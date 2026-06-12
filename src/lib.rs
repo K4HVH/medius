@@ -26,6 +26,10 @@
 // Transport needs `unsafe` for platform FFI; require it to be explicitly scoped.
 #![forbid(unsafe_op_in_unsafe_fn)]
 #![warn(missing_debug_implementations)]
+// On docs.rs (which sets `--cfg docsrs`), enable the nightly `doc_auto_cfg` feature so every
+// feature-gated item renders a "this is supported on feature X" badge. Gated on `docsrs`, so stable
+// builds (CI, downstream) never see the nightly feature.
+#![cfg_attr(docsrs, feature(doc_auto_cfg))]
 
 // Declared FIRST and `#[macro_use]` so its `trace_event!`/`trace_span!` macros are in scope for every
 // module below (Rust macro_rules visibility is textual/top-down). It expands to `tracing::…` with the

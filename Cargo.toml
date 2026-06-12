@@ -8,6 +8,13 @@ license = "MIT OR Apache-2.0"
 keywords = ["medius", "mouse", "hid", "serial", "injection"]
 categories = ["hardware-support", "api-bindings"]
 
+# docs.rs builds with every feature enabled and the `docsrs` cfg set, so the doc_auto_cfg feature
+# badges (see lib.rs) render on docs.rs. The cfg only activates there, so stable/CI builds are
+# unaffected.
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
 [features]
 default = []
 async = []                              # thin wrapper over the sync core (flume async recv, no runtime dep)
