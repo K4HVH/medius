@@ -29,8 +29,10 @@
 
 pub mod protocol; // M1 — pure wire layer
 
+mod error; // M2 — structured Error enum
+
+pub use error::{Error, Result};
+
 // Modules are added per implementation milestone:
-//   mod error;          // M2
-//   mod transport;      // M2
 //   mod device;         // M3
 //   pub mod pacer;      // M4
