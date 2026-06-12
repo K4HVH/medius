@@ -67,9 +67,13 @@ fn configure_dcb(mut dcb: DCB) -> DCB {
 /// most ~100 ms when idle so [`Transport::read`] yields `Ok(0)` and the reader thread can poll its
 /// stop flag.
 ///
-/// `ReadIntervalTimeout = MAXDWORD` with both total-timeout fields `0` is the documented
-/// "return-immediately with whatever is buffered" mode; we instead use a small total constant so an
-/// idle read blocks briefly rather than spinning.
+/// With `ReadIntervalTimeout = MAXDWORD`, `ReadTotalTimeoutMultiplier = 0`, and
+/// `ReadTotalTimeoutConstant = 100`, the total read timeout is a flat 100 ms: `ReadFile` waits up to
+/// 100 ms and returns with whatever bytes arrived (possibly 0). This is deliberately **not** the
+/// `MAXDWORD / MAXDWORD / nonzero` "wait for the first byte then return" special case, and crucially
+/// **not** the `MAXDWORD / 0 / 0` "return immediately with whatever is buffered" mode — that last one
+/// makes an idle `ReadFile` return `Ok(0)` *instantly*, spinning the reader thread at 100% CPU. The
+/// nonzero `ReadTotalTimeoutConstant` is load-bearing; do not "simplify" it to zero.
 fn read_timeouts() -> COMMTIMEOUTS {
     COMMTIMEOUTS {
         // Don't wait between bytes once data starts arriving.

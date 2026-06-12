@@ -168,6 +168,7 @@ fn windows_find_ports() -> Vec<PortInfo> {
         SPDRP_HARDWAREID, SetupDiDestroyDeviceInfoList, SetupDiEnumDeviceInfo,
         SetupDiGetClassDevsW, SetupDiGetDeviceRegistryPropertyW,
     };
+    use windows_sys::Win32::Foundation::{ERROR_INSUFFICIENT_BUFFER, GetLastError};
 
     /// `INVALID_HANDLE_VALUE` as an `HDEVINFO` (which is an `isize`, not a pointer).
     const INVALID_HDEVINFO: HDEVINFO = -1;
@@ -198,6 +199,14 @@ fn windows_find_ports() -> Vec<PortInfo> {
             );
         }
         if needed == 0 {
+            return None;
+        }
+        // The size-probe returned FALSE with a null buffer; it is only trustworthy if it failed with
+        // ERROR_INSUFFICIENT_BUFFER. Any other failure (e.g. ERROR_INVALID_DATA on a corrupt entry)
+        // means `needed` is not a reliable size, so bail rather than allocate/read against it.
+        // SAFETY: GetLastError only reads the calling thread's last-error code; no other Windows call
+        // intervenes between the probe and here, so it reflects the probe's result.
+        if unsafe { GetLastError() } != ERROR_INSUFFICIENT_BUFFER {
             return None;
         }
         let mut buf = vec![0u8; needed as usize];
