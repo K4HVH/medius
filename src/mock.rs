@@ -275,4 +275,12 @@ mod tests {
         mock.set_health(Health::from_flags(0x02)); // mouse_attached
         assert!(device.query_health().unwrap().mouse_attached);
     }
+
+    /// `MockBox` is `Send + Sync` (it shares its state/transport via `Arc` and is handed across test
+    /// threads). Mirrors the guard tests for `Device`/`MockTransport`/`Counters`.
+    #[test]
+    fn mock_box_is_send_sync() {
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<MockBox>();
+    }
 }
