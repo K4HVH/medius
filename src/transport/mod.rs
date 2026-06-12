@@ -37,6 +37,9 @@ pub(crate) mod mock;
 #[cfg(target_os = "linux")]
 pub(crate) mod linux;
 
+#[cfg(windows)]
+pub(crate) mod windows;
+
 /// A byte pipe to the box: blocking writes, timeout-bounded reads.
 ///
 /// The methods take `&self` so one `Arc<dyn Transport>` can be shared between the reader thread and
