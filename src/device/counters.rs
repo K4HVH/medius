@@ -40,7 +40,6 @@ impl Counters {
     }
 
     /// Add one to `reconnects`.
-    #[cfg_attr(not(test), allow(dead_code))] // driven by reconnect (Task 3.6)
     pub(crate) fn inc_reconnects(&self) {
         self.reconnects.fetch_add(1, Ordering::Relaxed);
     }
