@@ -160,9 +160,12 @@ pub struct Device {
 
 impl Device {
     /// Wrap an already-open transport, spawn the reader **and** keepalive threads, and return the
-    /// device — **without** any handshake. This is the seam used by tests (with the mock) and by
-    /// [`Device::open`] internally (which then performs the handshake). Uses the default
-    /// [`ConnectOptions`](crate::ConnectOptions) (default keepalive cadence + query timeout).
+    /// device — **without** any handshake. The no-handshake seam used by tests (with the mock) and by
+    /// the public `mock` feature ([`Device::with_mock`]); [`Device::open`] uses the handshaking
+    /// `open_transport_with`/`from_transport_with` forms instead. Uses the default
+    /// [`ConnectOptions`](crate::ConnectOptions) (default keepalive cadence + query timeout). Dead in
+    /// a default no-feature, no-test build, hence the gated allow.
+    #[cfg_attr(not(any(test, feature = "mock")), allow(dead_code))]
     pub(crate) fn from_transport(transport: Arc<dyn Transport>) -> Device {
         Self::from_transport_with(transport, &crate::ConnectOptions::default())
     }
