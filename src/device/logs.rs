@@ -55,3 +55,87 @@ pub(crate) fn push(
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    use crate::protocol::FrameType;
+    use crate::protocol::types::{LogLevel, LogLine};
+    use crate::transport::mock::MockTransport;
+
+    use super::*;
+
+    /// Pushed LOG frames surface on `logs()` in the order the box sent them.
+    #[test]
+    fn logs_arrive_in_order() {
+        let mock = Arc::new(MockTransport::new());
+        let device = Device::from_transport(mock.clone());
+        let rx = device.logs();
+
+        let levels = [
+            (0u8, LogLevel::Error),
+            (1, LogLevel::Warn),
+            (2, LogLevel::Info),
+            (3, LogLevel::Debug),
+            (4, LogLevel::Verbose),
+        ];
+        for (i, (lvl, _)) in levels.iter().enumerate() {
+            mock.push_frame(FrameType::Log, i as u8, &[*lvl, b'a' + i as u8]);
+        }
+
+        for (i, (_, expect_level)) in levels.iter().enumerate() {
+            let line = rx.recv_timeout(Duration::from_secs(1)).unwrap();
+            assert_eq!(line.level, *expect_level);
+            assert_eq!(line.text, ((b'a' + i as u8) as char).to_string());
+        }
+    }
+
+    /// `logs()` hands out independent receiver clones (flume MPMC) — each sees the stream.
+    #[test]
+    fn logs_returns_independent_receiver_clones() {
+        let mock = Arc::new(MockTransport::new());
+        let device = Device::from_transport(mock.clone());
+        let rx1 = device.logs();
+        let _rx2 = device.logs(); // a second clone exists; the first still drains the stream
+        mock.push_frame(FrameType::Log, 0, &[2, b'z']);
+        let line = rx1.recv_timeout(Duration::from_secs(1)).unwrap();
+        assert_eq!(line.text, "z");
+    }
+
+    /// Direct unit test of the overflow policy: on a full channel, `push` evicts the OLDEST line and
+    /// enqueues the new one (the buffer holds the most-recent `cap` lines).
+    #[test]
+    fn push_drops_oldest_on_overflow() {
+        let cap = 4;
+        let (tx, rx) = flume::bounded::<LogLine>(cap);
+        // Fill to capacity with lines "0".."3".
+        for i in 0..cap {
+            push(
+                &tx,
+                &rx,
+                LogLine {
+                    level: LogLevel::Info,
+                    text: i.to_string(),
+                },
+            );
+        }
+        // Two more overflow → evict oldest ("0","1"), leaving "2".."5".
+        for i in cap..cap + 2 {
+            push(
+                &tx,
+                &rx,
+                LogLine {
+                    level: LogLevel::Info,
+                    text: i.to_string(),
+                },
+            );
+        }
+
+        let drained: Vec<String> = std::iter::from_fn(|| rx.try_recv().ok())
+            .map(|l| l.text)
+            .collect();
+        assert_eq!(drained, vec!["2", "3", "4", "5"]);
+    }
+}
