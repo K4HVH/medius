@@ -272,6 +272,13 @@ fn pacer_loop(
         shared.period_ns.load(Ordering::Relaxed),
     ));
 
+    // ~1/sec tracing AGGREGATE (Task 5.2 hot-path safety). The pacer NEVER traces per tick — that
+    // would perturb the 1 kHz path. Instead it counts ticks/frames and flushes ONE DEBUG event per
+    // ~1 s window. The whole mechanism is `#[cfg(feature = "tracing")]`, so with tracing off there is
+    // not even a counter in the loop (zero cost). See `PacerAggregate`.
+    #[cfg(feature = "tracing")]
+    let mut agg = PacerAggregate::new();
+
     loop {
         pacer.wait_next_tick();
 
@@ -292,6 +299,10 @@ fn pacer_loop(
 
         // Drain the accumulator (pure decision) under the lock, then release before sending.
         let to_emit = shared.acc.lock().tick_emit();
+        #[cfg(feature = "tracing")]
+        {
+            agg.ticks += 1;
+        }
 
         if let Some((dx, dy)) = to_emit {
             #[cfg(feature = "metrics")]
@@ -300,10 +311,85 @@ fn pacer_loop(
             // One MOVE per tick (fire-and-go). A send error (port gone) is ignored — the next tick
             // retries, matching the device layer's fire-and-go model; reconnect heals a dead port.
             let _ = device.move_rel(dx, dy);
+            #[cfg(feature = "tracing")]
+            {
+                agg.frames += 1;
+            }
 
             #[cfg(feature = "metrics")]
             metrics.record_write_latency(write_start.elapsed());
         }
+
+        // Flush the ~1/sec aggregate (entirely absent when `tracing` is off).
+        #[cfg(feature = "tracing")]
+        agg.maybe_flush(
+            #[cfg(feature = "metrics")]
+            metrics,
+        );
+    }
+}
+
+/// Per-second tracing aggregate for the pacer (Task 5.2, `tracing` feature only). Accumulates tick /
+/// frame counts and emits **one** DEBUG event per ~1 s window under `target: "medius::pacer"` — never
+/// per tick.
+#[cfg(feature = "tracing")]
+struct PacerAggregate {
+    /// When the current window opened.
+    window_start: std::time::Instant,
+    /// Ticks run in the current window.
+    ticks: u64,
+    /// `MOVE` frames emitted in the current window.
+    frames: u64,
+}
+
+#[cfg(feature = "tracing")]
+impl PacerAggregate {
+    /// How long a tracing-aggregate window lasts before it is flushed (~1/sec, §10).
+    const WINDOW: Duration = Duration::from_secs(1);
+
+    fn new() -> Self {
+        PacerAggregate {
+            window_start: std::time::Instant::now(),
+            ticks: 0,
+            frames: 0,
+        }
+    }
+
+    /// Emit the aggregate and reset the window if at least [`WINDOW`](Self::WINDOW) has elapsed.
+    ///
+    /// When the `metrics` feature is on, the jitter p50/p99 from the snapshot is included in the
+    /// event; otherwise just the frame/tick counts are reported.
+    fn maybe_flush(&mut self, #[cfg(feature = "metrics")] metrics: &MetricsState) {
+        if self.window_start.elapsed() < Self::WINDOW {
+            return;
+        }
+        #[cfg(feature = "metrics")]
+        {
+            let stats = metrics.snapshot();
+            trace_event!(
+                target: "medius::pacer",
+                tracing::Level::DEBUG,
+                frames = self.frames,
+                ticks = self.ticks,
+                jitter_p50_ns = stats.jitter.p50,
+                jitter_p99_ns = stats.jitter.p99,
+                late_ticks = stats.late_ticks,
+                "pacer 1s aggregate",
+            );
+        }
+        #[cfg(not(feature = "metrics"))]
+        {
+            trace_event!(
+                target: "medius::pacer",
+                tracing::Level::DEBUG,
+                frames = self.frames,
+                ticks = self.ticks,
+                "pacer 1s aggregate",
+            );
+        }
+        self.window_start = std::time::Instant::now();
+        self.ticks = 0;
+        self.frames = 0;
     }
 }
 
@@ -321,5 +407,11 @@ impl Device {
     /// Open a [`MovementSession`] at an explicit rate in Hz (see [`movement`](Self::movement)).
     pub fn movement_at(&self, rate_hz: u32) -> MovementSession {
         MovementSession::spawn(self.clone(), rate_hz)
+    }
+
+    /// Open a [`MovementSession`] at the rate configured in `opts`
+    /// ([`ConnectOptions::rate_hz`](crate::ConnectOptions::rate_hz)).
+    pub fn movement_with(&self, opts: &crate::ConnectOptions) -> MovementSession {
+        MovementSession::spawn(self.clone(), opts.rate_hz)
     }
 }

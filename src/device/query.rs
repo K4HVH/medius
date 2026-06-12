@@ -18,11 +18,9 @@ use crate::protocol::{FrameType, Resp, parse_resp};
 
 use super::Device;
 
-/// Default time a query waits for its correlated `RESP` before giving up.
-pub(crate) const DEFAULT_QUERY_TIMEOUT: Duration = Duration::from_secs(1);
-
 impl Device {
-    /// Send `QUERY(what)` and block for the correlated `RESP` payload, with the default 1 s timeout.
+    /// Send `QUERY(what)` and block for the correlated `RESP` payload, with the device's configured
+    /// default timeout (from [`ConnectOptions`](crate::ConnectOptions), default 1 s).
     ///
     /// The reserved `SEQ` in `pending` is exactly the `SEQ` of the sent frame, so the reader can
     /// fulfil it. Returns the raw `RESP` **payload** (the caller decodes it); higher-level
@@ -32,7 +30,7 @@ impl Device {
     /// - [`Error::QueryTimeout`] if no `RESP` arrives within the timeout (the waiter is then removed).
     /// - [`Error::FrameTooLong`] / [`Error::Io`] from the underlying send.
     pub(crate) fn query(&self, what: u8) -> Result<Vec<u8>> {
-        self.query_timeout(what, DEFAULT_QUERY_TIMEOUT)
+        self.query_timeout(what, self.query_timeout_default())
     }
 
     /// [`query`](Device::query) with an explicit timeout.
@@ -51,11 +49,28 @@ impl Device {
         }
 
         match rx.recv_timeout(timeout) {
-            Ok(payload) => Ok(payload),
+            Ok(payload) => {
+                trace_event!(
+                    target: "medius::device",
+                    tracing::Level::DEBUG,
+                    selector = what,
+                    seq,
+                    resp_len = payload.len(),
+                    "query resolved",
+                );
+                Ok(payload)
+            }
             Err(_) => {
                 // Timed out (or the sender was dropped). Remove the stale waiter so `pending` doesn't
                 // leak, then report the timeout.
                 self.pending().lock().remove(&seq);
+                trace_event!(
+                    target: "medius::device",
+                    tracing::Level::WARN,
+                    selector = what,
+                    seq,
+                    "query timed out",
+                );
                 Err(Error::QueryTimeout)
             }
         }

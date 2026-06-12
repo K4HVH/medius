@@ -55,11 +55,6 @@ pub use counters::CountersSnapshot;
 /// has no native blocking timeout (the mock). Real serial reads block up to ≈100 ms themselves.
 const READER_IDLE_POLL: std::time::Duration = std::time::Duration::from_millis(2);
 
-/// Default keepalive cadence (§8): sub-1 s so a held override outlives the firmware's 1000 ms silence
-/// auto-clear, but sparse enough not to contend with the pacer.
-pub(crate) const DEFAULT_KEEPALIVE_CADENCE: std::time::Duration =
-    std::time::Duration::from_millis(500);
-
 /// A swappable transport slot (§6 reconnect). The reader and every writer load the *current*
 /// transport (a cheap `Arc` clone) for each operation, so [`reconnect`](Device::reconnect) can replace
 /// it in place and all parties follow the swap without restarting threads.
@@ -116,6 +111,8 @@ pub(crate) struct Inner {
     counters: Arc<Counters>,
     /// Set on drop / disconnect; the reader and keepalive observe it and exit.
     stop: Arc<AtomicBool>,
+    /// Default timeout [`query`](Device::query) waits for a `RESP` (from [`ConnectOptions`], §10).
+    query_timeout: std::time::Duration,
     /// The reader thread handle, joined on drop.
     reader: Option<JoinHandle<()>>,
     /// The keepalive thread handle, joined on drop (Task 3.6).
@@ -164,18 +161,33 @@ pub struct Device {
 impl Device {
     /// Wrap an already-open transport, spawn the reader **and** keepalive threads, and return the
     /// device — **without** any handshake. This is the seam used by tests (with the mock) and by
-    /// [`Device::open`] internally (which then performs the handshake). Uses the default keepalive
-    /// cadence ([`DEFAULT_KEEPALIVE_CADENCE`]).
+    /// [`Device::open`] internally (which then performs the handshake). Uses the default
+    /// [`ConnectOptions`](crate::ConnectOptions) (default keepalive cadence + query timeout).
     pub(crate) fn from_transport(transport: Arc<dyn Transport>) -> Device {
-        Self::from_transport_with_cadence(transport, DEFAULT_KEEPALIVE_CADENCE)
+        Self::from_transport_with(transport, &crate::ConnectOptions::default())
     }
 
     /// As [`from_transport`](Device::from_transport) but with an explicit keepalive cadence. Tests use
-    /// a short cadence so keepalive behaviour is observable without real 500 ms waits.
+    /// a short cadence so keepalive behaviour is observable without real 500 ms waits. The query
+    /// timeout stays at the [`ConnectOptions`](crate::ConnectOptions) default.
     pub(crate) fn from_transport_with_cadence(
         transport: Arc<dyn Transport>,
         keepalive_cadence: std::time::Duration,
     ) -> Device {
+        let opts = crate::ConnectOptions::default().with_keepalive_cadence(keepalive_cadence);
+        Self::from_transport_with(transport, &opts)
+    }
+
+    /// As [`from_transport`](Device::from_transport) but driven by a full
+    /// [`ConnectOptions`](crate::ConnectOptions): the keepalive cadence and the query timeout both come
+    /// from `opts`. This is the single construction seam the public `open_with`/`find_with`
+    /// constructors route through.
+    pub(crate) fn from_transport_with(
+        transport: Arc<dyn Transport>,
+        opts: &crate::ConnectOptions,
+    ) -> Device {
+        let keepalive_cadence = opts.keepalive_cadence;
+        let query_timeout = opts.query_timeout;
         // Build every piece of shared state as its own Arc BEFORE spawning, so each thread captures
         // clones of exactly what it needs — never `Arc<Inner>` (which would form a cycle and block
         // Drop's join).
@@ -220,10 +232,16 @@ impl Device {
                 desired,
                 counters,
                 stop,
+                query_timeout,
                 reader: Some(reader),
                 keepalive: Some(keepalive),
             }),
         }
+    }
+
+    /// The configured default query timeout (from [`ConnectOptions`](crate::ConnectOptions)).
+    pub(crate) fn query_timeout_default(&self) -> std::time::Duration {
+        self.inner.query_timeout
     }
 
     /// Allocate the next rolling `SEQ` (wraps 255 → 0).
@@ -298,6 +316,15 @@ fn write_frame(
         current.write_all(&frame)?;
     }
     counters.inc_tx();
+    // Per-frame TX at TRACE only (timing-perturbing; never on the pacer's aggregate-only path).
+    trace_event!(
+        target: "medius::transport",
+        tracing::Level::TRACE,
+        dir = "tx",
+        opcode = u8::from(ty),
+        seq,
+        len = payload.len(),
+    );
     Ok(())
 }
 
@@ -378,6 +405,15 @@ fn route_frame(
     counters: &Counters,
 ) {
     counters.inc_rx();
+    // Per-frame RX at TRACE only (timing-perturbing; documented in trace.rs).
+    trace_event!(
+        target: "medius::transport",
+        tracing::Level::TRACE,
+        dir = "rx",
+        opcode = u8::from(frame.ty),
+        seq = frame.seq,
+        len = frame.payload.len(),
+    );
     match frame.ty {
         FrameType::Resp => {
             // Correlate by SEQ: remove the one-shot and deliver the payload. An absent SEQ (timed
@@ -389,6 +425,10 @@ fn route_frame(
         }
         FrameType::Log => {
             let line = parse_log(&frame.payload);
+            // Re-emit the device LOG as a host tracing event (LOG level → tracing level), under
+            // `medius::device` — additional to the logs() channel, which still receives it below.
+            #[cfg(feature = "tracing")]
+            crate::trace::emit_device_log(&line);
             // Bounded channel: on a full queue we drop the OLDEST line then push, so a non-draining
             // consumer can never OOM the reader while still seeing the most recent logs.
             logs::push(logs_tx, logs_rx, line);
