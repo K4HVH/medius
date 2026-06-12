@@ -10,8 +10,10 @@
 //! numeric constant here is pinned to those by [`opcode::tests::opcodes_match_firmware`].
 
 pub mod crc;
+pub mod frame;
 pub mod opcode;
 pub mod types;
 
+pub use frame::{DecodedFrame, FrameDecoder, FrameError, encode};
 pub use opcode::{FrameType, MAX_PAYLOAD, PROTO_VER, SOF, UnknownFrameType};
 pub use types::{Button, ButtonAction, Health, LogLevel, LogLine, RebootTarget, Version};
