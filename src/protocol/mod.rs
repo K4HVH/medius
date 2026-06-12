@@ -10,3 +10,6 @@
 //! numeric constant here is pinned to those by [`opcode::tests::opcodes_match_firmware`].
 
 pub mod crc;
+pub mod opcode;
+
+pub use opcode::{FrameType, MAX_PAYLOAD, PROTO_VER, SOF, UnknownFrameType};
