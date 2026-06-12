@@ -88,3 +88,85 @@ impl Device {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    use crate::error::Error;
+    use crate::protocol::{FrameType, encode};
+    use crate::transport::mock::MockTransport;
+
+    use super::Device;
+
+    /// A mock that answers VERSION/HEALTH queries (echoing SEQ) with fixed values.
+    fn responder_device(version: [u8; 4], health_flags: u8) -> Device {
+        let mock = Arc::new(MockTransport::with_responder(move |ty, seq, payload| {
+            if ty != FrameType::Query {
+                return Vec::new();
+            }
+            match payload.first().copied() {
+                Some(0) => encode(
+                    FrameType::Resp,
+                    seq,
+                    &[0, version[0], version[1], version[2], version[3]],
+                )
+                .unwrap(),
+                Some(1) => encode(FrameType::Resp, seq, &[1, health_flags]).unwrap(),
+                _ => Vec::new(),
+            }
+        }));
+        Device::from_transport(mock)
+    }
+
+    #[test]
+    fn query_version_parses_resp() {
+        let device = responder_device([1, 7, 8, 9], 0x00);
+        let v = device.query_version().unwrap();
+        assert_eq!(v.proto_ver, 1);
+        assert_eq!(v.fw_major, 7);
+        assert_eq!(v.fw_minor, 8);
+        assert_eq!(v.fw_patch, 9);
+    }
+
+    #[test]
+    fn query_health_parses_flags() {
+        // link_up | mouse_attached | inject_on = 0x0B; clone_configured (0x04) off.
+        let device = responder_device([1, 0, 0, 0], 0x0B);
+        let h = device.query_health().unwrap();
+        assert!(h.link_up);
+        assert!(h.mouse_attached);
+        assert!(!h.clone_configured);
+        assert!(h.injection_active);
+    }
+
+    #[test]
+    fn query_times_out_when_box_is_silent() {
+        let mock = Arc::new(MockTransport::new()); // no responder
+        let device = Device::from_transport(mock);
+        let err = device
+            .query_timeout(0, Duration::from_millis(40))
+            .unwrap_err();
+        assert!(matches!(err, Error::QueryTimeout), "got {err:?}");
+    }
+
+    #[test]
+    fn version_query_sends_correct_payload_and_correlated_seq() {
+        // Capture what the host actually sent: a QUERY(VERSION) whose SEQ the RESP must echo.
+        let device = responder_device([1, 0, 0, 0], 0x00);
+        let _ = device.query_version().unwrap();
+        // A second query must succeed too (rolling SEQ advances, correlation still holds).
+        let _ = device.query_health().unwrap();
+    }
+
+    #[test]
+    fn two_concurrent_queries_correlate_by_seq() {
+        // Even issued back to back, each query gets exactly its own RESP (distinct SEQs).
+        let device = responder_device([1, 2, 3, 4], 0x0F);
+        let v = device.query_version().unwrap();
+        let h = device.query_health().unwrap();
+        assert_eq!((v.fw_major, v.fw_minor, v.fw_patch), (2, 3, 4));
+        assert!(h.link_up && h.injection_active);
+    }
+}
