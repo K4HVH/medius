@@ -20,7 +20,7 @@
 //!
 //! esptool's stdout/stderr are captured; on success the stdout is surfaced via `tracing`
 //! (`medius::flash`, INFO), and on a non-zero exit the stderr is folded into
-//! [`Error::FlashTool`](crate::Error::FlashTool).
+//! [`Error::FlashTool`].
 
 use std::path::Path;
 use std::time::Duration;

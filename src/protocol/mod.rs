@@ -7,7 +7,9 @@
 //!
 //! The byte-exact reference is `docs/protocol/control-protocol.md` (the source of truth);
 //! `firmware/device/components/inject/ctrl_proto.h` is the authoritative constants header. Every
-//! numeric constant here is pinned to those by [`opcode::tests::opcodes_match_firmware`].
+//! numeric constant here is pinned to its documented value by the `opcode` module's
+//! `opcodes_match_firmware` test, with a best-effort firmware-header drift check
+//! (`opcodes_match_ctrl_proto_header`) when the header is reachable.
 
 pub mod command;
 pub mod crc;

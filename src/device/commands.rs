@@ -1,9 +1,8 @@
 //! Fire-and-go command methods (§3) — the primary `&self` control surface.
 //!
 //! Every method here encodes one command payload (via [`crate::protocol::command`]) and fires it with
-//! a fresh `SEQ` (§2.1: no ACK, no wait). Button commands also update the host's
-//! [`DesiredState`](super::reconcile::DesiredState) so the keepalive/reconnect reconcile (Task 3.6)
-//! can keep or restore held overrides.
+//! a fresh `SEQ` (§2.1: no ACK, no wait). Button commands also update the host's `DesiredState` so the
+//! keepalive/reconnect reconcile (Task 3.6) can keep or restore held overrides.
 //!
 //! **Lock ordering.** `desired` is updated and its guard **released** before the send takes the write
 //! lock — the two locks are never held together, preserving the deadlock-free discipline documented
@@ -35,8 +34,8 @@ impl Device {
 
     /// `BUTTON` — set an injection override for one button (§3.3).
     ///
-    /// Records the intent in [`DesiredState`](super::reconcile::DesiredState) (press/force hold the
-    /// button; soft-release clears our override) and then fires the frame.
+    /// Records the intent in the host's `DesiredState` (press/force hold the button; soft-release
+    /// clears our override) and then fires the frame.
     pub fn button(&self, button: Button, action: ButtonAction) -> Result<()> {
         // Update intended state, then release the lock BEFORE sending (never hold two locks).
         self.desired().lock().apply(button, action);
@@ -65,7 +64,7 @@ impl Device {
     }
 
     /// `RESET` — return to pure passthrough immediately (§3.4). Clears every held override in the
-    /// host's [`DesiredState`](super::reconcile::DesiredState) to match the box.
+    /// host's `DesiredState` to match the box.
     pub fn reset(&self) -> Result<()> {
         self.desired().lock().clear();
         self.send(FrameType::Reset, &[])

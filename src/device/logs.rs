@@ -23,8 +23,8 @@ impl Device {
     ///
     /// Returns a clone of the bounded channel's receiver; multiple callers may each hold one (flume
     /// is MPMC). The reader thread pushes every decoded `LOG` line here; on overflow the **oldest**
-    /// buffered line is dropped (see the [module docs](self)). Lines arrive in the order the box sent
-    /// them.
+    /// buffered line is dropped, so a slow consumer can never stall the reader. Lines arrive in the
+    /// order the box sent them.
     pub fn logs(&self) -> flume::Receiver<LogLine> {
         self.inner.logs_rx.clone()
     }

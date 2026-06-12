@@ -61,7 +61,7 @@ impl Counters {
     }
 }
 
-/// A plain, copyable snapshot of [`Counters`] for display / JSON (serde-gated).
+/// A plain, copyable snapshot of the device's always-on `Counters`, for display / JSON (serde-gated).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct CountersSnapshot {

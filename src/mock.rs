@@ -5,7 +5,7 @@
 //!
 //! - **configure** the `Version` / `Health` it answers queries with ([`MockBox::with_version`] /
 //!   [`MockBox::with_health`]),
-//! - **drive a real [`Device`]** over it via [`Device::with_mock`] — the wrapper that reaches the
+//! - **drive a real [`Device`](crate::Device)** over it via [`Device::with_mock`](crate::Device::with_mock) — the wrapper that reaches the
 //!   private transport **without** exposing the private `Transport` trait,
 //! - **record** every command the host sent, for assertions ([`MockBox::recorded`] /
 //!   [`MockBox::recorded_frames`]),
@@ -13,7 +13,7 @@
 //!
 //! Like makcu's mock it matches **decoded** frames (semantic), not raw bytes. `MockBox` is cheap to
 //! clone (it shares its state and transport via `Arc`), so a test can keep a handle for assertions
-//! after the [`Device`] owns the transport.
+//! after the [`Device`](crate::Device) owns the transport.
 //!
 //! ```
 //! # use medius::mock::MockBox;
@@ -70,8 +70,8 @@ impl Default for State {
 
 /// A scriptable fake medius box for hardware-free tests (feature = `mock`).
 ///
-/// Build one with [`MockBox::new`] + the `with_*` setters, drive a [`Device`] over it with
-/// [`Device::with_mock`], then assert on [`recorded`](MockBox::recorded) /
+/// Build one with [`MockBox::new`] + the `with_*` setters, drive a [`Device`](crate::Device) over it
+/// with [`Device::with_mock`](crate::Device::with_mock), then assert on [`recorded`](MockBox::recorded) /
 /// [`recorded_frames`](MockBox::recorded_frames) and inject diagnostics with
 /// [`push_log`](MockBox::push_log). See the [module docs](self) for the full model.
 #[derive(Clone, Debug)]
@@ -154,7 +154,7 @@ impl MockBox {
     }
 
     /// Push a `LOG` line as if the box emitted it; it surfaces on the device's
-    /// [`logs()`](Device::logs) channel (and, with `tracing`, as a host event).
+    /// [`logs()`](crate::Device::logs) channel (and, with `tracing`, as a host event).
     pub fn push_log(&self, level: LogLevel, text: &str) {
         let mut payload = Vec::with_capacity(1 + text.len());
         payload.push(level.as_u8());
@@ -182,9 +182,9 @@ impl MockBox {
         self.state.lock().recorded.clear();
     }
 
-    /// The shared transport, as the crate-internal `Arc<dyn Transport>` the [`Device`] wraps. Kept
+    /// The shared transport, as the crate-internal `Arc<dyn Transport>` the [`Device`](crate::Device) wraps. Kept
     /// `pub(crate)` so the private `Transport` trait is **not** exposed (the public seam is
-    /// [`Device::with_mock`]).
+    /// [`Device::with_mock`](crate::Device::with_mock)).
     pub(crate) fn transport(&self) -> Arc<dyn crate::transport::Transport> {
         Arc::clone(&self.transport) as Arc<dyn crate::transport::Transport>
     }

@@ -62,7 +62,7 @@ pub use error::{Error, Result};
 pub use mock::MockBox;
 pub use pacer::{DEFAULT_RATE_HZ, MovementSession};
 pub use protocol::types::{Button, ButtonAction, Health, LogLevel, LogLine, RebootTarget, Version};
-pub use transport::scan::{PortInfo, find_medius, find_ports};
+pub use transport::scan::{CH343_PID, PortInfo, WCH_VID, find_medius, find_ports};
 
 #[cfg(feature = "metrics")]
 pub use pacer::metrics::{HistogramSnapshot, PacerStats};
