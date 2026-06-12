@@ -33,6 +33,7 @@
 use std::io;
 
 pub(crate) mod mock;
+pub(crate) mod scan;
 
 #[cfg(target_os = "linux")]
 pub(crate) mod linux;
