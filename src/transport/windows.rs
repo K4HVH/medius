@@ -22,7 +22,8 @@ use std::os::windows::ffi::OsStrExt;
 use std::path::Path;
 
 use windows_sys::Win32::Devices::Communication::{
-    COMMTIMEOUTS, DCB, GetCommState, NOPARITY, ONESTOPBIT, SetCommState, SetCommTimeouts,
+    COMMTIMEOUTS, DCB, GetCommState, NOPARITY, ONESTOPBIT, PURGE_RXCLEAR, PURGE_TXCLEAR, PurgeComm,
+    SetCommState, SetCommTimeouts,
 };
 use windows_sys::Win32::Foundation::{
     CloseHandle, GENERIC_READ, GENERIC_WRITE, HANDLE, INVALID_HANDLE_VALUE,
@@ -153,7 +154,20 @@ impl WindowsSerial {
         // Own it immediately so any early return below still closes via Drop.
         let serial = WindowsSerial { handle };
         serial.configure()?;
+        serial.flush_input()?;
         Ok(serial)
+    }
+
+    /// Discard any buffered RX/TX bytes (`PurgeComm`) once at open, so a stale buffer (ROM-bootloader
+    /// preamble, leftover frame bytes) cannot precede and mis-frame the first real reply. The decoder
+    /// resyncs on SOF regardless; this removes a connect-handshake flake source.
+    fn flush_input(&self) -> io::Result<()> {
+        // SAFETY: `self.handle` is a valid open serial handle; PurgeComm only clears its queues.
+        let ok = unsafe { PurgeComm(self.handle, PURGE_RXCLEAR | PURGE_TXCLEAR) };
+        if ok == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(())
     }
 
     /// Read the current `DCB`, apply our configuration, and write it back; then set read timeouts.

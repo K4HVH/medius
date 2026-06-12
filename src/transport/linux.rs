@@ -112,7 +112,23 @@ impl LinuxSerial {
 
         serial.deassert_dtr_rts()?;
         serial.configure()?;
+        serial.flush_input()?;
         Ok(serial)
+    }
+
+    /// Discard any already-received bytes (`tcflush(TCIFLUSH)`).
+    ///
+    /// Done once at open so a stale RX buffer (ROM-bootloader ASCII preamble, leftover frame bytes
+    /// from a previous session) cannot precede — and mis-frame — the first real reply. The decoder
+    /// resyncs on SOF regardless, but starting from an empty buffer removes a flake source on the
+    /// connect handshake.
+    fn flush_input(&self) -> io::Result<()> {
+        // SAFETY: `self.fd` is a valid open fd; tcflush only acts on the terminal's queues.
+        let rc = unsafe { libc::tcflush(self.fd, libc::TCIFLUSH) };
+        if rc < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(())
     }
 
     /// Clear DTR and RTS via `ioctl(TIOCMBIC, TIOCM_DTR | TIOCM_RTS)` — done before configuring so
