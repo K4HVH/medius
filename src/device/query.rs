@@ -95,7 +95,9 @@ impl Device {
     }
 
     /// Remove a pending query waiter by `seq` (used by the async timeout path to invalidate an
-    /// expired query so `pending` does not leak).
+    /// expired query so `pending` does not leak). Only the `async` wrapper calls this, so it is
+    /// dead in non-`async` builds.
+    #[cfg_attr(not(feature = "async"), allow(dead_code))]
     pub(crate) fn cancel_pending(&self, seq: u8) {
         self.pending().lock().remove(&seq);
     }
