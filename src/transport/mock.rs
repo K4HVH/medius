@@ -16,6 +16,12 @@
 //! seam the public "programmable box" mode (auto-answering `QUERY(VERSION)`/`QUERY(HEALTH)`) will
 //! build on — but the full programmable box is not implemented here.
 
+// The mock is purely a test double until the `mock` feature (Milestone 5) re-exports it publicly;
+// its scripting seams (`push_*`/`written`/`with_responder`) are only driven by tests, so the lib
+// build legitimately sees them as unused. Scoped to this module so a real unused item elsewhere is
+// still caught.
+#![cfg_attr(not(test), allow(dead_code))]
+
 use std::collections::VecDeque;
 use std::io;
 
@@ -79,7 +85,6 @@ impl MockTransport {
 
     /// Create a mock whose `responder` is invoked on every decoded outbound frame; the bytes it
     /// returns are queued as inbound (as if the box replied). The seam for the programmable box.
-    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn with_responder<F>(responder: F) -> Self
     where
         F: Fn(FrameType, u8, &[u8]) -> Vec<u8> + Send + Sync + 'static,

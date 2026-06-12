@@ -25,12 +25,18 @@ pub const WCH_VID: u16 = 0x1A86;
 /// The CH343 USB product id observed on the medius board (`idProduct = 55d3`).
 // TODO confirm exact PID from board across revisions — discovery matches on VID only for now, so a
 // different CH343 variant PID is still found.
+// Documents the observed board PID; `find_medius` matches on VID only, so this is reference-only
+// (and asserted by `tests::ch343_constants`) rather than used at runtime.
+#[allow(dead_code)]
 pub const CH343_PID: u16 = 0x55D3;
 
 /// Parse a sysfs hex id string (e.g. `"1a86"` from `idVendor`) into a `u16`.
 ///
 /// Tolerates a trailing newline and surrounding whitespace (sysfs files end with `\n`) and an
 /// optional `0x` prefix. Returns `None` if the trimmed string is not valid hex or overflows `u16`.
+///
+/// Linux-only: only `linux_find_ports` consumes it (it parses sysfs `idVendor`/`idProduct`).
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 fn parse_sysfs_hex(s: &str) -> Option<u16> {
     let t = s.trim();
     let t = t
