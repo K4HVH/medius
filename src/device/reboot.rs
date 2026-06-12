@@ -173,8 +173,8 @@ mod tests {
     use std::sync::Arc;
     use std::time::Duration;
 
-    use crate::protocol::types::{Button, RebootTarget};
-    use crate::protocol::{DecodedFrame, FrameDecoder, FrameType};
+    use crate::protocol::types::{Button, LogLevel, RebootTarget};
+    use crate::protocol::{DecodedFrame, FrameDecoder, FrameType, encode};
     use crate::transport::mock::MockTransport;
 
     use super::Device;
@@ -286,5 +286,39 @@ mod tests {
             .map(|f| f.payload[0])
             .collect();
         assert_eq!(reboots, vec![2, 3, 0, 1]);
+    }
+
+    /// FIX 3 — a transport swap (reconnect) must reset the reader's `FrameDecoder`, so a frame
+    /// interrupted mid-parse on the old port does NOT mis-frame the first bytes of the new one.
+    ///
+    /// We feed a *partial* LOG frame on mock A (leaving the decoder mid-frame), swap in mock B, push a
+    /// *complete* LOG frame, and assert that the complete LOG decodes cleanly. Without the reset, A's
+    /// dangling prefix would corrupt B's leading bytes and the LOG would never arrive intact.
+    #[test]
+    fn transport_swap_resets_decoder() {
+        let mock_a = Arc::new(MockTransport::new());
+        // Long cadence so the keepalive doesn't inject frames during the test window.
+        let device = Device::from_transport_with_cadence(mock_a.clone(), Duration::from_secs(60));
+        let rx = device.logs();
+
+        // Feed a TRUNCATED LOG frame on A: encode a full frame, push only its first half so the reader's
+        // decoder is left waiting for the remainder.
+        let partial = encode(FrameType::Log, 0, &[2, b'o', b'l', b'd']).unwrap();
+        let cut = partial.len() / 2;
+        mock_a.push_bytes(&partial[..cut]);
+        // Give the reader a moment to consume the partial bytes into its decoder.
+        std::thread::sleep(Duration::from_millis(20));
+
+        // Swap in a fresh transport (as reconnect does) and push a COMPLETE LOG frame on it.
+        let mock_b = Arc::new(MockTransport::new());
+        device.transport_slot().swap(mock_b.clone());
+        mock_b.push_frame(FrameType::Log, 0, &[2, b'n', b'e', b'w']);
+
+        // The complete LOG must arrive intact — proving the decoder was reset (the old partial discarded).
+        let line = rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("the post-swap LOG must decode cleanly");
+        assert_eq!(line.level, LogLevel::Info);
+        assert_eq!(line.text, "new");
     }
 }

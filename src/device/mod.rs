@@ -68,15 +68,22 @@ struct PendingEntry {
 /// A swappable transport slot (§6 reconnect). The reader and every writer load the *current*
 /// transport (a cheap `Arc` clone) for each operation, so [`reconnect`](Device::reconnect) can replace
 /// it in place and all parties follow the swap without restarting threads.
+///
+/// A monotonic [`generation`](TransportSlot::generation) is bumped on every [`swap`](TransportSlot::swap)
+/// so the reader can notice a transport change and reset its [`FrameDecoder`]: a frame interrupted
+/// mid-parse on the old port must not mis-frame the first bytes of the new one.
 #[derive(Debug)]
 pub(crate) struct TransportSlot {
     current: Mutex<Arc<dyn Transport>>,
+    /// Bumped on each `swap`; the reader compares it to its last-seen value to reset the decoder.
+    generation: AtomicU64,
 }
 
 impl TransportSlot {
     fn new(transport: Arc<dyn Transport>) -> Self {
         TransportSlot {
             current: Mutex::new(transport),
+            generation: AtomicU64::new(0),
         }
     }
 
@@ -85,10 +92,17 @@ impl TransportSlot {
         Arc::clone(&self.current.lock())
     }
 
-    /// Replace the transport (reconnect). The old one is dropped (closing its fd/HANDLE) once the last
-    /// in-flight `current()` clone is released.
+    /// The current transport generation (bumped by [`swap`](TransportSlot::swap)).
+    pub(crate) fn generation(&self) -> u64 {
+        self.generation.load(Ordering::Acquire)
+    }
+
+    /// Replace the transport (reconnect) and bump the generation so the reader resets its decoder. The
+    /// old transport is dropped (closing its fd/HANDLE) once the last in-flight `current()` clone is
+    /// released.
     pub(crate) fn swap(&self, transport: Arc<dyn Transport>) {
         *self.current.lock() = transport;
+        self.generation.fetch_add(1, Ordering::Release);
     }
 }
 
@@ -446,10 +460,18 @@ fn reader_loop(
 ) {
     let mut decoder = FrameDecoder::new();
     let mut buf = [0u8; 1024];
+    let mut seen_generation = transport.generation();
 
     loop {
         if stop.load(Ordering::SeqCst) {
             return;
+        }
+        // A reconnect swap installs a fresh transport and bumps the generation. Reset the decoder so a
+        // frame interrupted mid-parse on the old port can't mis-frame the first bytes of the new one.
+        let generation = transport.generation();
+        if generation != seen_generation {
+            decoder = FrameDecoder::new();
+            seen_generation = generation;
         }
         let current = transport.current();
         match current.read(&mut buf) {
