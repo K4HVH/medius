@@ -169,7 +169,8 @@ impl Device {
 
     /// As [`from_transport`](Device::from_transport) but with an explicit keepalive cadence. Tests use
     /// a short cadence so keepalive behaviour is observable without real 500 ms waits. The query
-    /// timeout stays at the [`ConnectOptions`](crate::ConnectOptions) default.
+    /// timeout stays at the [`ConnectOptions`](crate::ConnectOptions) default. (Test-only seam.)
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn from_transport_with_cadence(
         transport: Arc<dyn Transport>,
         keepalive_cadence: std::time::Duration,

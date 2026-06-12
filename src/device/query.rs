@@ -75,10 +75,7 @@ impl Device {
     /// returned. The returned receiver is `bounded(1)`; both `recv_timeout` and `recv_async` work on
     /// it. The caller MUST remove `seq` from `pending` if it gives up (the sync/async timeout paths
     /// both do).
-    pub(crate) fn register_query(
-        &self,
-        what: u8,
-    ) -> Result<(u8, flume::Receiver<Vec<u8>>)> {
+    pub(crate) fn register_query(&self, what: u8) -> Result<(u8, flume::Receiver<Vec<u8>>)> {
         let seq = self.next_seq();
         let (tx, rx) = flume::bounded::<Vec<u8>>(1);
 

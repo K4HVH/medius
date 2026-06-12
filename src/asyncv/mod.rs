@@ -126,7 +126,9 @@ impl AsyncDevice {
     /// Query the box version (§4.1), awaiting the correlated `RESP` with the device's configured
     /// default timeout.
     pub async fn query_version(&self) -> Result<Version> {
-        let payload = self.query(Q_VERSION, self.device.query_timeout_default()).await?;
+        let payload = self
+            .query(Q_VERSION, self.device.query_timeout_default())
+            .await?;
         match parse_resp(&payload) {
             Some(Resp::Version(v)) => Ok(v),
             _ => Err(Error::NoReply),
@@ -135,7 +137,9 @@ impl AsyncDevice {
 
     /// Query the box health flags (§4.2), awaiting the correlated `RESP` with the default timeout.
     pub async fn query_health(&self) -> Result<Health> {
-        let payload = self.query(Q_HEALTH, self.device.query_timeout_default()).await?;
+        let payload = self
+            .query(Q_HEALTH, self.device.query_timeout_default())
+            .await?;
         match parse_resp(&payload) {
             Some(Resp::Health(h)) => Ok(h),
             _ => Err(Error::NoReply),

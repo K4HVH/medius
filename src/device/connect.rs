@@ -55,10 +55,9 @@ impl Device {
     }
 
     /// Build a device over an already-open transport **and** run the handshake (default
-    /// [`ConnectOptions`]).
-    ///
-    /// Shared by [`open`](Device::open) and [`reconnect`](Device::reconnect); the test seam is
-    /// [`from_transport`](Device::from_transport) (no handshake).
+    /// [`ConnectOptions`]). The general form is [`open_transport_with`](Device::open_transport_with);
+    /// this no-options convenience is used by the device tests.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn open_transport(transport: Arc<dyn Transport>) -> Result<Device> {
         Self::open_transport_with(transport, &ConnectOptions::default())
     }
@@ -76,7 +75,8 @@ impl Device {
     /// Send `QUERY(VERSION)` and validate the reported protocol version (§2.2).
     fn handshake(&self) -> Result<()> {
         // A `connect` span groups the handshake's query/transport events (no-op without `tracing`).
-        let _span = trace_span!(target: "medius::device", tracing::Level::INFO, "connect").entered();
+        let _span =
+            trace_span!(target: "medius::device", tracing::Level::INFO, "connect").entered();
         let version = match self.query_version() {
             Ok(v) => v,
             // A handshake timeout means "no box at the other end" — surface the dedicated NoReply,
