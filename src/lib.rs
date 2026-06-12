@@ -27,8 +27,9 @@
 #![forbid(unsafe_op_in_unsafe_fn)]
 #![warn(missing_debug_implementations)]
 
+pub mod protocol; // M1 — pure wire layer
+
 // Modules are added per implementation milestone:
-//   pub mod protocol;   // M1 — pure wire layer
 //   mod error;          // M2
 //   mod transport;      // M2
 //   mod device;         // M3
