@@ -30,6 +30,7 @@
 pub mod protocol; // M1 — pure wire layer
 
 mod error; // M2 — structured Error enum
+mod transport; // M2 — private serial transport (+ mock)
 
 pub use error::{Error, Result};
 
