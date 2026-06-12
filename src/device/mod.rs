@@ -77,7 +77,6 @@ pub(crate) struct Inner {
     /// Consumer half handed out by [`Device::logs`].
     logs_rx: flume::Receiver<LogLine>,
     /// Intended button overrides; the keepalive + reconnect-reapply act on this (Task 3.6).
-    #[allow(dead_code)] // read by the keepalive thread (Task 3.6)
     desired: Arc<Mutex<DesiredState>>,
     /// Always-on atomic counters.
     counters: Arc<Counters>,
@@ -190,7 +189,6 @@ impl Device {
     }
 
     /// Allocate a fresh `SEQ` and fire one frame (the common fire-and-go path).
-    #[cfg_attr(not(test), allow(dead_code))] // the command surface (Task 3.3) is the lib-side user
     pub(crate) fn send(&self, ty: FrameType, payload: &[u8]) -> Result<()> {
         let seq = self.next_seq();
         self.send_with_seq(seq, ty, payload)
@@ -207,9 +205,7 @@ impl Device {
         &self.inner.pending
     }
 
-    /// The intended-state map, shared by the command surface (Task 3.3) and the keepalive/reconnect
-    /// reconcile (Task 3.6).
-    #[allow(dead_code)] // first user is the command surface (Task 3.3)
+    /// The intended-state map, shared by the command surface and the keepalive/reconnect reconcile.
     pub(crate) fn desired(&self) -> &Mutex<DesiredState> {
         &self.inner.desired
     }

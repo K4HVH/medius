@@ -12,11 +12,6 @@
 //! Commands (Task 3.3) update this map as they send: `press`/`force_release` set an override,
 //! `soft_release` clears it, `reset` clears all.
 
-// The command surface (Task 3.3) drives `apply`/`clear` and the keepalive/reconnect (Task 3.6) drive
-// `is_idle`/`held`; until they land the lib build sees these as unused (they are exercised by this
-// module's own tests). Removed as each consumer arrives.
-#![cfg_attr(not(test), allow(dead_code))]
-
 use crate::protocol::opcode::BTN_COUNT;
 use crate::protocol::types::{Button, ButtonAction};
 
@@ -36,6 +31,7 @@ impl Override {
     /// The [`ButtonAction`] that re-establishes this override on the box, or `None` if there is
     /// nothing to re-send (the override is `None`). `soft-release` is never a *held* state, so it is
     /// not represented here — it clears an override rather than holding one.
+    #[cfg_attr(not(test), allow(dead_code))] // used by `held` (reapply/keepalive, Task 3.6)
     pub(crate) fn as_action(self) -> Option<ButtonAction> {
         match self {
             Override::None => None,
@@ -81,12 +77,14 @@ impl DesiredState {
 
     /// `true` if no override is held — the keepalive stays *off* in this state so the firmware safety
     /// auto-clear remains intact (§8).
+    #[cfg_attr(not(test), allow(dead_code))] // gates the keepalive (Task 3.6)
     pub(crate) fn is_idle(&self) -> bool {
         self.overrides.iter().all(|o| *o == Override::None)
     }
 
     /// The held overrides as `(Button, ButtonAction)` pairs to re-send on reapply/reconnect. Skips
     /// `None` slots.
+    #[cfg_attr(not(test), allow(dead_code))] // drives reapply/reconnect (Task 3.6)
     pub(crate) fn held(&self) -> impl Iterator<Item = (Button, ButtonAction)> + '_ {
         self.overrides.iter().enumerate().filter_map(|(id, ov)| {
             let action = ov.as_action()?;
