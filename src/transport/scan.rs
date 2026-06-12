@@ -1,8 +1,8 @@
 //! Serial port discovery — enumerate candidate ports and their USB VID/PID (§6 of the design spec).
 //!
 //! [`find_ports`] returns every candidate serial port with its USB vendor/product id;
-//! [`find_medius`] filters to the medius box by the CH343 (WCH) USB vendor id. Reconnect rescans by
-//! VID/PID (not a fixed path) so a re-enumerated device is found again.
+//! [`find_medius`] filters to the medius box by its CH343 (WCH) USB vendor **and** product id.
+//! Reconnect rescans by VID/PID (not a fixed path) so a re-enumerated device is found again.
 //!
 //! Enumeration is OS-specific and untestable here (it hits sysfs / SetupAPI), so the **parsing** is
 //! factored into pure helpers ([`parse_sysfs_hex`], [`parse_usb_hardware_id`]) that are unit-tested.
@@ -22,12 +22,9 @@ pub struct PortInfo {
 /// WCH (Jiangsu Qinheng) USB vendor id — the CH343 USB-serial bridge the medius box uses (§6).
 pub const WCH_VID: u16 = 0x1A86;
 
-/// The CH343 USB product id observed on the medius board (`idProduct = 55d3`).
-// TODO confirm exact PID from board across revisions — discovery matches on VID only for now, so a
-// different CH343 variant PID is still found.
-// Documents the observed board PID; `find_medius` matches on VID only, so this is reference-only
-// (and asserted by `tests::ch343_constants`) rather than used at runtime.
-#[allow(dead_code)]
+/// The CH343 USB product id, confirmed on the medius board hardware (`idProduct = 55d3`).
+///
+/// [`find_medius`] matches on **both** [`WCH_VID`] and this PID; the handshake remains the final gate.
 pub const CH343_PID: u16 = 0x55D3;
 
 /// Parse a sysfs hex id string (e.g. `"1a86"` from `idVendor`) into a `u16`.
@@ -92,14 +89,14 @@ pub fn find_ports() -> Vec<PortInfo> {
     }
 }
 
-/// Discover medius boxes — [`find_ports`] filtered to the WCH vendor id (§6).
+/// Discover medius boxes — [`find_ports`] filtered to the medius VID **and** PID (§6).
 ///
-/// Matches on [`WCH_VID`] only (any CH343 PID), since the exact board PID is not yet pinned across
-/// revisions; the named [`CH343_PID`] documents the observed value.
+/// Matches on both [`WCH_VID`] and [`CH343_PID`] (the confirmed board USB id); the handshake remains
+/// the final gate that distinguishes a medius box from any other CH343-based serial device.
 pub fn find_medius() -> Vec<PortInfo> {
     find_ports()
         .into_iter()
-        .filter(|p| p.vid == WCH_VID)
+        .filter(|p| p.vid == WCH_VID && p.pid == CH343_PID)
         .collect()
 }
 
@@ -357,30 +354,41 @@ mod tests {
         assert_eq!(CH343_PID, 0x55D3);
     }
 
-    /// `find_medius` keeps only WCH-vendor ports (logic test independent of real enumeration).
+    /// `find_medius` keeps only ports matching BOTH the WCH vendor id and the CH343 product id
+    /// (logic test independent of real enumeration).
     #[test]
-    fn find_medius_filters_by_vendor() {
+    fn find_medius_filters_by_vendor_and_product() {
         // Direct test of the filter predicate via a synthetic list (mirrors find_medius()).
         let all = vec![
+            // Match: medius VID + PID.
             PortInfo {
                 path: "/dev/ttyACM0".into(),
                 vid: WCH_VID,
                 pid: CH343_PID,
             },
+            // Different vendor — rejected.
             PortInfo {
                 path: "/dev/ttyACM1".into(),
                 vid: 0x046D,
                 pid: 0xC534,
             },
+            // WCH vendor but a DIFFERENT CH product (e.g. CH340) — now rejected by the PID gate.
             PortInfo {
                 path: "/dev/ttyUSB0".into(),
                 vid: WCH_VID,
                 pid: 0x7523,
             },
         ];
-        let medius: Vec<_> = all.into_iter().filter(|p| p.vid == WCH_VID).collect();
-        assert_eq!(medius.len(), 2);
-        assert!(medius.iter().all(|p| p.vid == WCH_VID));
+        let medius: Vec<_> = all
+            .into_iter()
+            .filter(|p| p.vid == WCH_VID && p.pid == CH343_PID)
+            .collect();
+        assert_eq!(medius.len(), 1);
+        assert!(
+            medius
+                .iter()
+                .all(|p| p.vid == WCH_VID && p.pid == CH343_PID)
+        );
     }
 
     /// `find_ports` must not panic on this host (it may legitimately return an empty list in CI).
