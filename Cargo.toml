@@ -63,3 +63,20 @@ windows-sys = { version = "0.59", features = [
 [[bin]]
 name = "medius"
 required-features = ["cli"]
+
+# basic / paced open a real device — they compile everywhere, but need a connected box to RUN.
+[[example]]
+name = "basic"
+
+[[example]]
+name = "paced"
+
+# mock is fully runnable with no hardware (the scriptable fake box).
+[[example]]
+name = "mock"
+required-features = ["mock"]
+
+# async demo also runs hardware-free, over the mock box, on any executor.
+[[example]]
+name = "async"
+required-features = ["async", "mock"]
