@@ -29,6 +29,8 @@ serde = { version = "1", features = ["derive"], optional = true }
 
 [dev-dependencies]
 serde_json = "1"
+# Async tests use futures' executor::block_on — NO tokio (the wrapper is runtime-agnostic).
+futures = { version = "0.3", default-features = false, features = ["executor"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 libc = "0.2"

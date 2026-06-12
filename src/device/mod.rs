@@ -282,6 +282,12 @@ impl Device {
         &self.inner.pending
     }
 
+    /// The number of in-flight query waiters (diagnostic; used by the async timeout test to assert no
+    /// leak). Always available — cheap.
+    pub fn pending_len(&self) -> usize {
+        self.inner.pending.lock().len()
+    }
+
     /// The intended-state map, shared by the command surface and the keepalive/reconnect reconcile.
     pub(crate) fn desired(&self) -> &Mutex<DesiredState> {
         &self.inner.desired

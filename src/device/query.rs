@@ -35,18 +35,7 @@ impl Device {
 
     /// [`query`](Device::query) with an explicit timeout.
     pub(crate) fn query_timeout(&self, what: u8, timeout: Duration) -> Result<Vec<u8>> {
-        let seq = self.next_seq();
-        let (tx, rx) = flume::bounded::<Vec<u8>>(1);
-
-        // Reserve the SEQ *before* sending, so a fast RESP can never arrive before the waiter exists.
-        // Holding `pending` only for the insert (released before the send) keeps lock-ordering clean.
-        self.pending().lock().insert(seq, tx);
-
-        // Send the QUERY with the SAME seq the waiter is keyed on. If the send fails, drop the waiter.
-        if let Err(e) = self.send_with_seq(seq, FrameType::Query, &query_payload(what)) {
-            self.pending().lock().remove(&seq);
-            return Err(e);
-        }
+        let (seq, rx) = self.register_query(what)?;
 
         match rx.recv_timeout(timeout) {
             Ok(payload) => {
@@ -74,6 +63,41 @@ impl Device {
                 Err(Error::QueryTimeout)
             }
         }
+    }
+
+    /// Reserve a `SEQ`, register the bounded(1) one-shot under it in `pending`, and send the
+    /// `QUERY(what)` frame — returning the `(seq, receiver)` for the caller to await.
+    ///
+    /// This is the shared registration both the sync path ([`query_timeout`](Device::query_timeout),
+    /// via `recv_timeout`) and the async wrapper ([`crate::asyncv::AsyncDevice`], via `recv_async`)
+    /// use, so there is exactly **one** correlation mechanism and **one** flume one-shot — no
+    /// duplicated transport or query logic (§5). On a send failure the waiter is removed and the error
+    /// returned. The returned receiver is `bounded(1)`; both `recv_timeout` and `recv_async` work on
+    /// it. The caller MUST remove `seq` from `pending` if it gives up (the sync/async timeout paths
+    /// both do).
+    pub(crate) fn register_query(
+        &self,
+        what: u8,
+    ) -> Result<(u8, flume::Receiver<Vec<u8>>)> {
+        let seq = self.next_seq();
+        let (tx, rx) = flume::bounded::<Vec<u8>>(1);
+
+        // Reserve the SEQ *before* sending, so a fast RESP can never arrive before the waiter exists.
+        // Holding `pending` only for the insert (released before the send) keeps lock-ordering clean.
+        self.pending().lock().insert(seq, tx);
+
+        // Send the QUERY with the SAME seq the waiter is keyed on. If the send fails, drop the waiter.
+        if let Err(e) = self.send_with_seq(seq, FrameType::Query, &query_payload(what)) {
+            self.pending().lock().remove(&seq);
+            return Err(e);
+        }
+        Ok((seq, rx))
+    }
+
+    /// Remove a pending query waiter by `seq` (used by the async timeout path to invalidate an
+    /// expired query so `pending` does not leak).
+    pub(crate) fn cancel_pending(&self, seq: u8) {
+        self.pending().lock().remove(&seq);
     }
 
     /// Query the box version (§4.1). Used by the connect handshake and on demand.
