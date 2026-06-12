@@ -29,11 +29,12 @@
 
 pub mod protocol; // M1 — pure wire layer
 
+mod device; // M3 — Device core, reader/keepalive threads, commands/queries/logs/reconcile
 mod error; // M2 — structured Error enum
 mod transport; // M2 — private serial transport (+ mock)
 
+pub use device::CountersSnapshot;
 pub use error::{Error, Result};
 
 // Modules are added per implementation milestone:
-//   mod device;         // M3
 //   pub mod pacer;      // M4
