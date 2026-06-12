@@ -31,6 +31,7 @@ pub mod protocol; // M1 — pure wire layer
 
 mod device; // M3 — Device core, reader/keepalive threads, commands/queries/logs/reconcile
 mod error; // M2 — structured Error enum
+pub mod pacer; // M4 — paced MovementSession + precise tick clock
 mod transport; // M2 — private serial transport (+ mock)
 
 pub use device::{CountersSnapshot, Device};
