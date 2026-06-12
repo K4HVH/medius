@@ -14,19 +14,21 @@
 //!
 //! Only [`query_version`](AsyncDevice::query_version) / [`query_health`](AsyncDevice::query_health)
 //! differ: they register the **same** flume one-shot the sync path uses
-//! ([`Device::register_query`]) and `recv_async().await` it — so the sync and async query paths share
-//! one channel and one correlation mechanism.
+//! ([`register_query`](Device::register_query)) and `recv_async().await` it — so the sync and async
+//! query paths share one channel and one correlation mechanism.
 //!
 //! ## Runtime-agnostic query timeout (no async runtime pulled in)
 //!
-//! The timeout is realized **without** a full async runtime: a lightweight **detached `std::thread`
-//! timer** sleeps for the timeout and then calls [`Device::cancel_pending`], which drops the query's
-//! one-shot `Sender`. Dropping the sender makes the awaited `recv_async()` resolve with a
-//! disconnect, which we map to [`Error::QueryTimeout`]. If the `RESP` arrives first, the await
-//! resolves with the payload and the still-pending timer simply runs out and no-ops (removing an
-//! already-removed seq is harmless). The only async primitive used is `flume`'s own
-//! `recv_async()` future — pollable by **any** executor (`futures::executor::block_on`, tokio,
-//! async-std, smol, …). No tokio dependency, no `spawn_blocking`.
+//! The timeout is realized **without** a full async runtime: a lightweight **cancellable detached
+//! `std::thread` timer** waits up to the timeout on a cancel channel and, only on a genuine timeout,
+//! generation-checked-cancels the query's pending entry — dropping its one-shot `Sender`. Dropping the
+//! sender makes the awaited `recv_async()` resolve with a disconnect, which we map to
+//! [`Error::QueryTimeout`]. If the `RESP` arrives first, the await resolves with the payload and we
+//! drop the cancel sender, waking the timer at once (so it never lingers). The timer holds only a
+//! `Weak<Inner>`, so it never defers device shutdown and a generation mismatch (a reused SEQ) is never
+//! evicted by a stale timer. The only async primitive used is `flume`'s own `recv_async()` future —
+//! pollable by **any** executor (`futures::executor::block_on`, tokio, async-std, smol, …). No tokio
+//! dependency, no `spawn_blocking`.
 //!
 //! The blocking *open* stays synchronous (it is a one-time `open()` syscall); construct the device
 //! with [`Device::open`] etc. and convert via [`Device::into_async`] / [`AsyncDevice::from`].
@@ -148,34 +150,41 @@ impl AsyncDevice {
 
     /// Send `QUERY(what)` and await the correlated `RESP` payload with `timeout`.
     ///
-    /// Registers the SAME flume one-shot the sync path uses ([`Device::register_query`]) and
-    /// `recv_async().await`s it. The timeout is a detached `std::thread` timer that drops the waiter on
-    /// expiry (see the [module docs](self)) — no async runtime is pulled in.
+    /// Registers the SAME flume one-shot the sync path uses ([`register_query`](Device::register_query))
+    /// and `recv_async().await`s it. The timeout is a **cancellable** detached `std::thread` timer that
+    /// gen-checked-cancels the pending entry on expiry (see the [module docs](self)) — no async runtime
+    /// is pulled in. The timer holds only a `Weak<Inner>` (never pinning the device alive) and is woken
+    /// the instant the query resolves, so it exits promptly and never lingers.
     pub async fn query(&self, what: u8, timeout: Duration) -> Result<Vec<u8>> {
-        let (seq, rx) = self.device.register_query(what)?;
+        let (seq, gen_id, rx) = self.device.register_query(what)?;
 
-        // Detached timer: after `timeout`, invalidate the pending entry. Dropping its `Sender` makes
-        // the await below resolve with a disconnect, which we treat as a timeout. Runtime-agnostic —
-        // this is a plain OS thread, no executor involved.
-        let timer_device = self.device.clone();
+        // Cancellable timer. The timer waits on `cancel_rx` up to `timeout`:
+        //   - Timeout  ⇒ the query did not resolve ⇒ gen-checked-cancel its pending entry (which drops
+        //     the Sender, waking the await below as a disconnect = QueryTimeout).
+        //   - Ok / Disconnected ⇒ the query already finished (we dropped `cancel_tx`) ⇒ do nothing.
+        // It holds a `Weak<Inner>` so it can never defer device shutdown, and so a *reused* SEQ can
+        // never be evicted by this stale timer (the gen check + Weak together).
+        let (cancel_tx, cancel_rx) = flume::bounded::<()>(1);
+        let weak = self.device.weak_inner();
         std::thread::Builder::new()
             .name("medius-query-timeout".into())
             .spawn(move || {
-                std::thread::sleep(timeout);
-                // No-op if the RESP already removed this seq.
-                timer_device.cancel_pending(seq);
+                if let Err(flume::RecvTimeoutError::Timeout) = cancel_rx.recv_timeout(timeout)
+                    && let Some(inner) = weak.upgrade()
+                {
+                    inner.cancel_query(seq, gen_id);
+                }
             })
             .expect("spawn medius-query-timeout thread");
 
         // Await the shared one-shot. `Ok` = the reader delivered the RESP; `Err` = the sender was
-        // dropped (by the timer, or by a transport teardown) ⇒ no reply within the window.
-        match rx.recv_async().await {
+        // dropped (by the timer, or by a transport teardown) ⇒ no reply within the window. Dropping
+        // `cancel_tx` here wakes the timer immediately (Disconnected) so it exits at once on success.
+        let res = rx.recv_async().await;
+        drop(cancel_tx);
+        match res {
             Ok(payload) => Ok(payload),
-            Err(_) => {
-                // Ensure the entry is gone even if we lost a race with a late insert (defensive).
-                self.device.cancel_pending(seq);
-                Err(Error::QueryTimeout)
-            }
+            Err(_) => Err(Error::QueryTimeout),
         }
     }
 
@@ -278,5 +287,42 @@ mod tests {
         device.move_rel(1, 0).unwrap();
         // The shared counters reflect the frame sent via the sync handle.
         assert_eq!(adev.device().counters().frames_tx, 1);
+    }
+
+    /// FIX 2 — a completed async query's timeout timer must never evict a *reused* SEQ. A's timer
+    /// calls `cancel_query(seq, gen)` (gen-checked); once A has resolved and B has reused A's SEQ with a
+    /// newer generation, that stale cancel must leave B untouched. We exercise exactly what the timer
+    /// does (`register_pending` → `cancel_query`) so the test is deterministic (no real timer sleep).
+    #[test]
+    fn completed_async_timer_does_not_evict_reused_seq() {
+        let dev = responder_async([1, 0, 0, 0], 0x0B);
+        let device = dev.device().clone();
+
+        // Complete an async query A against the responder; its pending entry is gone afterwards.
+        let _ = block_on(dev.query_health()).unwrap();
+        assert_eq!(device.pending_len(), 0);
+
+        // Stand in for A's now-stale (seq, gen): register then cancel to capture a real freed slot.
+        let (seq_a, gen_a, _rx_a) = device.register_pending();
+        device.cancel_query(seq_a, gen_a);
+
+        // Advance the rolling SEQ so the next register lands back on A's SEQ (full wrap from post-A).
+        for _ in 0..255 {
+            let _ = device.next_seq();
+        }
+        // B reuses A's SEQ with a newer generation.
+        let (seq_b, gen_b, rx_b) = device.register_pending();
+        assert_eq!(seq_b, seq_a, "B reuses A's freed SEQ");
+        assert_ne!(gen_b, gen_a);
+
+        // A's would-be (stale) timer cancel must NOT evict B.
+        device.cancel_query(seq_a, gen_a);
+        assert_eq!(
+            device.pending_len(),
+            1,
+            "a completed query's stale timer must not evict the reused SEQ's newer waiter"
+        );
+        device.cancel_query(seq_b, gen_b);
+        drop(rx_b);
     }
 }
