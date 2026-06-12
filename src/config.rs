@@ -45,7 +45,10 @@ pub struct ConnectOptions {
     /// How long [`query_version`](crate::Device::query_version) /
     /// [`query_health`](crate::Device::query_health) wait for the correlated `RESP` before returning
     /// [`Error::QueryTimeout`](crate::Error::QueryTimeout). Default [`DEFAULT_QUERY_TIMEOUT`] (1 s).
-    #[cfg_attr(feature = "serde", serde(with = "duration_ms", rename = "query_timeout_ms"))]
+    #[cfg_attr(
+        feature = "serde",
+        serde(with = "duration_ms", rename = "query_timeout_ms")
+    )]
     pub query_timeout: Duration,
 
     /// The keepalive cadence — how often a held override is refreshed to defeat the firmware's 1000 ms

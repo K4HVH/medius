@@ -56,10 +56,10 @@ pub use config::ConnectOptions;
 #[cfg(feature = "async")]
 pub use asyncv::AsyncDevice;
 
-#[cfg(feature = "mock")]
-pub use mock::MockBox;
 pub use device::{CountersSnapshot, Device};
 pub use error::{Error, Result};
+#[cfg(feature = "mock")]
+pub use mock::MockBox;
 pub use pacer::{DEFAULT_RATE_HZ, MovementSession};
 pub use protocol::types::{Button, ButtonAction, Health, LogLevel, LogLine, RebootTarget, Version};
 pub use transport::scan::{PortInfo, find_medius, find_ports};

@@ -65,9 +65,7 @@ pub struct SystemRunner;
 
 impl CommandRunner for SystemRunner {
     fn run(&self, program: &str, args: &[String]) -> Result<CommandOutput> {
-        let output = std::process::Command::new(program)
-            .args(args)
-            .output()?; // spawn/io failure → Error::Io via `?`
+        let output = std::process::Command::new(program).args(args).output()?; // spawn/io failure → Error::Io via `?`
         Ok(CommandOutput {
             success: output.status.success(),
             stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
@@ -114,15 +112,21 @@ fn download_target(host: bool) -> u8 {
 /// - [`Error::FlashTool`] if `esptool` exits non-zero (its stderr is included).
 #[cfg(any(target_os = "linux", windows))]
 pub fn flash(port: &str, bin_path: impl AsRef<Path>, host: bool) -> Result<()> {
-    flash_with(port, bin_path.as_ref(), host, &SystemRunner, |port, host| {
-        // Open the box, send REBOOT_DOWNLOAD(target), drop it (closing the port), and let the chip
-        // settle into the ROM bootloader before esptool reopens the same port.
-        let device = crate::Device::open(port)?;
-        device.reboot_download(reboot_target(host))?;
-        drop(device);
-        std::thread::sleep(ROM_SETTLE);
-        Ok(())
-    })
+    flash_with(
+        port,
+        bin_path.as_ref(),
+        host,
+        &SystemRunner,
+        |port, host| {
+            // Open the box, send REBOOT_DOWNLOAD(target), drop it (closing the port), and let the chip
+            // settle into the ROM bootloader before esptool reopens the same port.
+            let device = crate::Device::open(port)?;
+            device.reboot_download(reboot_target(host))?;
+            drop(device);
+            std::thread::sleep(ROM_SETTLE);
+            Ok(())
+        },
+    )
 }
 
 /// Map the `host` flag to the typed [`RebootTarget`](crate::RebootTarget) for a download reboot.
@@ -319,9 +323,13 @@ mod tests {
     #[test]
     fn flash_with_surfaces_nonzero_exit_as_flash_tool_error() {
         let runner = FakeRunner::failing("A fatal error occurred: cannot open port");
-        let err = flash_with("/dev/ttyACM0", Path::new("fw.bin"), false, &runner, |_, _| {
-            Ok(())
-        })
+        let err = flash_with(
+            "/dev/ttyACM0",
+            Path::new("fw.bin"),
+            false,
+            &runner,
+            |_, _| Ok(()),
+        )
         .unwrap_err();
         match err {
             Error::FlashTool(msg) => assert!(msg.contains("cannot open port"), "msg: {msg}"),
@@ -332,9 +340,13 @@ mod tests {
     #[test]
     fn flash_with_propagates_reboot_failure() {
         let runner = FakeRunner::ok();
-        let err = flash_with("/dev/ttyACM0", Path::new("fw.bin"), false, &runner, |_, _| {
-            Err(Error::NotFound)
-        })
+        let err = flash_with(
+            "/dev/ttyACM0",
+            Path::new("fw.bin"),
+            false,
+            &runner,
+            |_, _| Err(Error::NotFound),
+        )
         .unwrap_err();
         assert!(matches!(err, Error::NotFound));
         // esptool must NOT run if the reboot failed.
