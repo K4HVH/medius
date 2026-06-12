@@ -45,6 +45,9 @@ mod transport; // M2 — private serial transport (+ mock)
 #[cfg(feature = "async")]
 pub mod asyncv; // M5 — thin AsyncDevice wrapper over the same core
 
+#[cfg(feature = "flash")]
+pub mod flash; // M5 — reboot-to-download + esptool orchestration
+
 #[cfg(feature = "mock")]
 pub mod mock; // M5 — public scriptable fake box
 

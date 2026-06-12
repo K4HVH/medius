@@ -54,6 +54,15 @@ pub enum Error {
     /// Produced by the frame encoder; see [`FrameError`].
     #[error("frame payload too long (max {max} bytes)", max = crate::protocol::MAX_PAYLOAD)]
     FrameTooLong,
+
+    /// The external flash tool (`esptool`) failed (feature = `flash`).
+    ///
+    /// Carries a human-readable reason — a non-zero exit (with captured stderr) or a spawn failure.
+    /// The underlying spawn `io::Error`, when present, is surfaced as [`Error::Io`] instead; this
+    /// variant is the tool's *own* failure (bad exit status, etc.).
+    #[cfg(feature = "flash")]
+    #[error("flash tool failed: {0}")]
+    FlashTool(String),
 }
 
 /// The crate-wide [`Result`](core::result::Result) alias.
