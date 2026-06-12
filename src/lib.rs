@@ -42,7 +42,13 @@ mod error; // M2 — structured Error enum
 pub mod pacer; // M4 — paced MovementSession + precise tick clock
 mod transport; // M2 — private serial transport (+ mock)
 
+#[cfg(feature = "async")]
+pub mod asyncv; // M5 — thin AsyncDevice wrapper over the same core
+
 pub use config::ConnectOptions;
+
+#[cfg(feature = "async")]
+pub use asyncv::AsyncDevice;
 pub use device::{CountersSnapshot, Device};
 pub use error::{Error, Result};
 pub use pacer::{DEFAULT_RATE_HZ, MovementSession};
