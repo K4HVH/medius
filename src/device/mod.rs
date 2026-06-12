@@ -196,7 +196,7 @@ impl Drop for Inner {
 /// last clone is dropped.
 ///
 /// Construct it with [`Device::open`] (a path), [`Device::find`] (VID/PID scan), or — for tests and
-/// internal use — [`Device::from_transport`] (no handshake).
+/// internal use — the crate-internal `from_transport` (no handshake).
 #[derive(Clone, Debug)]
 pub struct Device {
     inner: Arc<Inner>,

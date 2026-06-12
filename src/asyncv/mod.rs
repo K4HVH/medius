@@ -14,8 +14,8 @@
 //!
 //! Only [`query_version`](AsyncDevice::query_version) / [`query_health`](AsyncDevice::query_health)
 //! differ: they register the **same** flume one-shot the sync path uses
-//! ([`register_query`](Device::register_query)) and `recv_async().await` it — so the sync and async
-//! query paths share one channel and one correlation mechanism.
+//! (the crate-internal `register_query`) and `recv_async().await` it — so the sync and async query
+//! paths share one channel and one correlation mechanism.
 //!
 //! ## Runtime-agnostic query timeout (no async runtime pulled in)
 //!
@@ -150,8 +150,8 @@ impl AsyncDevice {
 
     /// Send `QUERY(what)` and await the correlated `RESP` payload with `timeout`.
     ///
-    /// Registers the SAME flume one-shot the sync path uses ([`register_query`](Device::register_query))
-    /// and `recv_async().await`s it. The timeout is a **cancellable** detached `std::thread` timer that
+    /// Registers the SAME flume one-shot the sync path uses (the crate-internal `register_query`) and
+    /// `recv_async().await`s it. The timeout is a **cancellable** detached `std::thread` timer that
     /// gen-checked-cancels the pending entry on expiry (see the [module docs](self)) — no async runtime
     /// is pulled in. The timer holds only a `Weak<Inner>` (never pinning the device alive) and is woken
     /// the instant the query resolves, so it exits promptly and never lingers.
