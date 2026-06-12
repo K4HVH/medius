@@ -55,26 +55,60 @@ pub use counters::CountersSnapshot;
 /// has no native blocking timeout (the mock). Real serial reads block up to ≈100 ms themselves.
 const READER_IDLE_POLL: std::time::Duration = std::time::Duration::from_millis(2);
 
+/// Default keepalive cadence (§8): sub-1 s so a held override outlives the firmware's 1000 ms silence
+/// auto-clear, but sparse enough not to contend with the pacer.
+pub(crate) const DEFAULT_KEEPALIVE_CADENCE: std::time::Duration =
+    std::time::Duration::from_millis(500);
+
+/// A swappable transport slot (§6 reconnect). The reader and every writer load the *current*
+/// transport (a cheap `Arc` clone) for each operation, so [`reconnect`](Device::reconnect) can replace
+/// it in place and all parties follow the swap without restarting threads.
+#[derive(Debug)]
+pub(crate) struct TransportSlot {
+    current: Mutex<Arc<dyn Transport>>,
+}
+
+impl TransportSlot {
+    fn new(transport: Arc<dyn Transport>) -> Self {
+        TransportSlot {
+            current: Mutex::new(transport),
+        }
+    }
+
+    /// The current transport (a clone of the `Arc`; the lock is held only for the clone).
+    pub(crate) fn current(&self) -> Arc<dyn Transport> {
+        Arc::clone(&self.current.lock())
+    }
+
+    /// Replace the transport (reconnect). The old one is dropped (closing its fd/HANDLE) once the last
+    /// in-flight `current()` clone is released.
+    pub(crate) fn swap(&self, transport: Arc<dyn Transport>) {
+        *self.current.lock() = transport;
+    }
+}
+
 /// The shared, reference-counted interior of a [`Device`].
 ///
 /// Each piece of shared state is its own `Arc` so it can be cloned into the reader/keepalive threads
 /// independently of `Inner` (see the [module docs](self#threads)). `Inner`'s `Drop` stops and joins
 /// both threads.
 pub(crate) struct Inner {
-    /// The byte pipe to the box, shared with the reader thread.
-    transport: Arc<dyn Transport>,
+    /// The byte pipe to the box — a swappable slot so [`reconnect`](Device::reconnect) can replace the
+    /// underlying transport in place while the reader and writers (which load the current transport
+    /// each operation) follow the swap. Shared with the reader thread.
+    transport: Arc<TransportSlot>,
     /// Held **only** around `transport.write_all` so two senders never interleave a frame's bytes.
     /// Never held while locking `pending`/`desired` (see the lock-ordering note in the module docs).
-    write_lock: Mutex<()>,
-    /// Rolling `SEQ` allocator; `fetch_add(1)` wraps at 255 → 0.
-    seq: AtomicU8,
+    /// An `Arc` so the keepalive thread can serialize against the same write lock.
+    write_lock: Arc<Mutex<()>>,
+    /// Rolling `SEQ` allocator; `fetch_add(1)` wraps at 255 → 0. An `Arc` so the keepalive thread
+    /// draws from the same monotonic sequence.
+    seq: Arc<AtomicU8>,
     /// In-flight `QUERY`→`RESP` correlation: `SEQ` → a bounded(1) one-shot the reader fulfils.
     pending: Arc<Mutex<HashMap<u8, flume::Sender<Vec<u8>>>>>,
-    /// Producer half of the device LOG fan-out (bounded; oldest dropped on a full, non-draining
-    /// consumer — see [`logs`]). Kept for the reconnect path (Task 3.6) to re-spawn the reader.
-    #[allow(dead_code)] // consumed by reconnect (Task 3.6)
-    logs_tx: flume::Sender<LogLine>,
-    /// Consumer half handed out by [`Device::logs`].
+    /// Consumer half of the device LOG fan-out, handed out (cloned) by [`Device::logs`]. The producer
+    /// half lives only in the reader thread; reconnect swaps the transport, not the reader, so no
+    /// producer-half copy is needed here.
     logs_rx: flume::Receiver<LogLine>,
     /// Intended button overrides; the keepalive + reconnect-reapply act on this (Task 3.6).
     desired: Arc<Mutex<DesiredState>>,
@@ -128,11 +162,21 @@ pub struct Device {
 }
 
 impl Device {
-    /// Wrap an already-open transport, spawn the reader thread, and return the device — **without**
-    /// any handshake. This is the seam used by tests (with the mock) and by [`Device::open`]
-    /// internally (which then performs the handshake).
+    /// Wrap an already-open transport, spawn the reader **and** keepalive threads, and return the
+    /// device — **without** any handshake. This is the seam used by tests (with the mock) and by
+    /// [`Device::open`] internally (which then performs the handshake). Uses the default keepalive
+    /// cadence ([`DEFAULT_KEEPALIVE_CADENCE`]).
     pub(crate) fn from_transport(transport: Arc<dyn Transport>) -> Device {
-        // Build every piece of shared state as its own Arc BEFORE spawning, so the thread captures
+        Self::from_transport_with_cadence(transport, DEFAULT_KEEPALIVE_CADENCE)
+    }
+
+    /// As [`from_transport`](Device::from_transport) but with an explicit keepalive cadence. Tests use
+    /// a short cadence so keepalive behaviour is observable without real 500 ms waits.
+    pub(crate) fn from_transport_with_cadence(
+        transport: Arc<dyn Transport>,
+        keepalive_cadence: std::time::Duration,
+    ) -> Device {
+        // Build every piece of shared state as its own Arc BEFORE spawning, so each thread captures
         // clones of exactly what it needs — never `Arc<Inner>` (which would form a cycle and block
         // Drop's join).
         let pending: Arc<Mutex<HashMap<u8, flume::Sender<Vec<u8>>>>> =
@@ -141,6 +185,9 @@ impl Device {
         let counters = Arc::new(Counters::default());
         let stop = Arc::new(AtomicBool::new(false));
         let desired = Arc::new(Mutex::new(DesiredState::default()));
+        let write_lock = Arc::new(Mutex::new(()));
+        let seq = Arc::new(AtomicU8::new(0));
+        let transport = Arc::new(TransportSlot::new(transport));
 
         let reader = spawn_reader(
             Arc::clone(&transport),
@@ -151,19 +198,30 @@ impl Device {
             Arc::clone(&stop),
         );
 
+        // The keepalive shares the *write* state (transport, write_lock, seq, counters) and `desired`,
+        // never `Arc<Inner>` — same anti-cycle discipline as the reader.
+        let keepalive = reboot::spawn_keepalive(reboot::KeepaliveCtx {
+            transport: Arc::clone(&transport),
+            write_lock: Arc::clone(&write_lock),
+            seq: Arc::clone(&seq),
+            counters: Arc::clone(&counters),
+            desired: Arc::clone(&desired),
+            stop: Arc::clone(&stop),
+            cadence: keepalive_cadence,
+        });
+
         Device {
             inner: Arc::new(Inner {
                 transport,
-                write_lock: Mutex::new(()),
-                seq: AtomicU8::new(0),
+                write_lock,
+                seq,
                 pending,
-                logs_tx,
                 logs_rx,
                 desired,
                 counters,
                 stop,
                 reader: Some(reader),
-                keepalive: None,
+                keepalive: Some(keepalive),
             }),
         }
     }
@@ -179,13 +237,14 @@ impl Device {
     /// Holds [`Inner::write_lock`] **only** around `transport.write_all` (never while holding another
     /// lock) so concurrent senders cannot interleave a frame.
     pub(crate) fn send_with_seq(&self, seq: u8, ty: FrameType, payload: &[u8]) -> Result<()> {
-        let frame = encode(ty, seq, payload)?; // FrameError → Error::FrameTooLong via `?`
-        {
-            let _guard = self.inner.write_lock.lock();
-            self.inner.transport.write_all(&frame)?;
-        }
-        self.inner.counters.inc_tx();
-        Ok(())
+        write_frame(
+            &self.inner.transport,
+            &self.inner.write_lock,
+            &self.inner.counters,
+            seq,
+            ty,
+            payload,
+        )
     }
 
     /// Allocate a fresh `SEQ` and fire one frame (the common fire-and-go path).
@@ -209,13 +268,44 @@ impl Device {
     pub(crate) fn desired(&self) -> &Mutex<DesiredState> {
         &self.inner.desired
     }
+
+    /// The swappable transport slot (for [`reconnect`](Device::reconnect)).
+    pub(crate) fn transport_slot(&self) -> &Arc<TransportSlot> {
+        &self.inner.transport
+    }
+
+    /// The reconnects counter (bumped by [`reconnect`](Device::reconnect)).
+    pub(crate) fn counters_inner(&self) -> &Counters {
+        &self.inner.counters
+    }
+}
+
+/// Encode and write one frame, serialized by `write_lock` (held **only** around `write_all`). Used by
+/// [`Device::send_with_seq`] and the keepalive thread — both go through the swappable transport slot
+/// so a reconnect redirects them. Bumps `frames_tx` on success.
+fn write_frame(
+    transport: &TransportSlot,
+    write_lock: &Mutex<()>,
+    counters: &Counters,
+    seq: u8,
+    ty: FrameType,
+    payload: &[u8],
+) -> Result<()> {
+    let frame = encode(ty, seq, payload)?; // FrameError → Error::FrameTooLong via `?`
+    let current = transport.current();
+    {
+        let _guard = write_lock.lock();
+        current.write_all(&frame)?;
+    }
+    counters.inc_tx();
+    Ok(())
 }
 
 /// Spawn the reader thread. It owns clones of exactly the shared state it touches — never the whole
 /// `Inner` — so it cannot keep `Inner` alive against its own `Drop`.
 #[allow(clippy::too_many_arguments)]
 fn spawn_reader(
-    transport: Arc<dyn Transport>,
+    transport: Arc<TransportSlot>,
     pending: Arc<Mutex<HashMap<u8, flume::Sender<Vec<u8>>>>>,
     logs_tx: flume::Sender<LogLine>,
     logs_rx: flume::Receiver<LogLine>,
@@ -228,10 +318,19 @@ fn spawn_reader(
         .expect("spawn medius-reader thread")
 }
 
+/// Back-off after a read error so the reader doesn't busy-spin on a dead port while waiting for a
+/// [`reconnect`](Device::reconnect) swap to install a fresh transport.
+const READER_ERROR_BACKOFF: std::time::Duration = std::time::Duration::from_millis(20);
+
 /// The reader loop body (factored out so it stays readable and testable in isolation).
+///
+/// It loads the *current* transport from the slot each iteration, so after a reconnect swaps the slot
+/// the very same reader thread follows onto the new transport — no thread restart needed. The loop
+/// exits **only** on the `stop` flag (a read error backs off and retries, since the port may be about
+/// to be reconnected), so shutdown stays deterministic via Drop.
 #[allow(clippy::too_many_arguments)]
 fn reader_loop(
-    transport: &Arc<dyn Transport>,
+    transport: &TransportSlot,
     pending: &Mutex<HashMap<u8, flume::Sender<Vec<u8>>>>,
     logs_tx: &flume::Sender<LogLine>,
     logs_rx: &flume::Receiver<LogLine>,
@@ -245,7 +344,8 @@ fn reader_loop(
         if stop.load(Ordering::SeqCst) {
             return;
         }
-        match transport.read(&mut buf) {
+        let current = transport.current();
+        match current.read(&mut buf) {
             Ok(0) => {
                 // Read timeout (or empty mock queue): nothing to do but re-check `stop`. A tiny
                 // sleep avoids a busy-spin against a mock whose read returns instantly; a real
@@ -260,11 +360,10 @@ fn reader_loop(
                 counters.set_crc_drops(decoder.crc_error_count());
             }
             Err(_) => {
-                // A real I/O error / disconnect: the port is gone. Stop reading; `reconnect`
-                // (Task 3.6) can rebuild the reader. Mark stop so a racing Drop doesn't re-join a
-                // dead thread oddly (idempotent).
-                stop.store(true, Ordering::SeqCst);
-                return;
+                // A read error means the current port is gone or hiccuping. Back off and retry rather
+                // than exit: `reconnect` may be about to swap in a fresh transport, and the same
+                // reader should follow onto it. Drop's `stop` still ends the loop promptly.
+                std::thread::sleep(READER_ERROR_BACKOFF);
             }
         }
     }
