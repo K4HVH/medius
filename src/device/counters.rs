@@ -10,10 +10,6 @@
 //! a snapshot is not a transactional barrier across all four fields — that is intentional and
 //! sufficient for diagnostics.
 
-// The device core (Task 3.2) constructs `Counters` and drives `inc_*`/`snapshot`; until it lands,
-// the lib build sees these as unused. Removed the moment `Inner` wires them in.
-#![allow(dead_code)]
-
 use core::sync::atomic::{AtomicU64, Ordering};
 
 /// Lifetime atomic counters for one [`Device`](crate::Device).
@@ -44,6 +40,7 @@ impl Counters {
     }
 
     /// Add one to `reconnects`.
+    #[cfg_attr(not(test), allow(dead_code))] // driven by reconnect (Task 3.6)
     pub(crate) fn inc_reconnects(&self) {
         self.reconnects.fetch_add(1, Ordering::Relaxed);
     }

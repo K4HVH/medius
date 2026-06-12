@@ -33,8 +33,10 @@ mod device; // M3 — Device core, reader/keepalive threads, commands/queries/lo
 mod error; // M2 — structured Error enum
 mod transport; // M2 — private serial transport (+ mock)
 
-pub use device::CountersSnapshot;
+pub use device::{CountersSnapshot, Device};
 pub use error::{Error, Result};
+pub use protocol::types::{Button, ButtonAction, Health, LogLevel, LogLine, RebootTarget, Version};
+pub use transport::scan::PortInfo;
 
 // Modules are added per implementation milestone:
 //   pub mod pacer;      // M4
