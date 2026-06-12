@@ -1,0 +1,70 @@
+name: CI
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+
+# Cancel superseded runs on the same ref to save CI minutes.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+
+jobs:
+  fmt:
+    name: rustfmt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install stable toolchain (rustfmt)
+        run: rustup toolchain install stable --profile minimal --component rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all --check
+
+  clippy:
+    name: clippy (Linux + Windows target)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install stable toolchain (clippy + windows target)
+        run: |
+          rustup toolchain install stable --profile minimal --component clippy
+          rustup target add x86_64-pc-windows-msvc
+      - uses: Swatinem/rust-cache@v2
+      # Native (Linux) lint of all targets and features.
+      - name: clippy (host)
+        run: cargo clippy --all-targets --all-features -- -D warnings
+      # Cross-lint the Windows code path so the platform FFI stays warning-clean too.
+      - name: clippy (x86_64-pc-windows-msvc)
+        run: cargo clippy --all-targets --all-features --target x86_64-pc-windows-msvc -- -D warnings
+
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install stable toolchain
+        run: rustup toolchain install stable --profile minimal
+      - uses: Swatinem/rust-cache@v2
+      # Default (no-feature) build, then the full feature matrix.
+      - name: cargo test (default features)
+        run: cargo test
+      - name: cargo test (all features)
+        run: cargo test --all-features
+
+  doc:
+    name: doc (link + warning clean)
+    runs-on: ubuntu-latest
+    env:
+      RUSTDOCFLAGS: -D warnings
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install stable toolchain
+        run: rustup toolchain install stable --profile minimal
+      - uses: Swatinem/rust-cache@v2
+      - name: cargo doc
+        run: cargo doc --no-deps --all-features
