@@ -36,7 +36,7 @@ mod tests;
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
 use std::thread::JoinHandle;
 
 use parking_lot::Mutex;
@@ -54,6 +54,16 @@ pub use counters::CountersSnapshot;
 /// How long the reader sleeps between drain attempts when a read returns `Ok(0)` *and* the transport
 /// has no native blocking timeout (the mock). Real serial reads block up to ≈100 ms themselves.
 const READER_IDLE_POLL: std::time::Duration = std::time::Duration::from_millis(2);
+
+/// One in-flight `QUERY`→`RESP` waiter, tagged with a monotonic `gen` so a stale canceller (a timed-out
+/// query, or the async timer) only evicts **its own** entry — never a newer query that has since reused
+/// the same wire `SEQ` (see [`Inner::cancel_query`]).
+struct PendingEntry {
+    /// Monotonic generation from [`Inner::query_gen`], unique to the query that registered this entry.
+    gen_id: u64,
+    /// The bounded(1) one-shot the reader fulfils with the correlated `RESP` payload.
+    tx: flume::Sender<Vec<u8>>,
+}
 
 /// A swappable transport slot (§6 reconnect). The reader and every writer load the *current*
 /// transport (a cheap `Arc` clone) for each operation, so [`reconnect`](Device::reconnect) can replace
@@ -99,8 +109,14 @@ pub(crate) struct Inner {
     /// Rolling `SEQ` allocator; `fetch_add(1)` wraps at 255 → 0. An `Arc` so the keepalive thread
     /// draws from the same monotonic sequence.
     seq: Arc<AtomicU8>,
-    /// In-flight `QUERY`→`RESP` correlation: `SEQ` → a bounded(1) one-shot the reader fulfils.
-    pending: Arc<Mutex<HashMap<u8, flume::Sender<Vec<u8>>>>>,
+    /// Monotonic per-query generation. Every [`register_query`](Device::register_query) takes a fresh
+    /// value; it tags the [`PendingEntry`] so a stale canceller can only evict its own waiter, never a
+    /// newer query that reused the same wire `SEQ`.
+    query_gen: Arc<AtomicU64>,
+    /// In-flight `QUERY`→`RESP` correlation: `SEQ` → a generation-tagged one-shot the reader fulfils.
+    /// The `SEQ` chosen for a new query is guaranteed free of any currently-pending entry (see
+    /// [`register_query`](Device::register_query)), so two in-flight queries never share a wire `SEQ`.
+    pending: Arc<Mutex<HashMap<u8, PendingEntry>>>,
     /// Consumer half of the device LOG fan-out, handed out (cloned) by [`Device::logs`]. The producer
     /// half lives only in the reader thread; reconnect swaps the transport, not the reader, so no
     /// producer-half copy is needed here.
@@ -128,6 +144,20 @@ impl std::fmt::Debug for Inner {
             .field("counters", &self.counters.snapshot())
             .field("stopped", &self.stop.load(Ordering::Relaxed))
             .finish_non_exhaustive()
+    }
+}
+
+impl Inner {
+    /// Generation-checked cancel: remove the pending entry under `seq` **only if** its generation
+    /// matches `gen`. A stale canceller (a timed-out query, or a fired async timer) thus never evicts a
+    /// newer query that reused the same wire `SEQ` — that newer entry carries a different `gen` and is
+    /// left untouched. Lives on `Inner` so the async timer can call it through a `Weak<Inner>` without
+    /// pinning the device alive.
+    pub(crate) fn cancel_query(&self, seq: u8, gen_id: u64) {
+        let mut pending = self.pending.lock();
+        if pending.get(&seq).is_some_and(|e| e.gen_id == gen_id) {
+            pending.remove(&seq);
+        }
     }
 }
 
@@ -195,14 +225,14 @@ impl Device {
         // Build every piece of shared state as its own Arc BEFORE spawning, so each thread captures
         // clones of exactly what it needs — never `Arc<Inner>` (which would form a cycle and block
         // Drop's join).
-        let pending: Arc<Mutex<HashMap<u8, flume::Sender<Vec<u8>>>>> =
-            Arc::new(Mutex::new(HashMap::new()));
+        let pending: Arc<Mutex<HashMap<u8, PendingEntry>>> = Arc::new(Mutex::new(HashMap::new()));
         let (logs_tx, logs_rx) = flume::bounded(logs::LOGS_CAPACITY);
         let counters = Arc::new(Counters::default());
         let stop = Arc::new(AtomicBool::new(false));
         let desired = Arc::new(Mutex::new(DesiredState::default()));
         let write_lock = Arc::new(Mutex::new(()));
         let seq = Arc::new(AtomicU8::new(0));
+        let query_gen = Arc::new(AtomicU64::new(0));
         let transport = Arc::new(TransportSlot::new(transport));
 
         let reader = spawn_reader(
@@ -231,6 +261,7 @@ impl Device {
                 transport,
                 write_lock,
                 seq,
+                query_gen,
                 pending,
                 logs_rx,
                 desired,
@@ -282,8 +313,47 @@ impl Device {
 
     // ---- internal accessors used by the sibling command/query/reconcile modules ----
 
-    pub(crate) fn pending(&self) -> &Mutex<HashMap<u8, flume::Sender<Vec<u8>>>> {
-        &self.inner.pending
+    /// Register a fresh query waiter: take a unique `gen`, then pick a wire `SEQ` that is **not**
+    /// currently pending, insert the generation-tagged one-shot under it, and return `(seq, gen, rx)`.
+    ///
+    /// Picking a free `SEQ` (drawing [`next_seq`](Device::next_seq) repeatedly until the slot is empty,
+    /// up to 256 tries — a full sweep of the 8-bit `SEQ` space) **guarantees no two in-flight queries
+    /// ever share a wire `SEQ`**, so a `RESP` can never be cross-delivered to the wrong waiter (the two
+    /// would be indistinguishable on the wire). 256 tries always finds a free slot unless 256 queries
+    /// are concurrently in flight (effectively impossible — the box answers in microseconds); in that
+    /// unreachable case we fall back to the last drawn `SEQ`.
+    ///
+    /// The caller is the registrar; the higher-level [`register_query`](Device::register_query) on the
+    /// query path also sends the frame. This low-level form is shared by the sync and async query paths.
+    pub(crate) fn register_pending(&self) -> (u8, u64, flume::Receiver<Vec<u8>>) {
+        let gen_id = self.inner.query_gen.fetch_add(1, Ordering::Relaxed);
+        let (tx, rx) = flume::bounded::<Vec<u8>>(1);
+        let mut pending = self.inner.pending.lock();
+        // Pick a SEQ not currently pending: a full 256-draw sweep always finds a free slot unless all
+        // 256 are occupied (unreachable). On the unreachable all-full case, the last draw is used.
+        let mut seq = self.next_seq();
+        for _ in 0..256 {
+            if !pending.contains_key(&seq) {
+                break;
+            }
+            seq = self.next_seq();
+        }
+        pending.insert(seq, PendingEntry { gen_id, tx });
+        (seq, gen_id, rx)
+    }
+
+    /// Generation-checked cancel (delegates to [`Inner::cancel_query`]): remove the pending entry under
+    /// `seq` **only if** its generation matches `gen`. A stale canceller (a timed-out query, or a fired
+    /// async timer) thus never evicts a newer query that reused the same wire `SEQ`.
+    pub(crate) fn cancel_query(&self, seq: u8, gen_id: u64) {
+        self.inner.cancel_query(seq, gen_id);
+    }
+
+    /// A `Weak` handle to the shared interior — for the async query timer, which must be able to cancel
+    /// a pending entry **without** pinning `Inner` alive (a held `Arc<Inner>` would defer shutdown).
+    #[cfg(feature = "async")]
+    pub(crate) fn weak_inner(&self) -> std::sync::Weak<Inner> {
+        Arc::downgrade(&self.inner)
     }
 
     /// The number of in-flight query waiters (diagnostic; used by the async timeout test to assert no
@@ -343,7 +413,7 @@ fn write_frame(
 #[allow(clippy::too_many_arguments)]
 fn spawn_reader(
     transport: Arc<TransportSlot>,
-    pending: Arc<Mutex<HashMap<u8, flume::Sender<Vec<u8>>>>>,
+    pending: Arc<Mutex<HashMap<u8, PendingEntry>>>,
     logs_tx: flume::Sender<LogLine>,
     logs_rx: flume::Receiver<LogLine>,
     counters: Arc<Counters>,
@@ -368,7 +438,7 @@ const READER_ERROR_BACKOFF: std::time::Duration = std::time::Duration::from_mill
 #[allow(clippy::too_many_arguments)]
 fn reader_loop(
     transport: &TransportSlot,
-    pending: &Mutex<HashMap<u8, flume::Sender<Vec<u8>>>>,
+    pending: &Mutex<HashMap<u8, PendingEntry>>,
     logs_tx: &flume::Sender<LogLine>,
     logs_rx: &flume::Receiver<LogLine>,
     counters: &Counters,
@@ -409,7 +479,7 @@ fn reader_loop(
 /// Route one decoded frame by `TYPE` (§5: RESP→pending, LOG→fan-out, others ignored).
 fn route_frame(
     frame: crate::protocol::DecodedFrame,
-    pending: &Mutex<HashMap<u8, flume::Sender<Vec<u8>>>>,
+    pending: &Mutex<HashMap<u8, PendingEntry>>,
     logs_tx: &flume::Sender<LogLine>,
     logs_rx: &flume::Receiver<LogLine>,
     counters: &Counters,
@@ -427,10 +497,11 @@ fn route_frame(
     match frame.ty {
         FrameType::Resp => {
             // Correlate by SEQ: remove the one-shot and deliver the payload. An absent SEQ (timed
-            // out / duplicate) is simply dropped.
-            let tx = pending.lock().remove(&frame.seq);
-            if let Some(tx) = tx {
-                let _ = tx.send(frame.payload);
+            // out / duplicate) is simply dropped. Because `register_pending` only ever assigns a SEQ
+            // that is currently free, at most one waiter is keyed on it, so this is the right one.
+            let entry = pending.lock().remove(&frame.seq);
+            if let Some(entry) = entry {
+                let _ = entry.tx.send(frame.payload);
             }
         }
         FrameType::Log => {

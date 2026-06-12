@@ -104,11 +104,7 @@ fn handshake_on_silent_box_is_no_reply() {
 fn query_timeout_removes_pending_waiter() {
     let (device, _mock) = device_with_mock();
     let _ = device.query_timeout(0, Duration::from_millis(30));
-    assert_eq!(
-        device.pending().lock().len(),
-        0,
-        "timed-out waiter must be removed"
-    );
+    assert_eq!(device.pending_len(), 0, "timed-out waiter must be removed");
 }
 
 /// The reader routes a pushed `LOG` frame onto the `logs()` channel, decoded.

@@ -35,7 +35,7 @@ impl Device {
 
     /// [`query`](Device::query) with an explicit timeout.
     pub(crate) fn query_timeout(&self, what: u8, timeout: Duration) -> Result<Vec<u8>> {
-        let (seq, rx) = self.register_query(what)?;
+        let (seq, gen_id, rx) = self.register_query(what)?;
 
         match rx.recv_timeout(timeout) {
             Ok(payload) => {
@@ -51,8 +51,9 @@ impl Device {
             }
             Err(_) => {
                 // Timed out (or the sender was dropped). Remove the stale waiter so `pending` doesn't
-                // leak, then report the timeout.
-                self.pending().lock().remove(&seq);
+                // leak — but only *our* entry: a gen-checked cancel never evicts a newer query that
+                // reused this wire SEQ in the meantime.
+                self.cancel_query(seq, gen_id);
                 trace_event!(
                     target: "medius::device",
                     tracing::Level::WARN,
@@ -65,38 +66,29 @@ impl Device {
         }
     }
 
-    /// Reserve a `SEQ`, register the bounded(1) one-shot under it in `pending`, and send the
-    /// `QUERY(what)` frame — returning the `(seq, receiver)` for the caller to await.
+    /// Reserve a free `SEQ`, register the generation-tagged bounded(1) one-shot under it in `pending`,
+    /// and send the `QUERY(what)` frame — returning `(seq, gen, receiver)` for the caller to await.
     ///
     /// This is the shared registration both the sync path ([`query_timeout`](Device::query_timeout),
     /// via `recv_timeout`) and the async wrapper ([`crate::asyncv::AsyncDevice`], via `recv_async`)
     /// use, so there is exactly **one** correlation mechanism and **one** flume one-shot — no
-    /// duplicated transport or query logic (§5). On a send failure the waiter is removed and the error
-    /// returned. The returned receiver is `bounded(1)`; both `recv_timeout` and `recv_async` work on
-    /// it. The caller MUST remove `seq` from `pending` if it gives up (the sync/async timeout paths
-    /// both do).
-    pub(crate) fn register_query(&self, what: u8) -> Result<(u8, flume::Receiver<Vec<u8>>)> {
-        let seq = self.next_seq();
-        let (tx, rx) = flume::bounded::<Vec<u8>>(1);
+    /// duplicated transport or query logic (§5). The `SEQ` is chosen via
+    /// [`register_pending`](Device::register_pending) to be free of any currently-pending waiter, so
+    /// two in-flight queries never share a wire `SEQ` (no cross-delivery). On a send failure the waiter
+    /// is removed (gen-checked) and the error returned. The caller MUST `cancel_query(seq, gen)` if it
+    /// gives up (the sync/async timeout paths both do).
+    pub(crate) fn register_query(&self, what: u8) -> Result<(u8, u64, flume::Receiver<Vec<u8>>)> {
+        // Reserve a free SEQ + tagged one-shot *before* sending, so a fast RESP can never arrive
+        // before the waiter exists. `register_pending` releases `pending` before we send (lock order).
+        let (seq, gen_id, rx) = self.register_pending();
 
-        // Reserve the SEQ *before* sending, so a fast RESP can never arrive before the waiter exists.
-        // Holding `pending` only for the insert (released before the send) keeps lock-ordering clean.
-        self.pending().lock().insert(seq, tx);
-
-        // Send the QUERY with the SAME seq the waiter is keyed on. If the send fails, drop the waiter.
+        // Send the QUERY with the SAME seq the waiter is keyed on. If the send fails, drop the waiter
+        // (gen-checked, so we never evict a newer query that reused this SEQ).
         if let Err(e) = self.send_with_seq(seq, FrameType::Query, &query_payload(what)) {
-            self.pending().lock().remove(&seq);
+            self.cancel_query(seq, gen_id);
             return Err(e);
         }
-        Ok((seq, rx))
-    }
-
-    /// Remove a pending query waiter by `seq` (used by the async timeout path to invalidate an
-    /// expired query so `pending` does not leak). Only the `async` wrapper calls this, so it is
-    /// dead in non-`async` builds.
-    #[cfg_attr(not(feature = "async"), allow(dead_code))]
-    pub(crate) fn cancel_pending(&self, seq: u8) {
-        self.pending().lock().remove(&seq);
+        Ok((seq, gen_id, rx))
     }
 
     /// Query the box version (§4.1). Used by the connect handshake and on demand.
@@ -206,5 +198,102 @@ mod tests {
         let h = device.query_health().unwrap();
         assert_eq!((v.fw_major, v.fw_minor, v.fw_patch), (2, 3, 4));
         assert!(h.link_up && h.injection_active);
+    }
+
+    /// A mock that answers ONLY `QUERY(HEALTH)` (selector 1), ignoring `QUERY(VERSION)` — so a
+    /// VERSION query stays pending forever while a HEALTH query is answered.
+    fn health_only_responder(health_flags: u8) -> Device {
+        let mock = Arc::new(MockTransport::with_responder(move |ty, seq, payload| {
+            if ty == FrameType::Query && payload.first().copied() == Some(1) {
+                encode(FrameType::Resp, seq, &[1, health_flags]).unwrap()
+            } else {
+                Vec::new()
+            }
+        }));
+        Device::from_transport(mock)
+    }
+
+    /// FIX 1 — SEQ-namespace wrap: a still-pending query A must NOT capture query B's RESP even after
+    /// the rolling SEQ wraps a full 256 back onto A's SEQ. `register_pending` picks a SEQ free of any
+    /// in-flight waiter, so B is forced onto a different SEQ; B resolves with its own value and A times
+    /// out (rather than B being stolen by A's stale waiter).
+    #[test]
+    fn pending_query_survives_seq_wrap_without_cross_delivery() {
+        use std::sync::mpsc;
+
+        let device = health_only_responder(0x0B); // link|mouse|inject
+
+        // Query A = VERSION, never answered by this mock. Run it on another thread so it blocks on its
+        // (long) timeout while we wrap the SEQ and issue B underneath it.
+        let dev_a = device.clone();
+        let (done_tx, done_rx) = mpsc::channel();
+        let a = std::thread::spawn(move || {
+            let r = dev_a.query_timeout(0, Duration::from_millis(400)); // selector 0 = VERSION
+            let _ = done_tx.send(());
+            r
+        });
+
+        // Let A register its pending waiter before we advance the SEQ.
+        std::thread::sleep(Duration::from_millis(20));
+
+        // Advance the rolling SEQ so that B's *natural* next draw lands exactly back on A's still-held
+        // SEQ. A drew one SEQ when it registered, so 255 more fire-and-go draws wrap the counter back
+        // onto A's value — meaning B would collide with A without the free-SEQ pick.
+        for _ in 0..255 {
+            device.move_rel(0, 0).unwrap();
+        }
+
+        // Query B = HEALTH, which the mock DOES answer. Because A still occupies the SEQ B would
+        // naturally draw, `register_pending` skips it and gives B a free SEQ — so B resolves to ITS
+        // value, never stealing/being stolen by A's still-pending waiter.
+        let h = device.query_health().expect("B must resolve");
+        assert!(h.link_up && h.mouse_attached && h.injection_active);
+
+        // A must still be pending (it has not been stolen by B's RESP); it then times out.
+        assert!(
+            done_rx.recv_timeout(Duration::from_millis(50)).is_err(),
+            "A must NOT have completed early (no cross-delivery from B)"
+        );
+        let a_res = a.join().unwrap();
+        assert!(
+            matches!(a_res, Err(Error::QueryTimeout)),
+            "A must time out, got {a_res:?}"
+        );
+    }
+
+    /// FIX 1 — gen-checked cancel: a stale `cancel_query(seq, old_gen)` must NOT remove a newer entry
+    /// that has since been registered under that same wire SEQ.
+    #[test]
+    fn stale_cancel_does_not_evict_newer_waiter() {
+        let device = Device::from_transport(Arc::new(MockTransport::new()));
+
+        // Register entry A and capture its (seq, gen), then cancel it so its SEQ is free again.
+        let (seq_a, gen_a, _rx_a) = device.register_pending();
+        device.cancel_query(seq_a, gen_a);
+        assert_eq!(device.pending_len(), 0);
+
+        // Advance the rolling SEQ so the *next* register_pending lands back on A's old SEQ (a full
+        // wrap from the post-A position). register_pending draws one SEQ itself, so advance 255 here.
+        for _ in 0..255 {
+            let _ = device.next_seq();
+        }
+
+        // Entry B reuses A's freed SEQ but carries a newer generation.
+        let (seq_b, gen_b, rx_b) = device.register_pending();
+        assert_eq!(seq_b, seq_a, "B reuses A's freed SEQ");
+        assert_ne!(gen_b, gen_a, "B has a newer generation");
+
+        // A stale cancel using A's OLD gen must leave B intact.
+        device.cancel_query(seq_a, gen_a);
+        assert_eq!(
+            device.pending_len(),
+            1,
+            "stale gen cancel must not evict the newer waiter B"
+        );
+
+        // B's own (current-gen) cancel removes it.
+        device.cancel_query(seq_b, gen_b);
+        assert_eq!(device.pending_len(), 0);
+        drop(rx_b);
     }
 }
