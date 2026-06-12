@@ -45,10 +45,16 @@ mod transport; // M2 — private serial transport (+ mock)
 #[cfg(feature = "async")]
 pub mod asyncv; // M5 — thin AsyncDevice wrapper over the same core
 
+#[cfg(feature = "mock")]
+pub mod mock; // M5 — public scriptable fake box
+
 pub use config::ConnectOptions;
 
 #[cfg(feature = "async")]
 pub use asyncv::AsyncDevice;
+
+#[cfg(feature = "mock")]
+pub use mock::MockBox;
 pub use device::{CountersSnapshot, Device};
 pub use error::{Error, Result};
 pub use pacer::{DEFAULT_RATE_HZ, MovementSession};
