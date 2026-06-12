@@ -96,7 +96,7 @@ impl Device {
             trace_span!(target: "medius::device", tracing::Level::INFO, "connect").entered();
 
         let mut version = None;
-        for attempt in 0..HANDSHAKE_ATTEMPTS {
+        for _ in 0..HANDSHAKE_ATTEMPTS {
             match self.query_timeout(Q_VERSION, HANDSHAKE_ATTEMPT_TIMEOUT) {
                 Ok(payload) => match parse_resp(&payload) {
                     Some(Resp::Version(v)) => {
@@ -105,12 +105,12 @@ impl Device {
                     }
                     // Answered, but not a parseable VERSION — treat like a dropped probe and retry.
                     _ => {
-                        trace_event!(target: "medius::device", tracing::Level::DEBUG, attempt, "handshake: unparseable version reply, retrying");
+                        trace_event!(target: "medius::device", tracing::Level::DEBUG, "handshake: unparseable version reply, retrying");
                     }
                 },
                 // No reply this attempt — retry (the first frame after open is the usual casualty).
                 Err(Error::QueryTimeout) => {
-                    trace_event!(target: "medius::device", tracing::Level::DEBUG, attempt, "handshake: version probe timed out, retrying");
+                    trace_event!(target: "medius::device", tracing::Level::DEBUG, "handshake: version probe timed out, retrying");
                 }
                 // A real transport/encode error is fatal — don't burn the remaining attempts on it.
                 Err(e) => return Err(e),
