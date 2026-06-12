@@ -1,0 +1,46 @@
+[package]
+name = "medius"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+description = "Host control library for the medius transparent mouse passthrough box"
+license = "MIT OR Apache-2.0"
+keywords = ["medius", "mouse", "hid", "serial", "injection"]
+categories = ["hardware-support", "api-bindings"]
+
+[features]
+default = []
+async = []                              # thin wrapper over the sync core (flume async recv, no runtime dep)
+mock = []                               # public scriptable fake box
+metrics = ["dep:hdrhistogram"]          # pacer jitter/latency histograms
+flash = []                              # esptool reboot+flash handoff
+cli = ["dep:clap", "serde", "metrics"]  # CLI wants --json + bench histograms
+tracing = ["dep:tracing"]               # library-side instrumentation
+serde = ["dep:serde"]                   # derives on value types
+
+[dependencies]
+thiserror = "2"
+flume = "0.11"
+parking_lot = "0.12"
+hdrhistogram = { version = "7", optional = true }
+clap = { version = "4", features = ["derive"], optional = true }
+tracing = { version = "0.1", optional = true }
+serde = { version = "1", features = ["derive"], optional = true }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = [
+  "Win32_Foundation",
+  "Win32_Storage_FileSystem",
+  "Win32_Devices_Communication",
+  "Win32_System_IO",
+  "Win32_System_Threading",
+  "Win32_Security",
+  "Win32_Devices_DeviceAndDriverInstallation",
+] }
+
+[[bin]]
+name = "medius"
+required-features = ["cli"]
