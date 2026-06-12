@@ -142,6 +142,13 @@ impl Device {
         let transport = open_raw(&port.path)?;
         self.transport_slot().swap(transport);
         self.counters_inner().inc_reconnects();
+        trace_event!(
+            target: "medius::device",
+            tracing::Level::INFO,
+            port = %port.path,
+            reason = "rescan",
+            "reconnected",
+        );
         // Re-assert held overrides on the fresh link.
         self.reapply()
     }
