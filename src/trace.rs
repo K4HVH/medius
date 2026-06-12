@@ -66,21 +66,6 @@ impl SpanStub {
     }
 }
 
-/// Map a device [`LogLevel`](crate::protocol::types::LogLevel) to a `tracing::Level`, so incoming
-/// device `LOG` frames can be re-emitted as host tracing events (§10) while still flowing on the
-/// `logs()` channel. Only needed with the feature on.
-#[cfg(feature = "tracing")]
-pub(crate) fn log_level_to_tracing(level: crate::protocol::types::LogLevel) -> ::tracing::Level {
-    use crate::protocol::types::LogLevel;
-    match level {
-        LogLevel::Error => ::tracing::Level::ERROR,
-        LogLevel::Warn => ::tracing::Level::WARN,
-        LogLevel::Info => ::tracing::Level::INFO,
-        LogLevel::Debug => ::tracing::Level::DEBUG,
-        LogLevel::Verbose => ::tracing::Level::TRACE,
-    }
-}
-
 /// Re-emit one decoded device `LOG` line as a host tracing event at the mapped level, under
 /// `target: "medius::device"` (§10). The line still goes on the `logs()` channel regardless; this is
 /// the *additional* tracing surface. A no-op without the feature (the reader does not call it then).
@@ -112,15 +97,24 @@ pub(crate) fn emit_device_log(line: &crate::protocol::types::LogLine) {
 
 #[cfg(all(test, feature = "tracing"))]
 mod tests {
-    use crate::protocol::types::LogLevel;
+    use crate::protocol::types::{LogLevel, LogLine};
 
+    /// `emit_device_log` runs without panicking for every level (the level → tracing mapping is
+    /// exercised inside it). A capturing-subscriber assertion of the re-emit lives in
+    /// `device::tests::tracing_capture`.
     #[test]
-    fn log_level_maps_to_tracing_levels() {
-        use tracing::Level;
-        assert_eq!(super::log_level_to_tracing(LogLevel::Error), Level::ERROR);
-        assert_eq!(super::log_level_to_tracing(LogLevel::Warn), Level::WARN);
-        assert_eq!(super::log_level_to_tracing(LogLevel::Info), Level::INFO);
-        assert_eq!(super::log_level_to_tracing(LogLevel::Debug), Level::DEBUG);
-        assert_eq!(super::log_level_to_tracing(LogLevel::Verbose), Level::TRACE);
+    fn emit_device_log_handles_every_level() {
+        for level in [
+            LogLevel::Error,
+            LogLevel::Warn,
+            LogLevel::Info,
+            LogLevel::Debug,
+            LogLevel::Verbose,
+        ] {
+            super::emit_device_log(&LogLine {
+                level,
+                text: "x".into(),
+            });
+        }
     }
 }

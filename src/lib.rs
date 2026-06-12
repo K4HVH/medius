@@ -62,7 +62,7 @@ pub use device::{CountersSnapshot, Device};
 pub use error::{Error, Result};
 pub use pacer::{DEFAULT_RATE_HZ, MovementSession};
 pub use protocol::types::{Button, ButtonAction, Health, LogLevel, LogLine, RebootTarget, Version};
-pub use transport::scan::PortInfo;
+pub use transport::scan::{PortInfo, find_medius, find_ports};
 
 #[cfg(feature = "metrics")]
 pub use pacer::metrics::{HistogramSnapshot, PacerStats};

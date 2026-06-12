@@ -14,7 +14,8 @@ async = []                              # thin wrapper over the sync core (flume
 mock = []                               # public scriptable fake box
 metrics = ["dep:hdrhistogram"]          # pacer jitter/latency histograms
 flash = []                              # esptool reboot+flash handoff
-cli = ["dep:clap", "serde", "metrics"]  # CLI wants --json + bench histograms
+# CLI wants --json (serde + serde_json), bench histograms (metrics), and -v/-vv (tracing subscriber).
+cli = ["dep:clap", "dep:serde_json", "dep:tracing-subscriber", "serde", "metrics", "tracing"]
 tracing = ["dep:tracing"]               # library-side instrumentation
 serde = ["dep:serde"]                   # derives on value types
 
@@ -25,7 +26,12 @@ parking_lot = "0.12"
 hdrhistogram = { version = "7", optional = true }
 clap = { version = "4", features = ["derive"], optional = true }
 tracing = { version = "0.1", optional = true }
+tracing-subscriber = { version = "0.3", features = [
+  "fmt",
+  "env-filter",
+], optional = true }
 serde = { version = "1", features = ["derive"], optional = true }
+serde_json = { version = "1", optional = true }
 
 [dev-dependencies]
 serde_json = "1"
