@@ -11,5 +11,7 @@
 
 pub mod crc;
 pub mod opcode;
+pub mod types;
 
 pub use opcode::{FrameType, MAX_PAYLOAD, PROTO_VER, SOF, UnknownFrameType};
+pub use types::{Button, ButtonAction, Health, LogLevel, LogLine, RebootTarget, Version};
