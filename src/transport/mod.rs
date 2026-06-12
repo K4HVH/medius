@@ -25,11 +25,6 @@
 //! 2. **4,000,000 baud is non-standard** and needs OS-specific custom-baud syscalls (`termios2` /
 //!    `BOTHER` on Linux, a custom `DCB.BaudRate` on Windows).
 
-// This whole layer is plumbing consumed by the device (M3) and pacer (M4) layers, plus the public
-// scan re-exports (wired in M3). Until those land, the items here are only exercised by tests, so
-// dead-code analysis flags them on the lib build; allow it crate-locally for the transport module.
-#![allow(dead_code)]
-
 use std::io;
 
 pub(crate) mod mock;
