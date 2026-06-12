@@ -1,10 +1,15 @@
-//! Frame opcodes and wire constants — pinned to the firmware.
+//! Frame opcodes and wire constants — pinned to the documented wire values.
 //!
 //! Every value here mirrors `firmware/device/components/inject/ctrl_proto.h` (the authoritative
-//! constants header) and `docs/protocol/control-protocol.md` (the byte-exact reference). The
-//! [`tests::opcodes_match_firmware`] test is the constant-parity guard: it asserts every numeric
-//! value against the firmware, so drift fails CI (mirroring the firmware-side
-//! `tests/host/test_ctrl_proto.c`).
+//! constants header) and `docs/protocol/control-protocol.md` (the byte-exact reference).
+//!
+//! Two test guards back this up (in the `tests` submodule):
+//! - `opcodes_match_firmware` pins the in-crate constants to their documented numeric values. It is a
+//!   Rust-literal-vs-Rust-literal check, so it catches an accidental in-crate edit — it does **not**
+//!   by itself detect firmware drift (both sides would have to be edited in lockstep).
+//! - `opcodes_match_ctrl_proto_header` provides the real drift guard: when the firmware header is
+//!   reachable (the monorepo dev env) it parses the `#define CTRL_*` values and asserts the Rust
+//!   constants equal them; when the header is absent (a published-crate build) it skips.
 
 use core::fmt;
 
@@ -143,8 +148,10 @@ impl From<FrameType> for u8 {
 mod tests {
     use super::*;
 
-    /// Constant-parity guard: every numeric value must match `ctrl_proto.h` / `control-protocol.md`.
-    /// If the firmware renumbers anything, this fails — exactly like `tests/host/test_ctrl_proto.c`.
+    /// In-crate constant guard: pins every numeric value to its **documented** wire value
+    /// (`ctrl_proto.h` / `control-protocol.md`). This is a Rust-literal vs Rust-literal assertion, so
+    /// it catches an accidental in-crate edit but does **not**, on its own, detect firmware drift —
+    /// see `opcodes_match_ctrl_proto_header` for the best-effort header-parsing drift guard.
     #[test]
     fn opcodes_match_firmware() {
         // Opcodes (CTRL_* frame TYPE).
@@ -212,5 +219,108 @@ mod tests {
         assert_eq!(FrameType::try_from(0x00), Err(UnknownFrameType(0x00)));
         assert_eq!(FrameType::try_from(0x09), Err(UnknownFrameType(0x09)));
         assert_eq!(FrameType::try_from(0xFF), Err(UnknownFrameType(0xFF)));
+    }
+
+    /// Best-effort **firmware drift** guard (FIX 7). Unlike [`opcodes_match_firmware`] (Rust-vs-Rust),
+    /// this parses the real `ctrl_proto.h` `#define CTRL_* <num>` lines and asserts the Rust constants
+    /// equal the firmware's values — true drift detection in the monorepo dev env.
+    ///
+    /// The header is located via the `MEDIUS_CTRL_PROTO_H` env var, else the sibling monorepo path
+    /// `<CARGO_MANIFEST_DIR>/../medius-fw/firmware/device/components/inject/ctrl_proto.h`. If neither
+    /// exists (a published-crate build), the test **passes** (skips) with an eprintln note, so it never
+    /// breaks a standalone build.
+    #[test]
+    fn opcodes_match_ctrl_proto_header() {
+        use std::path::PathBuf;
+
+        // Locate the header: env override first, then the sibling firmware-repo path.
+        let path = match std::env::var_os("MEDIUS_CTRL_PROTO_H") {
+            Some(p) => PathBuf::from(p),
+            None => {
+                let mut p = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+                p.push("../medius-fw/firmware/device/components/inject/ctrl_proto.h");
+                p
+            }
+        };
+        let Ok(src) = std::fs::read_to_string(&path) else {
+            eprintln!(
+                "opcodes_match_ctrl_proto_header: ctrl_proto.h not found at {} \
+                 (set MEDIUS_CTRL_PROTO_H to enable the firmware drift check); skipping.",
+                path.display()
+            );
+            return;
+        };
+
+        // Parse every `#define CTRL_<NAME> <number>` (decimal or 0x-hex), ignoring trailing comments
+        // and function-like macros (a define whose token after the name starts with `(`).
+        let mut defs: std::collections::HashMap<String, u64> = std::collections::HashMap::new();
+        for line in src.lines() {
+            let line = line.trim();
+            let Some(rest) = line.strip_prefix("#define ") else {
+                continue;
+            };
+            let mut it = rest.split_whitespace();
+            let Some(name) = it.next() else { continue };
+            if !name.starts_with("CTRL_") || name.contains('(') {
+                continue; // not a plain CTRL_* value define
+            }
+            let Some(tok) = it.next() else { continue };
+            let val = if let Some(hex) = tok.strip_prefix("0x").or_else(|| tok.strip_prefix("0X")) {
+                u64::from_str_radix(hex, 16).ok()
+            } else {
+                tok.parse::<u64>().ok()
+            };
+            if let Some(v) = val {
+                defs.insert(name.to_string(), v);
+            }
+        }
+        assert!(
+            !defs.is_empty(),
+            "parsed no CTRL_* defines from {} — header format changed?",
+            path.display()
+        );
+
+        // (firmware #define name, Rust constant value) — assert each present define matches.
+        let expected: &[(&str, u64)] = &[
+            ("CTRL_MOVE", FrameType::Move as u64),
+            ("CTRL_WHEEL", FrameType::Wheel as u64),
+            ("CTRL_BUTTON", FrameType::Button as u64),
+            ("CTRL_RESET", FrameType::Reset as u64),
+            ("CTRL_QUERY", FrameType::Query as u64),
+            ("CTRL_RESP", FrameType::Resp as u64),
+            ("CTRL_REBOOT_DL", FrameType::RebootDl as u64),
+            ("CTRL_LOG", FrameType::Log as u64),
+            ("CTRL_BTN_LEFT", BTN_LEFT as u64),
+            ("CTRL_BTN_RIGHT", BTN_RIGHT as u64),
+            ("CTRL_BTN_MIDDLE", BTN_MIDDLE as u64),
+            ("CTRL_BTN_SIDE1", BTN_SIDE1 as u64),
+            ("CTRL_BTN_SIDE2", BTN_SIDE2 as u64),
+            ("CTRL_BTN_COUNT", BTN_COUNT as u64),
+            ("CTRL_ACT_SOFTREL", ACT_SOFTREL as u64),
+            ("CTRL_ACT_PRESS", ACT_PRESS as u64),
+            ("CTRL_ACT_FORCEREL", ACT_FORCEREL as u64),
+            ("CTRL_Q_VERSION", Q_VERSION as u64),
+            ("CTRL_Q_HEALTH", Q_HEALTH as u64),
+            ("CTRL_H_LINK_UP", H_LINK_UP as u64),
+            ("CTRL_H_MOUSE_ATT", H_MOUSE_ATT as u64),
+            ("CTRL_H_CLONE_CFG", H_CLONE_CFG as u64),
+            ("CTRL_H_INJECT_ON", H_INJECT_ON as u64),
+            ("CTRL_LOG_ERROR", LOG_ERROR as u64),
+            ("CTRL_LOG_WARN", LOG_WARN as u64),
+            ("CTRL_LOG_INFO", LOG_INFO as u64),
+            ("CTRL_LOG_DEBUG", LOG_DEBUG as u64),
+            ("CTRL_LOG_VERBOSE", LOG_VERBOSE as u64),
+            ("CTRL_PROTO_VER", PROTO_VER as u64),
+        ];
+        for (name, rust_val) in expected {
+            if let Some(&fw_val) = defs.get(*name) {
+                assert_eq!(
+                    fw_val, *rust_val,
+                    "firmware drift: {name} = {fw_val} in ctrl_proto.h but {rust_val} in the Rust crate"
+                );
+            } else {
+                panic!("ctrl_proto.h is missing expected define {name}");
+            }
+        }
     }
 }
