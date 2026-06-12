@@ -36,8 +36,9 @@ mod transport; // M2 — private serial transport (+ mock)
 
 pub use device::{CountersSnapshot, Device};
 pub use error::{Error, Result};
+pub use pacer::{DEFAULT_RATE_HZ, MovementSession};
 pub use protocol::types::{Button, ButtonAction, Health, LogLevel, LogLine, RebootTarget, Version};
 pub use transport::scan::PortInfo;
 
-// Modules are added per implementation milestone:
-//   pub mod pacer;      // M4
+#[cfg(feature = "metrics")]
+pub use pacer::metrics::{HistogramSnapshot, PacerStats};
