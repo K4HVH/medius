@@ -190,6 +190,40 @@ mod tracing_capture {
 
     use super::Device;
 
+    /// Install, exactly once for the whole test binary, a no-op **global** default subscriber whose
+    /// `max_level_hint` is `TRACE`. tracing computes its process-wide *static* max-level filter from the
+    /// installed default(s); the `event!` macros consult that filter **before** the active subscriber,
+    /// so if it sits at `OFF` (the state when no global default was ever set) events are dropped before
+    /// reaching any per-thread `with_default` subscriber. Pinning the global filter at `TRACE` here
+    /// makes the capture below deterministic regardless of parallel test ordering, while each test's
+    /// own thread-local `with_default` still decides *which* subscriber actually records the events.
+    fn ensure_tracing_enabled() {
+        use std::sync::Once;
+        static INIT: Once = Once::new();
+        INIT.call_once(|| {
+            struct TraceLevelHint;
+            impl Subscriber for TraceLevelHint {
+                fn enabled(&self, _: &Metadata<'_>) -> bool {
+                    false // record nothing; this exists only to raise the static max-level filter
+                }
+                fn max_level_hint(&self) -> Option<tracing::level_filters::LevelFilter> {
+                    Some(tracing::level_filters::LevelFilter::TRACE)
+                }
+                fn new_span(&self, _: &Attributes<'_>) -> Id {
+                    Id::from_u64(1)
+                }
+                fn record(&self, _: &Id, _: &Record<'_>) {}
+                fn record_follows_from(&self, _: &Id, _: &Id) {}
+                fn event(&self, _: &Event<'_>) {}
+                fn enter(&self, _: &Id) {}
+                fn exit(&self, _: &Id) {}
+            }
+            // Best-effort: if another test already set a global default, that's fine — the static
+            // filter is already raised. We ignore the error in that case.
+            let _ = tracing::subscriber::set_global_default(TraceLevelHint);
+        });
+    }
+
     /// A minimal [`Subscriber`] that counts emitted events, bucketed by `target` prefix
     /// (`medius::device` / `medius::transport` / `medius::pacer`). It enables everything and does the
     /// bare minimum the trait requires; we only care about the per-target event tallies.
@@ -236,6 +270,7 @@ mod tracing_capture {
     /// A successful connect (handshake) emits at least one `medius::device` event.
     #[test]
     fn connect_emits_a_device_event() {
+        ensure_tracing_enabled();
         let sub = CountingSubscriber::default();
         let device_count = Arc::clone(&sub.device);
         tracing::subscriber::with_default(sub, || {
@@ -250,6 +285,7 @@ mod tracing_capture {
     /// A query emits a `medius::device` DEBUG event and per-frame `medius::transport` TRACE events.
     #[test]
     fn query_emits_device_and_transport_events() {
+        ensure_tracing_enabled();
         let sub = CountingSubscriber::default();
         let device_count = Arc::clone(&sub.device);
         let transport_count = Arc::clone(&sub.transport);
@@ -272,6 +308,7 @@ mod tracing_capture {
     /// hot-path discipline.
     #[test]
     fn pacer_does_not_trace_per_tick() {
+        ensure_tracing_enabled();
         let sub = CountingSubscriber::default();
         let pacer_count = Arc::clone(&sub.pacer);
         tracing::subscriber::with_default(sub, || {
