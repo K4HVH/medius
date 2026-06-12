@@ -257,3 +257,11 @@ fn idle_pacer_emits_no_moves() {
     // sanity: the test itself didn't hang.
     assert!(start.elapsed() < Duration::from_secs(5));
 }
+
+/// `MovementSession` is `Send + Sync` (a handle on the shared pacer state; callers may move it across
+/// threads). Mirrors the guard tests for `Device`/`MockTransport`/`Counters`.
+#[test]
+fn movement_session_is_send_sync() {
+    fn assert_send_sync<T: Send + Sync>() {}
+    assert_send_sync::<super::MovementSession>();
+}

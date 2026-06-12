@@ -325,4 +325,12 @@ mod tests {
         device.cancel_query(seq_b, gen_b);
         drop(rx_b);
     }
+
+    /// `AsyncDevice` is `Send + Sync` (a clonable handle over the same shared core; callers move it
+    /// across async tasks). Mirrors the guard tests for `Device`/`MockTransport`/`Counters`.
+    #[test]
+    fn async_device_is_send_sync() {
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<AsyncDevice>();
+    }
 }
