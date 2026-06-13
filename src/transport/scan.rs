@@ -5,17 +5,7 @@
 //! re-enumerated device is found again. OS-specific enumeration (sysfs/SetupAPI) is untestable here,
 //! so the parsing is factored into pure, unit-tested helpers.
 
-/// Information about one discovered serial port.
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct PortInfo {
-    /// The OS path used to open the port (`/dev/ttyACM0` on Linux, `COM3` on Windows).
-    pub path: String,
-    /// USB vendor id.
-    pub vid: u16,
-    /// USB product id.
-    pub pid: u16,
-}
+use crate::types::PortInfo;
 
 /// WCH (Jiangsu Qinheng) USB vendor id — the CH343 USB-serial bridge the medius box uses (§6).
 pub(crate) const WCH_VID: u16 = 0x1A86;

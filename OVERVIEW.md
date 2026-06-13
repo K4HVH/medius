@@ -29,7 +29,9 @@ frame, maintains caller-commanded state, or recovers the link → infrastructure
 
 ```
 src/
-  protocol/   internal, pure, no-I/O wire layer — crc16, frame codec, opcodes, command/response, types
+  protocol/   internal, pure, no-I/O wire layer — crc16, frame codec, opcodes, command/response
+  types/      PUBLIC value vocabulary — one file per concern (button, version, health, log, reboot,
+              counters, port); pure value types + their wire-mapping helpers
   transport/  PRIVATE — Transport trait; linux (termios2/4M/DTR-RTS), windows (DCB), mock, VID/PID scan
   device/     Device core — connect/handshake, commands, queries, logs, reconcile (DesiredState),
               reboot/reconnect/keepalive, counters
@@ -96,11 +98,13 @@ halving. There is no host-side pacer; the caller owns MOVE timing (e.g. its own 
 - `counters() -> CountersSnapshot` — frames_tx/rx, crc_drops, reconnects (always-on, cheap atomics).
 
 ### Public types
-`Device`, `AsyncDevice`, `Button`, `ButtonAction`, `RebootTarget`, `Version`, `Health`, `LogLine`,
-`LogLevel`, `CountersSnapshot`, `PortInfo`, `find_medius`, `MockBox`, `LogStream`, `Error`, `Result`,
-the `DEFAULT_QUERY_TIMEOUT`/`DEFAULT_KEEPALIVE_CADENCE` consts, plus `FrameType`/`DecodedFrame`
-(frame-inspection for `MockBox`). The wire codec (`protocol`) and low-level discovery
-(`find_ports`/`WCH_VID`/`CH343_PID`) are crate-internal.
+The value vocabulary lives in one place — the `types/` module (`Button`, `ButtonAction`,
+`RebootTarget`, `Version`, `Health`, `LogLine`, `LogLevel`, `CountersSnapshot`, `PortInfo`) — each
+also re-exported at the crate root, so both `medius::Button` and `medius::types::Button` resolve.
+Handles and the rest: `Device`, `AsyncDevice`, `MockBox`, `LogStream`, `Error`, `Result`,
+`find_medius`, the `DEFAULT_QUERY_TIMEOUT`/`DEFAULT_KEEPALIVE_CADENCE` consts, plus
+`FrameType`/`DecodedFrame` (frame-inspection for `MockBox`). The wire codec (`protocol`) and low-level
+discovery (`find_ports`/`WCH_VID`/`CH343_PID`) are crate-internal.
 
 ---
 

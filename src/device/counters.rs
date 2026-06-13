@@ -2,11 +2,13 @@
 //!
 //! [`Counters`] tracks four lifetime totals (frames sent/received, CRC-dropped frames, reconnects) as
 //! relaxed [`AtomicU64`]s. They are core (always compiled, effectively free on the hot path).
-//! [`Counters::snapshot`] reads them into a plain
-//! [`CountersSnapshot`] (serde-gated); the four reads are independent, so a snapshot is not
-//! transactional across fields — intentional and sufficient for diagnostics.
+//! [`Counters::snapshot`] reads them into a plain [`CountersSnapshot`] (the public value type, in
+//! [`crate::types`]); the four reads are independent, so a snapshot is not transactional across fields
+//! — intentional and sufficient for diagnostics.
 
 use core::sync::atomic::{AtomicU64, Ordering};
+
+use crate::types::CountersSnapshot;
 
 /// Lifetime atomic counters for one [`Device`](crate::Device). All [`Ordering::Relaxed`] — statistics,
 /// not synchronization.
@@ -44,20 +46,6 @@ impl Counters {
             reconnects: self.reconnects.load(Ordering::Relaxed),
         }
     }
-}
-
-/// A plain, copyable snapshot of the device's always-on `Counters`, for display / JSON (serde-gated).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct CountersSnapshot {
-    /// Total frames written to the transport.
-    pub frames_tx: u64,
-    /// Total frames decoded from the transport.
-    pub frames_rx: u64,
-    /// Total frames dropped for a failed CRC.
-    pub crc_drops: u64,
-    /// Total successful reconnects.
-    pub reconnects: u64,
 }
 
 #[cfg(test)]
@@ -101,18 +89,5 @@ mod tests {
     fn counters_is_send_sync() {
         fn assert_send_sync<T: Send + Sync>() {}
         assert_send_sync::<Counters>();
-    }
-
-    #[cfg(feature = "serde")]
-    #[test]
-    fn snapshot_serde_round_trip() {
-        let s = CountersSnapshot {
-            frames_tx: 10,
-            frames_rx: 7,
-            crc_drops: 1,
-            reconnects: 2,
-        };
-        let j = serde_json::to_string(&s).unwrap();
-        assert_eq!(serde_json::from_str::<CountersSnapshot>(&j).unwrap(), s);
     }
 }

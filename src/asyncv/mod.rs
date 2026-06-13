@@ -24,8 +24,8 @@ use std::time::Duration;
 use crate::Device;
 use crate::error::{Error, Result};
 use crate::protocol::opcode::{Q_HEALTH, Q_VERSION};
-use crate::protocol::types::{Button, ButtonAction, Health, RebootTarget, Version};
 use crate::protocol::{Resp, parse_resp};
+use crate::types::{Button, ButtonAction, Health, RebootTarget, Version};
 
 /// An async view over a [`Device`] — the same core, with `async` query methods (feature = `async`).
 ///

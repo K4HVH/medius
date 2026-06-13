@@ -22,7 +22,7 @@ use crate::error::{Error, Result};
 use crate::protocol::FrameType;
 use crate::protocol::command::query_payload;
 use crate::protocol::opcode::Q_HEALTH;
-use crate::protocol::types::RebootTarget;
+use crate::types::RebootTarget;
 
 use super::reconcile::DesiredState;
 use super::{Counters, Device, TransportSlot, write_frame};
@@ -152,9 +152,9 @@ mod tests {
     use std::sync::Arc;
     use std::time::Duration;
 
-    use crate::protocol::types::{Button, LogLevel, RebootTarget};
     use crate::protocol::{DecodedFrame, FrameDecoder, FrameType, encode};
     use crate::transport::mock::MockTransport;
+    use crate::types::{Button, LogLevel, RebootTarget};
 
     use super::Device;
 

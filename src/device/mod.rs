@@ -32,14 +32,12 @@ use std::thread::JoinHandle;
 use parking_lot::Mutex;
 
 use crate::error::Result;
-use crate::protocol::types::LogLine;
 use crate::protocol::{FrameDecoder, FrameType, encode, parse_log};
 use crate::transport::Transport;
+use crate::types::{CountersSnapshot, LogLine};
 
 use counters::Counters;
 use reconcile::DesiredState;
-
-pub use counters::CountersSnapshot;
 
 /// Reader sleep between drains when a read returns `Ok(0)` and the transport has no native blocking
 /// timeout (the mock). Real serial reads block ≈100 ms themselves, so this is a no-op there.

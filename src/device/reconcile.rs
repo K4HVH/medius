@@ -8,7 +8,7 @@
 //! clears all.
 
 use crate::protocol::opcode::BTN_COUNT;
-use crate::protocol::types::{Button, ButtonAction};
+use crate::types::{Button, ButtonAction};
 
 /// One button's intended override, mirroring the firmware's `{NONE, PRESS, FORCE}` (§5.1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]

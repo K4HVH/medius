@@ -11,7 +11,7 @@
 use std::time::Duration;
 
 use crate::error::{Error, Result};
-use crate::protocol::types::LogLine;
+use crate::types::LogLine;
 
 use super::Device;
 
@@ -101,8 +101,8 @@ mod tests {
     use std::time::Duration;
 
     use crate::protocol::FrameType;
-    use crate::protocol::types::{LogLevel, LogLine};
     use crate::transport::mock::MockTransport;
+    use crate::types::{LogLevel, LogLine};
 
     use super::*;
 
