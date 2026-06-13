@@ -27,21 +27,14 @@ impl Device {
     /// The handshake sends `QUERY(VERSION)` and requires the reported `proto_ver` to equal the
     /// library's supported protocol version (§2.2).
     ///
+    /// `path` is `/dev/ttyACMx` on Linux, `COMn` on Windows.
+    ///
     /// # Errors
     /// - [`Error::Io`] if the port cannot be opened/configured.
     /// - [`Error::NoReply`] if the box never answers the version probe.
     /// - [`Error::BadProtoVer`] if it answers with an unsupported protocol version.
-    #[cfg(target_os = "linux")]
     pub fn open(path: impl AsRef<std::path::Path>) -> Result<Device> {
-        let serial = crate::transport::linux::LinuxSerial::open(path.as_ref())?;
-        Self::open_transport(Arc::new(serial))
-    }
-
-    /// Open the box at serial `path` (Windows `COMn`); see the Linux [`open`](Device::open) for the
-    /// handshake contract and errors.
-    #[cfg(windows)]
-    pub fn open(path: impl AsRef<std::path::Path>) -> Result<Device> {
-        let serial = crate::transport::windows::WindowsSerial::open(path.as_ref())?;
+        let serial = crate::transport::serial::SerialTransport::open(path.as_ref())?;
         Self::open_transport(Arc::new(serial))
     }
 
@@ -117,7 +110,6 @@ impl Device {
     ///
     /// # Errors
     /// [`Error::NotFound`] if no port matches; otherwise the same errors as [`open`](Device::open).
-    #[cfg(any(target_os = "linux", windows))]
     pub fn find() -> Result<Device> {
         let port = crate::transport::scan::find_medius()
             .into_iter()

@@ -131,10 +131,10 @@ around a black-box device:
 
 ## Platform notes
 
-Supported on **Linux** and **Windows**, talking raw serial to the box's CH343 (WCH) USB-serial bridge
-at **4 Mbaud**. Port discovery is by USB VID/PID (`0x1A86` / `0x55D3`); reconnect rescans by VID/PID
-rather than a fixed path, so a re-enumerated device is found again. No `serialport` crate dependency —
-the transport is a thin platform FFI layer (`libc` termios2 on Linux, `windows-sys` on Windows).
+Supported on **Linux** and **Windows**, talking to the box's CH343 (WCH) USB-serial bridge at
+**4 Mbaud** via the `serialport` crate (cross-platform, no `unsafe`). Port discovery is by USB VID/PID
+(`0x1A86` / `0x55D3`); reconnect rescans by VID/PID rather than a fixed path, so a re-enumerated device
+is found again.
 
 ## Design references
 

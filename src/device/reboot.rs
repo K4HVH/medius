@@ -113,14 +113,21 @@ impl Device {
     ///
     /// # Errors
     /// [`Error::NotFound`] if no port matches; [`Error::Io`] if the reopen fails.
-    #[cfg(any(target_os = "linux", windows))]
     pub fn reconnect(&self) -> Result<()> {
         let port = crate::transport::scan::find_medius()
             .into_iter()
             .next()
             .ok_or(Error::NotFound)?;
-        let transport = open_raw(&port.path)?;
-        self.transport_slot().swap(transport);
+        // serialport holds the port exclusively, so release the current one before reopening: swap in
+        // a disconnected placeholder and give the reader one read timeout (~100 ms) to drop the old
+        // handle, then reopen. (On a real reconnect the box re-enumerated and the old handle is already
+        // dead; this also makes reopening the *same* path work.)
+        self.transport_slot()
+            .swap(Arc::new(crate::transport::Disconnected));
+        std::thread::sleep(Duration::from_millis(200));
+        let serial =
+            crate::transport::serial::SerialTransport::open(std::path::Path::new(&port.path))?;
+        self.transport_slot().swap(Arc::new(serial));
         self.counters_inner().inc_reconnects();
         trace_event!(
             target: "medius::device",
@@ -131,18 +138,4 @@ impl Device {
         );
         self.reapply()
     }
-}
-
-/// Open the raw platform serial transport at `path` (no handshake), for [`Device::reconnect`].
-#[cfg(target_os = "linux")]
-fn open_raw(path: &str) -> Result<Arc<dyn crate::transport::Transport>> {
-    let serial = crate::transport::linux::LinuxSerial::open(std::path::Path::new(path))?;
-    Ok(Arc::new(serial))
-}
-
-/// Open the raw platform serial transport at `path` (no handshake), for [`Device::reconnect`].
-#[cfg(windows)]
-fn open_raw(path: &str) -> Result<Arc<dyn crate::transport::Transport>> {
-    let serial = crate::transport::windows::WindowsSerial::open(std::path::Path::new(path))?;
-    Ok(Arc::new(serial))
 }

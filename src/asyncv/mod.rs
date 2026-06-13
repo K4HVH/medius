@@ -30,7 +30,7 @@ use crate::types::{Button, ButtonAction, Health, RebootTarget, Version};
 /// An async view over a [`Device`] — the same core, with `async` query methods (feature = `async`).
 ///
 /// Cheap to clone. Fire-and-go methods are shared verbatim with the sync API; only the queries are
-/// `async`. See the [module docs](self) for the one-core design and the runtime-agnostic timeout.
+/// `async`. See the module docs for the one-core design and the runtime-agnostic timeout.
 #[derive(Clone, Debug)]
 pub struct AsyncDevice {
     device: Device,
@@ -126,7 +126,7 @@ impl AsyncDevice {
     ///
     /// Registers the same flume one-shot the sync path uses and `recv_async().await`s it. The timeout
     /// is a cancellable detached `std::thread` timer that gen-checked-cancels the pending entry on
-    /// expiry (see the [module docs](self)); it holds only a `Weak<Inner>` and is woken the instant the
+    /// expiry (see the module docs); it holds only a `Weak<Inner>` and is woken the instant the
     /// query resolves, so it never lingers.
     pub(crate) async fn query(&self, what: u8, timeout: Duration) -> Result<Vec<u8>> {
         let (seq, gen_id, rx) = self.device.register_query(what)?;
@@ -163,7 +163,6 @@ impl AsyncDevice {
     ///
     /// The open is a one-time blocking syscall run on the caller's thread (not offloaded — that would
     /// need a runtime). Call it before a latency-sensitive async section.
-    #[cfg(any(target_os = "linux", windows))]
     pub fn open(path: impl AsRef<std::path::Path>) -> Result<AsyncDevice> {
         Ok(Device::open(path)?.into_async())
     }

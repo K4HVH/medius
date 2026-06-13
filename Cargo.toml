@@ -26,26 +26,16 @@ tracing = ["dep:tracing"]               # library-side instrumentation
 thiserror = "2"
 flume = "0.11"
 parking_lot = "0.12"
+serialport = "4"
 tracing = { version = "0.1", optional = true }
 
 [dev-dependencies]
 # Async tests use futures' executor::block_on — NO tokio (the wrapper is runtime-agnostic).
 futures = { version = "0.3", default-features = false, features = ["executor"] }
 
-[target.'cfg(target_os = "linux")'.dependencies]
+# libc is only used by the Linux `hw_full` example (evdev EVIOCGRAB), not the library itself.
+[target.'cfg(target_os = "linux")'.dev-dependencies]
 libc = "0.2"
-
-[target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.59", features = [
-  "Win32_Foundation",
-  "Win32_Storage_FileSystem",
-  "Win32_Devices_Communication",
-  "Win32_System_IO",
-  "Win32_System_Threading",
-  "Win32_System_Performance",
-  "Win32_Security",
-  "Win32_Devices_DeviceAndDriverInstallation",
-] }
 
 # basic opens a real device — it compiles everywhere, but needs a connected box to RUN.
 [[example]]

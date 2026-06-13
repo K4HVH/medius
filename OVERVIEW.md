@@ -16,7 +16,7 @@ Validated end-to-end on real hardware (see "Validation"). Tracks the firmware in
 |---|---|
 | 1:1 bindings of the firmware frames (MOVE/WHEEL/BUTTON/RESET/QUERY/REBOOT_DL/LOG) | `click`, `drag`, double-click, any composed multi-frame gesture |
 | Infrastructure: connect/handshake, keepalive (holds caller-commanded state), reconnect+reapply, the reader, SEQ correlation | `set_velocity` / any auto-generated motion |
-| Linux + Windows raw serial, async wrapper, mock, tracing | a host-side pacer / frame clock — the caller drives MOVE timing |
+| Linux + Windows serial (`serialport` crate), async wrapper, mock, tracing | a host-side pacer / frame clock — the caller drives MOVE timing |
 | | smoothing / humanization / trajectory synthesis |
 
 **The test for "is this an extra":** a function that *generates/automates input the caller didn't
@@ -32,7 +32,7 @@ src/
   protocol/   internal, pure, no-I/O wire layer — crc16, frame codec, opcodes, command/response
   types/      PUBLIC value vocabulary — one file per concern (button, version, health, log, reboot,
               counters, port); pure value types + their wire-mapping helpers
-  transport/  PRIVATE — Transport trait; linux (termios2/4M/DTR-RTS), windows (DCB), mock, VID/PID scan
+  transport/  PRIVATE — Transport trait; serial (the `serialport` crate, cross-platform), mock, VID/PID scan
   device/     Device core — connect/handshake, commands, queries, logs, reconcile (DesiredState),
               reboot/reconnect/keepalive, counters
   asyncv/     AsyncDevice — thin wrapper over the SAME core (async only on query, feature `async`)
@@ -111,8 +111,8 @@ discovery (`find_ports`/`WCH_VID`/`CH343_PID`) are crate-internal.
 ## 4. Wire protocol
 
 `[SOF 0xA5][TYPE u8][SEQ u8][LEN u16 LE][PAYLOAD ≤512][CRC16-CCITT-FALSE LE]`, CRC over
-`TYPE|SEQ|LEN|PAYLOAD`. Fixed **4,000,000 baud, framed-only** from power-up; connect = open (DTR/RTS
-deasserted) → `QUERY(VERSION)` → `proto_ver == 1`. Fire-and-go hot path (no per-command ACK); the only
+`TYPE|SEQ|LEN|PAYLOAD`. Fixed **4,000,000 baud, framed-only** from power-up; connect = open →
+`QUERY(VERSION)` → `proto_ver == 1`. Fire-and-go hot path (no per-command ACK); the only
 round-trip is `QUERY→RESP` (SEQ-correlated). Unknown opcodes ignored (forward-compat). The box emits an
 unsolicited `RESP(VERSION)` (SEQ=0) at boot + on first contact as a presence/ready signal.
 
