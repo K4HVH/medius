@@ -1,9 +1,6 @@
-//! Fully runnable, HARDWARE-FREE demo of the `mock` feature.
+//! Hardware-free demo of the `mock` feature: a scriptable `MockBox` drives a real `Device` via
+//! `Device::with_mock`, running queries + a press and asserting on the recorded commands.
 //!
-//! Builds a scriptable `MockBox`, drives a real `Device` over it via `Device::with_mock`, runs
-//! queries + a press, and asserts on the commands the host recorded. No box required.
-//!
-//! Run:
 //!     cargo run --example mock --features mock
 
 use medius::mock::MockBox;
@@ -11,7 +8,7 @@ use medius::protocol::FrameType;
 use medius::{Button, Device, Health, Version};
 
 fn main() {
-    // Configure the fake box: the Version/Health it will answer queries with.
+    // The Version/Health the fake box answers queries with.
     let mock = MockBox::new()
         .with_version(Version {
             proto_ver: 1,
@@ -21,11 +18,10 @@ fn main() {
         })
         .with_health(Health::from_flags(0x0F)); // link | mouse | clone | inject
 
-    // Drive the REAL device stack over the fake box. `mock.clone()` keeps a handle for assertions
-    // (MockBox shares its state/transport via Arc).
+    // Drive the real device stack over the fake box; `mock.clone()` keeps a handle for assertions.
     let device = Device::with_mock(mock.clone());
 
-    // Queries resolve against the configured values (the same SEQ-correlated path as real hardware).
+    // Resolve against the configured values via the same SEQ-correlated path as real hardware.
     let version = device.query_version().expect("version query resolves");
     let health = device.query_health().expect("health query resolves");
     println!("mock version: {version}");
@@ -40,7 +36,6 @@ fn main() {
             && health.injection_active
     );
 
-    // A fire-and-go command is recorded as a decoded frame.
     device.press(Button::Left).expect("press records");
 
     let frames = mock.recorded_frames();
@@ -49,7 +44,7 @@ fn main() {
         println!("  {:?} seq={} payload={:?}", f.ty, f.seq, f.payload);
     }
 
-    // The press is a BUTTON frame with payload [id=Left(0)][action=press(1)].
+    // BUTTON frame, payload [id=Left(0)][action=press(1)].
     let button = frames
         .iter()
         .find(|f| f.ty == FrameType::Button)

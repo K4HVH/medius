@@ -1,9 +1,8 @@
 //! Typed response/event decoders (box → PC).
 //!
-//! Decoders for the `RESP` (§4.1) and `LOG` (§4.3) payloads. They operate on the **payload** bytes
-//! only (the frame layer already stripped framing and verified the CRC). Every decoder is total and
-//! panic-free: a truncated or malformed payload yields `None` (or a safe default for `LOG`), never a
-//! panic or an index-out-of-bounds.
+//! Decoders for the `RESP` (§4.1) and `LOG` (§4.3) payloads, operating on payload bytes only (the
+//! frame layer stripped framing and verified the CRC). A truncated or malformed payload yields
+//! `None` (or a safe default for `LOG`), never a panic.
 
 use super::opcode::{Q_HEALTH, Q_VERSION};
 use super::types::{Health, LogLevel, LogLine, Version};
@@ -40,7 +39,6 @@ pub fn parse_resp(payload: &[u8]) -> Option<Resp> {
     let what = *payload.first()?;
     match what {
         Q_VERSION => {
-            // [what][proto_ver][fw_major][fw_minor][fw_patch]
             if payload.len() < 5 {
                 return None;
             }
@@ -52,7 +50,6 @@ pub fn parse_resp(payload: &[u8]) -> Option<Resp> {
             }))
         }
         Q_HEALTH => {
-            // [what][flags]
             if payload.len() < 2 {
                 return None;
             }
@@ -64,9 +61,8 @@ pub fn parse_resp(payload: &[u8]) -> Option<Resp> {
 
 /// Parse a `LOG` payload (§4.3): `[level u8][text UTF-8 (LEN−1)]`.
 ///
-/// The text is decoded lossily (invalid UTF-8 → replacement chars), is not NUL-terminated, and an
-/// unknown level falls back to [`LogLevel::Info`] (matching `medius.py`). An empty payload yields an
-/// `Info` line with empty text. Never panics.
+/// Text is decoded lossily; an unknown level falls back to [`LogLevel::Info`], and an empty payload
+/// yields an empty `Info` line.
 ///
 /// # Examples
 /// ```
@@ -140,12 +136,11 @@ mod tests {
 
     #[test]
     fn parse_resp_truncated_returns_none() {
-        // Empty payload.
         assert_eq!(parse_resp(&[]), None);
-        // VERSION selector but short data (needs 5 bytes).
+        // VERSION needs 5 bytes.
         assert_eq!(parse_resp(&[0]), None);
         assert_eq!(parse_resp(&[0, 1, 0, 1]), None);
-        // HEALTH selector but no flags byte.
+        // HEALTH needs the flags byte.
         assert_eq!(parse_resp(&[1]), None);
     }
 

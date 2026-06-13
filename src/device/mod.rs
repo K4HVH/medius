@@ -1,27 +1,17 @@
-//! The public [`Device`] surface — the concurrency heart of the crate (§5 of the design spec).
+//! The public [`Device`] surface — the concurrency heart of the crate (§5).
 //!
-//! [`Device`] is `&self`-only and `Send + Sync`, cloned freely (it is an `Arc<Inner>` newtype). All
-//! shared state lives in [`Inner`] behind its own `Arc`s, built **before** the background threads are
-//! spawned and cloned into them; the threads never hold `Arc<Inner>` itself, so there is no reference
-//! cycle and [`Inner`]'s `Drop` can deterministically stop and join them.
+//! [`Device`] is `&self`-only, `Send + Sync`, and a cheap `Arc<Inner>` newtype. All shared state lives
+//! in [`Inner`] behind its own `Arc`s, built before the background threads are spawned and cloned into
+//! them; the threads never hold `Arc<Inner>` itself, so there is no cycle and [`Inner`]'s `Drop` can
+//! deterministically stop and join them.
 //!
-//! ## Threads
+//! Two threads: the **reader** (sole transport reader; loops read → [`FrameDecoder`] → route by `TYPE`
+//! and observes `stop` within one read timeout) and the **keepalive** (sends a cheap frame only while
+//! desired-state is non-idle, defeating the firmware's 1000 ms silence auto-clear of held state).
 //!
-//! - **Reader thread** — the sole reader of the transport. It loops `transport.read()` (≈100 ms
-//!   timeout) → feeds a [`FrameDecoder`] → routes each frame by `TYPE`: `RESP` fulfils the pending
-//!   query keyed by `SEQ`; `LOG` is parsed and fanned out on the logs channel; other types are
-//!   ignored. It observes the stop flag within one read timeout, so shutdown is bounded (fixing
-//!   makcu's lingering reader).
-//! - **Keepalive thread** — added in Task 3.6; it sends a cheap frame only while desired-state is
-//!   non-idle, to defeat the firmware's 1000 ms silence auto-clear of *intentionally* held state.
-//!
-//! ## Lock-ordering discipline (deadlock avoidance)
-//!
-//! The write mutex ([`Inner::write_lock`]) is held **only** around `transport.write_all` and is never
-//! held while taking any other lock. The `pending` and `desired` mutexes are short-lived and never
-//! nested with each other. A query inserts its sender into `pending`, then sends (taking `write_lock`)
-//! — but it releases the `pending` lock before sending, so the two are never held together. This
-//! ordering means no two locks are ever held at once, so the layer is deadlock-free by construction.
+//! Lock-ordering: [`Inner::write_lock`] is held **only** around `transport.write_all`, never while
+//! holding another lock; `pending` and `desired` are short-lived and never nested. No two locks are
+//! ever held at once, so the layer is deadlock-free by construction.
 
 pub(crate) mod commands;
 pub(crate) mod connect;
@@ -51,31 +41,26 @@ use reconcile::DesiredState;
 
 pub use counters::CountersSnapshot;
 
-/// How long the reader sleeps between drain attempts when a read returns `Ok(0)` *and* the transport
-/// has no native blocking timeout (the mock). Real serial reads block up to ≈100 ms themselves.
+/// Reader sleep between drains when a read returns `Ok(0)` and the transport has no native blocking
+/// timeout (the mock). Real serial reads block ≈100 ms themselves, so this is a no-op there.
 const READER_IDLE_POLL: std::time::Duration = std::time::Duration::from_millis(2);
 
-/// One in-flight `QUERY`→`RESP` waiter, tagged with a monotonic `gen` so a stale canceller (a timed-out
-/// query, or the async timer) only evicts **its own** entry — never a newer query that has since reused
-/// the same wire `SEQ` (see [`Inner::cancel_query`]).
+/// One in-flight `QUERY`→`RESP` waiter, tagged with a monotonic `gen` so a stale canceller evicts only
+/// its own entry — never a newer query that reused the same wire `SEQ` (see [`Inner::cancel_query`]).
 struct PendingEntry {
-    /// Monotonic generation from [`Inner::query_gen`], unique to the query that registered this entry.
     gen_id: u64,
-    /// The bounded(1) one-shot the reader fulfils with the correlated `RESP` payload.
+    /// Bounded(1) one-shot the reader fulfils with the correlated `RESP` payload.
     tx: flume::Sender<Vec<u8>>,
 }
 
-/// A swappable transport slot (§6 reconnect). The reader and every writer load the *current*
-/// transport (a cheap `Arc` clone) for each operation, so [`reconnect`](Device::reconnect) can replace
-/// it in place and all parties follow the swap without restarting threads.
-///
-/// A monotonic [`generation`](TransportSlot::generation) is bumped on every [`swap`](TransportSlot::swap)
-/// so the reader can notice a transport change and reset its [`FrameDecoder`]: a frame interrupted
-/// mid-parse on the old port must not mis-frame the first bytes of the new one.
+/// A swappable transport slot (§6 reconnect). The reader and writers load the current transport (a
+/// cheap `Arc` clone) per operation, so [`reconnect`](Device::reconnect) can replace it in place and
+/// all parties follow without restarting threads. The generation is bumped on each `swap` so the
+/// reader resets its [`FrameDecoder`]: a frame interrupted mid-parse on the old port must not mis-frame
+/// the first bytes of the new one.
 #[derive(Debug)]
 pub(crate) struct TransportSlot {
     current: Mutex<Arc<dyn Transport>>,
-    /// Bumped on each `swap`; the reader compares it to its last-seen value to reset the decoder.
     generation: AtomicU64,
 }
 
@@ -92,14 +77,12 @@ impl TransportSlot {
         Arc::clone(&self.current.lock())
     }
 
-    /// The current transport generation (bumped by [`swap`](TransportSlot::swap)).
     pub(crate) fn generation(&self) -> u64 {
         self.generation.load(Ordering::Acquire)
     }
 
-    /// Replace the transport (reconnect) and bump the generation so the reader resets its decoder. The
-    /// old transport is dropped (closing its fd/HANDLE) once the last in-flight `current()` clone is
-    /// released.
+    /// Replace the transport and bump the generation so the reader resets its decoder. The old
+    /// transport's fd/HANDLE closes once the last in-flight `current()` clone is released.
     pub(crate) fn swap(&self, transport: Arc<dyn Transport>) {
         *self.current.lock() = transport;
         self.generation.fetch_add(1, Ordering::Release);
@@ -109,43 +92,34 @@ impl TransportSlot {
 /// The shared, reference-counted interior of a [`Device`].
 ///
 /// Each piece of shared state is its own `Arc` so it can be cloned into the reader/keepalive threads
-/// independently of `Inner` (see the [module docs](self#threads)). `Inner`'s `Drop` stops and joins
-/// both threads.
+/// independently of `Inner` (avoiding a cycle). `Inner`'s `Drop` stops and joins both threads.
 pub(crate) struct Inner {
-    /// The byte pipe to the box — a swappable slot so [`reconnect`](Device::reconnect) can replace the
-    /// underlying transport in place while the reader and writers (which load the current transport
-    /// each operation) follow the swap. Shared with the reader thread.
+    /// Swappable byte pipe to the box; [`reconnect`](Device::reconnect) replaces the transport in place
+    /// while the reader and writers follow the swap.
     transport: Arc<TransportSlot>,
-    /// Held **only** around `transport.write_all` so two senders never interleave a frame's bytes.
-    /// Never held while locking `pending`/`desired` (see the lock-ordering note in the module docs).
-    /// An `Arc` so the keepalive thread can serialize against the same write lock.
+    /// Held **only** around `transport.write_all` so two senders never interleave a frame. Never held
+    /// while locking `pending`/`desired`.
     write_lock: Arc<Mutex<()>>,
-    /// Rolling `SEQ` allocator; `fetch_add(1)` wraps at 255 → 0. An `Arc` so the keepalive thread
-    /// draws from the same monotonic sequence.
+    /// Rolling `SEQ` allocator; `fetch_add(1)` wraps 255 → 0.
     seq: Arc<AtomicU8>,
-    /// Monotonic per-query generation. Every [`register_query`](Device::register_query) takes a fresh
-    /// value; it tags the [`PendingEntry`] so a stale canceller can only evict its own waiter, never a
-    /// newer query that reused the same wire `SEQ`.
+    /// Monotonic per-query generation tagging each [`PendingEntry`], so a stale canceller can only
+    /// evict its own waiter, never a newer query that reused the same wire `SEQ`.
     query_gen: Arc<AtomicU64>,
-    /// In-flight `QUERY`→`RESP` correlation: `SEQ` → a generation-tagged one-shot the reader fulfils.
-    /// The `SEQ` chosen for a new query is guaranteed free of any currently-pending entry (see
-    /// [`register_query`](Device::register_query)), so two in-flight queries never share a wire `SEQ`.
+    /// In-flight `QUERY`→`RESP` correlation: `SEQ` → generation-tagged one-shot. A new query's `SEQ` is
+    /// chosen free of any pending entry, so two in-flight queries never share a wire `SEQ`.
     pending: Arc<Mutex<HashMap<u8, PendingEntry>>>,
-    /// Consumer half of the device LOG fan-out, handed out (cloned) by [`Device::logs`]. The producer
-    /// half lives only in the reader thread; reconnect swaps the transport, not the reader, so no
-    /// producer-half copy is needed here.
+    /// Consumer half of the LOG fan-out, cloned out by [`Device::logs`]; the producer half lives only
+    /// in the reader thread.
     logs_rx: flume::Receiver<LogLine>,
-    /// Intended button overrides; the keepalive + reconnect-reapply act on this (Task 3.6).
+    /// Intended button overrides; the keepalive and reconnect-reapply act on this.
     desired: Arc<Mutex<DesiredState>>,
-    /// Always-on atomic counters.
     counters: Arc<Counters>,
-    /// Set on drop / disconnect; the reader and keepalive observe it and exit.
+    /// Set on drop/disconnect; the reader and keepalive observe it and exit.
     stop: Arc<AtomicBool>,
-    /// Default timeout [`query`](Device::query) waits for a `RESP` (from [`ConnectOptions`], §10).
+    /// Default `RESP` wait for [`query`](Device::query) (from [`ConnectOptions`], §10).
     query_timeout: std::time::Duration,
-    /// The reader thread handle, joined on drop.
+    /// Thread handles, joined on drop.
     reader: Option<JoinHandle<()>>,
-    /// The keepalive thread handle, joined on drop (Task 3.6).
     keepalive: Option<JoinHandle<()>>,
 }
 
@@ -162,11 +136,9 @@ impl std::fmt::Debug for Inner {
 }
 
 impl Inner {
-    /// Generation-checked cancel: remove the pending entry under `seq` **only if** its generation
-    /// matches `gen`. A stale canceller (a timed-out query, or a fired async timer) thus never evicts a
-    /// newer query that reused the same wire `SEQ` — that newer entry carries a different `gen` and is
-    /// left untouched. Lives on `Inner` so the async timer can call it through a `Weak<Inner>` without
-    /// pinning the device alive.
+    /// Remove the pending entry under `seq` only if its generation matches `gen_id`, so a stale
+    /// canceller never evicts a newer query that reused the same wire `SEQ`. Lives on `Inner` so the
+    /// async timer can call it through a `Weak<Inner>` without pinning the device alive.
     pub(crate) fn cancel_query(&self, seq: u8, gen_id: u64) {
         let mut pending = self.pending.lock();
         if pending.get(&seq).is_some_and(|e| e.gen_id == gen_id) {
@@ -177,8 +149,8 @@ impl Inner {
 
 impl Drop for Inner {
     fn drop(&mut self) {
-        // Signal both threads, then join. The reader's read timeout bounds how long it can take to
-        // notice (≈100 ms real / a few ms mock), so this never hangs.
+        // Signal then join; the reader's read timeout (≈100 ms real / a few ms mock) bounds how long it
+        // takes to notice, so this never hangs.
         self.stop.store(true, Ordering::SeqCst);
         if let Some(h) = self.reader.take() {
             let _ = h.join();
@@ -191,32 +163,26 @@ impl Drop for Inner {
 
 /// The host control handle for one medius box.
 ///
-/// `Device` is `&self`-only, `Send + Sync`, and cheap to [`Clone`] (it is an `Arc<Inner>`). Cloning
-/// yields another handle to the *same* box and background threads; the threads stop and join when the
-/// last clone is dropped.
-///
-/// Construct it with [`Device::open`] (a path), [`Device::find`] (VID/PID scan), or — for tests and
-/// internal use — the crate-internal `from_transport` (no handshake).
+/// `Device` is `&self`-only, `Send + Sync`, and a cheap `Arc<Inner>` to [`Clone`]. Cloning yields
+/// another handle to the *same* box and threads; the threads stop and join on the last drop. Construct
+/// it with [`Device::open`] (a path), [`Device::find`] (VID/PID scan), or the crate-internal
+/// `from_transport` (no handshake).
 #[derive(Clone, Debug)]
 pub struct Device {
     inner: Arc<Inner>,
 }
 
 impl Device {
-    /// Wrap an already-open transport, spawn the reader **and** keepalive threads, and return the
-    /// device — **without** any handshake. The no-handshake seam used by tests (with the mock) and by
-    /// the public `mock` feature ([`Device::with_mock`]); [`Device::open`] uses the handshaking
-    /// `open_transport_with`/`from_transport_with` forms instead. Uses the default
-    /// [`ConnectOptions`](crate::ConnectOptions) (default keepalive cadence + query timeout). Dead in
-    /// a default no-feature, no-test build, hence the gated allow.
+    /// Wrap an already-open transport, spawn the reader and keepalive threads, and return the device —
+    /// **without** a handshake. The no-handshake seam for tests and the `mock` feature; [`Device::open`]
+    /// uses the handshaking forms. Default [`ConnectOptions`](crate::ConnectOptions).
     #[cfg_attr(not(any(test, feature = "mock")), allow(dead_code))]
     pub(crate) fn from_transport(transport: Arc<dyn Transport>) -> Device {
         Self::from_transport_with(transport, &crate::ConnectOptions::default())
     }
 
-    /// As [`from_transport`](Device::from_transport) but with an explicit keepalive cadence. Tests use
-    /// a short cadence so keepalive behaviour is observable without real 500 ms waits. The query
-    /// timeout stays at the [`ConnectOptions`](crate::ConnectOptions) default. (Test-only seam.)
+    /// As [`from_transport`](Device::from_transport) but with an explicit keepalive cadence, so tests
+    /// can observe keepalive behaviour without real 500 ms waits.
     #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn from_transport_with_cadence(
         transport: Arc<dyn Transport>,
@@ -226,19 +192,17 @@ impl Device {
         Self::from_transport_with(transport, &opts)
     }
 
-    /// As [`from_transport`](Device::from_transport) but driven by a full
-    /// [`ConnectOptions`](crate::ConnectOptions): the keepalive cadence and the query timeout both come
-    /// from `opts`. This is the single construction seam the public `open_with`/`find_with`
-    /// constructors route through.
+    /// As [`from_transport`](Device::from_transport) but driven by full
+    /// [`ConnectOptions`](crate::ConnectOptions). The single construction seam the public
+    /// `open_with`/`find_with` constructors route through.
     pub(crate) fn from_transport_with(
         transport: Arc<dyn Transport>,
         opts: &crate::ConnectOptions,
     ) -> Device {
         let keepalive_cadence = opts.keepalive_cadence;
         let query_timeout = opts.query_timeout;
-        // Build every piece of shared state as its own Arc BEFORE spawning, so each thread captures
-        // clones of exactly what it needs — never `Arc<Inner>` (which would form a cycle and block
-        // Drop's join).
+        // Build each shared piece as its own Arc BEFORE spawning, so threads capture only what they
+        // need — never `Arc<Inner>` (a cycle that would block Drop's join).
         let pending: Arc<Mutex<HashMap<u8, PendingEntry>>> = Arc::new(Mutex::new(HashMap::new()));
         let (logs_tx, logs_rx) = flume::bounded(logs::LOGS_CAPACITY);
         let counters = Arc::new(Counters::default());
@@ -258,8 +222,7 @@ impl Device {
             Arc::clone(&stop),
         );
 
-        // The keepalive shares the *write* state (transport, write_lock, seq, counters) and `desired`,
-        // never `Arc<Inner>` — same anti-cycle discipline as the reader.
+        // Keepalive shares the write state and `desired`, never `Arc<Inner>` (anti-cycle, like the reader).
         let keepalive = reboot::spawn_keepalive(reboot::KeepaliveCtx {
             transport: Arc::clone(&transport),
             write_lock: Arc::clone(&write_lock),
@@ -288,7 +251,7 @@ impl Device {
         }
     }
 
-    /// The configured default query timeout (from [`ConnectOptions`](crate::ConnectOptions)).
+    /// The configured default query timeout.
     pub(crate) fn query_timeout_default(&self) -> std::time::Duration {
         self.inner.query_timeout
     }
@@ -298,11 +261,7 @@ impl Device {
         self.inner.seq.fetch_add(1, Ordering::Relaxed)
     }
 
-    /// Encode and write one frame with an explicit `SEQ`. Fire-and-go: returns once the bytes are
-    /// flushed to the transport.
-    ///
-    /// Holds [`Inner::write_lock`] **only** around `transport.write_all` (never while holding another
-    /// lock) so concurrent senders cannot interleave a frame.
+    /// Encode and fire one frame with an explicit `SEQ`, returning once the bytes are flushed.
     pub(crate) fn send_with_seq(&self, seq: u8, ty: FrameType, payload: &[u8]) -> Result<()> {
         write_frame(
             &self.inner.transport,
@@ -327,24 +286,17 @@ impl Device {
 
     // ---- internal accessors used by the sibling command/query/reconcile modules ----
 
-    /// Register a fresh query waiter: take a unique `gen`, then pick a wire `SEQ` that is **not**
-    /// currently pending, insert the generation-tagged one-shot under it, and return `(seq, gen, rx)`.
+    /// Register a fresh query waiter and return `(seq, gen, rx)`: take a unique generation, pick a wire
+    /// `SEQ` not currently pending, and insert the generation-tagged one-shot under it.
     ///
-    /// Picking a free `SEQ` (drawing [`next_seq`](Device::next_seq) repeatedly until the slot is empty,
-    /// up to 256 tries — a full sweep of the 8-bit `SEQ` space) **guarantees no two in-flight queries
-    /// ever share a wire `SEQ`**, so a `RESP` can never be cross-delivered to the wrong waiter (the two
-    /// would be indistinguishable on the wire). 256 tries always finds a free slot unless 256 queries
-    /// are concurrently in flight (effectively impossible — the box answers in microseconds); in that
-    /// unreachable case we fall back to the last drawn `SEQ`.
-    ///
-    /// The caller is the registrar; the higher-level [`register_query`](Device::register_query) on the
-    /// query path also sends the frame. This low-level form is shared by the sync and async query paths.
+    /// Picking a free `SEQ` guarantees no two in-flight queries share one, so a `RESP` can never be
+    /// cross-delivered (the two would be indistinguishable on the wire). The 256-draw sweep always finds
+    /// a free slot unless all 256 are in flight (unreachable — the box answers in microseconds), in
+    /// which case the last draw is reused.
     pub(crate) fn register_pending(&self) -> (u8, u64, flume::Receiver<Vec<u8>>) {
         let gen_id = self.inner.query_gen.fetch_add(1, Ordering::Relaxed);
         let (tx, rx) = flume::bounded::<Vec<u8>>(1);
         let mut pending = self.inner.pending.lock();
-        // Pick a SEQ not currently pending: a full 256-draw sweep always finds a free slot unless all
-        // 256 are occupied (unreachable). On the unreachable all-full case, the last draw is used.
         let mut seq = self.next_seq();
         for _ in 0..256 {
             if !pending.contains_key(&seq) {
@@ -356,22 +308,19 @@ impl Device {
         (seq, gen_id, rx)
     }
 
-    /// Generation-checked cancel (delegates to [`Inner::cancel_query`]): remove the pending entry under
-    /// `seq` **only if** its generation matches `gen`. A stale canceller (a timed-out query, or a fired
-    /// async timer) thus never evicts a newer query that reused the same wire `SEQ`.
+    /// Delegates to [`Inner::cancel_query`].
     pub(crate) fn cancel_query(&self, seq: u8, gen_id: u64) {
         self.inner.cancel_query(seq, gen_id);
     }
 
-    /// A `Weak` handle to the shared interior — for the async query timer, which must be able to cancel
-    /// a pending entry **without** pinning `Inner` alive (a held `Arc<Inner>` would defer shutdown).
+    /// A `Weak` handle to the interior, so the async query timer can cancel a pending entry without
+    /// pinning `Inner` alive (a held `Arc<Inner>` would defer shutdown).
     #[cfg(feature = "async")]
     pub(crate) fn weak_inner(&self) -> std::sync::Weak<Inner> {
         Arc::downgrade(&self.inner)
     }
 
-    /// The number of in-flight query waiters (diagnostic; used by the async timeout test to assert no
-    /// leak). Always available — cheap.
+    /// The number of in-flight query waiters (diagnostic; the async timeout test asserts no leak).
     pub fn pending_len(&self) -> usize {
         self.inner.pending.lock().len()
     }
@@ -386,15 +335,13 @@ impl Device {
         &self.inner.transport
     }
 
-    /// The reconnects counter (bumped by [`reconnect`](Device::reconnect)).
     pub(crate) fn counters_inner(&self) -> &Counters {
         &self.inner.counters
     }
 }
 
-/// Encode and write one frame, serialized by `write_lock` (held **only** around `write_all`). Used by
-/// [`Device::send_with_seq`] and the keepalive thread — both go through the swappable transport slot
-/// so a reconnect redirects them. Bumps `frames_tx` on success.
+/// Encode and fire one frame, serialized by `write_lock` (held **only** around `write_all`). Goes
+/// through the swappable slot so a reconnect redirects it; bumps `frames_tx` on success.
 fn write_frame(
     transport: &TransportSlot,
     write_lock: &Mutex<()>,
@@ -410,7 +357,7 @@ fn write_frame(
         current.write_all(&frame)?;
     }
     counters.inc_tx();
-    // Per-frame TX at TRACE only (timing-perturbing; never on the pacer's aggregate-only path).
+    // Per-frame TX at TRACE only (timing-perturbing; never on the pacer's aggregate path).
     trace_event!(
         target: "medius::transport",
         tracing::Level::TRACE,
@@ -422,8 +369,8 @@ fn write_frame(
     Ok(())
 }
 
-/// Spawn the reader thread. It owns clones of exactly the shared state it touches — never the whole
-/// `Inner` — so it cannot keep `Inner` alive against its own `Drop`.
+/// Spawn the reader thread. It clones only the shared state it touches, never `Inner`, so it cannot
+/// keep `Inner` alive against its own `Drop`.
 #[allow(clippy::too_many_arguments)]
 fn spawn_reader(
     transport: Arc<TransportSlot>,
@@ -439,16 +386,13 @@ fn spawn_reader(
         .expect("spawn medius-reader thread")
 }
 
-/// Back-off after a read error so the reader doesn't busy-spin on a dead port while waiting for a
-/// [`reconnect`](Device::reconnect) swap to install a fresh transport.
+/// Back-off after a read error so the reader doesn't busy-spin on a dead port while a
+/// [`reconnect`](Device::reconnect) swap installs a fresh transport.
 const READER_ERROR_BACKOFF: std::time::Duration = std::time::Duration::from_millis(20);
 
-/// The reader loop body (factored out so it stays readable and testable in isolation).
-///
-/// It loads the *current* transport from the slot each iteration, so after a reconnect swaps the slot
-/// the very same reader thread follows onto the new transport — no thread restart needed. The loop
-/// exits **only** on the `stop` flag (a read error backs off and retries, since the port may be about
-/// to be reconnected), so shutdown stays deterministic via Drop.
+/// The reader loop. It loads the current transport each iteration, so after a reconnect swap the same
+/// thread follows onto the new transport with no restart. Exits **only** on `stop` (a read error backs
+/// off and retries, since the port may be about to be reconnected).
 #[allow(clippy::too_many_arguments)]
 fn reader_loop(
     transport: &TransportSlot,
@@ -466,8 +410,8 @@ fn reader_loop(
         if stop.load(Ordering::SeqCst) {
             return;
         }
-        // A reconnect swap installs a fresh transport and bumps the generation. Reset the decoder so a
-        // frame interrupted mid-parse on the old port can't mis-frame the first bytes of the new one.
+        // On a reconnect swap (generation bumped), reset the decoder so a frame interrupted mid-parse on
+        // the old port can't mis-frame the first bytes of the new one.
         let generation = transport.generation();
         if generation != seen_generation {
             decoder = FrameDecoder::new();
@@ -476,22 +420,19 @@ fn reader_loop(
         let current = transport.current();
         match current.read(&mut buf) {
             Ok(0) => {
-                // Read timeout (or empty mock queue): nothing to do but re-check `stop`. A tiny
-                // sleep avoids a busy-spin against a mock whose read returns instantly; a real
-                // serial read already blocks ≈100 ms, making this a no-op there.
+                // Read timeout / empty mock queue: re-check `stop`. The tiny sleep avoids busy-spinning
+                // a mock that returns instantly; real serial reads already block ≈100 ms.
                 std::thread::sleep(READER_IDLE_POLL);
             }
             Ok(n) => {
                 decoder.feed(&buf[..n], |frame| {
                     route_frame(frame, pending, logs_tx, logs_rx, counters);
                 });
-                // Mirror the decoder's running CRC-drop total into the counters.
                 counters.set_crc_drops(decoder.crc_error_count());
             }
             Err(_) => {
-                // A read error means the current port is gone or hiccuping. Back off and retry rather
-                // than exit: `reconnect` may be about to swap in a fresh transport, and the same
-                // reader should follow onto it. Drop's `stop` still ends the loop promptly.
+                // Port gone or hiccuping: back off and retry rather than exit, since `reconnect` may be
+                // about to swap in a fresh transport. Drop's `stop` still ends the loop promptly.
                 std::thread::sleep(READER_ERROR_BACKOFF);
             }
         }
@@ -518,9 +459,8 @@ fn route_frame(
     );
     match frame.ty {
         FrameType::Resp => {
-            // Correlate by SEQ: remove the one-shot and deliver the payload. An absent SEQ (timed
-            // out / duplicate) is simply dropped. Because `register_pending` only ever assigns a SEQ
-            // that is currently free, at most one waiter is keyed on it, so this is the right one.
+            // Correlate by SEQ. An absent SEQ (timed out / duplicate) is dropped. `register_pending`
+            // only assigns a free SEQ, so at most one waiter is keyed on it.
             let entry = pending.lock().remove(&frame.seq);
             if let Some(entry) = entry {
                 let _ = entry.tx.send(frame.payload);
@@ -528,16 +468,13 @@ fn route_frame(
         }
         FrameType::Log => {
             let line = parse_log(&frame.payload);
-            // Re-emit the device LOG as a host tracing event (LOG level → tracing level), under
-            // `medius::device` — additional to the logs() channel, which still receives it below.
+            // Mirror the LOG as a host tracing event, in addition to the logs() channel below.
             #[cfg(feature = "tracing")]
             crate::trace::emit_device_log(&line);
-            // Bounded channel: on a full queue we drop the OLDEST line then push, so a non-draining
-            // consumer can never OOM the reader while still seeing the most recent logs.
             logs::push(logs_tx, logs_rx, line);
         }
-        // MOVE/WHEEL/BUTTON/RESET/QUERY/REBOOT_DL are PC→box; a box that ever echoes one, or any
-        // other type, is ignored (forward-compat, §2).
+        // MOVE/WHEEL/BUTTON/RESET/QUERY/REBOOT_DL are PC→box; an echo or any other type is ignored
+        // (forward-compat, §2).
         _ => {}
     }
 }

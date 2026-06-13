@@ -1,9 +1,8 @@
 //! Tests for the paced [`MovementSession`](super::MovementSession).
 //!
-//! The per-tick *decision* logic (coalescing / carry / idle / velocity) is tested **directly** on the
-//! pure [`Accumulator::tick_emit`](super::Accumulator) — no real-time thread, no wall-clock — so it is
-//! fully deterministic. One short, tolerant integration test exercises the actual `medius-pacer`
-//! thread against the mock to prove the wiring end to end.
+//! The per-tick decision (coalescing / carry / idle / velocity) is tested directly on the pure
+//! [`Accumulator::tick_emit`](super::Accumulator) — no thread, no wall-clock, fully deterministic. A
+//! short tolerant integration test exercises the real `medius-pacer` thread against the mock.
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -20,7 +19,6 @@ use super::Accumulator;
 fn idle_tick_emits_nothing() {
     let mut acc = Accumulator::default();
     assert_eq!(acc.tick_emit(), None);
-    // Still nothing on a subsequent idle tick.
     assert_eq!(acc.tick_emit(), None);
 }
 
@@ -30,10 +28,8 @@ fn many_pushes_in_one_window_coalesce_into_one_move() {
     acc.push(3, -1);
     acc.push(4, 0);
     acc.push(-2, 5);
-    // All three pushes landed before this tick → one MOVE of the sum.
-    assert_eq!(acc.tick_emit(), Some((5, 4)));
-    // Drained: the next tick is idle.
-    assert_eq!(acc.tick_emit(), None);
+    assert_eq!(acc.tick_emit(), Some((5, 4))); // one MOVE of the sum
+    assert_eq!(acc.tick_emit(), None); // drained
 }
 
 #[test]
@@ -52,12 +48,11 @@ fn total_emitted_equals_total_pushed_within_i16() {
 
 #[test]
 fn oversized_burst_is_paced_across_ticks_with_carry() {
-    // Push more than fits in one i16 field; it must be split across ticks at the wire limit and the
-    // TOTAL must be preserved exactly (carry retained in the accumulator).
+    // A push larger than one i16 field must split across ticks at the wire limit with the total
+    // preserved exactly (carry retained in the accumulator).
     let mut acc = Accumulator::default();
-    let big_x: i32 = 80_000; // > i16::MAX (32767) → needs ≥3 ticks
-    let big_y: i32 = -50_000; // < i16::MIN (-32768)
-    // Apply via several i16 pushes summing to the big totals.
+    let big_x: i32 = 80_000; // > i16::MAX → needs ≥3 ticks
+    let big_y: i32 = -50_000; // < i16::MIN
     for chunk in [30_000i16, 30_000, 20_000] {
         acc.push(chunk, 0);
     }
@@ -68,9 +63,7 @@ fn oversized_burst_is_paced_across_ticks_with_carry() {
     let mut total_x: i32 = 0;
     let mut total_y: i32 = 0;
     let mut ticks = 0;
-    // Drain to idle.
     while let Some((dx, dy)) = acc.tick_emit() {
-        // No single emitted field ever exceeds the i16 range (it is an i16 by construction).
         total_x += dx as i32;
         total_y += dy as i32;
         ticks += 1;
@@ -88,7 +81,6 @@ fn first_emitted_field_is_clamped_to_i16_max() {
     acc.push(30_000, 0); // sum 60_000 > i16::MAX
     let (dx, _) = acc.tick_emit().unwrap();
     assert_eq!(dx, i16::MAX, "first tick carries exactly the i16 ceiling");
-    // Remainder on the next tick.
     let (dx2, _) = acc.tick_emit().unwrap();
     assert_eq!(dx2 as i32, 60_000 - i16::MAX as i32);
 }
@@ -97,11 +89,9 @@ fn first_emitted_field_is_clamped_to_i16_max() {
 fn velocity_emits_every_tick() {
     let mut acc = Accumulator::default();
     acc.set_velocity(2, -3);
-    // Each tick emits the velocity, indefinitely.
     for _ in 0..5 {
         assert_eq!(acc.tick_emit(), Some((2, -3)));
     }
-    // Clearing it returns to idle.
     acc.clear_velocity();
     assert_eq!(acc.tick_emit(), None);
 }
@@ -111,10 +101,8 @@ fn velocity_and_push_combine_additively_in_one_tick() {
     let mut acc = Accumulator::default();
     acc.set_velocity(10, 10);
     acc.push(5, -4);
-    // Velocity folded in + the push → one combined MOVE.
-    assert_eq!(acc.tick_emit(), Some((15, 6)));
-    // Next tick: only the velocity remains (push was one-shot).
-    assert_eq!(acc.tick_emit(), Some((10, 10)));
+    assert_eq!(acc.tick_emit(), Some((15, 6))); // velocity + push combined
+    assert_eq!(acc.tick_emit(), Some((10, 10))); // push was one-shot; velocity remains
 }
 
 #[test]
@@ -134,19 +122,17 @@ fn decode_moves(mock: &MockTransport) -> Vec<DecodedFrame> {
         .collect()
 }
 
-/// A short, tolerant end-to-end run: spin the real pacer thread at a high rate, push deltas, and
-/// assert at least one MOVE frame reached the mock; then drop the session and assert it stopped.
+/// End-to-end: spin the real pacer at a high rate, push deltas, assert a MOVE reached the mock, then
+/// drop and assert it stopped.
 #[test]
 fn pacer_thread_emits_moves_then_stops_on_drop() {
     let mock = Arc::new(MockTransport::new());
     let device = Device::from_transport(mock.clone());
 
-    // High rate so several ticks land inside the short window.
+    // High rate so several ticks land in the short window; velocity guarantees an emission per tick.
     let session = device.movement_at(2000);
-    // Constant velocity guarantees an emission every tick regardless of push timing.
     session.set_velocity(1, 0);
 
-    // Run for ~30 ms.
     std::thread::sleep(Duration::from_millis(30));
 
     let moves = decode_moves(&mock);
@@ -154,21 +140,18 @@ fn pacer_thread_emits_moves_then_stops_on_drop() {
         !moves.is_empty(),
         "the pacer thread should have emitted at least one MOVE in 30ms"
     );
-    // Each emitted MOVE is the velocity (1, 0).
     assert!(moves.iter().all(|f| f.payload == vec![1, 0, 0, 0]));
 
-    // Drop stops and joins the pacer thread.
     drop(session);
     let _ = mock.written(); // clear anything emitted up to the drop
 
-    // After the drop, no further MOVE frames appear.
     std::thread::sleep(Duration::from_millis(20));
     assert!(
         decode_moves(&mock).is_empty(),
         "no MOVE frames must be emitted after the session is dropped"
     );
 
-    // The device itself still works (the session held only a clone).
+    // The device still works (the session held only a clone).
     device.move_rel(7, 7).unwrap();
     let after = decode_moves(&mock);
     assert_eq!(after.len(), 1);
@@ -182,7 +165,6 @@ fn pushed_deltas_are_paced_and_total_preserved() {
     let device = Device::from_transport(mock.clone());
     let session = device.movement_at(2000);
 
-    // Push a known total.
     let pushes: [(i16, i16); 4] = [(10, 0), (0, 10), (-3, 4), (5, -5)];
     let (mut tx, mut ty) = (0i32, 0i32);
     for &(dx, dy) in &pushes {
@@ -224,7 +206,6 @@ fn metrics_populate_after_running() {
     let device = Device::from_transport(mock.clone());
     let session = device.movement_at(2000);
     session.set_velocity(1, 0); // emit every tick → write-latency samples too
-
     std::thread::sleep(Duration::from_millis(30));
     let stats = session.stats();
     assert!(stats.ticks > 0, "the pacer should have recorded ticks");

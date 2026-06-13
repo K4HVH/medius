@@ -1,22 +1,13 @@
 //! The crate-wide structured error type (§8 of the design spec).
 //!
-//! `medius` uses a small, fully structured [`Error`] enum — **no** stringly-typed catch-all variant.
-//! Every failure mode the control plane can surface has its own variant, so callers can match on it
-//! (e.g. distinguish a handshake `NoReply` from a wrong `BadProtoVer` from a port that simply isn't
-//! present, [`Error::NotFound`]). Transport / OS failures are carried through transparently via
-//! [`Error::Io`].
-//!
-//! CRC failures are **not** represented here: the decoder drops corrupt frames silently and counts
-//! them for diagnostics ([`crate::protocol::FrameDecoder::crc_error_count`]); they are never surfaced
-//! per-frame, matching the firmware's "corrupt frames are never acted on" rule (§8).
+//! Fully structured, no stringly-typed catch-all: callers match on each variant. CRC failures are
+//! deliberately absent — the decoder drops corrupt frames silently and only counts them
+//! ([`crate::protocol::FrameDecoder::crc_error_count`]), per the firmware's "corrupt frames are never
+//! acted on" rule (§8).
 
 use crate::protocol::FrameError;
 
 /// The crate-wide error type (§8).
-///
-/// Constructed by the device, transport, and query layers; the pure `protocol/` layer has its own
-/// local [`FrameError`] (so it stays I/O-free), which converts into [`Error::FrameTooLong`] here via
-/// `From`.
 #[derive(thiserror::Error, Debug)]
 #[non_exhaustive]
 pub enum Error {
@@ -33,8 +24,6 @@ pub enum Error {
     NoReply,
 
     /// Handshake: the box answered, but with a protocol version this library does not speak.
-    ///
-    /// The library targets [`crate::protocol::PROTO_VER`]; any other value is rejected here.
     #[error("unsupported protocol version {got} (expected {expected})", expected = crate::protocol::PROTO_VER)]
     BadProtoVer {
         /// The protocol version the box reported.
@@ -50,16 +39,11 @@ pub enum Error {
     Disconnected,
 
     /// An outbound payload exceeded the maximum frame payload ([`crate::protocol::MAX_PAYLOAD`]).
-    ///
-    /// Produced by the frame encoder; see [`FrameError`].
     #[error("frame payload too long (max {max} bytes)", max = crate::protocol::MAX_PAYLOAD)]
     FrameTooLong,
 
-    /// The external flash tool (`esptool`) failed (feature = `flash`).
-    ///
-    /// Carries a human-readable reason — a non-zero exit (with captured stderr) or a spawn failure.
-    /// The underlying spawn `io::Error`, when present, is surfaced as [`Error::Io`] instead; this
-    /// variant is the tool's *own* failure (bad exit status, etc.).
+    /// The external flash tool (`esptool`) failed: a non-zero exit (with captured stderr) or a spawn
+    /// failure. A spawn `io::Error` surfaces as [`Error::Io`]; this is the tool's own bad exit.
     #[cfg(feature = "flash")]
     #[error("flash tool failed: {0}")]
     FlashTool(String),
@@ -69,10 +53,6 @@ pub enum Error {
 pub type Result<T> = core::result::Result<T, Error>;
 
 impl From<FrameError> for Error {
-    /// Map the pure-protocol [`FrameError`] into the crate error.
-    ///
-    /// The only `FrameError` variant is an over-length payload, which becomes
-    /// [`Error::FrameTooLong`].
     fn from(err: FrameError) -> Self {
         match err {
             FrameError::PayloadTooLong { .. } => Error::FrameTooLong,
@@ -84,7 +64,7 @@ impl From<FrameError> for Error {
 mod tests {
     use super::*;
 
-    /// Build one representative value of every variant for exhaustive Display/property tests.
+    /// One representative value of every variant.
     fn one_of_each() -> Vec<Error> {
         vec![
             Error::Io(std::io::Error::other("boom")),

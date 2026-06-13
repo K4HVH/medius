@@ -1,87 +1,66 @@
-//! Frame opcodes and wire constants — pinned to the documented wire values.
+//! Frame opcodes and wire constants, pinned to `ctrl_proto.h` / `control-protocol.md`.
 //!
-//! Every value here mirrors `firmware/device/components/inject/ctrl_proto.h` (the authoritative
-//! constants header) and `docs/protocol/control-protocol.md` (the byte-exact reference).
-//!
-//! Two test guards back this up (in the `tests` submodule):
-//! - `opcodes_match_firmware` pins the in-crate constants to their documented numeric values. It is a
-//!   Rust-literal-vs-Rust-literal check, so it catches an accidental in-crate edit — it does **not**
-//!   by itself detect firmware drift (both sides would have to be edited in lockstep).
-//! - `opcodes_match_ctrl_proto_header` provides the real drift guard: when the firmware header is
-//!   reachable (the monorepo dev env) it parses the `#define CTRL_*` values and asserts the Rust
-//!   constants equal them; when the header is absent (a published-crate build) it skips.
+//! Two `tests` guards back these up: `opcodes_match_firmware` (Rust-vs-Rust, catches an in-crate
+//! edit) and `opcodes_match_ctrl_proto_header` (the real drift guard — parses the firmware header
+//! when reachable, skips otherwise).
 
 use core::fmt;
 
-/// Start-of-frame byte. A receiver resynchronizes by scanning for this (§2).
+/// Start-of-frame byte; the receiver resyncs by scanning for it (§2).
 pub const SOF: u8 = 0xA5;
 
-/// Maximum payload length in bytes (§2). A `LEN` greater than this is rejected as bogus.
+/// Maximum payload length (§2); a larger `LEN` is rejected as bogus.
 pub const MAX_PAYLOAD: usize = 512;
 
-/// Protocol version reported in `RESP(VERSION)` (§4.1). The handshake requires this exact value.
+/// Protocol version in `RESP(VERSION)` (§4.1); the handshake requires this exact value.
 pub const PROTO_VER: u8 = 1;
 
 // ---- QUERY selectors (§3.5 / ctrl_proto.h `CTRL_Q_*`) ----
 
-/// `QUERY` selector: request a `RESP(VERSION)`.
 pub const Q_VERSION: u8 = 0;
-/// `QUERY` selector: request a `RESP(HEALTH)`.
 pub const Q_HEALTH: u8 = 1;
 
 // ---- BUTTON ids (§3.3 / ctrl_proto.h `CTRL_BTN_*`) ----
 
-/// `BUTTON` id: left button.
 pub const BTN_LEFT: u8 = 0;
-/// `BUTTON` id: right button.
 pub const BTN_RIGHT: u8 = 1;
-/// `BUTTON` id: middle button.
 pub const BTN_MIDDLE: u8 = 2;
-/// `BUTTON` id: side button 1.
 pub const BTN_SIDE1: u8 = 3;
-/// `BUTTON` id: side button 2.
 pub const BTN_SIDE2: u8 = 4;
-/// Number of standard buttons.
 pub const BTN_COUNT: u8 = 5;
 
 // ---- BUTTON actions (§3.3 / ctrl_proto.h `CTRL_ACT_*`) ----
 
-/// `BUTTON` action: soft-release (clear our injected press; defer to physical).
+/// Clear our injected press; defer to physical state.
 pub const ACT_SOFTREL: u8 = 0;
-/// `BUTTON` action: press (force the button down regardless of physical).
+/// Force the button down regardless of physical state.
 pub const ACT_PRESS: u8 = 1;
-/// `BUTTON` action: force-release (force the button up, masking a physical hold).
+/// Force the button up, masking a physical hold.
 pub const ACT_FORCEREL: u8 = 2;
 
 // ---- HEALTH flag bits (§4.2 / ctrl_proto.h `CTRL_H_*`) ----
 
-/// HEALTH flag: inter-chip link to the host chip is up.
+/// Inter-chip link to the host chip is up.
 pub const H_LINK_UP: u8 = 0x01;
-/// HEALTH flag: a real mouse is attached on the host chip.
+/// A real mouse is attached on the host chip.
 pub const H_MOUSE_ATT: u8 = 0x02;
-/// HEALTH flag: the clone has been configured by the game PC.
+/// The clone has been configured by the game PC.
 pub const H_CLONE_CFG: u8 = 0x04;
-/// HEALTH flag: injection is currently active.
+/// Injection is currently active.
 pub const H_INJECT_ON: u8 = 0x08;
 
 // ---- LOG levels (§4.3 / ctrl_proto.h `CTRL_LOG_*`) ----
 
-/// LOG level: error.
 pub const LOG_ERROR: u8 = 0;
-/// LOG level: warn.
 pub const LOG_WARN: u8 = 1;
-/// LOG level: info.
 pub const LOG_INFO: u8 = 2;
-/// LOG level: debug.
 pub const LOG_DEBUG: u8 = 3;
-/// LOG level: verbose.
 pub const LOG_VERBOSE: u8 = 4;
 
 /// A frame opcode (the `TYPE` byte, §3 / §4).
 ///
-/// Values are pinned to `ctrl_proto.h` `CTRL_*`. [`FrameType::try_from`] returns `Err` for any
-/// unknown byte so the decoder can consume-and-ignore unrecognized frames (the forward-compat
-/// mechanism, §2).
+/// `try_from` returns `Err` for an unknown byte so the decoder can consume-and-ignore it (§2
+/// forward-compat).
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
@@ -105,10 +84,7 @@ pub enum FrameType {
     Log = 0x08,
 }
 
-/// Error returned when a byte does not name a known [`FrameType`].
-///
-/// The decoder treats this as "unknown opcode → ignore the frame" (§2), so an unknown type never
-/// breaks compatibility.
+/// Error returned when a byte does not name a known [`FrameType`]; the decoder ignores the frame (§2).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct UnknownFrameType(pub u8);
 
@@ -148,13 +124,10 @@ impl From<FrameType> for u8 {
 mod tests {
     use super::*;
 
-    /// In-crate constant guard: pins every numeric value to its **documented** wire value
-    /// (`ctrl_proto.h` / `control-protocol.md`). This is a Rust-literal vs Rust-literal assertion, so
-    /// it catches an accidental in-crate edit but does **not**, on its own, detect firmware drift —
-    /// see `opcodes_match_ctrl_proto_header` for the best-effort header-parsing drift guard.
+    /// In-crate guard (Rust-vs-Rust): pins every value to its documented wire byte. Catches an
+    /// in-crate edit; firmware drift is `opcodes_match_ctrl_proto_header`'s job.
     #[test]
     fn opcodes_match_firmware() {
-        // Opcodes (CTRL_* frame TYPE).
         assert_eq!(FrameType::Move as u8, 0x01);
         assert_eq!(FrameType::Wheel as u8, 0x02);
         assert_eq!(FrameType::Button as u8, 0x03);
@@ -164,16 +137,13 @@ mod tests {
         assert_eq!(FrameType::RebootDl as u8, 0x07);
         assert_eq!(FrameType::Log as u8, 0x08);
 
-        // Framing constants.
         assert_eq!(SOF, 0xA5);
         assert_eq!(MAX_PAYLOAD, 512);
         assert_eq!(PROTO_VER, 1);
 
-        // QUERY selectors.
         assert_eq!(Q_VERSION, 0);
         assert_eq!(Q_HEALTH, 1);
 
-        // BUTTON ids.
         assert_eq!(BTN_LEFT, 0);
         assert_eq!(BTN_RIGHT, 1);
         assert_eq!(BTN_MIDDLE, 2);
@@ -181,18 +151,15 @@ mod tests {
         assert_eq!(BTN_SIDE2, 4);
         assert_eq!(BTN_COUNT, 5);
 
-        // BUTTON actions.
         assert_eq!(ACT_SOFTREL, 0);
         assert_eq!(ACT_PRESS, 1);
         assert_eq!(ACT_FORCEREL, 2);
 
-        // HEALTH flag bits.
         assert_eq!(H_LINK_UP, 0x01);
         assert_eq!(H_MOUSE_ATT, 0x02);
         assert_eq!(H_CLONE_CFG, 0x04);
         assert_eq!(H_INJECT_ON, 0x08);
 
-        // LOG levels.
         assert_eq!(LOG_ERROR, 0);
         assert_eq!(LOG_WARN, 1);
         assert_eq!(LOG_INFO, 2);
@@ -221,19 +188,13 @@ mod tests {
         assert_eq!(FrameType::try_from(0xFF), Err(UnknownFrameType(0xFF)));
     }
 
-    /// Best-effort **firmware drift** guard (FIX 7). Unlike [`opcodes_match_firmware`] (Rust-vs-Rust),
-    /// this parses the real `ctrl_proto.h` `#define CTRL_* <num>` lines and asserts the Rust constants
-    /// equal the firmware's values — true drift detection in the monorepo dev env.
-    ///
-    /// The header is located via the `MEDIUS_CTRL_PROTO_H` env var, else the sibling monorepo path
-    /// `<CARGO_MANIFEST_DIR>/../medius-fw/firmware/device/components/inject/ctrl_proto.h`. If neither
-    /// exists (a published-crate build), the test **passes** (skips) with an eprintln note, so it never
-    /// breaks a standalone build.
+    /// Best-effort firmware-drift guard: parses the real `ctrl_proto.h` `#define CTRL_* <num>` lines
+    /// and asserts the Rust constants equal them. Header located via `MEDIUS_CTRL_PROTO_H`, else the
+    /// sibling `../medius-fw/.../ctrl_proto.h`; absent (published-crate build) → skip and pass.
     #[test]
     fn opcodes_match_ctrl_proto_header() {
         use std::path::PathBuf;
 
-        // Locate the header: env override first, then the sibling firmware-repo path.
         let path = match std::env::var_os("MEDIUS_CTRL_PROTO_H") {
             Some(p) => PathBuf::from(p),
             None => {
@@ -251,8 +212,7 @@ mod tests {
             return;
         };
 
-        // Parse every `#define CTRL_<NAME> <number>` (decimal or 0x-hex), ignoring trailing comments
-        // and function-like macros (a define whose token after the name starts with `(`).
+        // Parse `#define CTRL_<NAME> <number>` (decimal or 0x-hex), skipping function-like macros.
         let mut defs: std::collections::HashMap<String, u64> = std::collections::HashMap::new();
         for line in src.lines() {
             let line = line.trim();
@@ -262,7 +222,7 @@ mod tests {
             let mut it = rest.split_whitespace();
             let Some(name) = it.next() else { continue };
             if !name.starts_with("CTRL_") || name.contains('(') {
-                continue; // not a plain CTRL_* value define
+                continue;
             }
             let Some(tok) = it.next() else { continue };
             let val = if let Some(hex) = tok.strip_prefix("0x").or_else(|| tok.strip_prefix("0X")) {
@@ -280,7 +240,6 @@ mod tests {
             path.display()
         );
 
-        // (firmware #define name, Rust constant value) — assert each present define matches.
         let expected: &[(&str, u64)] = &[
             ("CTRL_MOVE", FrameType::Move as u64),
             ("CTRL_WHEEL", FrameType::Wheel as u64),

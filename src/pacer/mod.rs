@@ -1,43 +1,27 @@
 //! The paced movement session — the headline 1 kHz frame pacer (§7 of the design spec).
 //!
-//! [`MovementSession`] is the whole reason this library exists over the Python reference client: a
-//! dedicated real-time thread (named `medius-pacer`) that clocks **frame emission** at a fixed rate
-//! (default 1 kHz) on a precise absolute-deadline clock. Each tick it drains a shared delta
-//! accumulator and emits **at most one** `MOVE` frame for that window.
+//! [`MovementSession`] runs a dedicated real-time thread (`medius-pacer`) that clocks **frame
+//! emission** at a fixed rate (default 1 kHz) on a precise absolute-deadline clock. Each tick it
+//! drains a shared delta accumulator and emits **at most one** `MOVE` for that window.
 //!
-//! ## It paces frames — it never invents motion
+//! It paces frames; it never invents motion. No humanization, interpolation, or easing — it only
+//! clocks when frames go out and splits an oversized burst across ticks at the wire field limit. The
+//! firmware owns motion semantics (additive no-halving merge, descriptor-clamped carry-remainder).
 //!
-//! There is **no humanization** anywhere in here. The session does not interpolate, ease, smooth, or
-//! synthesize intermediate points; it only *clocks when frames go out* and *splits an oversized burst
-//! across ticks at the wire field limit*. The firmware owns the real motion semantics — additive
-//! "no-halving" merge, descriptor-clamped carry-remainder so a `MOVE 2000` lands as exactly 2000.
-//! The session never re-implements any of that.
+//! The `i32`-per-axis accumulator lets many [`push`](MovementSession::push)es in one window sum
+//! without overflow. Each tick drains it, but the emitted `MOVE` carries only what fits in an `i16`
+//! wire field; the beyond-`i16` remainder stays in the accumulator for the next tick, so total motion
+//! is preserved exactly. (The firmware's separate, finer carry against the mouse's native descriptor
+//! width is not duplicated here.)
 //!
-//! ## What "carry" means here (wire-field pacing, not trajectory synthesis)
+//! [`set_velocity`](MovementSession::set_velocity) folds a constant `(vx, vy)` into the accumulator
+//! *before* draining every tick, so it combines additively with pushes through the same carry until
+//! changed or [`clear_velocity`](MovementSession::clear_velocity)ed. Zero velocity + no pushes drains
+//! to zero and emits nothing — the firmware frame clock handles stillness (§5.3).
 //!
-//! The shared accumulator is an `i32` per axis, so many [`push`](MovementSession::push)es landing in
-//! one tick window sum without overflow. Each tick the accumulator is drained, but the emitted `MOVE`
-//! carries only what fits in an `i16` wire field; any beyond-`i16` remainder **stays in the
-//! accumulator** for the next tick. So total motion is preserved exactly and an oversized burst is
-//! *paced across ticks at the wire field limit* — this is wire-field pacing, not a trajectory the host
-//! made up. (The firmware additionally carries against the mouse's native descriptor field width;
-//! that is a separate, finer carry the host does not duplicate.)
-//!
-//! ## Velocity mode
-//!
-//! [`set_velocity`](MovementSession::set_velocity) emits a constant `(vx, vy)` **every tick** until
-//! changed or [`clear_velocity`](MovementSession::clear_velocity)ed. It combines additively with
-//! pushes: each tick the velocity is added into the accumulator *before* draining, so a push and a
-//! velocity in the same window sum into one `MOVE`, and both flow through the same `i16` carry. With a
-//! zero velocity and no pushes, a tick drains to zero and emits **nothing** (the firmware frame clock
-//! handles stillness — §5.3).
-//!
-//! ## Thread lifecycle (stop/join, no cycle)
-//!
-//! The session holds a [`Device`] clone, the shared accumulator, a stop flag, and the pacer thread's
-//! [`JoinHandle`]. It is **not** stored inside the device's `Inner`, so there is no reference cycle —
-//! exactly the anti-cycle discipline the device threads use. `Drop` sets the stop flag and joins the
-//! pacer thread; residual deltas are **not** force-flushed (fire-and-go, §7).
+//! The session holds a [`Device`] clone and is **not** stored in the device's `Inner`, so there is no
+//! reference cycle. `Drop` sets the stop flag and joins the thread; residual deltas are not
+//! force-flushed (fire-and-go, §7).
 
 pub(crate) mod clock;
 
@@ -64,74 +48,54 @@ pub(crate) mod metrics;
 /// Default pacer rate (Hz) — the headline 1 kHz frame cadence.
 pub const DEFAULT_RATE_HZ: u32 = 1000;
 
-/// Convert a rate in Hz to a tick period. A zero rate is treated as 1 Hz (the clock further clamps a
-/// zero period), so the pacer never divides by zero or spins on a 0 ns grid.
+/// Rate in Hz to tick period. A zero rate is treated as 1 Hz so we never divide by zero.
 fn rate_to_period(hz: u32) -> Duration {
     let hz = hz.max(1);
     Duration::from_nanos(1_000_000_000u64 / hz as u64)
 }
 
-/// The shared per-tick movement state: an `i32` push accumulator (so many pushes in one window can't
-/// overflow) plus the current constant velocity.
+/// The shared per-tick movement state: an `i32` push accumulator plus the current constant velocity.
 ///
-/// This is the **pure**, thread-free heart of the pacer. [`tick_emit`](Accumulator::tick_emit)
-/// computes one tick's emission decision with no clock and no I/O, so the coalescing / carry / idle /
-/// velocity logic is unit-tested directly without the real-time thread.
+/// The pure, thread-free heart of the pacer: [`tick_emit`](Accumulator::tick_emit) computes one tick's
+/// emission with no clock or I/O, so coalescing / carry / idle / velocity is unit-tested directly.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct Accumulator {
     /// Pending relative X (pushes + carried `i16` remainder), drained each tick.
     acc_x: i32,
-    /// Pending relative Y.
     acc_y: i32,
-    /// Constant per-tick velocity X, added into the accumulator every tick until changed/cleared.
+    /// Constant per-tick velocity X, folded into the accumulator every tick until changed/cleared.
     vel_x: i16,
-    /// Constant per-tick velocity Y.
     vel_y: i16,
 }
 
 impl Accumulator {
-    /// Add a relative delta into the push accumulator (saturating, though `i32` headroom over `i16`
-    /// inputs means realistic push streams never reach the bound).
+    /// Add a relative delta (saturating; `i32` headroom means realistic streams never reach the bound).
     fn push(&mut self, dx: i16, dy: i16) {
         self.acc_x = self.acc_x.saturating_add(dx as i32);
         self.acc_y = self.acc_y.saturating_add(dy as i32);
     }
 
-    /// Set the constant per-tick velocity.
     fn set_velocity(&mut self, vx: i16, vy: i16) {
         self.vel_x = vx;
         self.vel_y = vy;
     }
 
-    /// Clear the constant velocity (back to push-only).
     fn clear_velocity(&mut self) {
         self.vel_x = 0;
         self.vel_y = 0;
     }
 
-    /// Compute one tick's emission and update the accumulator — the pure tick decision.
-    ///
-    /// Steps, in order:
-    /// 1. Fold the constant velocity into the accumulator (so velocity emits each tick and combines
-    ///    additively with pushes through the same carry).
-    /// 2. If the accumulator is now zero on **both** axes, emit **nothing** (`None`) — an idle tick
-    ///    sends no frame; the firmware frame clock handles stillness (§5.3).
-    /// 3. Otherwise clamp each axis to the `i16` wire-field range, **retain the beyond-`i16`
-    ///    remainder** in the accumulator, and return the clamped `(dx, dy)` to emit as one `MOVE`.
-    ///
-    /// Because the remainder is retained, the sum of all emitted deltas equals the total pushed (+
-    /// velocity per tick) exactly — an oversized burst is paced across ticks at the wire field limit.
+    /// One tick's emission decision: fold velocity in, emit `None` if both axes are now zero (idle tick
+    /// → no frame, firmware handles stillness §5.3), else clamp each axis to the `i16` wire field and
+    /// retain the remainder for the next tick. The retained remainder makes the emitted total exact.
     fn tick_emit(&mut self) -> Option<(i16, i16)> {
-        // 1. Fold velocity in (saturating into the i32 accumulator).
         self.acc_x = self.acc_x.saturating_add(self.vel_x as i32);
         self.acc_y = self.acc_y.saturating_add(self.vel_y as i32);
 
-        // 2. Idle tick → emit nothing.
         if self.acc_x == 0 && self.acc_y == 0 {
             return None;
         }
 
-        // 3. Clamp to i16, retaining the remainder for the next tick.
         let dx = self.acc_x.clamp(i16::MIN as i32, i16::MAX as i32);
         let dy = self.acc_y.clamp(i16::MIN as i32, i16::MAX as i32);
         self.acc_x -= dx;
@@ -140,16 +104,12 @@ impl Accumulator {
     }
 }
 
-/// Shared state between the public [`MovementSession`] handle and its pacer thread.
-///
-/// Held behind an [`Arc`] so the thread and the handle reference the same accumulator. The session
-/// handle does **not** live in the device's `Inner`, so this `Arc` forms no cycle with the device.
+/// Shared state between the [`MovementSession`] handle and its pacer thread (behind an [`Arc`]; forms
+/// no cycle since the session is not stored in the device's `Inner`).
 #[derive(Debug)]
 struct Shared {
-    /// The push/velocity accumulator (the pure [`Accumulator`]), mutated by `push`/`set_velocity`
-    /// from any thread and drained by the pacer thread each tick.
     acc: Mutex<Accumulator>,
-    /// Tick period in nanoseconds; the pacer thread reads it each tick so `set_rate` retunes live.
+    /// Tick period in nanoseconds; re-read each tick so `set_rate` retunes live.
     period_ns: AtomicU64,
     /// Set on drop; the pacer thread observes it and exits.
     stop: AtomicBool,
@@ -157,9 +117,8 @@ struct Shared {
 
 /// A paced movement session over a [`Device`] — the headline 1 kHz frame pacer.
 ///
-/// Created by [`Device::movement`]. Spawns a dedicated real-time thread (`medius-pacer`) that clocks
-/// frame emission on a precise absolute-deadline clock. See the [module docs](self) for the
-/// no-humanization guarantee, the wire-field carry, velocity mode, and the stop/join lifecycle.
+/// Created by [`Device::movement`]. See the [module docs](self) for the no-humanization guarantee, the
+/// wire-field carry, velocity mode, and the stop/join lifecycle.
 #[derive(Debug)]
 pub struct MovementSession {
     shared: Arc<Shared>,
@@ -169,8 +128,7 @@ pub struct MovementSession {
 }
 
 impl MovementSession {
-    /// Spawn the pacer thread at `rate_hz` over a clone of `device`. Internal — use
-    /// [`Device::movement`] / [`Device::movement_at`].
+    /// Spawn the pacer thread at `rate_hz` over a clone of `device`.
     fn spawn(device: Device, rate_hz: u32) -> MovementSession {
         let shared = Arc::new(Shared {
             acc: Mutex::new(Accumulator::default()),
@@ -206,26 +164,25 @@ impl MovementSession {
         }
     }
 
-    /// Accumulate a relative delta into the shared accumulator (it is *not* sent immediately — the
-    /// next tick drains and emits it). Many pushes within one tick window coalesce into a single
-    /// `MOVE` of their sum.
+    /// Accumulate a relative delta; the next tick drains and emits it. Pushes within one tick window
+    /// coalesce into a single `MOVE` of their sum.
     pub fn push(&self, dx: i16, dy: i16) {
         self.shared.acc.lock().push(dx, dy);
     }
 
-    /// Set a constant per-tick velocity: `(vx, vy)` is emitted **every tick** (combined additively
-    /// with any pushes) until changed or [`clear_velocity`](Self::clear_velocity)ed.
+    /// Set a constant per-tick velocity: `(vx, vy)` is emitted every tick (combined additively with
+    /// pushes) until changed or [`clear_velocity`](Self::clear_velocity)ed.
     pub fn set_velocity(&self, vx: i16, vy: i16) {
         self.shared.acc.lock().set_velocity(vx, vy);
     }
 
-    /// Clear the constant velocity (back to push-only). Any already-accumulated pushes still drain.
+    /// Clear the constant velocity (back to push-only). Already-accumulated pushes still drain.
     pub fn clear_velocity(&self) {
         self.shared.acc.lock().clear_velocity();
     }
 
-    /// Change the tick rate in Hz (default [`DEFAULT_RATE_HZ`]). Takes effect on the next tick; the
-    /// absolute-deadline grid is retuned without resetting (the clock advances by the new period).
+    /// Change the tick rate in Hz. Takes effect next tick; the absolute-deadline grid retunes without
+    /// resetting.
     pub fn set_rate(&self, hz: u32) {
         self.shared
             .period_ns
@@ -239,9 +196,6 @@ impl MovementSession {
     }
 
     /// A snapshot of the pacer metrics (tick count, late ticks, jitter + write-latency histograms).
-    ///
-    /// Only available with the `metrics` feature; when the feature is off the pacer records nothing
-    /// (zero-cost — no atomics, no branches in the hot loop).
     #[cfg(feature = "metrics")]
     pub fn stats(&self) -> PacerStats {
         self.metrics.snapshot()
@@ -250,9 +204,7 @@ impl MovementSession {
 
 impl Drop for MovementSession {
     fn drop(&mut self) {
-        // Signal stop and join the pacer thread. The pacer checks `stop` once per tick (≤ one period,
-        // ≈1 ms at the default rate), so this never hangs. Residual deltas are NOT force-flushed
-        // (fire-and-go, §7).
+        // The pacer checks `stop` once per tick (≤ one period), so the join never hangs.
         self.shared.stop.store(true, Ordering::SeqCst);
         if let Some(h) = self.pacer.take() {
             let _ = h.join();
@@ -261,8 +213,7 @@ impl Drop for MovementSession {
 }
 
 /// The pacer thread body: loop on the precise clock, draining the accumulator each tick and emitting
-/// at most one `MOVE`. Factored out so it reads top-to-bottom; the per-tick *decision* lives in the
-/// pure [`Accumulator::tick_emit`] (unit-tested without this thread).
+/// at most one `MOVE`. The per-tick decision lives in the pure [`Accumulator::tick_emit`].
 fn pacer_loop(
     device: &Device,
     shared: &Shared,
@@ -272,10 +223,8 @@ fn pacer_loop(
         shared.period_ns.load(Ordering::Relaxed),
     ));
 
-    // ~1/sec tracing AGGREGATE (Task 5.2 hot-path safety). The pacer NEVER traces per tick — that
-    // would perturb the 1 kHz path. Instead it counts ticks/frames and flushes ONE DEBUG event per
-    // ~1 s window. The whole mechanism is `#[cfg(feature = "tracing")]`, so with tracing off there is
-    // not even a counter in the loop (zero cost). See `PacerAggregate`.
+    // ~1/sec tracing aggregate (Task 5.2 hot-path safety): the pacer never traces per tick. The whole
+    // mechanism is cfg-gated, so with tracing off there is not even a counter in the loop.
     #[cfg(feature = "tracing")]
     let mut agg = PacerAggregate::new();
 
@@ -286,18 +235,16 @@ fn pacer_loop(
             return;
         }
 
-        // Live rate change: re-read the period and retune the clock if it changed.
+        // Live rate change: retune the clock if the period changed.
         let period = Duration::from_nanos(shared.period_ns.load(Ordering::Relaxed));
         if period != pacer.period() {
             pacer.set_period(period);
         }
 
-        // `metrics` records the realized inter-tick interval vs the ideal period (jitter / late
-        // ticks); compiled out entirely when the feature is off.
         #[cfg(feature = "metrics")]
         metrics.record_tick(period);
 
-        // Drain the accumulator (pure decision) under the lock, then release before sending.
+        // Drain under the lock, then release before sending.
         let to_emit = shared.acc.lock().tick_emit();
         #[cfg(feature = "tracing")]
         {
@@ -308,8 +255,8 @@ fn pacer_loop(
             #[cfg(feature = "metrics")]
             let write_start = std::time::Instant::now();
 
-            // One MOVE per tick (fire-and-go). A send error (port gone) is ignored — the next tick
-            // retries, matching the device layer's fire-and-go model; reconnect heals a dead port.
+            // Fire-and-go: a send error (port gone) is ignored — the next tick retries, and reconnect
+            // heals a dead port.
             let _ = device.move_rel(dx, dy);
             #[cfg(feature = "tracing")]
             {
@@ -320,7 +267,6 @@ fn pacer_loop(
             metrics.record_write_latency(write_start.elapsed());
         }
 
-        // Flush the ~1/sec aggregate (entirely absent when `tracing` is off).
         #[cfg(feature = "tracing")]
         agg.maybe_flush(
             #[cfg(feature = "metrics")]
@@ -329,22 +275,17 @@ fn pacer_loop(
     }
 }
 
-/// Per-second tracing aggregate for the pacer (Task 5.2, `tracing` feature only). Accumulates tick /
-/// frame counts and emits **one** DEBUG event per ~1 s window under `target: "medius::pacer"` — never
-/// per tick.
+/// Per-second tracing aggregate (Task 5.2): one DEBUG event per ~1 s window under
+/// `target: "medius::pacer"`, never per tick.
 #[cfg(feature = "tracing")]
 struct PacerAggregate {
-    /// When the current window opened.
     window_start: std::time::Instant,
-    /// Ticks run in the current window.
     ticks: u64,
-    /// `MOVE` frames emitted in the current window.
     frames: u64,
 }
 
 #[cfg(feature = "tracing")]
 impl PacerAggregate {
-    /// How long a tracing-aggregate window lasts before it is flushed (~1/sec, §10).
     const WINDOW: Duration = Duration::from_secs(1);
 
     fn new() -> Self {
@@ -355,10 +296,8 @@ impl PacerAggregate {
         }
     }
 
-    /// Emit the aggregate and reset the window if at least [`WINDOW`](Self::WINDOW) has elapsed.
-    ///
-    /// When the `metrics` feature is on, the jitter p50/p99 from the snapshot is included in the
-    /// event; otherwise just the frame/tick counts are reported.
+    /// Emit and reset the window once [`WINDOW`](Self::WINDOW) has elapsed (with jitter p50/p99 when
+    /// the `metrics` feature is on).
     fn maybe_flush(&mut self, #[cfg(feature = "metrics")] metrics: &MetricsState) {
         if self.window_start.elapsed() < Self::WINDOW {
             return;
@@ -396,10 +335,8 @@ impl PacerAggregate {
 impl Device {
     /// Open a [`MovementSession`] at the default rate ([`DEFAULT_RATE_HZ`], 1 kHz).
     ///
-    /// Spawns a dedicated real-time pacer thread that clocks `MOVE` emission; [`push`] deltas into it
-    /// and they are paced out one `MOVE` per tick. Drop the session to stop and join the thread.
-    ///
-    /// [`push`]: MovementSession::push
+    /// Spawns the pacer thread; [`push`](MovementSession::push) deltas into it and they pace out one
+    /// `MOVE` per tick. Drop the session to stop and join the thread.
     pub fn movement(&self) -> MovementSession {
         MovementSession::spawn(self.clone(), DEFAULT_RATE_HZ)
     }

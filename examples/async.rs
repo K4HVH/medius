@@ -1,11 +1,9 @@
 //! `AsyncDevice` queries against the hardware-free `mock` box, driven by `futures::executor::block_on`.
 //!
-//! Fully runnable with no hardware. Requires BOTH the `async` and `mock` features. The async wrapper
-//! is runtime-agnostic — `flume`'s `recv_async()` future is pollable by any executor (here the tiny
-//! `futures` block-on, but tokio / async-std / smol work identically). No tokio dependency is pulled
-//! in by the crate.
+//! No hardware; requires the `async` and `mock` features. The async wrapper is runtime-agnostic —
+//! `flume`'s `recv_async()` future is pollable by any executor (here `futures` block-on; tokio /
+//! async-std / smol work identically). The crate pulls in no tokio dependency.
 //!
-//! Run:
 //!     cargo run --example async --features async,mock
 
 use futures::executor::block_on;
@@ -21,13 +19,12 @@ fn main() {
         fw_patch: 9,
     });
 
-    // The async view is the SAME core as the sync Device (one Arc<Inner>, one reader, one transport).
+    // Same core as the sync Device (one Arc<Inner>, one reader, one transport).
     let device = Device::with_mock(mock).into_async();
 
-    // Only the queries are `async`; fire-and-go methods are instant non-blocking writes.
+    // Only queries are `async`; fire-and-go methods are instant non-blocking writes.
     device.press(Button::Left).expect("press is instant");
 
-    // Await the SEQ-correlated RESP on any executor.
     let version = block_on(device.query_version()).expect("async version query resolves");
     println!("async mock version: {version}");
     assert_eq!(

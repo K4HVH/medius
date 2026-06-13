@@ -2,16 +2,16 @@
 //!
 //! Host control library for the **medius** transparent mouse passthrough box.
 //!
-//! `medius` is the compiled control plane for a box whose firmware the project owns. It speaks the
-//! framed binary control protocol over the device-chip USB-serial link and sustains **1 kHz** MOVE
-//! injection — the production replacement for `smooth_inject.c`.
+//! The compiled control plane for a box whose firmware the project owns: speaks the framed binary
+//! control protocol over the device-chip USB-serial link and sustains **1 kHz** MOVE injection (the
+//! production replacement for `smooth_inject.c`).
 //!
-//! It is a transparent, precise control + injection layer. It does **not** smooth, humanize, or
-//! synthesize fake mouse behaviour; the firmware guarantees additive carry-remainder injection and
-//! descriptor-faithful clamping. The library's only "shaping" job is *pacing the frame stream*.
+//! It does **not** smooth, humanize, or synthesize mouse behaviour — the firmware owns additive
+//! carry-remainder injection and descriptor-faithful clamping. The library's only "shaping" job is
+//! pacing the frame stream.
 //!
-//! See `docs/superpowers/specs/2026-06-13-medius-rust-library-design.md` in the firmware repo for
-//! the full design, and `docs/protocol/control-protocol.md` for the byte-exact wire reference.
+//! See `docs/superpowers/specs/2026-06-13-medius-rust-library-design.md` for the full design and
+//! `docs/protocol/control-protocol.md` for the byte-exact wire reference.
 //!
 //! ## Feature flags
 //!
@@ -26,34 +26,29 @@
 // Transport needs `unsafe` for platform FFI; require it to be explicitly scoped.
 #![forbid(unsafe_op_in_unsafe_fn)]
 #![warn(missing_debug_implementations)]
-// On docs.rs (which sets `--cfg docsrs`), enable the nightly `doc_auto_cfg` feature so every
-// feature-gated item renders a "this is supported on feature X" badge. Gated on `docsrs`, so stable
-// builds (CI, downstream) never see the nightly feature.
+// docs.rs sets `--cfg docsrs`; gate the nightly feature-cfg badge feature on it so stable builds never see it.
 #![cfg_attr(docsrs, feature(doc_auto_cfg))]
 
-// Declared FIRST and `#[macro_use]` so its `trace_event!`/`trace_span!` macros are in scope for every
-// module below (Rust macro_rules visibility is textual/top-down). It expands to `tracing::…` with the
-// `tracing` feature on and to nothing when off, so call sites stay clean and the default build has no
-// tracing dependency (Task 5.2).
+// First + `#[macro_use]` so `trace_event!`/`trace_span!` are in scope crate-wide (macro_rules is textual).
 #[macro_use]
-mod trace; // M5 — internal tracing macro shim
+mod trace;
 
-pub mod protocol; // M1 — pure wire layer
+pub mod protocol;
 
-mod config; // M5 — ConnectOptions config surface (serde)
-mod device; // M3 — Device core, reader/keepalive threads, commands/queries/logs/reconcile
-mod error; // M2 — structured Error enum
-pub mod pacer; // M4 — paced MovementSession + precise tick clock
-mod transport; // M2 — private serial transport (+ mock)
+mod config;
+mod device;
+mod error;
+pub mod pacer;
+mod transport;
 
 #[cfg(feature = "async")]
-pub mod asyncv; // M5 — thin AsyncDevice wrapper over the same core
+pub mod asyncv;
 
 #[cfg(feature = "flash")]
-pub mod flash; // M5 — reboot-to-download + esptool orchestration
+pub mod flash;
 
 #[cfg(feature = "mock")]
-pub mod mock; // M5 — public scriptable fake box
+pub mod mock;
 
 pub use config::ConnectOptions;
 

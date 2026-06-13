@@ -1,25 +1,13 @@
-//! An in-memory [`Transport`] for hardware-free tests (the test/seam transport).
+//! An in-memory [`Transport`] for hardware-free tests.
 //!
-//! [`MockTransport`] is interior-mutable (a [`parking_lot::Mutex`] inside) so it satisfies the
-//! `&self` trait while being driven from a test. It does two things:
-//!
-//! - **Inbound:** a test pushes raw bytes ([`MockTransport::push_bytes`]) or whole encoded frames
-//!   ([`MockTransport::push_frame`]); [`Transport::read`] then drains them. An empty queue reads as
-//!   `Ok(0)` — simulating the real transport's read timeout (so a reader thread keeps polling).
-//! - **Outbound:** every [`Transport::write_all`] is appended to a capture buffer that a test drains
-//!   with [`MockTransport::written`] and decodes with [`crate::protocol::FrameDecoder`].
-//!
-//! ## Responder seam (for Milestone 5's `mock` feature)
-//!
-//! [`MockTransport::with_responder`] installs an optional callback invoked on every fully decoded
-//! outbound frame; whatever bytes it returns are queued as if the box had replied. This is the clean
-//! seam the public "programmable box" mode (auto-answering `QUERY(VERSION)`/`QUERY(HEALTH)`) will
-//! build on — but the full programmable box is not implemented here.
+//! [`MockTransport`] is interior-mutable (a [`parking_lot::Mutex`]) to satisfy the `&self` trait.
+//! Inbound: a test pushes bytes/frames and [`Transport::read`] drains them; an empty queue reads
+//! `Ok(0)`, simulating the real read timeout. Outbound: each [`Transport::write_all`] is captured for
+//! a test to drain via [`MockTransport::written`]. [`MockTransport::with_responder`] is the seam the
+//! future public "programmable box" mode builds on, but that mode is not implemented here.
 
-// The mock is purely a test double until the `mock` feature (Milestone 5) re-exports it publicly;
-// its scripting seams (`push_*`/`written`/`with_responder`) are only driven by tests, so the lib
-// build legitimately sees them as unused. Scoped to this module so a real unused item elsewhere is
-// still caught.
+// Test double until the `mock` feature re-exports it publicly; its seams are only driven by tests, so
+// the lib build sees them unused. Scoped to this module so real unused items elsewhere still fail.
 #![cfg_attr(not(test), allow(dead_code))]
 
 use std::collections::VecDeque;
@@ -30,11 +18,9 @@ use parking_lot::Mutex;
 use super::Transport;
 use crate::protocol::{FrameDecoder, FrameType, encode};
 
-/// A callback invoked on each decoded outbound frame; its return bytes are queued as an inbound
-/// reply. This is the seam the public programmable-box mode (Milestone 5) builds on.
+/// Callback invoked on each decoded outbound frame; its return bytes are queued as an inbound reply.
 type Responder = Box<dyn Fn(FrameType, u8, &[u8]) -> Vec<u8> + Send + Sync>;
 
-/// Mutable interior of [`MockTransport`], guarded by a single mutex.
 struct Inner {
     /// Bytes the box "sends" to the host; drained by [`Transport::read`].
     inbound: VecDeque<u8>,
@@ -42,13 +28,10 @@ struct Inner {
     outbound: Vec<u8>,
     /// Decoder for the outbound stream, used only when a responder is installed.
     out_decoder: FrameDecoder,
-    /// Optional auto-responder (the programmable-box seam).
     responder: Option<Responder>,
 }
 
-/// An in-memory transport for tests and the (future) public scriptable mock box.
-///
-/// See the [module docs](self) for the inbound/outbound model and the responder seam.
+/// An in-memory transport for tests and the future public scriptable mock box.
 pub(crate) struct MockTransport {
     inner: Mutex<Inner>,
 }
@@ -83,8 +66,8 @@ impl MockTransport {
         }
     }
 
-    /// Create a mock whose `responder` is invoked on every decoded outbound frame; the bytes it
-    /// returns are queued as inbound (as if the box replied). The seam for the programmable box.
+    /// Create a mock whose `responder` runs on every decoded outbound frame; its return bytes are
+    /// queued as inbound, as if the box replied. The seam for the programmable box.
     pub(crate) fn with_responder<F>(responder: F) -> Self
     where
         F: Fn(FrameType, u8, &[u8]) -> Vec<u8> + Send + Sync + 'static,
@@ -99,18 +82,17 @@ impl MockTransport {
         self.inner.lock().inbound.extend(bytes.iter().copied());
     }
 
-    /// Encode a frame (via [`crate::protocol::encode`]) and queue it inbound.
+    /// Encode a frame and queue it inbound.
     ///
     /// # Panics
-    /// Panics if `payload` exceeds [`crate::protocol::MAX_PAYLOAD`] — tests control their inputs, so
-    /// an over-length payload is a test bug, not a runtime condition.
+    /// If `payload` exceeds [`crate::protocol::MAX_PAYLOAD`] — a test bug, since tests control inputs.
     pub(crate) fn push_frame(&self, ty: FrameType, seq: u8, payload: &[u8]) {
         let frame = encode(ty, seq, payload).expect("mock push_frame: payload too long");
         self.push_bytes(&frame);
     }
 
     /// Drain and return all bytes the host has written so far (decodable with a
-    /// [`crate::protocol::FrameDecoder`]). Leaves the capture buffer empty.
+    /// [`crate::protocol::FrameDecoder`]).
     pub(crate) fn written(&self) -> Vec<u8> {
         std::mem::take(&mut self.inner.lock().outbound)
     }
@@ -121,8 +103,8 @@ impl Transport for MockTransport {
         let mut inner = self.inner.lock();
         inner.outbound.extend_from_slice(buf);
 
-        // If a responder is installed, feed the outbound bytes through a decoder and queue any
-        // reply it produces. We avoid borrowing `inner` twice by collecting replies first.
+        // Feed outbound bytes through the decoder and queue any reply. Replies are collected first to
+        // avoid borrowing `inner` twice.
         if inner.responder.is_some() {
             let Inner {
                 out_decoder,
@@ -145,7 +127,7 @@ impl Transport for MockTransport {
         }
         let mut inner = self.inner.lock();
         if inner.inbound.is_empty() {
-            // Empty queue == read timeout (no data within the window).
+            // Empty queue == read timeout.
             return Ok(0);
         }
         let n = buf.len().min(inner.inbound.len());
@@ -161,7 +143,6 @@ mod tests {
     use super::*;
     use crate::protocol::{DecodedFrame, command::move_payload};
 
-    /// Decode every frame captured by `written()`.
     fn decode_all(bytes: &[u8]) -> Vec<DecodedFrame> {
         FrameDecoder::new().feed_collect(bytes)
     }
@@ -203,7 +184,6 @@ mod tests {
     #[test]
     fn push_frame_then_read_yields_it() {
         let mock = MockTransport::new();
-        // RESP(VERSION): [what=0][proto_ver][fw_major][fw_minor][fw_patch]
         mock.push_frame(FrameType::Resp, 0x05, &[0, 1, 2, 3, 4]);
 
         let mut buf = [0u8; 64];
@@ -231,7 +211,7 @@ mod tests {
         mock.push_bytes(&[1, 2, 3]);
         let mut empty: [u8; 0] = [];
         assert_eq!(mock.read(&mut empty).unwrap(), 0);
-        // The pushed bytes are still there.
+        // Pushed bytes are still there.
         let mut buf = [0u8; 8];
         assert_eq!(mock.read(&mut buf).unwrap(), 3);
         assert_eq!(&buf[..3], &[1, 2, 3]);
@@ -263,11 +243,9 @@ mod tests {
             }
         });
 
-        // Host sends QUERY(VERSION) with seq 0x20.
         mock.write_all(&encode(FrameType::Query, 0x20, &[0]).unwrap())
             .unwrap();
 
-        // The responder queued a RESP; read it back.
         let mut buf = [0u8; 64];
         let n = mock.read(&mut buf).unwrap();
         let frames = decode_all(&buf[..n]);

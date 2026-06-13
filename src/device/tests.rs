@@ -1,8 +1,7 @@
-//! Device core tests (Task 3.2) — reader routing, handshake, shutdown.
+//! Device core tests — reader routing, handshake, shutdown.
 //!
-//! All tests run against the in-memory [`MockTransport`] and its responder seam; none touch
-//! hardware. Thread-lifecycle tests are guarded with a short wall-clock budget so a regression that
-//! wedges the reader/Drop fails fast instead of hanging CI.
+//! All run against the in-memory [`MockTransport`]; none touch hardware. Thread-lifecycle tests carry a
+//! short wall-clock budget so a regression that wedges the reader/Drop fails fast instead of hanging CI.
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -14,16 +13,14 @@ use crate::transport::mock::MockTransport;
 
 use super::Device;
 
-/// Build a `Device` over a fresh mock, returning both the device and an `Arc` to the same mock so a
-/// test can push inbound frames / inspect captured writes after the device owns it.
+/// A `Device` plus an `Arc` to the same mock, so a test can push inbound frames / inspect writes.
 fn device_with_mock() -> (Device, Arc<MockTransport>) {
     let mock = Arc::new(MockTransport::new());
     let device = Device::from_transport(mock.clone());
     (device, mock)
 }
 
-/// A responder that answers `QUERY(VERSION)` with the given version bytes and `QUERY(HEALTH)` with
-/// the given flags, echoing the request `SEQ`.
+/// A responder answering `QUERY(VERSION)`/`QUERY(HEALTH)` with the given values, echoing the `SEQ`.
 fn version_health_responder(version: [u8; 4], health_flags: u8) -> Arc<MockTransport> {
     Arc::new(MockTransport::with_responder(move |ty, seq, payload| {
         if ty != FrameType::Query {
@@ -42,8 +39,8 @@ fn version_health_responder(version: [u8; 4], health_flags: u8) -> Arc<MockTrans
     }))
 }
 
-/// Run `f` on its own thread and require it to finish within `budget`, else fail (so a wedged
-/// reader/Drop fails fast instead of hanging the suite).
+/// Run `f` on its own thread and fail if it doesn't finish within `budget`, so a wedged reader/Drop
+/// fails fast instead of hanging the suite.
 fn within<F: FnOnce() + Send + 'static>(budget: Duration, f: F) {
     let (tx, rx) = flume::bounded(1);
     let h = std::thread::spawn(move || {
@@ -71,7 +68,6 @@ fn from_transport_spawns_reader_and_counts_tx() {
 fn handshake_succeeds_on_matching_version() {
     let mock = version_health_responder([1, 2, 3, 4], 0x0F);
     let device = Device::open_transport(mock).expect("handshake should succeed");
-    // query_version round-trips the version the responder reported.
     let v = device.query_version().unwrap();
     assert_eq!(v.proto_ver, 1);
     assert_eq!((v.fw_major, v.fw_minor, v.fw_patch), (2, 3, 4));
@@ -85,13 +81,11 @@ fn handshake_rejects_wrong_proto_ver() {
     assert!(matches!(err, Error::BadProtoVer { got: 9 }), "got {err:?}");
 }
 
-/// A silent mock (no responder) makes the handshake fail with `NoReply` (the query under the hood
-/// times out, surfaced as NoReply by the handshake).
+/// A silent mock makes the handshake fail with `NoReply` (the underlying query times out).
 #[test]
 fn handshake_on_silent_box_is_no_reply() {
     let mock = Arc::new(MockTransport::new());
-    // Keep the handshake fast: a full 1 s query timeout would slow the suite, so drive the query
-    // directly with a short timeout to assert the timeout path, then assert open_transport maps it.
+    // Drive the query directly with a short timeout rather than eat the full 1 s handshake timeout.
     let device = Device::from_transport(mock.clone());
     let err = device
         .query_timeout(0, Duration::from_millis(50))
@@ -119,7 +113,6 @@ fn reader_routes_log_to_logs_channel() {
         .expect("a LOG line should arrive");
     assert_eq!(line.level, LogLevel::Info);
     assert_eq!(line.text, "hi");
-    // frames_rx bumped for the routed frame.
     assert!(device.counters().frames_rx >= 1);
 }
 
@@ -159,7 +152,7 @@ fn clone_keeps_reader_alive_until_last_drop() {
     let (device, mock) = device_with_mock();
     let clone = device.clone();
     drop(device);
-    // The reader is still alive: a pushed LOG still routes through the surviving clone.
+    // Reader still alive: a pushed LOG routes through the surviving clone.
     let rx = clone.logs();
     mock.push_frame(FrameType::Log, 0, &[2, b'x']);
     let line = rx.recv_timeout(Duration::from_secs(1)).unwrap();
@@ -173,9 +166,8 @@ fn device_is_send_sync() {
     assert_send_sync::<Device>();
 }
 
-/// Tracing acceptance tests (Task 5.2): a tiny custom capturing subscriber (no `tracing-subscriber`
-/// dev-dep) records events by `target`, so we can assert a connect/query event fires and that the
-/// pacer does NOT trace per tick.
+/// Tracing acceptance tests: a tiny capturing subscriber (no `tracing-subscriber` dev-dep) tallies
+/// events by `target`, to assert connect/query events fire and the pacer does NOT trace per tick.
 #[cfg(feature = "tracing")]
 mod tracing_capture {
     use std::sync::Arc;
@@ -190,13 +182,11 @@ mod tracing_capture {
 
     use super::Device;
 
-    /// Install, exactly once for the whole test binary, a no-op **global** default subscriber whose
-    /// `max_level_hint` is `TRACE`. tracing computes its process-wide *static* max-level filter from the
-    /// installed default(s); the `event!` macros consult that filter **before** the active subscriber,
-    /// so if it sits at `OFF` (the state when no global default was ever set) events are dropped before
-    /// reaching any per-thread `with_default` subscriber. Pinning the global filter at `TRACE` here
-    /// makes the capture below deterministic regardless of parallel test ordering, while each test's
-    /// own thread-local `with_default` still decides *which* subscriber actually records the events.
+    /// Install once a no-op global default subscriber hinting `max_level = TRACE`. tracing's `event!`
+    /// macros consult the process-wide static max-level filter (computed from the global default)
+    /// BEFORE the active subscriber; with no global default it sits at `OFF` and events are dropped
+    /// before any per-thread `with_default` subscriber sees them. Pinning it at `TRACE` makes the
+    /// captures below deterministic regardless of parallel test ordering.
     fn ensure_tracing_enabled() {
         use std::sync::Once;
         static INIT: Once = Once::new();
@@ -204,7 +194,7 @@ mod tracing_capture {
             struct TraceLevelHint;
             impl Subscriber for TraceLevelHint {
                 fn enabled(&self, _: &Metadata<'_>) -> bool {
-                    false // record nothing; this exists only to raise the static max-level filter
+                    false // record nothing; exists only to raise the static max-level filter
                 }
                 fn max_level_hint(&self) -> Option<tracing::level_filters::LevelFilter> {
                     Some(tracing::level_filters::LevelFilter::TRACE)
@@ -218,15 +208,13 @@ mod tracing_capture {
                 fn enter(&self, _: &Id) {}
                 fn exit(&self, _: &Id) {}
             }
-            // Best-effort: if another test already set a global default, that's fine — the static
-            // filter is already raised. We ignore the error in that case.
+            // If another test already set a global default, the static filter is already raised; ignore.
             let _ = tracing::subscriber::set_global_default(TraceLevelHint);
         });
     }
 
-    /// A minimal [`Subscriber`] that counts emitted events, bucketed by `target` prefix
-    /// (`medius::device` / `medius::transport` / `medius::pacer`). It enables everything and does the
-    /// bare minimum the trait requires; we only care about the per-target event tallies.
+    /// A minimal [`Subscriber`] counting emitted events bucketed by `target` prefix (`medius::device` /
+    /// `medius::transport` / `medius::pacer`).
     #[derive(Clone, Default)]
     struct CountingSubscriber {
         device: Arc<AtomicU64>,
@@ -303,9 +291,8 @@ mod tracing_capture {
         );
     }
 
-    /// The pacer must NOT trace per tick: over a short run at 1 kHz (hundreds of ticks), the number of
-    /// `medius::pacer` events stays tiny (≈ the number of elapsed seconds), proving the aggregate-only
-    /// hot-path discipline.
+    /// The pacer must NOT trace per tick: over a 1 kHz run (hundreds of ticks) the `medius::pacer`
+    /// event count stays tiny (≈ elapsed seconds), proving the aggregate-only hot-path discipline.
     #[test]
     fn pacer_does_not_trace_per_tick() {
         ensure_tracing_enabled();
@@ -314,13 +301,12 @@ mod tracing_capture {
         tracing::subscriber::with_default(sub, || {
             let device = Device::from_transport(Arc::new(MockTransport::new()));
             let mv = device.movement(); // 1 kHz
-            mv.set_velocity(1, 0); // emit every tick → hundreds of frames over the run
+            mv.set_velocity(1, 0); // emit every tick
             std::thread::sleep(Duration::from_millis(250)); // ≈250 ticks
             drop(mv);
         });
         let pacer_events = pacer_count.load(Ordering::Relaxed);
-        // Per-tick tracing would be ~250 events; the aggregate is ~1/sec, so over 250 ms we expect 0
-        // (window not yet elapsed) or at most a small handful. Assert it is far below the tick count.
+        // Per-tick would be ~250; the aggregate is ~1/sec, so over 250 ms expect a small handful.
         assert!(
             pacer_events <= 3,
             "pacer must aggregate, not trace per tick — saw {pacer_events} pacer events"

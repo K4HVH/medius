@@ -1,11 +1,9 @@
 //! Serial port discovery — enumerate candidate ports and their USB VID/PID (§6 of the design spec).
 //!
-//! [`find_ports`] returns every candidate serial port with its USB vendor/product id;
-//! [`find_medius`] filters to the medius box by its CH343 (WCH) USB vendor **and** product id.
-//! Reconnect rescans by VID/PID (not a fixed path) so a re-enumerated device is found again.
-//!
-//! Enumeration is OS-specific and untestable here (it hits sysfs / SetupAPI), so the **parsing** is
-//! factored into pure helpers ([`parse_sysfs_hex`], [`parse_usb_hardware_id`]) that are unit-tested.
+//! [`find_ports`] lists every candidate serial port with its USB VID/PID; [`find_medius`] filters to
+//! the box by CH343 (WCH) vendor and product id. Reconnect rescans by VID/PID, not a fixed path, so a
+//! re-enumerated device is found again. OS-specific enumeration (sysfs/SetupAPI) is untestable here,
+//! so the parsing is factored into pure, unit-tested helpers.
 
 /// Information about one discovered serial port.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -23,16 +21,10 @@ pub struct PortInfo {
 pub const WCH_VID: u16 = 0x1A86;
 
 /// The CH343 USB product id, confirmed on the medius board hardware (`idProduct = 55d3`).
-///
-/// [`find_medius`] matches on **both** [`WCH_VID`] and this PID; the handshake remains the final gate.
 pub const CH343_PID: u16 = 0x55D3;
 
-/// Parse a sysfs hex id string (e.g. `"1a86"` from `idVendor`) into a `u16`.
-///
-/// Tolerates a trailing newline and surrounding whitespace (sysfs files end with `\n`) and an
-/// optional `0x` prefix. Returns `None` if the trimmed string is not valid hex or overflows `u16`.
-///
-/// Linux-only: only `linux_find_ports` consumes it (it parses sysfs `idVendor`/`idProduct`).
+/// Parse a sysfs hex id string (e.g. `"1a86"`) into a `u16`. Tolerates surrounding whitespace, a
+/// trailing newline, and an optional `0x` prefix; `None` on invalid hex or `u16` overflow.
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 fn parse_sysfs_hex(s: &str) -> Option<u16> {
     let t = s.trim();
@@ -47,10 +39,8 @@ fn parse_sysfs_hex(s: &str) -> Option<u16> {
 }
 
 /// Parse a Windows hardware-id string for the USB VID/PID, e.g.
-/// `USB\VID_1A86&PID_55D3&...` → `(0x1A86, 0x55D3)`.
-///
-/// Case-insensitive; tolerant of leading text and any trailing `&...` fields. Returns `None` if
-/// either `VID_` or `PID_` (followed by four hex digits) is absent.
+/// `USB\VID_1A86&PID_55D3&...` → `(0x1A86, 0x55D3)`. Case-insensitive; `None` if `VID_` or `PID_`
+/// (followed by four hex digits) is absent.
 #[cfg_attr(not(windows), allow(dead_code))]
 fn parse_usb_hardware_id(hwid: &str) -> Option<(u16, u16)> {
     let upper = hwid.to_ascii_uppercase();
@@ -71,9 +61,7 @@ fn extract_hex4_after(upper: &str, marker: &str) -> Option<u16> {
     }
 }
 
-/// Enumerate candidate serial ports with their USB VID/PID.
-///
-/// On unsupported targets this returns an empty `Vec`.
+/// Enumerate candidate serial ports with their USB VID/PID (empty on unsupported targets).
 pub fn find_ports() -> Vec<PortInfo> {
     #[cfg(target_os = "linux")]
     {
@@ -89,10 +77,8 @@ pub fn find_ports() -> Vec<PortInfo> {
     }
 }
 
-/// Discover medius boxes — [`find_ports`] filtered to the medius VID **and** PID (§6).
-///
-/// Matches on both [`WCH_VID`] and [`CH343_PID`] (the confirmed board USB id); the handshake remains
-/// the final gate that distinguishes a medius box from any other CH343-based serial device.
+/// Discover medius boxes: [`find_ports`] filtered to [`WCH_VID`] and [`CH343_PID`] (§6). The
+/// handshake remains the final gate distinguishing a box from any other CH343-based serial device.
 pub fn find_medius() -> Vec<PortInfo> {
     find_ports()
         .into_iter()
@@ -107,11 +93,10 @@ fn linux_find_ports() -> Vec<PortInfo> {
     use std::fs;
     use std::path::{Path, PathBuf};
 
-    /// Walk up from a tty's `device` dir until a directory containing `idVendor` is found (the USB
-    /// device dir, one or more levels above the interface dir), and read the VID/PID there.
+    /// Walk up from a tty's `device` dir to the USB device dir (which holds `idVendor`/`idProduct`)
+    /// and read the VID/PID. `device` symlinks to the USB *interface* dir; idVendor lives on an
+    /// ancestor.
     fn vid_pid_for(class_dir: &Path) -> Option<(u16, u16)> {
-        // `/sys/class/tty/ttyACMx/device` is a symlink to the USB *interface* dir; idVendor lives on
-        // an ancestor (the USB device dir). Canonicalize, then walk parents.
         let start: PathBuf = fs::canonicalize(class_dir.join("device")).ok()?;
         let mut dir: &Path = start.as_path();
         loop {
@@ -140,7 +125,7 @@ fn linux_find_ports() -> Vec<PortInfo> {
             continue;
         }
         let class_dir = entry.path();
-        // Only real USB-backed ttys have a `device` symlink resolving to an idVendor ancestor.
+        // Only USB-backed ttys resolve to an idVendor ancestor.
         if let Some((vid, pid)) = vid_pid_for(&class_dir) {
             ports.push(PortInfo {
                 path: format!("/dev/{name}"),
@@ -170,20 +155,19 @@ fn windows_find_ports() -> Vec<PortInfo> {
     /// `INVALID_HANDLE_VALUE` as an `HDEVINFO` (which is an `isize`, not a pointer).
     const INVALID_HDEVINFO: HDEVINFO = -1;
 
-    /// Read a string device property (REG_SZ / REG_MULTI_SZ) for one device, as a Rust `String`.
+    /// Read a string device property (REG_SZ / REG_MULTI_SZ) for one device.
     ///
     /// # Safety
-    /// `hdi` must be a valid device-info-set handle and `data` a valid populated `SP_DEVINFO_DATA`
-    /// from [`SetupDiEnumDeviceInfo`] on the same set.
+    /// `hdi` must be a valid device-info-set handle and `data` a populated `SP_DEVINFO_DATA` from
+    /// [`SetupDiEnumDeviceInfo`] on the same set.
     unsafe fn read_string_prop(
         hdi: HDEVINFO,
         data: *mut SP_DEVINFO_DATA,
         prop: u32,
     ) -> Option<String> {
-        // First call sizes the buffer.
         let mut needed: u32 = 0;
-        // SAFETY: passing a null buffer with size 0 is the documented size-probe form; `needed`
-        // receives the required byte count. `hdi`/`data` are valid per this fn's contract.
+        // SAFETY: null buffer + size 0 is the documented size-probe form; `needed` receives the
+        // required byte count. `hdi`/`data` valid per this fn's contract.
         unsafe {
             SetupDiGetDeviceRegistryPropertyW(
                 hdi,
@@ -198,17 +182,16 @@ fn windows_find_ports() -> Vec<PortInfo> {
         if needed == 0 {
             return None;
         }
-        // The size-probe returned FALSE with a null buffer; it is only trustworthy if it failed with
-        // ERROR_INSUFFICIENT_BUFFER. Any other failure (e.g. ERROR_INVALID_DATA on a corrupt entry)
-        // means `needed` is not a reliable size, so bail rather than allocate/read against it.
-        // SAFETY: GetLastError only reads the calling thread's last-error code; no other Windows call
-        // intervenes between the probe and here, so it reflects the probe's result.
+        // `needed` is only a reliable size if the probe failed with ERROR_INSUFFICIENT_BUFFER; any
+        // other failure (e.g. ERROR_INVALID_DATA on a corrupt entry) means bail, don't allocate.
+        // SAFETY: GetLastError reads this thread's last-error; no Windows call intervened since the
+        // probe.
         if unsafe { GetLastError() } != ERROR_INSUFFICIENT_BUFFER {
             return None;
         }
         let mut buf = vec![0u8; needed as usize];
-        // SAFETY: `buf` is `needed` bytes; the call fills it with a wide (UTF-16) string. `hdi`/
-        // `data` are valid per this fn's contract.
+        // SAFETY: `buf` is `needed` bytes; the call fills it with a UTF-16 string. `hdi`/`data` valid
+        // per this fn's contract.
         let ok = unsafe {
             SetupDiGetDeviceRegistryPropertyW(
                 hdi,
@@ -223,7 +206,7 @@ fn windows_find_ports() -> Vec<PortInfo> {
         if ok == 0 {
             return None;
         }
-        // Reinterpret the byte buffer as u16 and take up to the first NUL.
+        // Reinterpret as u16, up to the first NUL.
         let wide: Vec<u16> = buf
             .chunks_exact(2)
             .map(|c| u16::from_ne_bytes([c[0], c[1]]))
@@ -247,7 +230,7 @@ fn windows_find_ports() -> Vec<PortInfo> {
     let mut ports = Vec::new();
 
     // SAFETY: GUID_DEVCLASS_PORTS is a valid class GUID; null enumerator/parent request all present
-    // devices of that class. The returned handle is released via SetupDiDestroyDeviceInfoList below.
+    // devices of that class. Handle released via SetupDiDestroyDeviceInfoList below.
     let hdi = unsafe {
         SetupDiGetClassDevsW(
             &GUID_DEVCLASS_PORTS,
@@ -271,9 +254,8 @@ fn windows_find_ports() -> Vec<PortInfo> {
         }
         index += 1;
 
-        // SAFETY: `hdi`/`data` are valid for this iteration.
+        // SAFETY: `hdi`/`data` are valid for this iteration (both calls).
         let hwid = unsafe { read_string_prop(hdi, &mut data, SPDRP_HARDWAREID) };
-        // SAFETY: same.
         let friendly = unsafe { read_string_prop(hdi, &mut data, SPDRP_FRIENDLYNAME) };
 
         if let (Some(hwid), Some(friendly)) = (hwid, friendly)
@@ -301,10 +283,9 @@ mod tests {
     fn parse_sysfs_hex_typical() {
         assert_eq!(parse_sysfs_hex("1a86"), Some(0x1A86));
         assert_eq!(parse_sysfs_hex("55d3"), Some(0x55D3));
-        // sysfs files carry a trailing newline.
+        // Trailing newline, whitespace, uppercase, 0x prefix all tolerated.
         assert_eq!(parse_sysfs_hex("1a86\n"), Some(0x1A86));
         assert_eq!(parse_sysfs_hex("  ffff \n"), Some(0xFFFF));
-        // Uppercase and 0x prefix tolerated.
         assert_eq!(parse_sysfs_hex("0x1A86"), Some(0x1A86));
         assert_eq!(parse_sysfs_hex("FFFF"), Some(0xFFFF));
         assert_eq!(parse_sysfs_hex("0000"), Some(0x0000));
@@ -315,8 +296,7 @@ mod tests {
         assert_eq!(parse_sysfs_hex(""), None);
         assert_eq!(parse_sysfs_hex("   "), None);
         assert_eq!(parse_sysfs_hex("zzzz"), None);
-        // Overflows u16.
-        assert_eq!(parse_sysfs_hex("10000"), None);
+        assert_eq!(parse_sysfs_hex("10000"), None); // u16 overflow
     }
 
     #[test]
@@ -325,12 +305,12 @@ mod tests {
             parse_usb_hardware_id(r"USB\VID_1A86&PID_55D3&REV_0100"),
             Some((0x1A86, 0x55D3))
         );
-        // Lowercase input.
+        // Lowercase.
         assert_eq!(
             parse_usb_hardware_id(r"usb\vid_1a86&pid_55d3"),
             Some((0x1A86, 0x55D3))
         );
-        // Multi-field with an interface suffix.
+        // Interface-suffix field tolerated.
         assert_eq!(
             parse_usb_hardware_id(r"USB\VID_046D&PID_C534&MI_01"),
             Some((0x046D, 0xC534))
@@ -342,9 +322,8 @@ mod tests {
         assert_eq!(parse_usb_hardware_id(r"USB\VID_1A86"), None); // no PID
         assert_eq!(parse_usb_hardware_id(r"PID_55D3"), None); // no VID
         assert_eq!(parse_usb_hardware_id("nonsense"), None);
-        // VID_ marker but fewer than 4 hex digits after it.
+        // Fewer than 4 hex digits / non-hex after the marker.
         assert_eq!(parse_usb_hardware_id(r"USB\VID_1A&PID_55D3"), None);
-        // Non-hex digits after the marker.
         assert_eq!(parse_usb_hardware_id(r"USB\VID_ZZZZ&PID_55D3"), None);
     }
 
@@ -354,13 +333,11 @@ mod tests {
         assert_eq!(CH343_PID, 0x55D3);
     }
 
-    /// `find_medius` keeps only ports matching BOTH the WCH vendor id and the CH343 product id
-    /// (logic test independent of real enumeration).
+    /// `find_medius` keeps only ports matching BOTH the WCH vendor id and the CH343 product id.
     #[test]
     fn find_medius_filters_by_vendor_and_product() {
-        // Direct test of the filter predicate via a synthetic list (mirrors find_medius()).
         let all = vec![
-            // Match: medius VID + PID.
+            // Match.
             PortInfo {
                 path: "/dev/ttyACM0".into(),
                 vid: WCH_VID,
@@ -372,7 +349,7 @@ mod tests {
                 vid: 0x046D,
                 pid: 0xC534,
             },
-            // WCH vendor but a DIFFERENT CH product (e.g. CH340) — now rejected by the PID gate.
+            // WCH vendor but a different CH product (e.g. CH340) — rejected by the PID gate.
             PortInfo {
                 path: "/dev/ttyUSB0".into(),
                 vid: WCH_VID,

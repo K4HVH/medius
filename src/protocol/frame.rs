@@ -1,31 +1,23 @@
 //! Frame encoding and a streaming decoder — the wire packet codec.
 //!
-//! Wire frame (§2 of `docs/protocol/control-protocol.md`):
+//! Wire frame (§2 of `control-protocol.md`):
 //!
 //! ```text
 //! [SOF 0xA5][TYPE u8][SEQ u8][LEN u16 LE][PAYLOAD (LEN)][CRC16 u16 LE]
 //! ```
 //!
-//! The CRC16-CCITT (see [`super::crc`]) is computed over `TYPE | SEQ | LEN | PAYLOAD` — **not** the
-//! SOF byte and **not** the CRC bytes themselves. [`encode`] builds a frame; [`FrameDecoder`] is a
-//! byte-at-a-time streaming decoder that tolerates and ignores non-frame bytes, resyncs on SOF,
-//! verifies the CRC, and silently drops corrupt frames — a faithful port of `tools/medius.py`'s
-//! `_Decoder`.
+//! The CRC ([`super::crc`]) covers `TYPE | SEQ | LEN | PAYLOAD` — not SOF, not the CRC bytes.
+//! [`FrameDecoder`] is a port of `medius.py`'s `_Decoder`.
 
 use super::crc::crc16_ccitt;
 use super::opcode::{FrameType, MAX_PAYLOAD, SOF};
 
-/// Error returned by [`encode`] when a frame cannot be built.
-///
-/// This is a small, local error so `protocol/` stays free of any crate-wide `Error` (the device
-/// layer wraps it later). Encoding is otherwise infallible.
+/// Error returned by [`encode`]. A local error so `protocol/` stays free of any crate-wide `Error`
+/// (the device layer wraps it). Encoding is otherwise infallible.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FrameError {
-    /// The payload exceeds [`MAX_PAYLOAD`] (512) bytes and cannot be framed (§2).
-    PayloadTooLong {
-        /// The offending payload length.
-        len: usize,
-    },
+    /// The payload exceeds [`MAX_PAYLOAD`] and cannot be framed (§2).
+    PayloadTooLong { len: usize },
 }
 
 impl core::fmt::Display for FrameError {
@@ -40,23 +32,18 @@ impl core::fmt::Display for FrameError {
 
 impl core::error::Error for FrameError {}
 
-/// A fully decoded frame: its opcode, sequence number, and payload bytes.
+/// A fully decoded frame. Only known opcodes reach here; unknown types are dropped.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DecodedFrame {
-    /// The frame opcode (`TYPE`). Only known opcodes reach here; unknown types are dropped.
     pub ty: FrameType,
-    /// The rolling sequence number (`SEQ`).
     pub seq: u8,
-    /// The payload bytes (length `LEN`).
     pub payload: Vec<u8>,
 }
 
 /// Encode a frame: `[SOF][TYPE][SEQ][LEN_LO][LEN_HI][PAYLOAD..][CRC_LO][CRC_HI]`.
 ///
-/// The CRC is computed over `TYPE | SEQ | LEN | PAYLOAD` per §2.
-///
 /// # Errors
-/// Returns [`FrameError::PayloadTooLong`] if `payload` exceeds [`MAX_PAYLOAD`] (512) bytes.
+/// Returns [`FrameError::PayloadTooLong`] if `payload` exceeds [`MAX_PAYLOAD`].
 ///
 /// # Examples
 /// ```
@@ -75,7 +62,7 @@ pub fn encode(ty: FrameType, seq: u8, payload: &[u8]) -> Result<Vec<u8>, FrameEr
     let len_lo = (len & 0xFF) as u8;
     let len_hi = (len >> 8) as u8;
 
-    // CRC covers TYPE | SEQ | LEN | PAYLOAD (the header without SOF, plus the payload).
+    // CRC covers TYPE | SEQ | LEN | PAYLOAD (header without SOF, plus payload).
     let mut crc_input = Vec::with_capacity(4 + payload.len());
     crc_input.push(ty as u8);
     crc_input.push(seq);
@@ -96,40 +83,28 @@ pub fn encode(ty: FrameType, seq: u8, payload: &[u8]) -> Result<Vec<u8>, FrameEr
     Ok(frame)
 }
 
-/// Decoder state — the steps of the wire format, mirroring `medius.py`'s `_Decoder`.
+/// Decoder position in the wire format. `Sof` is the resync/idle state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum State {
-    /// Scanning for the SOF byte (resync / idle).
     Sof,
-    /// Reading the `TYPE` byte.
     Type,
-    /// Reading the `SEQ` byte.
     Seq,
-    /// Reading the low byte of `LEN`.
     LenLo,
-    /// Reading the high byte of `LEN`.
     LenHi,
-    /// Accumulating the `PAYLOAD` bytes.
     Payload,
-    /// Reading the low byte of the CRC.
     CrcLo,
-    /// Reading the high byte of the CRC.
     CrcHi,
 }
 
-/// A streaming frame decoder.
+/// A streaming frame decoder. Feed it bytes ([`FrameDecoder::feed`]); it invokes a callback per
+/// valid, CRC-checked, known-opcode frame. Deterministic and panic-free on any input (§2):
 ///
-/// Feed it bytes as they arrive ([`FrameDecoder::feed`]); it invokes a callback for every valid,
-/// CRC-checked, known-opcode frame. It is deterministic and panic-free on any input:
-///
-/// - **Resync:** non-frame bytes before a SOF are ignored; a stray SOF inside garbage restarts
-///   framing (§2).
-/// - **CRC drop:** a frame whose CRC fails is dropped silently and [`FrameDecoder::crc_error_count`]
-///   is incremented (§2 — "corrupt frames are never acted on").
-/// - **Oversize LEN:** a `LEN` greater than [`MAX_PAYLOAD`] is rejected and the decoder resyncs,
-///   counted in [`FrameDecoder::resync_count`]; no allocation of the bogus size occurs.
-/// - **Unknown opcode:** a CRC-valid frame whose `TYPE` is unknown is consumed and ignored (§2
-///   forward-compat), counted in [`FrameDecoder::unknown_type_count`].
+/// - **Resync:** non-frame bytes before a SOF are ignored; a stray SOF restarts framing.
+/// - **CRC drop:** a CRC failure is dropped silently, counted in [`FrameDecoder::crc_error_count`].
+/// - **Oversize LEN:** a `LEN` > [`MAX_PAYLOAD`] resyncs without allocating the bogus size, counted
+///   in [`FrameDecoder::resync_count`].
+/// - **Unknown opcode:** a CRC-valid frame with an unknown `TYPE` is consumed and ignored
+///   (forward-compat), counted in [`FrameDecoder::unknown_type_count`].
 #[derive(Debug)]
 pub struct FrameDecoder {
     state: State,
@@ -180,10 +155,8 @@ impl FrameDecoder {
         self.unknown_type_count
     }
 
-    /// Feed `data` to the decoder, invoking `on_frame` once per valid, known-opcode frame.
-    ///
-    /// Bytes may be delivered in any chunking (including one at a time); framing state persists
-    /// across calls. Never panics.
+    /// Feed `data`, invoking `on_frame` once per valid, known-opcode frame. Bytes may arrive in any
+    /// chunking; framing state persists across calls.
     pub fn feed(&mut self, data: &[u8], mut on_frame: impl FnMut(DecodedFrame)) {
         for &b in data {
             self.feed_byte(b, &mut on_frame);
@@ -203,7 +176,6 @@ impl FrameDecoder {
                 if b == SOF {
                     self.state = State::Type;
                 }
-                // else: non-frame byte, ignored (resync).
             }
             State::Type => {
                 self.ty = b;
@@ -221,7 +193,7 @@ impl FrameDecoder {
                 self.len |= (b as usize) << 8;
                 self.buf.clear();
                 if self.len > MAX_PAYLOAD {
-                    // Bogus length: resync without allocating the claimed size.
+                    // Resync without allocating the bogus size.
                     self.resync_count += 1;
                     self.state = State::Sof;
                 } else if self.len == 0 {
@@ -249,7 +221,6 @@ impl FrameDecoder {
     }
 
     fn finish_frame(&mut self, on_frame: &mut impl FnMut(DecodedFrame)) {
-        // Recompute the CRC over TYPE | SEQ | LEN | PAYLOAD and compare to the received CRC.
         let len = self.buf.len() as u16;
         let mut crc_input = Vec::with_capacity(4 + self.buf.len());
         crc_input.push(self.ty);
@@ -259,7 +230,7 @@ impl FrameDecoder {
         crc_input.extend_from_slice(&self.buf);
 
         if crc16_ccitt(&crc_input) != self.crc_rx {
-            // Corrupt frame: drop silently (§2), count it.
+            // Corrupt frame: drop silently (§2).
             self.crc_error_count += 1;
             return;
         }
@@ -287,12 +258,10 @@ mod tests {
     fn encode_move_exact_bytes() {
         let payload = [0x28, 0x00, 0x00, 0x00]; // dx=40, dy=0
         let frame = encode(FrameType::Move, 0x11, &payload).unwrap();
-        // Header + payload (everything but the CRC).
         assert_eq!(
             &frame[..9],
             &[SOF, 0x01, 0x11, 0x04, 0x00, 0x28, 0x00, 0x00, 0x00]
         );
-        // CRC over [TYPE, SEQ, LEN_LO, LEN_HI, PAYLOAD..] = [0x01,0x11,0x04,0x00,0x28,0x00,0x00,0x00].
         let crc = crc16_ccitt(&[0x01, 0x11, 0x04, 0x00, 0x28, 0x00, 0x00, 0x00]);
         assert_eq!(frame[9], (crc & 0xFF) as u8);
         assert_eq!(frame[10], (crc >> 8) as u8);
@@ -375,8 +344,7 @@ mod tests {
     #[test]
     fn crc_failure_is_dropped() {
         let mut frame = encode(FrameType::Move, 0, &[1, 2, 3, 4]).unwrap();
-        // Flip a payload byte (index 5 is the first payload byte after the 5-byte header).
-        frame[5] ^= 0xFF;
+        frame[5] ^= 0xFF; // first payload byte, after the 5-byte header
         let mut dec = FrameDecoder::new();
         let frames = dec.feed_collect(&frame);
         assert!(frames.is_empty());
@@ -478,16 +446,12 @@ mod tests {
     /// misframing is caught by the CRC, and the decoder recovers on the next clean frame.
     #[test]
     fn stray_sof_does_not_wedge_decoder() {
-        // A lone SOF then unrelated bytes that don't complete a valid frame, then a real frame.
         let frame = encode(FrameType::Reset, 0, &[]).unwrap();
         let mut stream = vec![SOF, 0x13, 0x37, 0x00]; // partial junk after a stray SOF
-        // A long run of non-SOF garbage flushes any partial state by being consumed as fields and
-        // then failing CRC; the real frame after it must decode.
         stream.extend_from_slice(&[0xDE, 0xAD, 0xBE, 0xEF, 0x11, 0x22, 0x33, 0x44]);
         stream.extend_from_slice(&frame);
         let mut dec = FrameDecoder::new();
         let frames = dec.feed_collect(&stream);
-        // The real RESET frame comes through (the decoder did not wedge on the stray SOF).
         assert!(
             frames
                 .iter()

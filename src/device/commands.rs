@@ -1,13 +1,11 @@
 //! Fire-and-go command methods (§3) — the primary `&self` control surface.
 //!
-//! Every method here encodes one command payload (via [`crate::protocol::command`]) and fires it with
-//! a fresh `SEQ` (§2.1: no ACK, no wait). Button commands also update the host's `DesiredState` so the
-//! keepalive/reconnect reconcile (Task 3.6) can keep or restore held overrides.
+//! Each method encodes one payload (via [`crate::protocol::command`]) and fires it with a fresh `SEQ`
+//! (§2.1: no ACK, no wait). Button commands also update the host's `DesiredState` for the
+//! keepalive/reconnect reconcile.
 //!
-//! **Lock ordering.** `desired` is updated and its guard **released** before the send takes the write
-//! lock — the two locks are never held together, preserving the deadlock-free discipline documented
-//! in [`super`]. There is a benign window where `desired` is updated before the frame reaches the box;
-//! it is bounded (one frame) and self-heals via reconcile, matching the firmware's fire-and-go model.
+//! Lock ordering: `desired` is updated and released before the send takes the write lock (never two
+//! locks at once). The benign one-frame window where `desired` leads the box self-heals via reconcile.
 
 use std::time::Duration;
 
@@ -32,12 +30,10 @@ impl Device {
         self.send(FrameType::Wheel, &wheel_payload(delta))
     }
 
-    /// `BUTTON` — set an injection override for one button (§3.3).
-    ///
-    /// Records the intent in the host's `DesiredState` (press/force hold the button; soft-release
-    /// clears our override) and then fires the frame.
+    /// `BUTTON` — set an injection override for one button (§3.3). Records the intent in `DesiredState`
+    /// (press/force hold; soft-release clears it), then fires the frame.
     pub fn button(&self, button: Button, action: ButtonAction) -> Result<()> {
-        // Update intended state, then release the lock BEFORE sending (never hold two locks).
+        // Release the desired lock BEFORE sending (never hold two locks).
         self.desired().lock().apply(button, action);
         self.send(
             FrameType::Button,
@@ -70,11 +66,8 @@ impl Device {
         self.send(FrameType::Reset, &[])
     }
 
-    /// A host-composed click: press, hold for `hold`, then soft-release (§3.3 — there is no firmware
-    /// click).
-    ///
-    /// This blocks the calling thread for `hold` (the press and release are themselves instant
-    /// fire-and-go writes). It emits a `BUTTON(press)` then, after the sleep, a `BUTTON(soft-release)`.
+    /// A host-composed click: press, block the calling thread for `hold`, then soft-release (§3.3 —
+    /// there is no firmware click).
     pub fn click(&self, button: Button, hold: Duration) -> Result<()> {
         self.press(button)?;
         std::thread::sleep(hold);
@@ -92,14 +85,12 @@ mod tests {
 
     use super::*;
 
-    /// Build a device over a mock and return both, so a test can inspect captured outbound frames.
     fn device_with_mock() -> (Device, Arc<MockTransport>) {
         let mock = Arc::new(MockTransport::new());
         let device = Device::from_transport(mock.clone());
         (device, mock)
     }
 
-    /// Decode every frame the host has written so far.
     fn written_frames(mock: &MockTransport) -> Vec<DecodedFrame> {
         FrameDecoder::new().feed_collect(&mock.written())
     }
@@ -162,11 +153,9 @@ mod tests {
         assert!(!device.desired().lock().is_idle());
 
         device.reset().unwrap();
-        // Desired state cleared.
         assert!(device.desired().lock().is_idle());
 
         let frames = written_frames(&mock);
-        // PRESS then RESET.
         let reset = frames.iter().find(|f| f.ty == FrameType::Reset).unwrap();
         assert!(reset.payload.is_empty());
     }
@@ -199,8 +188,7 @@ mod tests {
         assert_eq!(frames[0].payload, vec![0, 1]); // press Left
         assert_eq!(frames[1].ty, FrameType::Button);
         assert_eq!(frames[1].payload, vec![0, 0]); // soft-release Left
-        // Net effect on desired: idle again (pressed then released).
-        assert!(device.desired().lock().is_idle());
+        assert!(device.desired().lock().is_idle()); // pressed then released → idle
     }
 
     #[test]
@@ -211,7 +199,6 @@ mod tests {
         device.move_rel(3, 0).unwrap();
         let frames = written_frames(&mock);
         let seqs: Vec<u8> = frames.iter().map(|f| f.seq).collect();
-        // Distinct, monotonically increasing rolling seqs.
         assert_eq!(seqs, vec![0, 1, 2]);
     }
 }

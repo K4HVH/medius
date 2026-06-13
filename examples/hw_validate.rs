@@ -1,15 +1,15 @@
 //! Hardware injection validation (Linux only).
 //!
-//! Drives injection **through the `medius` library** while exclusively grabbing the clone's mouse
-//! event node (`EVIOCGRAB`) so the injected motion is measured here and **never reaches the desktop**.
-//! Checks observed-vs-injected for motion, wheel, button press/release, the 1 s silence auto-clear
-//! (no-stuck), and sustained **1 kHz no-halving** via the `MovementSession` pacer.
+//! Drives injection through the `medius` library while exclusively grabbing the clone's mouse event
+//! node (`EVIOCGRAB`) so injected motion is measured here and never reaches the desktop. Checks
+//! observed-vs-injected for motion, wheel, button press/release, the 1 s silence auto-clear
+//! (no-stuck), and sustained 1 kHz no-halving via the `MovementSession` pacer.
 //!
 //! ```text
 //! cargo run --example hw_validate -- [event_node=/dev/input/event11] [port]
 //! ```
-//! Needs read access to the event node (a logged-in user usually has it via a uaccess ACL; else run
-//! as root). The control port defaults to the first medius box found by VID/PID.
+//! Needs read access to the event node (uaccess ACL, else run as root). The port defaults to the
+//! first medius box by VID/PID.
 
 #[cfg(not(target_os = "linux"))]
 fn main() {
@@ -54,8 +54,8 @@ mod linux {
         btn_right: AtomicI64,
     }
 
-    /// Owns the grabbed fd; releases the grab and closes the fd on drop (even on panic) so injected
-    /// motion can never leak to the desktop after we exit.
+    /// Owns the grabbed fd; releases the grab and closes the fd on drop (even on panic), so injected
+    /// motion can't leak to the desktop after we exit.
     struct EvdevGrab {
         fd: RawFd,
     }
@@ -63,8 +63,8 @@ mod linux {
     impl EvdevGrab {
         fn open(path: &str) -> std::io::Result<Self> {
             let cpath = std::ffi::CString::new(path).unwrap();
-            // SAFETY: valid C string; the flags are valid. O_NONBLOCK so the reader polls `stop`
-            // instead of blocking forever in read() when injection is idle (clean shutdown).
+            // SAFETY: valid C string and flags. O_NONBLOCK so the reader polls `stop` rather than
+            // blocking in read() when injection is idle (clean shutdown).
             let fd = unsafe {
                 libc::open(
                     cpath.as_ptr(),
@@ -103,8 +103,7 @@ mod linux {
             // SAFETY: fd is valid; we read into a buffer of exactly EVENT_SIZE bytes.
             let n = unsafe { libc::read(fd, buf.as_mut_ptr() as *mut libc::c_void, EVENT_SIZE) };
             if n != EVENT_SIZE as isize {
-                // No data (EAGAIN on the non-blocking fd) / partial — nap briefly, then re-check
-                // `stop`. Buffered events are drained back-to-back (no nap while n == EVENT_SIZE).
+                // EAGAIN / partial: nap, then re-check `stop`. Buffered events drain back-to-back.
                 std::thread::sleep(std::time::Duration::from_millis(1));
                 continue;
             }
@@ -247,8 +246,8 @@ mod linux {
             pf(nostuck_ok)
         );
 
-        // 5) 1 kHz NO-HALVING — the headline: run the MovementSession pacer at constant velocity (1,0)
-        //    for 1 s and confirm ~1000 reports arrive (halving would show ~500).
+        // 5) 1 kHz NO-HALVING — the headline: pacer at velocity (1,0) for 1 s should deliver ~1000
+        //    reports (halving would show ~500).
         let _ = device.reset();
         std::thread::sleep(Duration::from_millis(100));
         acc.rel_x.store(0, Ordering::Relaxed);
@@ -272,7 +271,7 @@ mod linux {
 
         stop.store(true, Ordering::Relaxed);
         let _ = reader.join(); // non-blocking reader observes `stop` within ~1 ms
-        drop(grab); // release the EVIOCGRAB + close the fd
+        drop(grab);
 
         println!("\nRESULT: {}", if ok { "PASS ✓" } else { "FAIL ✗" });
         if ok {

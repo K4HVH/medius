@@ -1,18 +1,16 @@
 //! Typed command **payload** encoders (PC → box).
 //!
-//! Each function returns only the payload bytes for one command (§3) — frame wrapping (SOF, TYPE,
-//! SEQ, LEN, CRC) is the device layer's job, since it owns the rolling SEQ. All multi-byte integers
-//! are little-endian (§2). These are pure, total, and panic-free.
+//! Each returns only the payload bytes for one command (§3); frame wrapping is the device layer's
+//! job (it owns the rolling SEQ). Multi-byte integers are little-endian (§2).
 //!
-//! `RESET` (§3.4) has an empty payload, so there is no `reset_payload` — the device layer simply
-//! frames [`FrameType::Reset`] with `&[]`.
+//! `RESET` (§3.4) has an empty payload, so there is no `reset_payload` — the device layer frames
+//! [`FrameType::Reset`] with `&[]`.
 //!
 //! [`FrameType::Reset`]: super::opcode::FrameType::Reset
 
-/// `MOVE` payload (§3.1): `[dx i16 LE][dy i16 LE]`.
+/// `MOVE` payload (§3.1): `[dx i16 LE][dy i16 LE]`. `+dx` = right, `+dy` = down.
 ///
-/// `+dx` = right, `+dy` = down. No clamp — the full `i16` range is sent; the firmware clamps to the
-/// clone's descriptor field width with carry.
+/// No clamp: the full `i16` is sent; the firmware clamps to the clone's field width with carry.
 ///
 /// # Examples
 /// ```
@@ -25,10 +23,9 @@ pub fn move_payload(dx: i16, dy: i16) -> [u8; 4] {
     [dx[0], dx[1], dy[0], dy[1]]
 }
 
-/// `WHEEL` payload (§3.2): `[delta i16 LE]`.
+/// `WHEEL` payload (§3.2): `[delta i16 LE]`. `+` = up, `−` = down.
 ///
-/// `+` = up, `−` = down. No clamp — full `i16`; the firmware paces it across frames by the native
-/// wheel-field width with carry.
+/// No clamp: the firmware paces it across frames by the native wheel-field width with carry.
 ///
 /// # Examples
 /// ```
@@ -42,8 +39,7 @@ pub fn wheel_payload(delta: i16) -> [u8; 2] {
 /// `BUTTON` payload (§3.3): `[id u8][action u8]`.
 ///
 /// `id` ∈ 0..=4 (Left/Right/Middle/Side1/Side2); `action` ∈ {0 soft-release, 1 press,
-/// 2 force-release}. The raw bytes are passed through verbatim — validating/clamping is the typed
-/// device API's job (a command for an absent button is a firmware no-op).
+/// 2 force-release}. Bytes pass through verbatim; the typed device API validates.
 ///
 /// # Examples
 /// ```
