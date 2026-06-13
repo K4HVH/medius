@@ -26,42 +26,39 @@
 // docs.rs sets `--cfg docsrs`; gate the nightly feature-cfg badge feature on it so stable builds never see it.
 #![cfg_attr(docsrs, feature(doc_auto_cfg))]
 
-// First + `#[macro_use]` so `trace_event!`/`trace_span!` are in scope crate-wide (macro_rules is textual).
+// `#[macro_use]` first so `trace_event!` / `trace_span!` are in scope crate-wide (macro_rules is textual).
 #[macro_use]
 mod trace;
 
-pub(crate) mod protocol;
-pub mod types;
-
 mod device;
 mod error;
+pub(crate) mod protocol;
 mod transport;
+pub mod types;
+
+#[cfg(feature = "async")]
+pub mod asyncv;
+#[cfg(feature = "flash")]
+pub mod flash;
+#[cfg(feature = "mock")]
+pub mod mock;
 
 #[cfg(test)]
 mod tests;
 
-#[cfg(feature = "async")]
-pub mod asyncv;
-
-#[cfg(feature = "flash")]
-pub mod flash;
-
-#[cfg(feature = "mock")]
-pub mod mock;
-
-#[cfg(feature = "async")]
-pub use asyncv::AsyncDevice;
-
 pub use device::logs::LogStream;
 pub use device::{DEFAULT_KEEPALIVE_CADENCE, DEFAULT_QUERY_TIMEOUT, Device};
 pub use error::{Error, Result};
-#[cfg(feature = "mock")]
-pub use mock::MockBox;
 // Frame-inspection types the public `mock` surface exposes (the wire codec stays crate-private).
 pub use protocol::{DecodedFrame, FrameType};
 pub use transport::scan::find_medius;
-// The centralized public value vocabulary; also browsable as `medius::types::*`.
+// The public value vocabulary (also browsable as `medius::types::*`).
 pub use types::{
     Button, ButtonAction, CountersSnapshot, Health, LogLevel, LogLine, PortInfo, RebootTarget,
     Version,
 };
+
+#[cfg(feature = "async")]
+pub use asyncv::AsyncDevice;
+#[cfg(feature = "mock")]
+pub use mock::MockBox;
