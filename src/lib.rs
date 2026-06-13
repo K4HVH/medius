@@ -19,7 +19,6 @@
 //! - `mock` — a public scriptable fake box for hardware-free tests.
 //! - `metrics` — pacer jitter / latency histograms.
 //! - `flash` — `esptool` reboot + flash handoff.
-//! - `cli` — the `medius` operator/validation binary.
 //! - `tracing` — library-side instrumentation.
 //! - `serde` — derives on the public value types.
 

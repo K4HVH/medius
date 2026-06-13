@@ -26,7 +26,6 @@ the host application's job — build it on top, not in here.
 | `mock`     |         | `MockBox` — a public scriptable fake box for hardware-free tests.         |
 | `metrics`  |         | Pacer jitter / write-latency histograms (`MovementSession::stats`).       |
 | `flash`    |         | `esptool` reboot-to-download + flash handoff.                             |
-| `cli`      |         | The `medius` operator / validation binary (pulls `serde`, `metrics`, `tracing`). |
 | `tracing`  |         | Library-side `tracing` instrumentation (per-second pacer aggregate, never per tick). |
 | `serde`    |         | `Serialize`/`Deserialize` derives on the public value types + `ConnectOptions`. |
 
@@ -101,26 +100,6 @@ assert_eq!((v.fw_major, v.fw_minor, v.fw_patch), (2, 3, 4));
 device.press(Button::Left).unwrap();
 assert!(mock.saw(FrameType::Button));               // the command was recorded
 ```
-
-### The `medius` CLI
-
-The `cli` feature builds an operator / on-hardware validation binary:
-
-```sh
-cargo install medius --features cli      # or: cargo run --features cli --bin medius -- <args>
-
-medius list                              # enumerate boxes by CH343 VID/PID
-medius info                              # connect, print Version + Health
-medius move 40 0                         # one-shot relative move
-medius button left press                 # one-shot button override (then `… left soft_release`)
-medius pace --vx 5 --ms 3000             # drive the pacer with a push loop at ~1 kHz
-medius bench                             # achieved-rate / jitter stats (uses `metrics`)
-medius monitor                           # stream device LOG frames + periodic health
-medius reset                             # clear all injection
-```
-
-`-p/--port` selects an explicit port (else the first box is used), `--json` emits machine-readable
-output, and `-v/-vv/-vvv` installs a `tracing` subscriber.
 
 ## Examples
 
