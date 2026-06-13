@@ -13,7 +13,7 @@
 /// No clamp: the full `i16` is sent; the firmware clamps to the clone's field width with carry.
 ///
 /// # Examples
-/// ```
+/// ```ignore
 /// # use medius::protocol::command::move_payload;
 /// assert_eq!(move_payload(-1, 256), [0xFF, 0xFF, 0x00, 0x01]);
 /// ```
@@ -28,7 +28,7 @@ pub fn move_payload(dx: i16, dy: i16) -> [u8; 4] {
 /// No clamp: the firmware paces it across frames by the native wheel-field width with carry.
 ///
 /// # Examples
-/// ```
+/// ```ignore
 /// # use medius::protocol::command::wheel_payload;
 /// assert_eq!(wheel_payload(-3), [0xFD, 0xFF]);
 /// ```
@@ -42,7 +42,7 @@ pub fn wheel_payload(delta: i16) -> [u8; 2] {
 /// 2 force-release}. Bytes pass through verbatim; the typed device API validates.
 ///
 /// # Examples
-/// ```
+/// ```ignore
 /// # use medius::protocol::command::button_payload;
 /// assert_eq!(button_payload(3, 1), [0x03, 0x01]); // press Side1
 /// ```
@@ -53,7 +53,7 @@ pub fn button_payload(id: u8, action: u8) -> [u8; 2] {
 /// `QUERY` payload (§3.5): `[what u8]` (0 = VERSION, 1 = HEALTH).
 ///
 /// # Examples
-/// ```
+/// ```ignore
 /// # use medius::protocol::command::query_payload;
 /// assert_eq!(query_payload(1), [0x01]); // QUERY(HEALTH)
 /// ```
@@ -67,10 +67,11 @@ pub fn query_payload(what: u8) -> [u8; 1] {
 /// `3` = host → reboot to run.
 ///
 /// # Examples
-/// ```
+/// ```ignore
 /// # use medius::protocol::command::reboot_payload;
 /// assert_eq!(reboot_payload(2), [0x02]); // device -> reboot to run
 /// ```
+#[cfg_attr(not(test), allow(dead_code))]
 pub fn reboot_payload(target: u8) -> [u8; 1] {
     [target]
 }

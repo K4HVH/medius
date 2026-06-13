@@ -379,7 +379,7 @@ mod linux {
                 let _ = dev.press(button);
                 std::thread::sleep(Duration::from_millis(200));
                 let down = btn_val(&acc, button);
-                let _ = dev.release(button);
+                let _ = dev.soft_release(button);
                 std::thread::sleep(Duration::from_millis(200));
                 let up = btn_val(&acc, button);
 
@@ -413,7 +413,7 @@ mod linux {
             let _ = dev.force_release(Button::Left);
             std::thread::sleep(Duration::from_millis(200));
             let up = acc.btn_left.load(Ordering::Relaxed);
-            let _ = dev.release(Button::Left); // clean up desired-state
+            let _ = dev.soft_release(Button::Left); // clean up desired-state
             check(
                 "force_release",
                 down == 1 && up == 0,
@@ -487,7 +487,7 @@ mod linux {
             let down = acc.btn_right.load(Ordering::Relaxed);
             std::thread::sleep(Duration::from_millis(1600)); // silence on OUR side; keepalive runs internally
             let still = acc.btn_right.load(Ordering::Relaxed);
-            let _ = dev.release(Button::Right);
+            let _ = dev.soft_release(Button::Right);
             std::thread::sleep(Duration::from_millis(150));
             check(
                 "keepalive holds",

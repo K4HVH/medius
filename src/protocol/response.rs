@@ -27,7 +27,7 @@ pub enum Resp {
 /// - `what = 1` HEALTH  → `[1, flags]` (needs ≥ 2 bytes).
 ///
 /// # Examples
-/// ```
+/// ```ignore
 /// # use medius::protocol::response::{parse_resp, Resp};
 /// # use medius::protocol::types::Version;
 /// assert_eq!(
@@ -65,7 +65,7 @@ pub fn parse_resp(payload: &[u8]) -> Option<Resp> {
 /// yields an empty `Info` line.
 ///
 /// # Examples
-/// ```
+/// ```ignore
 /// # use medius::protocol::response::parse_log;
 /// # use medius::protocol::types::LogLevel;
 /// let line = parse_log(&[1, b'h', b'i']);

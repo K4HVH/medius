@@ -192,7 +192,10 @@ impl Device {
         transport: Arc<dyn Transport>,
         keepalive_cadence: std::time::Duration,
     ) -> Device {
-        let opts = crate::ConnectOptions::default().with_keepalive_cadence(keepalive_cadence);
+        let opts = crate::ConnectOptions {
+            keepalive_cadence,
+            ..crate::ConnectOptions::default()
+        };
         Self::from_transport_with(transport, &opts)
     }
 
@@ -335,7 +338,8 @@ impl Device {
     }
 
     /// The number of in-flight query waiters (diagnostic; the async timeout test asserts no leak).
-    pub fn pending_len(&self) -> usize {
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn pending_len(&self) -> usize {
         self.inner.pending.lock().len()
     }
 

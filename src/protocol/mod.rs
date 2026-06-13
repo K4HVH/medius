@@ -16,6 +16,6 @@ pub mod response;
 pub mod types;
 
 pub use frame::{DecodedFrame, FrameDecoder, FrameError, encode};
-pub use opcode::{FrameType, MAX_PAYLOAD, PROTO_VER, SOF, UnknownFrameType};
+pub use opcode::{FrameType, MAX_PAYLOAD, PROTO_VER};
 pub use response::{Resp, parse_log, parse_resp};
 pub use types::{Button, ButtonAction, Health, LogLevel, LogLine, RebootTarget, Version};

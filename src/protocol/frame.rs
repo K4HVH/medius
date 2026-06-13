@@ -46,7 +46,7 @@ pub struct DecodedFrame {
 /// Returns [`FrameError::PayloadTooLong`] if `payload` exceeds [`MAX_PAYLOAD`].
 ///
 /// # Examples
-/// ```
+/// ```ignore
 /// # use medius::protocol::frame::encode;
 /// # use medius::protocol::opcode::FrameType;
 /// let f = encode(FrameType::Reset, 7, &[]).unwrap();
@@ -146,11 +146,13 @@ impl FrameDecoder {
     }
 
     /// Number of times an oversize `LEN` (> [`MAX_PAYLOAD`]) forced a resync.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn resync_count(&self) -> u64 {
         self.resync_count
     }
 
     /// Number of CRC-valid frames dropped because their `TYPE` was an unknown opcode.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn unknown_type_count(&self) -> u64 {
         self.unknown_type_count
     }
@@ -164,6 +166,7 @@ impl FrameDecoder {
     }
 
     /// Convenience: feed `data` and collect all decoded frames into a `Vec`.
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn feed_collect(&mut self, data: &[u8]) -> Vec<DecodedFrame> {
         let mut out = Vec::new();
         self.feed(data, |f| out.push(f));

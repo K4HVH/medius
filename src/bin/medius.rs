@@ -291,7 +291,7 @@ fn cmd_monitor(cli: &Cli, args: &MonitorArgs) -> medius::Result<()> {
 
     let mut next_health = Instant::now();
     loop {
-        while let Ok(line) = logs.try_recv() {
+        while let Some(line) = logs.try_recv() {
             if cli.json {
                 println!("{}", serde_json::to_string(&line).unwrap());
             } else {
@@ -326,7 +326,7 @@ fn cmd_selftest(cli: &Cli) -> medius::Result<()> {
     device.wheel(1)?;
     device.wheel(-1)?;
     device.press(Button::Left)?;
-    device.release(Button::Left)?;
+    device.soft_release(Button::Left)?;
     device.reset()?;
     let counters = device.counters();
     if cli.json {
@@ -410,17 +410,15 @@ fn cmd_bench(cli: &Cli, args: &BenchArgs) -> medius::Result<()> {
 
 fn cmd_reboot(cli: &Cli, args: &RebootArgs) -> medius::Result<()> {
     let device = open(cli)?;
+    // RebootTarget fully encodes both chip (device/host) and mode (run/download), so one reboot call
+    // covers all four combinations.
     let target = match (args.download, args.host) {
         (true, false) => RebootTarget::DeviceDownload,
         (true, true) => RebootTarget::HostDownload,
         (false, false) => RebootTarget::DeviceRun,
         (false, true) => RebootTarget::HostRun,
     };
-    if args.download {
-        device.reboot_download(target)?;
-    } else {
-        device.reboot(target)?;
-    }
+    device.reboot(target)?;
     eprintln!("sent reboot ({target:?})");
     Ok(())
 }

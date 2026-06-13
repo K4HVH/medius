@@ -30,7 +30,7 @@ fn main() -> medius::Result<()> {
 
     // Primitive press then soft-release (two fire-and-go calls).
     device.press(Button::Left)?;
-    device.release(Button::Left)?;
+    device.soft_release(Button::Left)?;
 
     // Back to pure passthrough.
     device.reset()?;

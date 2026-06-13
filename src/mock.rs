@@ -8,14 +8,14 @@
 //!
 //! ```
 //! # use medius::mock::MockBox;
-//! # use medius::{Device, Button, Version};
+//! # use medius::{Device, Button, FrameType, Version};
 //! let mock = MockBox::new().with_version(Version { proto_ver: 1, fw_major: 2, fw_minor: 3, fw_patch: 4 });
 //! let device = Device::with_mock(mock.clone());
 //! let v = device.query_version().unwrap();
 //! assert_eq!((v.fw_major, v.fw_minor, v.fw_patch), (2, 3, 4));
 //! device.press(Button::Left).unwrap();
 //! // The press was recorded.
-//! assert!(mock.recorded_frames().iter().any(|f| f.ty == medius::protocol::FrameType::Button));
+//! assert!(mock.recorded_frames().iter().any(|f| f.ty == FrameType::Button));
 //! ```
 //!
 //! The public seam to drive a real `Device` over the mock is [`Device::with_mock`](crate::Device::with_mock),
@@ -70,7 +70,7 @@ impl Default for MockBox {
 }
 
 impl MockBox {
-    /// Create a mock box with default config (proto_ver = [`PROTO_VER`](crate::protocol::PROTO_VER),
+    /// Create a mock box with default config (proto_ver = the library's supported protocol version,
     /// fw 0.0.0, all-clear health) that records commands and auto-answers `QUERY`.
     pub fn new() -> Self {
         let state = Arc::new(Mutex::new(State::default()));
