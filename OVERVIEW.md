@@ -33,11 +33,14 @@ src/
   transport/  PRIVATE — Transport trait; linux (termios2/4M/DTR-RTS), windows (DCB), mock, VID/PID scan
   device/     Device core — connect/handshake, commands, queries, logs, reconcile (DesiredState),
               reboot/reconnect/keepalive, counters
-  asyncv/     AsyncDevice — thin wrapper over the SAME core (async only on query)
+  asyncv/     AsyncDevice — thin wrapper over the SAME core (async only on query, feature `async`)
   mock/       MockBox — public scriptable fake box (feature `mock`)
   flash/      esptool reboot+flash handoff (feature `flash`)
-  error/trace
+  error/      structured Error / Result
+  trace/      feature-gated tracing shim (per-frame TX/RX at TRACE; feature `tracing`)
 ```
+
+Every top-level concern is its own folder (`mod.rs` + submodules); `lib.rs` is the only loose file.
 
 **Concurrency model.** `Device` is `&self`-only, `Send + Sync`, a cheap `Arc<Inner>` clone. Two
 background threads:
