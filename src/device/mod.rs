@@ -319,6 +319,12 @@ impl Device {
         self.inner.cancel_query(seq, gen_id);
     }
 
+    /// The number of in-flight query waiters (a diagnostic seam the FIX-1 correlation tests assert on).
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn pending_len(&self) -> usize {
+        self.inner.pending.lock().len()
+    }
+
     /// A `Weak` handle to the interior, so the async query timer can cancel a pending entry without
     /// pinning `Inner` alive (a held `Arc<Inner>` would defer shutdown).
     #[cfg(feature = "async")]

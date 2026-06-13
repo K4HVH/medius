@@ -80,3 +80,39 @@ fn pending_query_survives_seq_wrap_without_cross_delivery() {
         "A must time out"
     );
 }
+
+/// Gen-checked cancel: a stale `cancel_query(seq, old_gen)` must NOT remove a newer waiter that has
+/// since been registered under that same wire `SEQ` (the FIX-1 ABA). The async timeout exercises the
+/// cancel path for a single query; this targets the reuse race directly.
+#[test]
+fn stale_cancel_does_not_evict_newer_waiter() {
+    let device = Device::from_transport(Arc::new(MockTransport::new()));
+
+    // Register A, then cancel it so its SEQ is free again.
+    let (seq_a, gen_a, _rx_a) = device.register_pending(0);
+    device.cancel_query(seq_a, gen_a);
+    assert_eq!(device.pending_len(), 0);
+
+    // Wrap the SEQ so the next register_pending lands back on A's old SEQ.
+    for _ in 0..255 {
+        let _ = device.next_seq();
+    }
+
+    // B reuses A's freed SEQ but with a newer generation.
+    let (seq_b, gen_b, rx_b) = device.register_pending(0);
+    assert_eq!(seq_b, seq_a, "B reuses A's freed SEQ");
+    assert_ne!(gen_b, gen_a, "B has a newer generation");
+
+    // A stale cancel using A's OLD gen must leave B intact.
+    device.cancel_query(seq_a, gen_a);
+    assert_eq!(
+        device.pending_len(),
+        1,
+        "a stale-gen cancel must not evict the newer waiter B"
+    );
+
+    // B's own (current-gen) cancel removes it.
+    device.cancel_query(seq_b, gen_b);
+    assert_eq!(device.pending_len(), 0);
+    drop(rx_b);
+}
