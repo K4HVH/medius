@@ -1,45 +1,30 @@
 //! The precise tick clock behind the pacer thread (`pacer/clock.rs`, Task 4.1).
 //!
-//! [`PrecisePacer`] turns a fixed tick **period** into a stream of absolute deadlines and blocks the
-//! caller until each one. It is the single piece of timing machinery the [`MovementSession`](super)
-//! pacer thread loops on — one `wait_next_tick()` per frame window.
+//! [`PrecisePacer`] turns a fixed tick **period** into a stream of absolute deadlines and blocks until
+//! each one — one `wait_next_tick()` per frame window.
 //!
-//! ## Why absolute deadlines (no drift)
+//! Drift-free by construction: the deadline advances by exactly one period per tick
+//! (`deadline += period`) and the clock sleeps until that absolute instant, never "for a duration", so
+//! a late tick does not push the following ticks out. Error is bounded per-tick rather than
+//! accumulating — the reason a compiled host holds a steady 1 kHz where a `sleep(period)` loop drifts.
+//! Mirrors `smooth_inject.c`'s `clock_nanosleep(TIMER_ABSTIME)` scheduler.
 //!
-//! The deadline is advanced by exactly one period **per tick** (`deadline += period`) and the clock
-//! sleeps *until that absolute instant*, never "for a duration". So if one tick wakes late, the next
-//! deadline is still the original grid point — the lateness does **not** push every following tick
-//! out. Error is bounded per-tick instead of accumulating, which is the whole reason a compiled host
-//! can hold a steady 1 kHz where a `sleep(period)` loop drifts. This mirrors `smooth_inject.c`'s
-//! `clock_nanosleep(TIMER_ABSTIME)` scheduler.
+//! Backends:
+//! - **Linux** ([`LinuxClock`]): a raw [`libc::timespec`] deadline slept on with
+//!   `clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME)`. A `std::time::Instant` cannot be converted to
+//!   a raw `CLOCK_MONOTONIC` `timespec`, so the deadline is tracked as a `timespec` directly.
+//! - **Windows** ([`WindowsClock`]): a high-resolution waitable timer armed per tick, then a short
+//!   `QueryPerformanceCounter` spin trims residual jitter to the absolute grid.
+//! - **Fallback** ([`FallbackClock`]): an [`Instant`]-grid hybrid — sleep most of the way, spin the
+//!   last sliver.
 //!
-//! ## Platform backends
-//!
-//! - **Linux** ([`LinuxClock`]): the deadline is a raw [`libc::timespec`] seeded from
-//!   `clock_gettime(CLOCK_MONOTONIC)` and slept on with
-//!   `clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &deadline, NULL)` (retried on `EINTR`). A
-//!   [`std::time::Instant`] *cannot* be converted to a raw `CLOCK_MONOTONIC` `timespec`, so the
-//!   precise path never tries to sleep-until an `Instant`; it tracks the deadline as a `timespec`
-//!   directly.
-//! - **Windows** ([`WindowsClock`]): a high-resolution waitable timer
-//!   (`CreateWaitableTimerExW(.., CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, TIMER_ALL_ACCESS)`); each
-//!   tick arms it with a **negative** (relative, 100 ns units) due-time and waits on it
-//!   (`WaitForSingleObject`), then a short `QueryPerformanceCounter` spin trims residual jitter up to
-//!   the absolute grid deadline. Compile-checked on Linux via the Windows target.
-//! - **Fallback** ([`FallbackClock`], any other target / if a syscall is unavailable): an
-//!   [`Instant`]-based hybrid — sleep most of the remaining time, then spin the last sliver.
-//!
-//! The first deadline is seeded **lazily on the first `wait_next_tick`**, so creating a pacer does no
-//! syscall and the grid starts at the first real tick.
+//! The first deadline is seeded lazily on the first `wait_next_tick`, so construction does no syscall.
 
 use std::time::Duration;
 
 /// A precise, drift-free tick clock: each [`wait_next_tick`](PrecisePacer::wait_next_tick) blocks
-/// until the next absolute deadline on a fixed-period grid.
-///
-/// The first call seeds the grid origin (lazily — no work at construction); every subsequent call
-/// advances the deadline by exactly one period and sleeps until it. See the [module docs](self) for
-/// the per-platform backend and why absolute stepping avoids cumulative drift.
+/// until the next absolute deadline on a fixed-period grid. See the [module docs](self) for the
+/// per-platform backend and why absolute stepping avoids cumulative drift.
 #[derive(Debug)]
 pub(crate) struct PrecisePacer {
     period: Duration,
@@ -47,11 +32,9 @@ pub(crate) struct PrecisePacer {
 }
 
 impl PrecisePacer {
-    /// Create a pacer ticking every `period`. Does **no** I/O / syscall yet — the grid origin is
-    /// seeded on the first [`wait_next_tick`](Self::wait_next_tick).
-    ///
-    /// A zero period is clamped to 1 ns so the deadline always advances (a 0 ns grid would busy-loop
-    /// without progressing).
+    /// Create a pacer ticking every `period`. Does no syscall yet — the grid origin is seeded on the
+    /// first [`wait_next_tick`](Self::wait_next_tick). A zero period is clamped to 1 ns so the deadline
+    /// always advances.
     pub(crate) fn new(period: Duration) -> Self {
         let period = period.max(Duration::from_nanos(1));
         PrecisePacer {
@@ -65,17 +48,14 @@ impl PrecisePacer {
         self.period
     }
 
-    /// Change the tick period. Takes effect from the **next** [`wait_next_tick`](Self::wait_next_tick):
-    /// the next deadline is the (already-seeded) grid point plus the new period, so rate changes don't
-    /// reset the grid or skip a beat.
+    /// Change the tick period from the next [`wait_next_tick`](Self::wait_next_tick). The next deadline
+    /// is the already-seeded grid point plus the new period, so a rate change doesn't reset the grid.
     pub(crate) fn set_period(&mut self, period: Duration) {
         self.period = period.max(Duration::from_nanos(1));
     }
 
-    /// Block until the next tick deadline.
-    ///
-    /// On the first call this seeds the grid origin to "now" and returns (almost) immediately; on
-    /// every later call it advances the deadline by one period and sleeps until that absolute instant.
+    /// Block until the next tick deadline. The first call seeds the grid origin and returns almost
+    /// immediately; later calls advance the deadline one period and sleep until that absolute instant.
     pub(crate) fn wait_next_tick(&mut self) {
         self.backend.wait_next_tick(self.period);
     }
@@ -118,13 +98,11 @@ impl LinuxClock {
 
     /// Read `CLOCK_MONOTONIC` into a `timespec`.
     fn now() -> libc::timespec {
-        // SAFETY: `ts` is a valid, writable `timespec`; `clock_gettime` with `CLOCK_MONOTONIC`
-        // fully initializes it. `CLOCK_MONOTONIC` always exists on Linux, so this never fails in
-        // practice; if it somehow did we'd read a zeroed `ts`, which only mis-seeds the first tick.
         let mut ts = libc::timespec {
             tv_sec: 0,
             tv_nsec: 0,
         };
+        // SAFETY: `ts` is valid and writable; `clock_gettime` fully initializes it.
         unsafe {
             libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut ts);
         }
@@ -133,7 +111,6 @@ impl LinuxClock {
 
     /// Advance `deadline` by `period`, normalizing `tv_nsec` into `[0, 1e9)`.
     fn advance(deadline: &mut libc::timespec, period: Duration) {
-        // period.subsec_nanos() < 1e9, so the add can carry at most one second beyond normalization.
         deadline.tv_nsec += period.subsec_nanos() as i64;
         deadline.tv_sec += period.as_secs() as libc::time_t;
         while deadline.tv_nsec >= NANOS_PER_SEC {
@@ -145,9 +122,8 @@ impl LinuxClock {
     /// Sleep until the absolute `deadline`, retrying on `EINTR`.
     fn sleep_until(deadline: &libc::timespec) {
         loop {
-            // SAFETY: `deadline` is a valid, fully-initialized `timespec` with a normalized
-            // `tv_nsec` in `[0, 1e9)`; we pass a null remainder (TIMER_ABSTIME ignores it). The call
-            // only reads `*deadline` and blocks the calling thread.
+            // SAFETY: `deadline` is a valid, normalized `timespec`; the null remainder is ignored under
+            // TIMER_ABSTIME. The call only reads `*deadline` and blocks.
             let rc = unsafe {
                 libc::clock_nanosleep(
                     libc::CLOCK_MONOTONIC,
@@ -156,8 +132,7 @@ impl LinuxClock {
                     std::ptr::null_mut(),
                 )
             };
-            // clock_nanosleep returns the error directly (not via errno). Retry only on EINTR; any
-            // other return (0 = slept, or an unexpected error) ends the wait.
+            // clock_nanosleep returns the error directly (not errno); only EINTR retries.
             if rc != libc::EINTR {
                 return;
             }
@@ -167,7 +142,6 @@ impl LinuxClock {
     fn wait_next_tick(&mut self, period: Duration) {
         match self.deadline.as_mut() {
             None => {
-                // First tick: seed the grid origin to now and return immediately (no sleep).
                 self.deadline = Some(Self::now());
             }
             Some(deadline) => {
@@ -185,24 +159,21 @@ impl LinuxClock {
 /// Windows backend: a high-resolution waitable timer armed per tick with a negative relative due-time,
 /// plus a short `QueryPerformanceCounter` spin to trim residual jitter to the absolute grid.
 ///
-/// The grid is tracked in QPC ticks (an absolute, monotonic, drift-free counter) so the per-tick
-/// relative due-time is recomputed from the *absolute* next deadline each time — lateness in one tick
-/// does not accumulate.
+/// The grid is tracked in QPC ticks (absolute, monotonic), so the relative due-time is recomputed from
+/// the absolute next deadline each tick — lateness does not accumulate.
 #[cfg(windows)]
 #[derive(Debug)]
 pub(crate) struct WindowsClock {
-    /// The waitable timer handle (`HANDLE`), or null if creation failed (then we fall back to a spin).
+    /// The waitable timer handle, or null if creation failed (then we fall back to a spin).
     timer: windows_sys::Win32::Foundation::HANDLE,
-    /// QPC ticks per second (the frequency), cached once.
+    /// QPC ticks per second, cached once.
     qpc_freq: i64,
     /// The next absolute deadline in QPC ticks, or `None` until the first tick seeds it.
     deadline_qpc: Option<i64>,
 }
 
-// SAFETY: the only non-`Send` field is the raw timer `HANDLE`. A Windows waitable timer HANDLE is a
-// kernel object usable from any thread; we own it exclusively (created here, closed in Drop) and move
-// the whole clock into the single pacer thread, so transferring ownership across the spawn boundary is
-// sound. It is never shared, so `Sync` is not claimed.
+// SAFETY: the only non-`Send` field is the timer HANDLE — a kernel object usable from any thread,
+// owned exclusively and moved into the single pacer thread. Never shared, so `Sync` is not claimed.
 #[cfg(windows)]
 unsafe impl Send for WindowsClock {}
 
@@ -214,9 +185,8 @@ impl WindowsClock {
             CREATE_WAITABLE_TIMER_HIGH_RESOLUTION, CreateWaitableTimerExW, TIMER_ALL_ACCESS,
         };
 
-        // SAFETY: all-null attributes/name request a default, unnamed, process-local timer. The
-        // returned HANDLE is owned by this struct and closed in Drop. A null return is tolerated
-        // (handled as "no timer" → spin-only wait), so failure is non-fatal.
+        // SAFETY: all-null args request a default unnamed timer, owned here and closed in Drop. A null
+        // return is tolerated (handled as spin-only wait).
         let timer = unsafe {
             CreateWaitableTimerExW(
                 std::ptr::null(),
@@ -227,9 +197,8 @@ impl WindowsClock {
         };
 
         let mut freq: i64 = 0;
-        // SAFETY: `freq` is a valid, writable `i64`. QueryPerformanceFrequency never fails on
-        // any system that supports Win32 (it returns a fixed nonzero value); we still guard against a
-        // zero below when converting durations to ticks.
+        // SAFETY: `freq` is valid and writable; the call only writes through it. We still guard a zero
+        // below when converting durations to ticks.
         unsafe {
             QueryPerformanceFrequency(&mut freq);
         }
@@ -245,7 +214,7 @@ impl WindowsClock {
     fn now_qpc() -> i64 {
         use windows_sys::Win32::System::Performance::QueryPerformanceCounter;
         let mut c: i64 = 0;
-        // SAFETY: `c` is a valid, writable `i64`; QueryPerformanceCounter only writes through it.
+        // SAFETY: `c` is valid and writable; the call only writes through it.
         unsafe {
             QueryPerformanceCounter(&mut c);
         }
@@ -254,7 +223,7 @@ impl WindowsClock {
 
     /// Convert a `Duration` to QPC ticks (saturating; the period is tiny, so no realistic overflow).
     fn duration_to_qpc(&self, d: Duration) -> i64 {
-        // ticks = secs * freq, using u128 to avoid intermediate overflow, then clamp to i64.
+        // u128 intermediate avoids overflow, then clamp to i64.
         let ticks = d.as_nanos().saturating_mul(self.qpc_freq as u128) / 1_000_000_000u128;
         ticks.min(i64::MAX as u128) as i64
     }
@@ -263,28 +232,23 @@ impl WindowsClock {
         let now = Self::now_qpc();
         let next = match self.deadline_qpc {
             None => {
-                // First tick: seed the grid to now and return immediately.
                 self.deadline_qpc = Some(now);
                 return;
             }
             Some(prev) => {
-                // Absolute stepping: the new deadline is prev + period, regardless of how late we
-                // woke — drift cannot accumulate.
+                // Absolute stepping: next = prev + period regardless of wake lateness → no drift.
                 let next = prev.saturating_add(self.duration_to_qpc(period));
                 self.deadline_qpc = Some(next);
                 next
             }
         };
 
-        // If we are already past the deadline (a very slow tick), don't sleep — return immediately
-        // so we catch up on the grid rather than sleeping a full extra period.
+        // Already past the deadline (a very slow tick): don't sleep — catch up on the grid.
         let remaining_ticks = next - now;
         if remaining_ticks <= 0 {
             return;
         }
 
-        // Coarse wait on the high-resolution timer for most of the remaining time, leaving a short
-        // spin window to trim to the absolute deadline.
         self.coarse_wait(remaining_ticks);
 
         // Fine spin to the absolute QPC deadline.
@@ -293,9 +257,8 @@ impl WindowsClock {
         }
     }
 
-    /// Arm the waitable timer for (most of) `remaining_ticks` and block on it. Leaves a small trailing
-    /// window for the QPC spin. If the timer handle is null (creation failed), this is a no-op and the
-    /// spin alone realizes the wait.
+    /// Arm the waitable timer for most of `remaining_ticks` and block on it, leaving a trailing window
+    /// for the QPC spin. A null timer handle makes this a no-op (the spin realizes the whole wait).
     fn coarse_wait(&self, remaining_ticks: i64) {
         use windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE;
         use windows_sys::Win32::System::Threading::{
@@ -314,14 +277,12 @@ impl WindowsClock {
             return; // too close — let the spin handle all of it
         }
 
-        // Convert coarse ticks → 100 ns units, negated for a *relative* due-time.
+        // Coarse ticks → 100 ns units, negated for a *relative* due-time.
         let hundred_ns = (coarse_ticks as i128 * 10_000_000i128) / self.qpc_freq as i128;
         let due: i64 = -((hundred_ns.min(i64::MAX as i128)) as i64);
 
-        // SAFETY: `self.timer` is a live timer HANDLE we own; `&due` is a valid `i64`. A period of 0
-        // and null completion routine make this a one-shot timer with no APC. SetWaitableTimer only
-        // reads `*due`. A failure leaves the timer unsignaled; the subsequent wait would then block
-        // until the next arm — but we treat any failure as "fall through to spin" by not waiting.
+        // SAFETY: `self.timer` is a live owned HANDLE; `&due` is valid. Period 0 + null routine make a
+        // one-shot timer with no APC; the call only reads `*due`. On failure we fall through to spin.
         let armed = unsafe {
             SetWaitableTimer(
                 self.timer,
@@ -336,9 +297,8 @@ impl WindowsClock {
             return; // arming failed → let the spin realize the wait
         }
 
-        // SAFETY: `self.timer` is a live HANDLE; INFINITE blocks until the timer signals. The return
-        // value is ignored beyond "we waited"; the absolute QPC spin afterwards corrects any early
-        // wake.
+        // SAFETY: `self.timer` is a live HANDLE; INFINITE blocks until it signals. An early wake is
+        // corrected by the QPC spin afterwards.
         unsafe {
             WaitForSingleObject(self.timer, INFINITE);
         }
@@ -350,8 +310,7 @@ impl Drop for WindowsClock {
     fn drop(&mut self) {
         use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
         if !self.timer.is_null() && self.timer != INVALID_HANDLE_VALUE {
-            // SAFETY: `self.timer` was created by `CreateWaitableTimerExW` in `new`, is owned solely
-            // by this struct, and is closed exactly once here on drop.
+            // SAFETY: owned HANDLE from `new`, closed exactly once here.
             unsafe {
                 CloseHandle(self.timer);
             }
@@ -363,8 +322,8 @@ impl Drop for WindowsClock {
 // Fallback: Instant-based hybrid sleep + spin
 // ---------------------------------------------------------------------------------------------------
 
-/// Portable fallback backend (non-Linux, non-Windows, or whenever a precise syscall is unavailable):
-/// an [`Instant`]-grid hybrid that sleeps most of the remaining time then spins the last sliver.
+/// Portable fallback backend: an [`Instant`]-grid hybrid that sleeps most of the remaining time then
+/// spins the last sliver.
 #[cfg(not(any(target_os = "linux", windows)))]
 #[derive(Debug)]
 pub(crate) struct FallbackClock {
@@ -373,7 +332,7 @@ pub(crate) struct FallbackClock {
 
 #[cfg(not(any(target_os = "linux", windows)))]
 impl FallbackClock {
-    /// How much of the remaining time to leave for the busy-spin (sub-ms residual trim).
+    /// Remaining time left for the busy-spin (sub-ms residual trim).
     const SPIN_MARGIN: Duration = Duration::from_micros(300);
 
     fn new() -> Self {
@@ -411,9 +370,8 @@ mod tests {
     use super::*;
     use std::time::Instant;
 
-    /// 50 ticks at 1 ms should complete in *roughly* 50 ms. Bounds are deliberately loose so the
-    /// test is robust under CI scheduling load: it only proves the pacer actually paces (not a busy
-    /// spin that finishes in microseconds, nor a drifting loop that takes far too long).
+    /// 50 ticks at 1 ms should take roughly 50 ms. Bounds are loose for CI: this only proves the pacer
+    /// actually paces (not a microsecond busy-spin, nor a far-too-slow drifting loop).
     #[test]
     fn fifty_one_ms_ticks_take_about_fifty_ms() {
         let mut pacer = PrecisePacer::new(Duration::from_millis(1));
@@ -444,9 +402,8 @@ mod tests {
         );
     }
 
-    /// Absolute stepping means no cumulative drift: after N ticks the total elapsed tracks N×period
-    /// to within a small slack, and individual ticks advance monotonically (each `wait` returns no
-    /// earlier than the previous, and the run total stays close to ideal — not N× a fixed late bias).
+    /// No cumulative drift: after N ticks the elapsed tracks N×period within a small slack, and ticks
+    /// advance monotonically.
     #[test]
     fn deadlines_advance_without_cumulative_drift() {
         let period = Duration::from_millis(1);

@@ -1,49 +1,35 @@
 //! Connection / session configuration ([`ConnectOptions`]) — the serde-able config surface (§10).
 //!
-//! [`ConnectOptions`] groups the tunables a host app may want to set or load from a config file: the
-//! query timeout, the keepalive cadence, and the pacer rate. It is a **plain value type** (no live
-//! handles), so it carries the `serde` derives like the rest of the public value surface and is the
-//! one config struct the design spec (§10 `serde`) calls for.
-//!
-//! It is applied at construction: [`Device::open_with`](crate::Device::open_with) /
-//! [`Device::find_with`](crate::Device::find_with) build a device whose keepalive cadence and query
-//! timeout come from the options, and [`ConnectOptions::movement`] /
-//! [`Device::movement_with`](crate::Device::movement_with) open a [`MovementSession`] at the
-//! configured rate. The individual knobs remain settable on the live objects too
-//! ([`MovementSession::set_rate`], etc.); `ConnectOptions` is the *declarative* surface over them.
-//!
-//! [`MovementSession`]: crate::MovementSession
-//! [`MovementSession::set_rate`]: crate::MovementSession::set_rate
+//! A plain value type (no live handles) grouping the query timeout, keepalive cadence, and pacer rate.
+//! Applied at construction via [`Device::open_with`](crate::Device::open_with) /
+//! [`Device::find_with`](crate::Device::find_with) and at session open via
+//! [`Device::movement_with`](crate::Device::movement_with). The same knobs stay settable on the live
+//! objects; this is the declarative surface over them.
 
 use std::time::Duration;
 
 use crate::pacer::DEFAULT_RATE_HZ;
 
-/// Default query timeout (mirrors the device layer's internal default): one second.
+/// Default query timeout: one second.
 pub const DEFAULT_QUERY_TIMEOUT: Duration = Duration::from_secs(1);
 
-/// Default keepalive cadence (mirrors the device layer's internal default): 500 ms (sub-1 s so a held
-/// override outlives the firmware's 1000 ms silence auto-clear).
+/// Default keepalive cadence: 500 ms — sub-1 s so a held override outlives the firmware's 1000 ms
+/// silence auto-clear.
 pub const DEFAULT_KEEPALIVE_CADENCE: Duration = Duration::from_millis(500);
 
 /// Declarative connection / session configuration.
 ///
-/// A plain, copyable, `serde`-able value type (the config surface, §10). Build it with [`Default`] and
-/// the `with_*` setters, or deserialize it from JSON/TOML. Pass it to
-/// [`Device::open_with`](crate::Device::open_with) / [`Device::find_with`](crate::Device::find_with)
-/// to configure a device, and to [`Device::movement_with`](crate::Device::movement_with) (or
-/// [`ConnectOptions::movement`]) for a session at the configured rate.
+/// A plain, copyable, `serde`-able value type. Build it with [`Default`] and the `with_*` setters or
+/// deserialize from JSON/TOML, then pass it to [`Device::open_with`](crate::Device::open_with) /
+/// [`Device::find_with`](crate::Device::find_with) / [`Device::movement_with`](crate::Device::movement_with).
 ///
-/// ## Serde representation
-///
-/// The two `Duration` fields serialize as a `_ms` integer-millisecond pair (`query_timeout_ms`,
-/// `keepalive_cadence_ms`) rather than serde's default `{secs,nanos}` struct, so a hand-written config
-/// file stays human-friendly (`"query_timeout_ms": 1000`). `rate_hz` is a plain integer.
+/// The two `Duration` fields serialize as integer-millisecond `_ms` pairs (`query_timeout_ms`,
+/// `keepalive_cadence_ms`) rather than serde's default `{secs,nanos}`, so hand-written config stays
+/// human-friendly.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct ConnectOptions {
-    /// How long [`query_version`](crate::Device::query_version) /
-    /// [`query_health`](crate::Device::query_health) wait for the correlated `RESP` before returning
+    /// How long queries wait for the correlated `RESP` before returning
     /// [`Error::QueryTimeout`](crate::Error::QueryTimeout). Default `DEFAULT_QUERY_TIMEOUT` (1 s).
     #[cfg_attr(
         feature = "serde",
@@ -51,8 +37,8 @@ pub struct ConnectOptions {
     )]
     pub query_timeout: Duration,
 
-    /// The keepalive cadence — how often a held override is refreshed to defeat the firmware's 1000 ms
-    /// silence auto-clear (§8). Must stay sub-1 s. Default `DEFAULT_KEEPALIVE_CADENCE` (500 ms).
+    /// How often a held override is refreshed to defeat the firmware's 1000 ms silence auto-clear
+    /// (§8). Must stay sub-1 s. Default `DEFAULT_KEEPALIVE_CADENCE` (500 ms).
     #[cfg_attr(
         feature = "serde",
         serde(with = "duration_ms", rename = "keepalive_cadence_ms")
@@ -75,7 +61,7 @@ impl Default for ConnectOptions {
 }
 
 impl ConnectOptions {
-    /// A fresh [`ConnectOptions`] with the defaults (alias for [`Default::default`]).
+    /// A fresh [`ConnectOptions`] with the defaults.
     pub fn new() -> Self {
         Self::default()
     }
@@ -108,8 +94,7 @@ impl ConnectOptions {
     }
 }
 
-/// serde helper: represent a `Duration` as integer milliseconds (`query_timeout_ms` etc.) instead of
-/// serde's default `{secs,nanos}` so config files are human-friendly.
+/// serde helper: a `Duration` as integer milliseconds rather than serde's `{secs,nanos}`.
 #[cfg(feature = "serde")]
 mod duration_ms {
     use std::time::Duration;
@@ -154,7 +139,6 @@ mod tests {
     fn serde_round_trips_with_ms_fields() {
         let o = ConnectOptions::default();
         let j = serde_json::to_string(&o).unwrap();
-        // Durations serialize as integer-millisecond `_ms` fields, not {secs,nanos}.
         assert!(j.contains("\"query_timeout_ms\":1000"), "json was {j}");
         assert!(j.contains("\"keepalive_cadence_ms\":500"), "json was {j}");
         assert!(j.contains("\"rate_hz\":1000"), "json was {j}");

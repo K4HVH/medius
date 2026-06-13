@@ -1,17 +1,10 @@
 //! Pacer timing metrics (`pacer/metrics.rs`, feature = `metrics`).
 //!
-//! When the `metrics` feature is on, the pacer thread records, per tick, the **jitter** (realized
-//! inter-tick interval minus the ideal period) and the **write latency** of the one `MOVE` it emits,
-//! and counts **late ticks** (a tick whose interval overran the period). [`MovementSession::stats`]
-//! snapshots them into a [`PacerStats`] — the detailed timing layer that self-validates the 1 kHz /
-//! no-jitter claim (§10 of the design spec).
-//!
-//! **Zero-cost when off.** This whole module is `#[cfg(feature = "metrics")]`, and every call site in
-//! the pacer hot loop is cfg-gated too, so with the feature off there is *no* recording — no atomics,
-//! no branches, nothing compiled into the tick loop.
-//!
-//! Histograms use [`hdrhistogram`]: high dynamic range, fixed memory, lock-free reads via a snapshot
-//! clone. Values are recorded in **nanoseconds**.
+//! Per tick the pacer records jitter (realized interval − ideal period) and the `MOVE` write latency,
+//! and counts late ticks (interval > period); [`MovementSession::stats`] snapshots them into a
+//! [`PacerStats`] that self-validates the 1 kHz / no-jitter claim (§10). The whole module is cfg-gated,
+//! as is every hot-loop call site, so it is zero-cost when off. Histograms ([`hdrhistogram`]) record
+//! nanoseconds.
 //!
 //! [`MovementSession::stats`]: super::MovementSession::stats
 
@@ -20,12 +13,11 @@ use std::time::Duration;
 use hdrhistogram::Histogram;
 use parking_lot::Mutex;
 
-/// The maximum value (ns) the histograms track before saturating: 1 second. A tick or write that
-/// takes longer than this is an extreme outlier; it is recorded at the ceiling rather than lost.
+/// Histogram ceiling (ns): 1 second. A longer tick/write saturates here rather than being lost.
 const MAX_TRACKED_NS: u64 = 1_000_000_000;
 
-/// Live, mutable metrics the pacer thread writes each tick. Held behind an [`Arc`](std::sync::Arc) so
-/// the session handle can [`snapshot`](Self::snapshot) it concurrently.
+/// Live metrics the pacer writes each tick, behind an [`Arc`](std::sync::Arc) so the session handle
+/// can [`snapshot`](Self::snapshot) concurrently.
 #[derive(Debug)]
 pub(crate) struct MetricsState {
     inner: Mutex<Inner>,
@@ -33,24 +25,23 @@ pub(crate) struct MetricsState {
 
 #[derive(Debug)]
 struct Inner {
-    /// Total ticks the pacer has run (whether or not a `MOVE` was emitted).
+    /// Total ticks run (whether or not a `MOVE` was emitted).
     ticks: u64,
-    /// Ticks whose realized interval overran the ideal period (`interval > period`).
+    /// Ticks whose realized interval overran the ideal period.
     late_ticks: u64,
-    /// `|realized interval − ideal period|` per tick, in nanoseconds.
+    /// `|interval − period|` per tick, ns.
     jitter: Histogram<u64>,
-    /// `Device::move_rel` write latency per emitting tick, in nanoseconds.
+    /// `move_rel` write latency per emitting tick, ns.
     write_latency: Histogram<u64>,
-    /// The realized instant of the previous tick, to compute the next interval. `None` until the
-    /// first recorded tick (which establishes the baseline and counts but contributes no jitter).
+    /// Previous tick instant, for the next interval. `None` until the first tick (the baseline, which
+    /// counts but contributes no jitter).
     last_tick: Option<std::time::Instant>,
 }
 
 impl MetricsState {
-    /// Create an empty metrics state with auto-resizing histograms (1 ns–1 s range, 3 sig figs).
+    /// Empty metrics state. Bounds 1 ns–1 s avoid a zero-low panic and saturate at the ceiling rather
+    /// than growing unbounded.
     pub(crate) fn new() -> Self {
-        // new_with_bounds(low, high, sigfig): low=1ns avoids a zero-low panic; high=1s ceiling. These
-        // are non-auto so a pathological value saturates at the ceiling instead of growing unbounded.
         let jitter =
             Histogram::new_with_bounds(1, MAX_TRACKED_NS, 3).expect("valid histogram bounds");
         let write_latency =
@@ -66,15 +57,14 @@ impl MetricsState {
         }
     }
 
-    /// Record one tick: bump the tick count, and (from the second tick on) the jitter vs `period`
-    /// and the late-tick count. Called once per tick by the pacer loop.
+    /// Record one tick: bump the count and, from the second tick on, the jitter vs `period` and the
+    /// late-tick count.
     pub(crate) fn record_tick(&self, period: Duration) {
         let now = std::time::Instant::now();
         let mut inner = self.inner.lock();
         inner.ticks += 1;
         if let Some(prev) = inner.last_tick {
             let interval = now.duration_since(prev);
-            // Jitter = |interval − period|.
             let jitter_ns = abs_diff_nanos(interval, period);
             let _ = inner.jitter.record(jitter_ns.max(1));
             if interval > period {
@@ -118,8 +108,7 @@ pub struct PacerStats {
 }
 
 /// A serializable summary of an [`hdrhistogram::Histogram`] — count, min/max/mean, and key
-/// percentiles in nanoseconds. (The live histogram is not itself serde-able, and a full snapshot is
-/// rarely what a consumer wants; these summary stats are.)
+/// percentiles in nanoseconds (the live histogram is not itself serde-able).
 #[derive(Debug, Clone)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct HistogramSnapshot {
@@ -160,13 +149,13 @@ impl From<&Histogram<u64>> for HistogramSnapshot {
     }
 }
 
-/// `|a − b|` in nanoseconds, saturating into `u64`.
+/// `|a − b|` in nanoseconds.
 fn abs_diff_nanos(a: Duration, b: Duration) -> u64 {
     duration_nanos_clamped(a.abs_diff(b))
 }
 
-/// A `Duration` as `u64` nanoseconds, clamped to [`MAX_TRACKED_NS`] so a huge stall saturates the
-/// histogram ceiling instead of erroring on `record`.
+/// A `Duration` as `u64` ns, clamped to [`MAX_TRACKED_NS`] so a huge stall saturates the histogram
+/// ceiling instead of erroring on `record`.
 fn duration_nanos_clamped(d: Duration) -> u64 {
     d.as_nanos().min(MAX_TRACKED_NS as u128) as u64
 }
@@ -179,9 +168,7 @@ mod tests {
     fn records_ticks_and_jitter() {
         let m = MetricsState::new();
         let period = Duration::from_millis(1);
-        // First tick: baseline (no jitter sample yet).
-        m.record_tick(period);
-        // A few more ticks with a tiny real gap so an interval exists.
+        m.record_tick(period); // baseline, no jitter sample yet
         for _ in 0..5 {
             std::thread::sleep(Duration::from_micros(200));
             m.record_tick(period);
@@ -190,7 +177,7 @@ mod tests {
 
         let s = m.snapshot();
         assert_eq!(s.ticks, 6);
-        // 5 jitter samples (ticks 2..=6), at least one write-latency sample.
+        // 5 jitter samples (ticks 2..=6).
         assert_eq!(s.jitter.count, 5);
         assert!(!s.jitter.is_empty());
         assert_eq!(s.write_latency.count, 1);
@@ -201,7 +188,7 @@ mod tests {
     #[test]
     fn counts_late_ticks() {
         let m = MetricsState::new();
-        // Tiny ideal period → real sleeps overrun it → every interval counts as late.
+        // A 1 ns ideal period → every real sleep overruns it → every interval counts as late.
         let period = Duration::from_nanos(1);
         m.record_tick(period); // baseline
         for _ in 0..3 {

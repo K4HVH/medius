@@ -1,9 +1,7 @@
 //! Connection setup — [`Device::open`], [`Device::find`], and the version handshake (§2.2, §6).
 //!
-//! [`Device::from_transport`] (in [`super`]) builds the device and spawns the reader **without** a
-//! handshake — the seam for tests and for these constructors. [`Device::open`] adds the real
-//! handshake: send `QUERY(VERSION)`, require `proto_ver == PROTO_VER`, else reject. [`Device::find`]
-//! scans candidate ports by VID/PID and opens the first match.
+//! [`Device::open`] adds the handshake on top of `from_transport`: send `QUERY(VERSION)`, require
+//! `proto_ver == PROTO_VER`, else reject. [`Device::find`] scans ports by VID/PID and opens the first.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -16,23 +14,19 @@ use crate::transport::Transport;
 
 use super::Device;
 
-/// Handshake VERSION probes before giving up. A box can drop the very first frame after a fresh open
-/// (the device-chip UART resyncing / stale RX after enumeration), so a single-shot probe fails
-/// intermittently on reconnect — observed ~1-in-12 on real hardware. A few quick retries make connect
-/// reliable without the native firmware's baud dance.
+/// VERSION probes before giving up. A box can drop the first frame after a fresh open (device-chip
+/// UART resyncing / stale RX after enumeration) — observed ~1-in-12 on real hardware — so a few quick
+/// retries make connect reliable without the native firmware's baud dance.
 const HANDSHAKE_ATTEMPTS: usize = 5;
 
-/// Per-attempt VERSION-probe timeout during the handshake. `HANDSHAKE_ATTEMPTS × this` bounds total
-/// connect time (~1.25 s worst case) while each retry re-sends a fresh `QUERY(VERSION)`.
+/// Per-attempt probe timeout; `HANDSHAKE_ATTEMPTS ×` this bounds total connect time (~1.25 s worst).
 const HANDSHAKE_ATTEMPT_TIMEOUT: Duration = Duration::from_millis(250);
 
 impl Device {
-    /// Open the box at an explicit serial `path`, perform the version handshake, and return a ready
-    /// [`Device`] (default [`ConnectOptions`]).
+    /// Open the box at serial `path`, run the version handshake, and return a ready [`Device`].
     ///
     /// The handshake sends `QUERY(VERSION)` and requires the reported `proto_ver` to equal
-    /// [`PROTO_VER`](crate::protocol::PROTO_VER) (§2.2). A silent box surfaces as
-    /// [`Error::NoReply`]; a wrong version as [`Error::BadProtoVer`].
+    /// [`PROTO_VER`](crate::protocol::PROTO_VER) (§2.2).
     ///
     /// # Errors
     /// - [`Error::Io`] if the port cannot be opened/configured.
@@ -43,16 +37,14 @@ impl Device {
         Self::open_with(path, &ConnectOptions::default())
     }
 
-    /// Open the box at an explicit serial `path` (Windows `COMn`), perform the handshake, and return
-    /// a ready [`Device`] (default [`ConnectOptions`]). See the Linux [`open`](Device::open) for the
-    /// handshake contract.
+    /// Open the box at serial `path` (Windows `COMn`); see the Linux [`open`](Device::open) for the
+    /// handshake contract and errors.
     #[cfg(windows)]
     pub fn open(path: impl AsRef<std::path::Path>) -> Result<Device> {
         Self::open_with(path, &ConnectOptions::default())
     }
 
-    /// As [`open`](Device::open) but configured by `opts` (query timeout, keepalive cadence) — the
-    /// [`ConnectOptions`]-driven constructor (§10).
+    /// As [`open`](Device::open) but configured by `opts` (§10).
     #[cfg(target_os = "linux")]
     pub fn open_with(path: impl AsRef<std::path::Path>, opts: &ConnectOptions) -> Result<Device> {
         let serial = crate::transport::linux::LinuxSerial::open(path.as_ref())?;
@@ -66,9 +58,8 @@ impl Device {
         Self::open_transport_with(Arc::new(serial), opts)
     }
 
-    /// Build a device over an already-open transport **and** run the handshake (default
-    /// [`ConnectOptions`]). The general form is [`open_transport_with`](Device::open_transport_with);
-    /// this no-options convenience is used by the device tests.
+    /// Build a device over an already-open transport and run the handshake (default
+    /// [`ConnectOptions`]). No-options convenience used by the device tests.
     #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn open_transport(transport: Arc<dyn Transport>) -> Result<Device> {
         Self::open_transport_with(transport, &ConnectOptions::default())
@@ -86,12 +77,11 @@ impl Device {
 
     /// Send `QUERY(VERSION)` and validate the reported protocol version (§2.2).
     ///
-    /// Probes up to [`HANDSHAKE_ATTEMPTS`] times (each [`HANDSHAKE_ATTEMPT_TIMEOUT`]) because the box
-    /// can drop the first frame after a fresh open; a timeout on every attempt surfaces as
-    /// [`Error::NoReply`]. A parseable reply with the wrong protocol version is a hard
+    /// Probes up to [`HANDSHAKE_ATTEMPTS`] times because the box can drop the first frame after a fresh
+    /// open; all-timeout surfaces as [`Error::NoReply`]. A wrong version is a hard
     /// [`Error::BadProtoVer`] (not retried — the box answered, it's just incompatible).
     fn handshake(&self) -> Result<()> {
-        // A `connect` span groups the handshake's query/transport events (no-op without `tracing`).
+        // `connect` span grouping the handshake's events (no-op without `tracing`).
         let _span =
             trace_span!(target: "medius::device", tracing::Level::INFO, "connect").entered();
 
@@ -108,17 +98,16 @@ impl Device {
                         trace_event!(target: "medius::device", tracing::Level::DEBUG, "handshake: unparseable version reply, retrying");
                     }
                 },
-                // No reply this attempt — retry (the first frame after open is the usual casualty).
+                // No reply this attempt — retry.
                 Err(Error::QueryTimeout) => {
                     trace_event!(target: "medius::device", tracing::Level::DEBUG, "handshake: version probe timed out, retrying");
                 }
-                // A real transport/encode error is fatal — don't burn the remaining attempts on it.
+                // A real transport/encode error is fatal — don't burn the remaining attempts.
                 Err(e) => return Err(e),
             }
         }
 
         let Some(version) = version else {
-            // Every probe timed out — there is no (responsive) box at the other end.
             trace_event!(target: "medius::device", tracing::Level::WARN, attempts = HANDSHAKE_ATTEMPTS, "handshake: no reply to version query");
             return Err(Error::NoReply);
         };
@@ -134,7 +123,6 @@ impl Device {
                 got: version.proto_ver,
             });
         }
-        // Connect succeeded — INFO with the firmware/proto fields (§10).
         trace_event!(
             target: "medius::device",
             tracing::Level::INFO,
@@ -147,12 +135,10 @@ impl Device {
         Ok(())
     }
 
-    /// Discover the first medius box by VID/PID, open it, and handshake (§6, default
-    /// [`ConnectOptions`]).
+    /// Discover the first medius box by VID/PID, open it, and handshake (§6).
     ///
     /// # Errors
-    /// [`Error::NotFound`] if no candidate port matches; otherwise the same errors as
-    /// [`open`](Device::open).
+    /// [`Error::NotFound`] if no port matches; otherwise the same errors as [`open`](Device::open).
     #[cfg(any(target_os = "linux", windows))]
     pub fn find() -> Result<Device> {
         Self::find_with(&ConnectOptions::default())
@@ -180,16 +166,15 @@ mod tests {
 
     use super::Device;
 
-    /// The handshake must survive the box dropping its first frame(s) after open — it retries the
-    /// VERSION probe. Here the mock ignores the first two `QUERY(VERSION)` frames, then answers; the
-    /// handshake must still connect (reproduces the ~1-in-12 real-hardware reopen flake).
+    /// The handshake retries past dropped first frames: the mock ignores the first two probes, then
+    /// answers, and connect must still succeed (the ~1-in-12 real-hardware reopen flake).
     #[test]
     fn handshake_retries_past_dropped_first_frames() {
         let calls = Arc::new(AtomicUsize::new(0));
         let counter = Arc::clone(&calls);
         let mock = Arc::new(MockTransport::with_responder(move |ty, seq, payload| {
             if ty == FrameType::Query && payload.first() == Some(&0) {
-                // Drop the first two VERSION probes (return nothing); answer the third onward.
+                // Drop the first two probes; answer the third onward.
                 if counter.fetch_add(1, Ordering::SeqCst) < 2 {
                     return Vec::new();
                 }
@@ -201,11 +186,10 @@ mod tests {
         let device = Device::open_transport(mock)
             .expect("handshake should retry past the dropped first frames and connect");
         assert_eq!(device.query_version().unwrap().proto_ver, 1);
-        // At least 3 probes were sent (2 dropped + 1 answered).
-        assert!(calls.load(Ordering::SeqCst) >= 3);
+        assert!(calls.load(Ordering::SeqCst) >= 3); // 2 dropped + 1 answered
     }
 
-    /// A genuinely silent box still fails fast-ish with `NoReply` after exhausting the retries.
+    /// A silent box fails with `NoReply` after exhausting the retries.
     #[test]
     fn handshake_gives_up_with_no_reply_when_silent() {
         let mock = Arc::new(MockTransport::new()); // never answers

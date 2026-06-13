@@ -1,15 +1,11 @@
 //! medius — operator / hardware-validation CLI (feature = `cli`).
 //!
-//! A `clap`-derive operator tool and our on-hardware validation harness (§10). It exposes the device
-//! command/query surface, the paced movement session (`pace`/`bench` — the CLI's reason to exist over
-//! `tools/medius.py`), reboot/flash box management, and a LOG monitor.
+//! A `clap`-derive operator tool and on-hardware validation harness (§10): the device command/query
+//! surface, the paced movement session (`pace`/`bench` — the CLI's reason to exist over
+//! `tools/medius.py`), reboot/flash box management, and a LOG monitor. `--json` emits machine-readable
+//! output; `-v/-vv` installs a `tracing` subscriber; the `flash` subcommand needs the `flash` feature.
 //!
-//! Cross-feature surfaces: `--json` (serde) emits machine-readable output; `-v/-vv` installs a
-//! `tracing` subscriber (the `cli` feature pulls both `serde` + `tracing`); `bench` uses `metrics`;
-//! the `flash` subcommand is compiled only when the `flash` feature is also on.
-//!
-//! `pace`/`bench` are long-running and **explicitly user-invoked** — never auto-launched (per the
-//! project's hardware-test ergonomics).
+//! `pace`/`bench` are long-running and explicitly user-invoked — never auto-launched.
 
 use std::io::{self, BufRead, Write};
 use std::process::ExitCode;
@@ -223,8 +219,7 @@ fn main() -> ExitCode {
     }
 }
 
-/// Install a `tracing` subscriber if `-v` was passed (level scales with the count). The `cli` feature
-/// always pulls `tracing`, so this is unconditional here.
+/// Install a `tracing` subscriber if `-v` was passed (level scales with the count).
 fn init_tracing(verbose: u8) {
     if verbose == 0 {
         return;
@@ -308,7 +303,6 @@ fn cmd_monitor(cli: &Cli, args: &MonitorArgs) -> medius::Result<()> {
 
     let mut next_health = Instant::now();
     loop {
-        // Drain any pending log lines.
         while let Ok(line) = logs.try_recv() {
             if cli.json {
                 println!("{}", serde_json::to_string(&line).unwrap());
@@ -338,7 +332,7 @@ fn cmd_selftest(cli: &Cli) -> medius::Result<()> {
     let version = device.query_version()?;
     let health = device.query_health()?;
     eprintln!("connected: {version} (health link={})", health.link_up);
-    // A gentle scripted exercise — no large motion, no held buttons left behind.
+    // Gentle scripted exercise — no large motion, no buttons left held.
     device.move_rel(5, 0)?;
     device.move_rel(-5, 0)?;
     device.wheel(1)?;
@@ -360,7 +354,6 @@ fn cmd_pace(cli: &Cli, args: &PaceArgs) -> medius::Result<()> {
     let session = device.movement_at(args.rate);
 
     if args.stdin {
-        // Read "DX DY" pairs from stdin, pushing each into the pacer.
         eprintln!("paceing stdin deltas at {} Hz (EOF to stop)…", args.rate);
         let stdin = io::stdin();
         for line in stdin.lock().lines() {
@@ -373,7 +366,6 @@ fn cmd_pace(cli: &Cli, args: &PaceArgs) -> medius::Result<()> {
             }
         }
     } else {
-        // Constant-velocity mode.
         let vx = args.vx.unwrap_or(0);
         let vy = args.vy.unwrap_or(0);
         eprintln!(
@@ -384,8 +376,7 @@ fn cmd_pace(cli: &Cli, args: &PaceArgs) -> medius::Result<()> {
         std::thread::sleep(Duration::from_millis(args.ms));
         session.clear_velocity();
     }
-    // Drop the session (joins the pacer thread).
-    drop(session);
+    drop(session); // joins the pacer thread
     let _ = io::stdout().flush();
     Ok(())
 }
@@ -393,7 +384,7 @@ fn cmd_pace(cli: &Cli, args: &PaceArgs) -> medius::Result<()> {
 fn cmd_bench(cli: &Cli, args: &BenchArgs) -> medius::Result<()> {
     let device = open(cli)?;
     let session = device.movement_at(args.rate);
-    // Emit one MOVE per tick so the pacer is actually exercised.
+    // velocity(1,0) emits one MOVE per tick, exercising the pacer.
     session.set_velocity(1, 0);
     std::thread::sleep(Duration::from_millis(args.ms));
     session.clear_velocity();
@@ -439,7 +430,7 @@ fn cmd_reboot(cli: &Cli, args: &RebootArgs) -> medius::Result<()> {
 
 #[cfg(feature = "flash")]
 fn cmd_flash(cli: &Cli, args: &FlashArgs) -> medius::Result<()> {
-    // Flash needs an explicit port (the box re-enumerates through download mode).
+    // Needs a concrete port: the box re-enumerates through download mode.
     let port = cli
         .port
         .clone()
@@ -470,19 +461,16 @@ mod tests {
     /// Each subcommand parses with representative args, and global flags attach.
     #[test]
     fn subcommands_parse() {
-        // Global flags + a one-shot move.
         let cli = Cli::try_parse_from(["medius", "--port", "/dev/ttyACM0", "move", "10", "-5"])
             .expect("move parses");
         assert!(matches!(cli.command, Command::Move(_)));
         assert_eq!(cli.port.as_deref(), Some("/dev/ttyACM0"));
 
-        // -vv increments verbosity; --json sets the flag.
         let cli = Cli::try_parse_from(["medius", "-vv", "--json", "list"]).unwrap();
         assert_eq!(cli.verbose, 2);
         assert!(cli.json);
         assert!(matches!(cli.command, Command::List));
 
-        // Enum value-parsing (snake_case button + action).
         let cli = Cli::try_parse_from(["medius", "button", "side1", "force_release"]).unwrap();
         match cli.command {
             Command::Button(a) => {
@@ -492,7 +480,6 @@ mod tests {
             _ => panic!("expected button"),
         }
 
-        // Each remaining subcommand at least parses.
         for argv in [
             vec!["medius", "info"],
             vec!["medius", "monitor"],

@@ -1,15 +1,14 @@
 //! Sustained 1 kHz pacer soak + jitter measurement (Linux, `metrics` feature).
 //!
 //! Grabs the clone's mouse node (`EVIOCGRAB`, so injected motion never reaches the desktop), runs the
-//! [`medius::MovementSession`] pacer at constant velocity for N seconds, and reports both the
-//! **evdev-delivered** stream (event count, achieved Hz, sum fidelity, worst inter-event gap, stalls)
-//! and the library's **host-side `PacerStats`** (tick jitter + write-latency histograms).
+//! pacer at constant velocity for N seconds, and reports both the evdev-delivered stream (count,
+//! achieved Hz, sum fidelity, worst gap, stalls) and the host-side `PacerStats` (tick-jitter +
+//! write-latency histograms).
 //!
 //! ```text
 //! cargo run --example hw_soak --features metrics -- [seconds=20] [event=/dev/input/event11] [port]
 //! ```
-//! NOTE: this freezes the box's passthrough mouse for the whole window (the node is grabbed). Wrap in
-//! `timeout` when running unattended.
+//! NOTE: freezes the box's passthrough mouse for the whole window. Wrap in `timeout` when unattended.
 
 #[cfg(not(all(target_os = "linux", feature = "metrics")))]
 fn main() {
@@ -175,10 +174,9 @@ mod linux {
         let stalls = stats.stalls.load(Ordering::Relaxed);
         let hz = events as f64 / elapsed;
 
-        // The firmware merges additively: if two host MOVEs land in one ~1 ms frame, they emit ONE
-        // report carrying their sum. So the report COUNT can sit just below `sum` while total motion
-        // (`sum`) is preserved exactly — that is correct, not a loss. Fidelity is judged on `sum`, not
-        // on count == sum.
+        // Firmware merges additively: two host MOVEs in one ~1 ms frame emit ONE report of their sum.
+        // So report COUNT can sit below total motion (`sum`) with no loss — fidelity is judged on
+        // `sum`, not count == sum.
         let expected = secs * 1000; // velocity 1/tick at 1 kHz
         println!("== evdev-delivered (what the OS actually saw) ==");
         println!("  duration       {elapsed:.2} s");
@@ -205,8 +203,7 @@ mod linux {
             host.write_latency.max as f64 / 1e3,
         );
 
-        // No-halving: sustained ~1 kHz (halving would show ~500 Hz), total motion within 2% of the
-        // expected sum, and only the odd OS-scheduler hiccup.
+        // No-halving: ~1 kHz (halving shows ~500), motion within 2% of expected, only the odd hiccup.
         let rate_ok = hz >= 950.0;
         let fidelity_ok = sum >= expected * 98 / 100 && sum <= expected * 102 / 100;
         let stall_ok = stalls <= secs.max(3);

@@ -1,12 +1,9 @@
 //! Open a real medius box, read its version/health, and exercise the core control surface.
 //!
-//! THIS EXAMPLE NEEDS A CONNECTED BOX TO RUN. It compiles without hardware (`cargo build
-//! --examples`), but actually running it requires a medius box plugged in over its CH343 USB-serial
-//! link. With no box present, `Device::find()` returns `Error::NotFound` and the program exits early.
+//! NEEDS A CONNECTED BOX TO RUN (compiles without hardware). With no box, `Device::find()` returns
+//! `Error::NotFound` and the program exits early.
 //!
-//! Run with an auto-discovered box:
-//!     cargo run --example basic
-//! Or point it at an explicit serial port:
+//!     cargo run --example basic                      # auto-discover
 //!     cargo run --example basic -- /dev/ttyACM0      # Linux
 //!     cargo run --example basic -- COM7              # Windows
 
@@ -15,8 +12,7 @@ use std::time::Duration;
 use medius::{Button, Device};
 
 fn main() -> medius::Result<()> {
-    // Either open the port given on the command line, or auto-discover the first box by VID/PID.
-    // Both run the version handshake (QUERY(VERSION) + proto-version check) before returning.
+    // Open the given port, or auto-discover. Both run the version handshake before returning.
     let device = match std::env::args().nth(1) {
         Some(path) => Device::open(path)?,
         None => Device::find()?,
@@ -31,16 +27,15 @@ fn main() -> medius::Result<()> {
         health.link_up, health.mouse_attached, health.clone_configured, health.injection_active,
     );
 
-    // Relative move: +dx right, +dy down. Fire-and-go (no ACK, returns once the bytes are flushed).
+    // +dx right, +dy down. Fire-and-go.
     device.move_rel(40, 0)?;
 
-    // A host-composed click: press, hold, soft-release. Blocks the calling thread for `hold`.
+    // Host-composed press/hold/soft-release; blocks for `hold`.
     device.click(Button::Left, Duration::from_millis(40))?;
 
-    // Return to pure passthrough (clear every injection override).
+    // Back to pure passthrough.
     device.reset()?;
 
-    // A snapshot of the always-on counters (frames sent, reconnects, etc.).
     println!("counters: {:?}", device.counters());
     Ok(())
 }

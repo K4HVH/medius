@@ -1,16 +1,11 @@
 //! Desired-state tracking + reapply (§8) — the data half of reconcile.
 //!
-//! [`DesiredState`] is the host's record of the button overrides it *intends* the box to hold. It is
-//! the single source of truth for two recovery behaviours wired up in Task 3.6:
-//!
-//! - **Keepalive** — while the state is non-idle (any held `press`/`force`), a cheap frame is sent
-//!   sub-1 s to defeat the firmware's 1000 ms silence auto-clear of intentionally held state; when
-//!   idle, nothing is sent, so the firmware safety auto-clear still fires on a real host crash.
-//! - **Auto-reapply on reconnect** — after a VID/PID rescan reconnect, every non-`None` override is
-//!   re-sent so the box returns to the intended state.
-//!
-//! Commands (Task 3.3) update this map as they send: `press`/`force_release` set an override,
-//! `soft_release` clears it, `reset` clears all.
+//! [`DesiredState`] records the button overrides the host *intends* the box to hold, the source of
+//! truth for two recovery behaviours: keepalive (while non-idle, send a cheap frame sub-1 s to defeat
+//! the firmware's 1000 ms silence auto-clear; while idle, send nothing so the safety auto-clear still
+//! fires on a real crash) and auto-reapply on reconnect (re-send every held override). Commands update
+//! this map as they send: `press`/`force_release` set an override, `soft_release` clears it, `reset`
+//! clears all.
 
 use crate::protocol::opcode::BTN_COUNT;
 use crate::protocol::types::{Button, ButtonAction};
@@ -28,9 +23,8 @@ pub(crate) enum Override {
 }
 
 impl Override {
-    /// The [`ButtonAction`] that re-establishes this override on the box, or `None` if there is
-    /// nothing to re-send (the override is `None`). `soft-release` is never a *held* state, so it is
-    /// not represented here — it clears an override rather than holding one.
+    /// The [`ButtonAction`] re-establishing this override on the box, or `None` if there is nothing to
+    /// re-send. `soft-release` is never a held state, so it has no representation here.
     pub(crate) fn as_action(self) -> Option<ButtonAction> {
         match self {
             Override::None => None,
@@ -55,11 +49,8 @@ impl Default for DesiredState {
 }
 
 impl DesiredState {
-    /// Record the effect of a `BUTTON` command on the intended state.
-    ///
-    /// - `Press` → hold the button down.
-    /// - `ForceRelease` → hold the button up (masking physical).
-    /// - `SoftRelease` → clear our override (back to `None`).
+    /// Record the effect of a `BUTTON` command: `Press` → down, `ForceRelease` → up (masking physical),
+    /// `SoftRelease` → clear our override.
     pub(crate) fn apply(&mut self, button: Button, action: ButtonAction) {
         let slot = &mut self.overrides[button.as_id() as usize];
         *slot = match action {
@@ -74,14 +65,13 @@ impl DesiredState {
         self.overrides = [Override::None; BTN_COUNT as usize];
     }
 
-    /// `true` if no override is held — the keepalive stays *off* in this state so the firmware safety
-    /// auto-clear remains intact (§8).
+    /// `true` if no override is held — the keepalive stays off so the firmware safety auto-clear stays
+    /// intact (§8).
     pub(crate) fn is_idle(&self) -> bool {
         self.overrides.iter().all(|o| *o == Override::None)
     }
 
-    /// The held overrides as `(Button, ButtonAction)` pairs to re-send on reapply/reconnect. Skips
-    /// `None` slots.
+    /// The held overrides as `(Button, ButtonAction)` pairs to re-send on reapply/reconnect.
     pub(crate) fn held(&self) -> impl Iterator<Item = (Button, ButtonAction)> + '_ {
         self.overrides.iter().enumerate().filter_map(|(id, ov)| {
             let action = ov.as_action()?;

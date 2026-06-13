@@ -1,26 +1,16 @@
 //! Host-driven flashing (feature = `flash`) — `reboot_download` → `esptool` handoff (§9).
 //!
-//! [`flash`] reboots a chip into ROM download mode (a `REBOOT_DL` frame: device = target 0, host =
-//! target 1) and then invokes `esptool` to write the firmware, mirroring `tools/flash_device.sh` in
-//! the firmware repo **exactly**: `esptool --chip esp32s3 --port <PORT> --before no_reset --after
-//! hard_reset write_flash 0x10000 <BIN>`.
+//! [`flash`] reboots a chip into ROM download mode then invokes `esptool` to write the firmware,
+//! mirroring `tools/flash_device.sh` **exactly**: `esptool --chip esp32s3 --port <PORT> --before
+//! no_reset --after hard_reset write_flash 0x10000 <BIN>`. Both medius chips are ESP32-S3 with the app
+//! partition at `0x10000`, so device and host flash differ only in which chip is rebooted (the `host`
+//! flag). `--before no_reset` is essential: the chip is *already* in the ROM bootloader (we just put
+//! it there), and a reset would bounce it back to the app.
 //!
-//! Both medius chips are ESP32-S3 and the app partition is at `0x10000`, so device and host flash use
-//! the same `--chip`/address — they differ only in which chip is rebooted into download mode (the
-//! `host` flag). The `--before no_reset` is essential: the chip is *already* in the ROM bootloader
-//! (we just put it there), and a reset would bounce it back to the app.
-//!
-//! ## Injectable command runner (testable without esptool)
-//!
-//! Running esptool is abstracted behind the [`CommandRunner`] trait, and the pre-flash reboot behind a
-//! closure, so [`flash_with`] can be unit-tested with a fake runner that **records the argv** and a
-//! no-op reboot — asserting the exact program, flags, address, and bin path **without** spawning
-//! esptool or opening a serial port. The production [`flash`] wires the real [`SystemRunner`] and a
-//! real [`Device`](crate::Device) reboot.
-//!
-//! esptool's stdout/stderr are captured; on success the stdout is surfaced via `tracing`
-//! (`medius::flash`, INFO), and on a non-zero exit the stderr is folded into
-//! [`Error::FlashTool`].
+//! esptool is behind the [`CommandRunner`] trait and the pre-flash reboot behind a closure, so
+//! [`flash_with`] is unit-testable with a recording runner and a no-op reboot — no esptool, no serial
+//! port. esptool's stdout/stderr are captured; success surfaces stdout via `tracing`, a non-zero exit
+//! folds stderr into [`Error::FlashTool`].
 
 use std::path::Path;
 use std::time::Duration;
@@ -51,21 +41,21 @@ pub struct CommandOutput {
     pub stderr: String,
 }
 
-/// An injectable runner for the external flash command — the seam that makes [`flash_with`] testable
+/// Injectable runner for the external flash command — the seam that makes [`flash_with`] testable
 /// without spawning `esptool`.
 pub trait CommandRunner {
-    /// Run `program` with `args`, capturing its output. An error here is a *spawn* failure (e.g. the
-    /// program is not on PATH); a non-zero exit is reported via [`CommandOutput::success`] = `false`.
+    /// Run `program` with `args`, capturing its output. An error is a *spawn* failure (e.g. not on
+    /// PATH); a non-zero exit is reported via [`CommandOutput::success`] = `false`.
     fn run(&self, program: &str, args: &[String]) -> Result<CommandOutput>;
 }
 
-/// The production [`CommandRunner`] — spawns the real process via [`std::process::Command`].
+/// The production [`CommandRunner`] — spawns the real process.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct SystemRunner;
 
 impl CommandRunner for SystemRunner {
     fn run(&self, program: &str, args: &[String]) -> Result<CommandOutput> {
-        let output = std::process::Command::new(program).args(args).output()?; // spawn/io failure → Error::Io via `?`
+        let output = std::process::Command::new(program).args(args).output()?; // spawn failure → Error::Io
         Ok(CommandOutput {
             success: output.status.success(),
             stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
@@ -74,10 +64,8 @@ impl CommandRunner for SystemRunner {
     }
 }
 
-/// Build the exact `esptool` argument vector for a `write_flash`, mirroring `flash_device.sh`.
-///
-/// Pure (no I/O): `--chip esp32s3 --port <port> --before no_reset --after hard_reset write_flash
-/// 0x10000 <bin>`. Factored out so the argv is unit-tested directly.
+/// Build the exact `esptool write_flash` argv, mirroring `flash_device.sh`. Pure (no I/O), so the
+/// argv is unit-tested directly.
 pub fn esptool_args(port: &str, bin_path: &Path) -> Vec<String> {
     vec![
         "--chip".to_string(),
@@ -100,11 +88,10 @@ fn download_target(host: bool) -> u8 {
 }
 
 /// Flash `bin_path` to a medius chip on `port`: reboot it into ROM download (`host` selects the host
-/// chip vs the device chip), then run `esptool`.
+/// vs device chip), then run `esptool`.
 ///
-/// Production entry point — uses the real [`SystemRunner`] and opens a real
-/// [`Device`](crate::Device) to send the `REBOOT_DOWNLOAD` frame, then waits [`ROM_SETTLE`] for the
-/// chip to enter the bootloader before flashing.
+/// Production entry point — real [`SystemRunner`] and a real [`Device`](crate::Device) reboot,
+/// waiting [`ROM_SETTLE`] before flashing.
 ///
 /// # Errors
 /// - [`Error::Io`] / handshake errors from opening the box to send the reboot frame.
@@ -118,8 +105,7 @@ pub fn flash(port: &str, bin_path: impl AsRef<Path>, host: bool) -> Result<()> {
         host,
         &SystemRunner,
         |port, host| {
-            // Open the box, send REBOOT_DOWNLOAD(target), drop it (closing the port), and let the chip
-            // settle into the ROM bootloader before esptool reopens the same port.
+            // Close the port (drop) before esptool reopens it, then let the chip settle into ROM.
             let device = crate::Device::open(port)?;
             device.reboot_download(reboot_target(host))?;
             drop(device);
@@ -129,7 +115,6 @@ pub fn flash(port: &str, bin_path: impl AsRef<Path>, host: bool) -> Result<()> {
     )
 }
 
-/// Map the `host` flag to the typed [`RebootTarget`](crate::RebootTarget) for a download reboot.
 #[cfg(any(target_os = "linux", windows))]
 fn reboot_target(host: bool) -> crate::RebootTarget {
     if host {
@@ -141,10 +126,8 @@ fn reboot_target(host: bool) -> crate::RebootTarget {
 
 /// The generic flash flow with an injectable runner and reboot step (the test seam).
 ///
-/// `reboot(port, host)` puts the target chip into ROM download mode; `runner` runs `esptool`. This
-/// lets a unit test pass a no-op reboot and a recording runner to assert the argv **without** touching
-/// hardware or esptool. The `download_target` byte is computed here so the test can also verify the
-/// host/device selection if it inspects the reboot closure's argument.
+/// `reboot(port, host)` puts the target chip into ROM download mode; `runner` runs `esptool`. A test
+/// passes a no-op reboot and recording runner to assert the argv without touching hardware.
 pub fn flash_with<R, F>(
     port: &str,
     bin_path: &Path,
@@ -156,7 +139,7 @@ where
     R: CommandRunner,
     F: FnOnce(&str, bool) -> Result<()>,
 {
-    let _target = download_target(host); // documents the device/host selection (0/1)
+    let _target = download_target(host); // device/host selection (0/1)
     trace_event!(
         target: "medius::flash",
         tracing::Level::INFO,
@@ -166,10 +149,8 @@ where
         "flashing: rebooting into download mode",
     );
 
-    // 1. Put the chip into ROM download mode.
     reboot(port, host)?;
 
-    // 2. Run esptool with the exact flash_device.sh argv.
     let args = esptool_args(port, bin_path);
     trace_event!(
         target: "medius::flash",
@@ -209,8 +190,7 @@ mod tests {
 
     use super::*;
 
-    /// A recording fake runner: captures the program + args it was asked to run, and returns a
-    /// scripted outcome.
+    /// Records the program + args it was asked to run, returns a scripted outcome.
     struct FakeRunner {
         calls: RefCell<Vec<(String, Vec<String>)>>,
         success: bool,
@@ -289,9 +269,7 @@ mod tests {
             },
         );
         assert!(res.is_ok());
-        // The reboot step was invoked for the device chip on the right port.
         assert_eq!(reboot_seen, Some(("/dev/ttyACM0".to_string(), false)));
-        // esptool was run exactly once, with the flash_device.sh argv.
         let calls = runner.calls.borrow();
         assert_eq!(calls.len(), 1);
         assert_eq!(calls[0].0, "esptool.py");
@@ -299,7 +277,6 @@ mod tests {
             calls[0].1,
             esptool_args("/dev/ttyACM0", Path::new("/tmp/medius_device.bin"))
         );
-        // Address is present and correct.
         assert!(calls[0].1.contains(&"0x10000".to_string()));
     }
 
