@@ -1,5 +1,3 @@
-//! Device `LOG` frame fan-out (§4.3).
-
 use std::time::Duration;
 
 use crate::error::{Error, Result};
@@ -7,9 +5,7 @@ use crate::types::LogLine;
 
 use super::Device;
 
-pub(crate) const LOGS_CAPACITY: usize = 1024;
-
-/// A receiver for the device `LOG` stream (§4.3).
+/// A receiver for the device `LOG` stream.
 #[derive(Clone, Debug)]
 pub struct LogStream(flume::Receiver<LogLine>);
 
@@ -39,30 +35,14 @@ impl IntoIterator for LogStream {
     type Item = LogLine;
     type IntoIter = flume::IntoIter<LogLine>;
 
-    /// A blocking iterator that yields each `LOG` line until the device is dropped.
     fn into_iter(self) -> Self::IntoIter {
         self.0.into_iter()
     }
 }
 
 impl Device {
-    /// A [`LogStream`] over the device `LOG` stream (§4.3).
+    /// A [`LogStream`] over the device `LOG` stream.
     pub fn logs(&self) -> LogStream {
-        LogStream(self.inner.logs_rx.clone())
-    }
-}
-
-pub(crate) fn push(
-    logs_tx: &flume::Sender<LogLine>,
-    evict_rx: &flume::Receiver<LogLine>,
-    line: LogLine,
-) {
-    match logs_tx.try_send(line) {
-        Ok(()) => {}
-        Err(flume::TrySendError::Full(line)) => {
-            let _ = evict_rx.try_recv();
-            let _ = logs_tx.try_send(line);
-        }
-        Err(flume::TrySendError::Disconnected(_)) => {}
+        LogStream(self.link.logs_rx())
     }
 }

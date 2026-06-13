@@ -8,6 +8,7 @@ mod trace;
 
 mod device;
 mod error;
+mod link;
 pub(crate) mod protocol;
 mod transport;
 pub mod types;
@@ -22,9 +23,10 @@ mod mock;
 #[cfg(test)]
 mod tests;
 
+pub use device::Device;
 pub use device::logs::LogStream;
-pub use device::{DEFAULT_KEEPALIVE_CADENCE, DEFAULT_QUERY_TIMEOUT, Device};
 pub use error::{Error, Result};
+pub use link::{DEFAULT_KEEPALIVE_CADENCE, DEFAULT_QUERY_TIMEOUT};
 pub use protocol::{DecodedFrame, FrameType};
 pub use transport::scan::find_medius;
 pub use types::{

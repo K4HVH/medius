@@ -1,4 +1,4 @@
-use crate::device::reconcile::DesiredState;
+use crate::link::reconcile::DesiredState;
 use crate::types::{Button, ButtonAction};
 
 #[test]

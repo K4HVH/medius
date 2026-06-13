@@ -8,18 +8,18 @@ use super::Device;
 impl Device {
     /// `MOVE` — relative cursor movement; full `i16`, no clamp.
     pub fn move_rel(&self, dx: i16, dy: i16) -> Result<()> {
-        self.send(FrameType::Move, &move_payload(dx, dy))
+        self.link.send(FrameType::Move, &move_payload(dx, dy))
     }
 
     /// `WHEEL` — vertical scroll; full `i16`, no clamp.
     pub fn wheel(&self, delta: i16) -> Result<()> {
-        self.send(FrameType::Wheel, &wheel_payload(delta))
+        self.link.send(FrameType::Wheel, &wheel_payload(delta))
     }
 
     /// `BUTTON` — set an injection override for one button.
     pub fn button(&self, button: Button, action: ButtonAction) -> Result<()> {
-        self.desired().lock().apply(button, action);
-        self.send(
+        self.link.desired().lock().apply(button, action);
+        self.link.send(
             FrameType::Button,
             &button_payload(button.as_id(), action.as_u8()),
         )
@@ -42,7 +42,7 @@ impl Device {
 
     /// `RESET` — return to pure passthrough immediately.
     pub fn reset(&self) -> Result<()> {
-        self.desired().lock().clear();
-        self.send(FrameType::Reset, &[])
+        self.link.desired().lock().clear();
+        self.link.send(FrameType::Reset, &[])
     }
 }

@@ -18,7 +18,7 @@ fn transport_swap_resets_decoder() {
     std::thread::sleep(Duration::from_millis(20));
 
     let mock_b = Arc::new(MockTransport::new());
-    device.transport_slot().swap(mock_b.clone());
+    device.link.transport_slot().swap(mock_b.clone());
     mock_b.push_frame(FrameType::Log, 0, &[2, b'n', b'e', b'w']);
 
     let line = rx

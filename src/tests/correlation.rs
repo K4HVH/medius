@@ -38,7 +38,7 @@ fn pending_query_survives_seq_wrap_without_cross_delivery() {
     let dev_a = device.clone();
     let (done_tx, done_rx) = mpsc::channel();
     let a = std::thread::spawn(move || {
-        let r = dev_a.query_timeout(0, Duration::from_millis(400));
+        let r = dev_a.link.query_timeout(0, Duration::from_millis(400));
         let _ = done_tx.send(());
         r
     });
@@ -65,26 +65,26 @@ fn pending_query_survives_seq_wrap_without_cross_delivery() {
 fn stale_cancel_does_not_evict_newer_waiter() {
     let device = Device::from_transport(Arc::new(MockTransport::new()));
 
-    let (seq_a, gen_a, _rx_a) = device.register_pending(0);
-    device.cancel_query(seq_a, gen_a);
-    assert_eq!(device.pending_len(), 0);
+    let (seq_a, gen_a, _rx_a) = device.link.register_pending(0);
+    device.link.cancel_query(seq_a, gen_a);
+    assert_eq!(device.link.pending_len(), 0);
 
     for _ in 0..255 {
-        let _ = device.next_seq();
+        let _ = device.link.next_seq();
     }
 
-    let (seq_b, gen_b, rx_b) = device.register_pending(0);
+    let (seq_b, gen_b, rx_b) = device.link.register_pending(0);
     assert_eq!(seq_b, seq_a, "B reuses A's freed SEQ");
     assert_ne!(gen_b, gen_a, "B has a newer generation");
 
-    device.cancel_query(seq_a, gen_a);
+    device.link.cancel_query(seq_a, gen_a);
     assert_eq!(
-        device.pending_len(),
+        device.link.pending_len(),
         1,
         "a stale-gen cancel must not evict the newer waiter B"
     );
 
-    device.cancel_query(seq_b, gen_b);
-    assert_eq!(device.pending_len(), 0);
+    device.link.cancel_query(seq_b, gen_b);
+    assert_eq!(device.link.pending_len(), 0);
     drop(rx_b);
 }

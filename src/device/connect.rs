@@ -1,5 +1,3 @@
-//! Connection setup: [`Device::open`], [`Device::find`], and the version handshake.
-
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -33,7 +31,10 @@ impl Device {
 
         let mut version = None;
         for _ in 0..HANDSHAKE_ATTEMPTS {
-            match self.query_timeout(Q_VERSION, HANDSHAKE_ATTEMPT_TIMEOUT) {
+            match self
+                .link
+                .query_timeout(Q_VERSION, HANDSHAKE_ATTEMPT_TIMEOUT)
+            {
                 Ok(payload) => match parse_resp(&payload) {
                     Some(Resp::Version(v)) => {
                         version = Some(v);
