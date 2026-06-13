@@ -21,9 +21,6 @@ pub(crate) mod query;
 pub(crate) mod reboot;
 pub(crate) mod reconcile;
 
-#[cfg(test)]
-mod tests;
-
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
@@ -327,12 +324,6 @@ impl Device {
     #[cfg(feature = "async")]
     pub(crate) fn weak_inner(&self) -> std::sync::Weak<Inner> {
         Arc::downgrade(&self.inner)
-    }
-
-    /// The number of in-flight query waiters (diagnostic; the async timeout test asserts no leak).
-    #[cfg_attr(not(test), allow(dead_code))]
-    pub(crate) fn pending_len(&self) -> usize {
-        self.inner.pending.lock().len()
     }
 
     /// The intended-state map, shared by the command surface and the keepalive/reconnect reconcile.

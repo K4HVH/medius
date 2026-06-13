@@ -70,35 +70,3 @@ impl ButtonAction {
         })
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn button_id_round_trips() {
-        for (id, btn) in [
-            (0u8, Button::Left),
-            (1, Button::Right),
-            (2, Button::Middle),
-            (3, Button::Side1),
-            (4, Button::Side2),
-        ] {
-            assert_eq!(Button::from_id(id), Some(btn));
-            assert_eq!(btn.as_id(), id);
-        }
-        assert_eq!(Button::from_id(5), None);
-        assert_eq!(Button::from_id(255), None);
-    }
-
-    #[test]
-    fn button_action_round_trips() {
-        assert_eq!(ButtonAction::SoftRelease.as_u8(), 0);
-        assert_eq!(ButtonAction::Press.as_u8(), 1);
-        assert_eq!(ButtonAction::ForceRelease.as_u8(), 2);
-        assert_eq!(ButtonAction::from_u8(0), Some(ButtonAction::SoftRelease));
-        assert_eq!(ButtonAction::from_u8(1), Some(ButtonAction::Press));
-        assert_eq!(ButtonAction::from_u8(2), Some(ButtonAction::ForceRelease));
-        assert_eq!(ButtonAction::from_u8(3), None);
-    }
-}

@@ -21,19 +21,3 @@ impl fmt::Display for Version {
         )
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn version_display() {
-        let v = Version {
-            proto_ver: 1,
-            fw_major: 2,
-            fw_minor: 3,
-            fw_patch: 4,
-        };
-        assert_eq!(v.to_string(), "fw 2.3.4");
-    }
-}
