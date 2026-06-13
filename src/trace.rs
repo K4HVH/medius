@@ -5,9 +5,9 @@
 //! and no runtime cost without scattering `#[cfg]` through every call site. `#[macro_use]`d first in
 //! `lib.rs` so they are in scope crate-wide.
 //!
-//! Hot-path discipline (§10): the pacer must never trace per tick (it would perturb the 1 kHz path);
-//! it emits only a ~1/sec DEBUG aggregate. The shim is the mechanism; placement is the caller's job
-//! and is enforced by a test.
+//! Hot-path discipline (§10): per-frame TX/RX is traced at TRACE only, so a caller's tight MOVE loop
+//! is never perturbed by event work at higher levels. The shim is the mechanism; placement is the
+//! call site's job.
 
 /// Emit a tracing event when the `tracing` feature is on; expand to nothing otherwise.
 ///

@@ -1,9 +1,9 @@
 # medius — library overview
 
 The `medius` crate is the host control plane for the Medius transparent mouse-passthrough box. It is a
-**faithful, minimal v1**: a 1:1 binding of the firmware's command primitives, plus the host-side 1 kHz
-pacer and the infrastructure to drive the box reliably — and **nothing that automates or composes
-mouse input** (no click, drag, hold, smoothing, or auto-velocity).
+**faithful, minimal v1**: a 1:1 binding of the firmware's command primitives plus the infrastructure
+to drive the box reliably — and **nothing that automates, paces, or composes mouse input** (no click,
+drag, hold, smoothing, auto-velocity, or host-side pacer).
 
 Validated end-to-end on real hardware (see "Validation"). Tracks the firmware in `medius-fw`
 (`control-protocol.md` is the wire source of truth).
@@ -15,13 +15,13 @@ Validated end-to-end on real hardware (see "Validation"). Tracks the firmware in
 | In scope | Out of scope (deliberately) |
 |---|---|
 | 1:1 bindings of the firmware frames (MOVE/WHEEL/BUTTON/RESET/QUERY/REBOOT_DL/LOG) | `click`, `drag`, double-click, any composed multi-frame gesture |
-| The 1 kHz `MovementSession` pacer (caller supplies every delta; the library only paces *when* frames emit — the firmware offloads pacing to the host) | `set_velocity` / any auto-generated motion |
-| Infrastructure: connect/handshake, keepalive (holds caller-commanded state), reconnect+reapply, the reader, SEQ correlation | smoothing / humanization / trajectory synthesis |
-| Linux + Windows raw serial, async wrapper, mock, metrics, tracing, serde | firmware-side features not yet in `control-protocol.md` |
+| Infrastructure: connect/handshake, keepalive (holds caller-commanded state), reconnect+reapply, the reader, SEQ correlation | `set_velocity` / any auto-generated motion |
+| Linux + Windows raw serial, async wrapper, mock, tracing, serde | a host-side pacer / frame clock — the caller drives MOVE timing |
+| | smoothing / humanization / trajectory synthesis |
 
 **The test for "is this an extra":** a function that *generates/automates input the caller didn't
-explicitly supply* is a gesture → out. A function that binds one firmware frame, maintains
-caller-commanded state, recovers the link, or paces caller-supplied data → infrastructure → in.
+explicitly supply* — or clocks *when* their input emits — is out. A function that binds one firmware
+frame, maintains caller-commanded state, or recovers the link → infrastructure → in.
 
 ---
 
@@ -33,7 +33,6 @@ src/
   transport/  PRIVATE — Transport trait; linux (termios2/4M/DTR-RTS), windows (DCB), mock, VID/PID scan
   device/     Device core — connect/handshake, commands, queries, logs, reconcile (DesiredState),
               reboot/reconnect/keepalive, counters
-  pacer/      MovementSession — push→1kHz emission, precise clock, metrics
   asyncv/     AsyncDevice — thin wrapper over the SAME core (async only on query)
   mock/       MockBox — public scriptable fake box (feature `mock`)
   flash/      esptool reboot+flash handoff (feature `flash`)
@@ -76,13 +75,8 @@ cross-delivered to a query awaiting a different selector).
 ### Queries — QUERY→RESP (the only round-trip)
 - `query_version() -> Version` · `query_health() -> Health` (and async equivalents).
 
-### Pacer — `MovementSession` (the host's 1 kHz job)
-- `device.movement()` / `movement_at(hz)` / `movement_with(&ConnectOptions)` → spawns the real-time
-  pacer thread.
-- `push(dx, dy)` — accumulate a caller delta; the pacer emits ≤1 MOVE per tick (drift-free absolute
-  clock; carry-remainder for >i16 bursts; idle ticks emit nothing).
-- `set_rate(hz)` / `rate()` · `stats() -> PacerStats` (feature `metrics`: tick-jitter + write-latency
-  histograms).
+Sustained 1 kHz motion is a caller-driven loop of `move_rel` — the firmware merges additively with no
+halving. There is no host-side pacer; the caller owns MOVE timing (e.g. its own real-time loop).
 
 ### Box management
 - `reboot(RebootTarget)` → REBOOT_DL — the only software reboot (no DTR/RTS auto-reset on this board).
@@ -96,11 +90,10 @@ cross-delivered to a query awaiting a different selector).
 - `counters() -> CountersSnapshot` — frames_tx/rx, crc_drops, reconnects (always-on, cheap atomics).
 
 ### Public types
-`Device`, `AsyncDevice`, `MovementSession`, `Button`, `ButtonAction`, `RebootTarget`, `Version`,
-`Health`, `LogLine`, `LogLevel`, `ConnectOptions`, `CountersSnapshot`, `PacerStats`,
-`HistogramSnapshot`, `PortInfo`, `find_medius`, `MockBox`, `LogStream`, `Error`, `Result`,
-`DEFAULT_RATE_HZ`, plus `FrameType`/`DecodedFrame` (frame-inspection for `MockBox`). The wire codec
-(`protocol`) and low-level discovery (`find_ports`/`WCH_VID`/`CH343_PID`) are now crate-internal.
+`Device`, `AsyncDevice`, `Button`, `ButtonAction`, `RebootTarget`, `Version`, `Health`, `LogLine`,
+`LogLevel`, `ConnectOptions`, `CountersSnapshot`, `PortInfo`, `find_medius`, `MockBox`, `LogStream`,
+`Error`, `Result`, plus `FrameType`/`DecodedFrame` (frame-inspection for `MockBox`). The wire codec
+(`protocol`) and low-level discovery (`find_ports`/`WCH_VID`/`CH343_PID`) are crate-internal.
 
 ---
 
@@ -132,9 +125,9 @@ unsolicited `RESP(VERSION)` (SEQ=0) at boot + on first contact as a presence/rea
 
 ## 6. Feature flags
 
-`default` = lean sync core. `async` (AsyncDevice) · `mock` (MockBox) · `metrics` (PacerStats) ·
-`flash` (esptool handoff) · `tracing` (library spans, off the pacer hot path) · `serde` (derives on
-value types, snake_case).
+`default` = lean sync core. `async` (AsyncDevice) · `mock` (MockBox) · `flash` (esptool handoff) ·
+`tracing` (library spans; per-frame TX/RX at TRACE only) · `serde` (derives on value types,
+snake_case).
 
 ---
 
@@ -163,14 +156,18 @@ To keep the host faithful (no host workarounds), three firmware changes were mad
 - **Host-free:** every feature flag + `--all-features` (unit + doctests) pass; clippy
   clean on Linux **and** `x86_64-pc-windows-msvc`; `cargo doc` link-clean; examples build.
 - **Hardware (`examples/hw_full.rs`, grabbed):** handshake, move (exact/neg/zero/diagonal/carry),
-  wheel, all 5 buttons × actions, force-release, reset, 1 kHz pacer (no-halving), keepalive-holds,
+  wheel, all 5 buttons × actions, force-release, reset, 1 kHz no-halving, keepalive-holds,
   query-under-1kHz-load (SEQ correlation), reconnect+reapply, async query, no-stuck/crash safety — **all
-  PASS**, `crc_drops=0`. Re-validated after every fix.
+  PASS**, `crc_drops=0`.
+  These results are from the hardware runs *prior to* the pacer removal (then driven via the pacer).
+  Post-removal, the no-halving check drives a direct `move_rel` loop instead; that conversion is
+  host-free-verified (build/clippy/test/doc), and **on-hardware re-validation is pending** — the medius
+  box is currently disconnected (a stock-firmware box is on the port).
 - **Adversarial review:** 4-lens (firmware, concurrency, cleanup-regression, protocol-integration);
   all confirmed findings fixed (selector-aware correlation, firmware linger decoupling).
 
 ## 10. Tests & examples
 
 Unit + doctests across all features; a public scriptable `mock` for hardware-free downstream tests.
-Examples: `basic`, `paced`, `mock`, `async`, `hw_validate`, `hw_soak`, `hw_full`. CI workflow checks
+Examples: `basic`, `mock`, `async`, `hw_validate`, `hw_soak`, `hw_full`. CI workflow checks
 fmt/clippy(both targets)/test/doc.

@@ -1,26 +1,26 @@
-//! Sustained 1 kHz pacer soak + jitter measurement (Linux, `metrics` feature).
+//! Sustained 1 kHz direct-move soak (Linux).
 //!
-//! Grabs the clone's mouse node (`EVIOCGRAB`, so injected motion never reaches the desktop), runs the
-//! pacer with a ~1 kHz push loop for N seconds, and reports both the evdev-delivered stream (count,
-//! achieved Hz, sum fidelity, worst gap, stalls) and the host-side `PacerStats` (tick-jitter +
-//! write-latency histograms).
+//! Grabs the clone's mouse node (`EVIOCGRAB`, so injected motion never reaches the desktop), drives a
+//! direct `move_rel(1, 0)` loop at ~1 kHz for N seconds, and reports the evdev-delivered stream (count,
+//! achieved Hz, sum fidelity, worst gap, stalls) — proving the firmware's no-halving 1 kHz injection
+//! holds up over a long run, with the host as a thin 1:1 frame binding (no host-side pacer).
 //!
 //! ```text
-//! cargo run --example hw_soak --features metrics -- [seconds=20] [event=/dev/input/event11] [port]
+//! cargo run --example hw_soak -- [seconds=20] [event=/dev/input/event11] [port]
 //! ```
 //! NOTE: freezes the box's passthrough mouse for the whole window. Wrap in `timeout` when unattended.
 
-#[cfg(not(all(target_os = "linux", feature = "metrics")))]
+#[cfg(not(target_os = "linux"))]
 fn main() {
-    eprintln!("hw_soak needs Linux + `--features metrics`.");
+    eprintln!("hw_soak needs Linux.");
 }
 
-#[cfg(all(target_os = "linux", feature = "metrics"))]
+#[cfg(target_os = "linux")]
 fn main() -> std::process::ExitCode {
     linux::run()
 }
 
-#[cfg(all(target_os = "linux", feature = "metrics"))]
+#[cfg(target_os = "linux")]
 mod linux {
     use std::os::fd::RawFd;
     use std::process::ExitCode;
@@ -148,24 +148,20 @@ mod linux {
             }
         };
         println!(
-            "connected {:?}; grabbed {event}; soaking the 1 kHz pacer for {secs}s ...\n",
+            "connected {:?}; grabbed {event}; soaking a direct 1 kHz move_rel loop for {secs}s ...\n",
             device.query_version().ok()
         );
 
         let _ = device.reset();
-        let session = device.movement_at(1000);
         let start = Instant::now();
-        // Operator-driven push loop: feed (1,0) at ~1 kHz for the whole window; the pacer emits one
-        // MOVE per tick. Push timing isn't exact, so the verdict judges achieved rate + motion, not an
-        // exact secs*1000 sum.
+        // Caller-driven 1 kHz loop: one MOVE per ~1 ms straight to the box. Sleep timing isn't exact, so
+        // the verdict judges achieved rate + motion, not an exact secs*1000 sum.
         let deadline = start + Duration::from_secs(secs);
         while Instant::now() < deadline {
-            session.push(1, 0);
+            let _ = device.move_rel(1, 0);
             std::thread::sleep(Duration::from_millis(1));
         }
         let elapsed = start.elapsed().as_secs_f64();
-        let host = session.stats();
-        drop(session);
         std::thread::sleep(Duration::from_millis(150));
         let _ = device.reset();
 
@@ -188,26 +184,8 @@ mod linux {
         println!("  achieved rate  {hz:.1} Hz");
         println!("  worst gap      {max_gap_ms:.3} ms");
         println!("  stalls (>2ms)  {stalls}");
-        println!("\n== host PacerStats (the library's own tick clock) ==");
-        println!(
-            "  ticks          {}  (late {})",
-            host.ticks, host.late_ticks
-        );
-        println!(
-            "  tick jitter    p50={:.1}us p90={:.1}us p99={:.1}us max={:.1}us",
-            host.jitter.p50 as f64 / 1e3,
-            host.jitter.p90 as f64 / 1e3,
-            host.jitter.p99 as f64 / 1e3,
-            host.jitter.max as f64 / 1e3,
-        );
-        println!(
-            "  write latency  p50={:.1}us p99={:.1}us max={:.1}us",
-            host.write_latency.p50 as f64 / 1e3,
-            host.write_latency.p99 as f64 / 1e3,
-            host.write_latency.max as f64 / 1e3,
-        );
 
-        // No-halving: ~1 kHz observed (halving shows ~500), motion delivered (sum ≥ reports — push
+        // No-halving: ~1 kHz observed (halving shows ~500), motion delivered (sum ≥ reports — sleep
         // timing isn't exact, so we don't demand sum == secs*1000), only the odd hiccup.
         let rate_ok = hz >= 950.0;
         let fidelity_ok = sum >= events;

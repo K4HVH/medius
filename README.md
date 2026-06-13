@@ -1,32 +1,31 @@
 # medius
 
-Host control library for the **medius** transparent mouse passthrough box — the compiled, 1 kHz
-control plane for a box whose firmware the project owns. It speaks a clean framed binary protocol over
-the device-chip USB-serial link, sustains 1 kHz `MOVE` injection from a dedicated real-time pacer
-thread, and exposes a small fire-and-go control surface (`move`, `wheel`, button press/release,
-`reset`) plus the two SEQ-correlated queries (`version`, `health`). It is the production replacement
-for the C reference `smooth_inject.c` and the Python reference client.
+Host control library for the **medius** transparent mouse passthrough box — the compiled control
+plane for a box whose firmware the project owns. It speaks a clean framed binary protocol over the
+device-chip USB-serial link, binds the firmware's command primitives 1:1 — a small fire-and-go
+control surface (`move`, `wheel`, button press/release, `reset`) plus the two SEQ-correlated queries
+(`version`, `health`) — and adds the infrastructure to drive the box reliably (handshake, keepalive,
+reconnect). It is the production replacement for the C and Python reference clients.
 
 ## Transparent control + injection — NOT a humanizer or smoother
 
-**`medius` does not smooth, humanize, ease, interpolate, or synthesize any fake mouse behaviour.** It
-is a transparent, precise control + injection layer. The firmware guarantees additive "no-halving"
-merge and descriptor-faithful carry-remainder clamping (a `MOVE 2000` lands as exactly 2000). The
-library's *only* "shaping" job is **pacing the frame stream**: the `MovementSession` clocks *when*
-frames go out at a fixed rate and splits an oversized burst across ticks at the `i16` wire-field
-limit, preserving the total exactly. It never invents trajectory. If you want humanization, that is
-the host application's job — build it on top, not in here.
+**`medius` does not smooth, humanize, ease, interpolate, pace, or synthesize any fake mouse
+behaviour.** It is a transparent, precise control + injection layer: each method binds exactly one
+firmware frame. The firmware guarantees additive "no-halving" merge and descriptor-faithful
+carry-remainder clamping (a `MOVE 2000` lands as exactly 2000), and the firmware sustains 1 kHz
+injection — the host just emits `MOVE` frames as fast as the caller drives them. The library never
+invents trajectory and never clocks motion for you. If you want pacing or humanization, that is the
+host application's job — build it on top, not in here.
 
 ## Feature flags
 
 | Flag       | Default | What it adds                                                              |
 | ---------- | :-----: | ------------------------------------------------------------------------- |
-| (none)     |   ✓     | Sync `Device`, the `MovementSession` pacer, queries, logs, reconnect.     |
+| (none)     |   ✓     | Sync `Device`: 1:1 frame commands, queries, logs, keepalive, reconnect.   |
 | `async`    |         | `AsyncDevice` — a thin wrapper over the **same** sync core; `async` queries, runtime-agnostic timeout, no tokio dep. |
 | `mock`     |         | `MockBox` — a public scriptable fake box for hardware-free tests.         |
-| `metrics`  |         | Pacer jitter / write-latency histograms (`MovementSession::stats`).       |
 | `flash`    |         | `esptool` reboot-to-download + flash handoff.                             |
-| `tracing`  |         | Library-side `tracing` instrumentation (per-second pacer aggregate, never per tick). |
+| `tracing`  |         | Library-side `tracing` instrumentation (per-frame TX/RX at TRACE only).   |
 | `serde`    |         | `Serialize`/`Deserialize` derives on the public value types + `ConnectOptions`. |
 
 ## Quick start
@@ -53,13 +52,13 @@ fn main() -> medius::Result<()> {
 
     device.move_rel(40, 0)?;                       // +dx right, +dy down (fire-and-go)
     device.press(Button::Left)?;                   // primitive press …
-    device.release(Button::Left)?;                 // … then soft-release
+    device.soft_release(Button::Left)?;            // … then soft-release
     device.reset()?;                               // back to pure passthrough
     Ok(())
 }
 ```
 
-### The paced `movement()` session (1 kHz frame pacer)
+### Sustained 1 kHz motion (caller-driven)
 
 ```rust,no_run
 use std::{thread::sleep, time::Duration};
@@ -67,16 +66,14 @@ use medius::Device;
 
 fn main() -> medius::Result<()> {
     let device = Device::find()?;
-    let session = device.movement();               // spawns the `medius-pacer` real-time thread
 
-    // Pushes accumulate; the pacer drains them one MOVE per tick. The pacer clocks frame emission —
-    // it does NOT humanize or invent motion. Sustained motion is just a push loop paced at ~1 kHz.
+    // Sustained motion is just a caller-driven loop: one fire-and-go MOVE per tick. The firmware
+    // merges additively with no halving, so a tight 1 kHz loop lands as full-rate motion. The library
+    // does NOT pace, smooth, or invent motion — you own the timing (use your own real-time loop).
     for _ in 0..200 {
-        session.push(2, 0);
+        device.move_rel(2, 0)?;
         sleep(Duration::from_millis(1));
     }
-
-    drop(session);                                  // stops + joins the pacer thread
     Ok(())
 }
 ```
@@ -105,7 +102,7 @@ assert!(mock.saw(FrameType::Button));               // the command was recorded
 
 Runnable examples live in [`examples/`](examples/):
 
-- `basic` / `paced` — compile everywhere, but need a **connected box** to run
+- `basic` — compiles everywhere, but needs a **connected box** to run
   (`cargo run --example basic`).
 - `mock` — fully **hardware-free** (`cargo run --example mock --features mock`).
 - `async` — hardware-free over the mock box on any executor
@@ -128,8 +125,8 @@ around a black-box device:
 - **Fire-and-go hot path** — commands return the instant their bytes are flushed; no per-command ACK,
   no `spawn_blocking`-per-command thread. The `async` wrapper is the *same* core, not a second
   transport.
-- **A real 1 kHz pacer** — a dedicated real-time thread clocking frame emission on a precise
-  absolute-deadline clock, with optional jitter/latency metrics.
+- **1 kHz injection lives in firmware** — the firmware does the additive no-halving merge, so the host
+  stays a thin 1:1 frame binding. There is no host-side pacer/smoother; the caller drives MOVE timing.
 
 ## Platform notes
 

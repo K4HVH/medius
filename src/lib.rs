@@ -3,12 +3,12 @@
 //! Host control library for the **medius** transparent mouse passthrough box.
 //!
 //! The compiled control plane for a box whose firmware the project owns: speaks the framed binary
-//! control protocol over the device-chip USB-serial link and sustains **1 kHz** MOVE injection (the
-//! production replacement for `smooth_inject.c`).
+//! control protocol over the device-chip USB-serial link, exposing the firmware's command primitives
+//! 1:1 (the production replacement for the C reference client).
 //!
-//! It does **not** smooth, humanize, or synthesize mouse behaviour — the firmware owns additive
-//! carry-remainder injection and descriptor-faithful clamping. The library's only "shaping" job is
-//! pacing the frame stream.
+//! It does **not** smooth, humanize, pace, or synthesize mouse behaviour — each method binds one
+//! firmware frame, and the firmware owns additive carry-remainder injection and descriptor-faithful
+//! clamping. The caller drives the timing of its own MOVE stream.
 //!
 //! See `docs/superpowers/specs/2026-06-13-medius-rust-library-design.md` for the full design and
 //! `docs/protocol/control-protocol.md` for the byte-exact wire reference.
@@ -17,7 +17,6 @@
 //!
 //! - `async` — a thin `AsyncDevice` wrapper over the same sync core.
 //! - `mock` — a public scriptable fake box for hardware-free tests.
-//! - `metrics` — pacer jitter / latency histograms.
 //! - `flash` — `esptool` reboot + flash handoff.
 //! - `tracing` — library-side instrumentation.
 //! - `serde` — derives on the public value types.
@@ -37,7 +36,6 @@ pub(crate) mod protocol;
 mod config;
 mod device;
 mod error;
-pub mod pacer;
 mod transport;
 
 #[cfg(feature = "async")]
@@ -59,12 +57,8 @@ pub use device::{CountersSnapshot, Device};
 pub use error::{Error, Result};
 #[cfg(feature = "mock")]
 pub use mock::MockBox;
-pub use pacer::{DEFAULT_RATE_HZ, MovementSession};
 // Frame-inspection types the public `mock` surface exposes (the wire codec stays crate-private).
 pub use protocol::{
     Button, ButtonAction, DecodedFrame, FrameType, Health, LogLevel, LogLine, RebootTarget, Version,
 };
 pub use transport::scan::{PortInfo, find_medius};
-
-#[cfg(feature = "metrics")]
-pub use pacer::metrics::{HistogramSnapshot, PacerStats};

@@ -49,7 +49,7 @@ mod linux {
     const EVENT_SIZE: usize = 24;
 
     /// Accumulators populated by the reader thread from the grabbed event stream. Motion is summed (with
-    /// a REL_X event count for the pacer rate); each button code latches its last KEY value (1=down,
+    /// a REL_X event count for the 1 kHz move rate); each button code latches its last KEY value (1=down,
     /// 0=up). `side_other_*` capture any side-button KEY that arrives on an UNEXPECTED code, so a mouse
     /// that maps its side buttons elsewhere is reported rather than hard-failing the run.
     #[derive(Default)]
@@ -441,7 +441,7 @@ mod linux {
             );
         }
 
-        // 11) 1 kHz PACER (no-halving) — push(1,0) on a ~1ms deadline loop for 1.0s; PASS if ≥950
+        // 11) 1 kHz NO-HALVING — direct move_rel(1,0) on a ~1ms deadline loop for 1.0s; PASS if ≥950
         //     reports/s reach the clone (halving would show ~500). Judged on report rate, with the sum
         //     confirming motion was delivered.
         {
@@ -449,12 +449,11 @@ mod linux {
             let _ = dev.reset();
             std::thread::sleep(Duration::from_millis(100));
             reset_motion(&acc);
-            let mv = dev.movement();
             let start = Instant::now();
             let deadline = start + Duration::from_millis(1000);
             let mut next = Instant::now();
             while Instant::now() < deadline {
-                mv.push(1, 0);
+                let _ = dev.move_rel(1, 0);
                 next += Duration::from_millis(1);
                 let now = Instant::now();
                 if next > now {
@@ -462,13 +461,12 @@ mod linux {
                 }
             }
             let elapsed = start.elapsed().as_secs_f64();
-            drop(mv);
             std::thread::sleep(Duration::from_millis(100));
             let events = acc.rel_x_events.load(Ordering::Relaxed);
             let sum = acc.rel_x.load(Ordering::Relaxed);
             let rate = events as f64 / elapsed;
             check(
-                "1kHz pacer",
+                "1kHz no-halving",
                 rate >= 950.0 && sum >= events,
                 format!(
                     "{rate:.0} reports/s ({events} reports in {elapsed:.3}s), sum REL_X={sum} (>=950 = no-halving)"
@@ -496,24 +494,23 @@ mod linux {
             );
         }
 
-        // 13) QUERY UNDER PACER LOAD — with a pacer churning SEQs at ~1kHz, 15 concurrent query_health()
-        //     calls must all resolve Ok with link_up. Proves the SEQ generation-tag correlation isn't
-        //     corrupted by the pacer's SEQ churn (the FIX-1 invariant, on hardware).
+        // 13) QUERY UNDER MOVE LOAD — with a background move_rel(1,0) loop churning SEQs at ~1kHz, 15
+        //     concurrent query_health() calls must all resolve Ok with link_up. Proves the SEQ
+        //     generation-tag correlation isn't corrupted by the MOVE SEQ churn (the FIX-1 invariant, on
+        //     hardware).
         {
             let dev = device.as_ref().unwrap();
-            // Background pacer pushing (1,0) at ~1kHz for the duration of the queries.
-            let pacer_stop = Arc::new(AtomicBool::new(false));
+            // Background move loop emitting (1,0) at ~1kHz for the duration of the queries.
+            let move_stop = Arc::new(AtomicBool::new(false));
             let pdev = dev.clone();
-            let pstop = Arc::clone(&pacer_stop);
-            let pacer_thread = std::thread::spawn(move || {
-                let mv = pdev.movement();
+            let pstop = Arc::clone(&move_stop);
+            let move_thread = std::thread::spawn(move || {
                 while !pstop.load(Ordering::Relaxed) {
-                    mv.push(1, 0);
+                    let _ = pdev.move_rel(1, 0);
                     std::thread::sleep(Duration::from_millis(1));
                 }
-                drop(mv);
             });
-            std::thread::sleep(Duration::from_millis(50)); // let the pacer spin up
+            std::thread::sleep(Duration::from_millis(50)); // let the loop spin up
 
             let mut all_q_ok = true;
             for _ in 0..15 {
@@ -522,13 +519,13 @@ mod linux {
                     _ => all_q_ok = false,
                 }
             }
-            pacer_stop.store(true, Ordering::Relaxed);
-            let _ = pacer_thread.join();
+            move_stop.store(true, Ordering::Relaxed);
+            let _ = move_thread.join();
             let _ = dev.reset();
             check(
                 "query under load",
                 all_q_ok,
-                "15/15 query_health() Ok+link_up under ~1kHz pacer SEQ churn".to_string(),
+                "15/15 query_health() Ok+link_up under ~1kHz MOVE SEQ churn".to_string(),
             );
         }
 

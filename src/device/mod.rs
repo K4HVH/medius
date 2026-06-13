@@ -375,7 +375,7 @@ fn write_frame(
         current.write_all(&frame)?;
     }
     counters.inc_tx();
-    // Per-frame TX at TRACE only (timing-perturbing; never on the pacer's aggregate path).
+    // Per-frame TX at TRACE only (timing-perturbing; kept off any tight caller timing loop).
     trace_event!(
         target: "medius::transport",
         tracing::Level::TRACE,

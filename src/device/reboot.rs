@@ -5,7 +5,7 @@
 //! if the host went quiet, so the keepalive thread sends one cheap frame per cadence tick (default
 //! 500 ms) **only while the desired state is non-idle**; while idle it sends nothing, leaving the
 //! safety auto-clear intact for a real crash. The frame is a fire-and-go `QUERY(HEALTH)` with no waiter
-//! registered, so its `RESP` is discarded and it never contends with `pending` or the pacer.
+//! registered, so its `RESP` is discarded and it never contends with `pending`.
 //!
 //! [`Device::reconnect`] rescans by VID/PID, reopens, and swaps the transport into the shared
 //! [`TransportSlot`] (the running reader/keepalive follow it), then re-applies the held state and bumps

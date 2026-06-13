@@ -50,8 +50,7 @@ impl Device {
 }
 
 impl AsyncDevice {
-    /// Borrow the underlying sync [`Device`] (same core) — e.g. to open a
-    /// [`MovementSession`](crate::MovementSession) or read counters.
+    /// Borrow the underlying sync [`Device`] (same core) — e.g. to read counters or reconnect.
     #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn device(&self) -> &Device {
         &self.device
