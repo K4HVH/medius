@@ -27,30 +27,35 @@ frame, maintains caller-commanded state, or recovers the link → infrastructure
 
 ## 2. Architecture
 
+A 4-layer I/O stack with a clean dependency DAG — `protocol → transport → link → device`:
+
 ```
 src/
   protocol/   internal, pure, no-I/O wire layer — crc16, frame codec, opcodes, command/response
   types/      PUBLIC value vocabulary — one file per concern (button, version, health, log, reboot,
               counters, port); pure value types + their wire-mapping helpers
-  transport/  PRIVATE — Transport trait; serial (the `serialport` crate, cross-platform), mock, VID/PID scan
-  device/     Device core — connect/handshake, commands, queries, logs, reconcile (DesiredState),
-              reboot/reconnect/keepalive, counters
-  asyncv/     AsyncDevice — thin wrapper over the SAME core (async only on query, feature `async`)
+  transport/  PRIVATE byte pipe — Transport trait; serial (`serialport` crate), mock, VID/PID scan
+  link/       PRIVATE connection engine — the Link handle + state, construction, the TX path, the
+              reader thread (reader), SEQ correlation (correlation), keepalive, reconnect, plus the
+              counters/reconcile/log-push link state
+  device/     thin PUBLIC API over a Link — the Device/AsyncDevice handles, connect, movement, buttons,
+              admin (reboot/reconnect/reapply), query, logs (asyncv = AsyncDevice, feature `async`)
   mock/       MockBox — public scriptable fake box (feature `mock`)
   flash/      esptool reboot+flash handoff (feature `flash`)
   error/      structured Error / Result
   trace/      feature-gated tracing shim (per-frame TX/RX at TRACE; feature `tracing`)
 ```
 
-Every top-level concern is its own folder (`mod.rs` + submodules); `lib.rs` is the only loose file.
+`device/` is a thin skin: each command method is one `self.link.send(...)`. The engine lives in `link/`,
+split single-responsibility per file; `Device` and `AsyncDevice` are both newtypes over the same `Link`.
 
-**Concurrency model.** `Device` is `&self`-only, `Send + Sync`, a cheap `Arc<Inner>` clone. Two
-background threads:
+**Concurrency model.** `Device` is `&self`-only, `Send + Sync`, a cheap `Arc<LinkInner>` clone (via
+`Link`). Two background threads:
 - **reader** — sole transport reader: `read → FrameDecoder → route by TYPE` (RESP → fulfil the
   SEQ+selector-matched waiter; LOG → fan out; unknown → ignore). On a read error (a likely disconnect)
   it auto-reconnects in place with back-off — the same rescan/reopen/reapply path as the manual
-  `reconnect()` — via a `ReconnectCtx` of plain `Arc`s (never `Arc<Inner>`, so the joined-on-drop reader
-  can't self-join). Observes a stop flag within one read timeout → deterministic shutdown.
+  `reconnect()` — via a `ReconnectCtx` of plain `Arc`s (never `Arc<LinkInner>`, so the joined-on-drop
+  reader can't self-join). Observes a stop flag within one read timeout → deterministic shutdown.
 - **keepalive** — sends a cheap `QUERY(HEALTH)` **only while desired-state is non-idle**, so a held
   button survives idle periods (the firmware honours any frame as activity). Silent when idle, so the
   firmware's silence auto-clear still fires on a real host crash.
