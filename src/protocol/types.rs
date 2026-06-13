@@ -1,6 +1,6 @@
 //! Decoded value types — the typed surface over the raw wire bytes.
 //!
-//! `serde` derives use `snake_case` to match the wire doc / `medius.py` / CLI. The `as_*`/`from_*`
+//! `serde` derives use `snake_case` to match the wire doc / `medius.py`. The `as_*`/`from_*`
 //! helpers map between the typed forms and the raw `u8` wire values in [`super::opcode`].
 
 use core::fmt;

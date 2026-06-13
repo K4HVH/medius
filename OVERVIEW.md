@@ -17,7 +17,7 @@ Validated end-to-end on real hardware (see "Validation"). Tracks the firmware in
 | 1:1 bindings of the firmware frames (MOVE/WHEEL/BUTTON/RESET/QUERY/REBOOT_DL/LOG) | `click`, `drag`, double-click, any composed multi-frame gesture |
 | The 1 kHz `MovementSession` pacer (caller supplies every delta; the library only paces *when* frames emit — the firmware offloads pacing to the host) | `set_velocity` / any auto-generated motion |
 | Infrastructure: connect/handshake, keepalive (holds caller-commanded state), reconnect+reapply, the reader, SEQ correlation | smoothing / humanization / trajectory synthesis |
-| Linux + Windows raw serial, async wrapper, mock, metrics, CLI, tracing, serde | firmware-side features not yet in `control-protocol.md` |
+| Linux + Windows raw serial, async wrapper, mock, metrics, tracing, serde | firmware-side features not yet in `control-protocol.md` |
 
 **The test for "is this an extra":** a function that *generates/automates input the caller didn't
 explicitly supply* is a gesture → out. A function that binds one firmware frame, maintains
@@ -37,7 +37,6 @@ src/
   asyncv/     AsyncDevice — thin wrapper over the SAME core (async only on query)
   mock/       MockBox — public scriptable fake box (feature `mock`)
   flash/      esptool reboot+flash handoff (feature `flash`)
-  bin/medius  CLI (feature `cli`)
   config/error/trace
 ```
 
@@ -134,8 +133,8 @@ unsolicited `RESP(VERSION)` (SEQ=0) at boot + on first contact as a presence/rea
 ## 6. Feature flags
 
 `default` = lean sync core. `async` (AsyncDevice) · `mock` (MockBox) · `metrics` (PacerStats) ·
-`flash` (esptool handoff) · `cli` (the `medius` binary) · `tracing` (library spans, off the pacer hot
-path) · `serde` (derives on value types, snake_case).
+`flash` (esptool handoff) · `tracing` (library spans, off the pacer hot path) · `serde` (derives on
+value types, snake_case).
 
 ---
 
@@ -161,14 +160,14 @@ To keep the host faithful (no host workarounds), three firmware changes were mad
 
 ## 9. Validation status
 
-- **Host-free:** every feature flag + `--all-features` (164 unit + 4 bin + 10 doctests) pass; clippy
+- **Host-free:** every feature flag + `--all-features` (unit + doctests) pass; clippy
   clean on Linux **and** `x86_64-pc-windows-msvc`; `cargo doc` link-clean; examples build.
 - **Hardware (`examples/hw_full.rs`, grabbed):** handshake, move (exact/neg/zero/diagonal/carry),
   wheel, all 5 buttons × actions, force-release, reset, 1 kHz pacer (no-halving), keepalive-holds,
   query-under-1kHz-load (SEQ correlation), reconnect+reapply, async query, no-stuck/crash safety — **all
   PASS**, `crc_drops=0`. Re-validated after every fix.
 - **Adversarial review:** 4-lens (firmware, concurrency, cleanup-regression, protocol-integration);
-  all confirmed findings fixed (selector-aware correlation, CLI `--rate`, firmware linger decoupling).
+  all confirmed findings fixed (selector-aware correlation, firmware linger decoupling).
 
 ## 10. Tests & examples
 
