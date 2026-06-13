@@ -178,8 +178,10 @@ To keep the host faithful (no host workarounds), three firmware changes were mad
   keepalive-holds, query-under-1kHz-load (SEQ correlation), reconnect+reapply, reboot-to-run recovery,
   the async gate (queries + fire-and-go), no-stuck/crash safety — **all PASS**, `crc_drops=0`. The soak
   holds **1000 reports/s** sustained and the no-halving check measures **1000 reports/s, sum 1000**
-  (full rate, no halving). An opt-in `MEDIUS_UNPLUG_TEST=1` phase additionally proves unattended
-  auto-reconnect after a real physical unplug (the reader self-heals with no manual `reconnect()`).
+  (full rate, no halving). An opt-in `MEDIUS_UNPLUG_TEST=1` phase additionally **validates unattended
+  auto-reconnect**: a real control-USB drop re-enumerates the box on a *different* tty node
+  (`ttyACM0`→`ttyACM1` in test) and the reader self-heals via VID/PID rescan with no manual
+  `reconnect()` — observed `reconnects 0→1`, `version recovered`, **PASS**.
 
 ## 10. Tests & examples
 
