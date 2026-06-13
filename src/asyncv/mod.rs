@@ -21,11 +21,11 @@
 
 use std::time::Duration;
 
+use crate::Device;
 use crate::error::{Error, Result};
 use crate::protocol::opcode::{Q_HEALTH, Q_VERSION};
 use crate::protocol::types::{Button, ButtonAction, Health, RebootTarget, Version};
 use crate::protocol::{Resp, parse_resp};
-use crate::{ConnectOptions, Device};
 
 /// An async view over a [`Device`] — the same core, with `async` query methods (feature = `async`).
 ///
@@ -172,15 +172,6 @@ impl AsyncDevice {
     #[cfg(any(target_os = "linux", windows))]
     pub fn open(path: impl AsRef<std::path::Path>) -> Result<AsyncDevice> {
         Ok(Device::open(path)?.into_async())
-    }
-
-    /// As [`open`](AsyncDevice::open) but with explicit [`ConnectOptions`].
-    #[cfg(any(target_os = "linux", windows))]
-    pub fn open_with(
-        path: impl AsRef<std::path::Path>,
-        opts: &ConnectOptions,
-    ) -> Result<AsyncDevice> {
-        Ok(Device::open_with(path, opts)?.into_async())
     }
 }
 

@@ -36,7 +36,7 @@ src/
   asyncv/     AsyncDevice — thin wrapper over the SAME core (async only on query)
   mock/       MockBox — public scriptable fake box (feature `mock`)
   flash/      esptool reboot+flash handoff (feature `flash`)
-  config/error/trace
+  error/trace
 ```
 
 **Concurrency model.** `Device` is `&self`-only, `Send + Sync`, a cheap `Arc<Inner>` clone. Two
@@ -59,8 +59,11 @@ cross-delivered to a query awaiting a different selector).
 ## 3. Public API (everything that touches the box)
 
 ### Connect
-- `Device::open(path)` / `open_with(path, &ConnectOptions)` — open + single-shot version handshake.
-- `Device::find()` / `find_with(&ConnectOptions)` — scan by CH343 VID/PID (`0x1A86:0x55D3`), open first.
+- `Device::open(path)` — open + single-shot version handshake.
+- `Device::find()` — scan by CH343 VID/PID (`0x1A86:0x55D3`), open the first match.
+
+No connection config: the box's behavior is fixed, so the two timing values are `pub const`s
+(`DEFAULT_QUERY_TIMEOUT` = 1 s, `DEFAULT_KEEPALIVE_CADENCE` = 500 ms), not per-connection knobs.
 - `AsyncDevice::open(...)` / `Device::into_async()` — async wrapper over the same core.
 
 ### Commands — 1:1 firmware frames (fire-and-go)
@@ -91,9 +94,10 @@ halving. There is no host-side pacer; the caller owns MOVE timing (e.g. its own 
 
 ### Public types
 `Device`, `AsyncDevice`, `Button`, `ButtonAction`, `RebootTarget`, `Version`, `Health`, `LogLine`,
-`LogLevel`, `ConnectOptions`, `CountersSnapshot`, `PortInfo`, `find_medius`, `MockBox`, `LogStream`,
-`Error`, `Result`, plus `FrameType`/`DecodedFrame` (frame-inspection for `MockBox`). The wire codec
-(`protocol`) and low-level discovery (`find_ports`/`WCH_VID`/`CH343_PID`) are crate-internal.
+`LogLevel`, `CountersSnapshot`, `PortInfo`, `find_medius`, `MockBox`, `LogStream`, `Error`, `Result`,
+the `DEFAULT_QUERY_TIMEOUT`/`DEFAULT_KEEPALIVE_CADENCE` consts, plus `FrameType`/`DecodedFrame`
+(frame-inspection for `MockBox`). The wire codec (`protocol`) and low-level discovery
+(`find_ports`/`WCH_VID`/`CH343_PID`) are crate-internal.
 
 ---
 
