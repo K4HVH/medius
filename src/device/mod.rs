@@ -126,6 +126,10 @@ pub(crate) struct Inner {
     counters: Arc<Counters>,
     /// Set on drop/disconnect; the reader and keepalive observe it and exit.
     stop: Arc<AtomicBool>,
+    /// Serializes reconnect attempts so a manual [`reconnect`](Device::reconnect) and the reader's
+    /// auto-reconnect can't open the port concurrently. Shared (`Arc`) so the reader's [`ReconnectCtx`]
+    /// holds the *same* lock.
+    reconnect_lock: Arc<Mutex<()>>,
     /// Default `RESP` wait for [`query`](Device::query) — the fixed [`DEFAULT_QUERY_TIMEOUT`].
     query_timeout: std::time::Duration,
     /// Thread handles, joined on drop.
@@ -208,7 +212,11 @@ impl Device {
         let seq = Arc::new(AtomicU8::new(0));
         let query_gen = Arc::new(AtomicU64::new(0));
         let transport = Arc::new(TransportSlot::new(transport));
+        let reconnect_lock = Arc::new(Mutex::new(()));
 
+        // The reader auto-reconnects on a read error. It carries a `ReconnectCtx` of the *shared* state
+        // `Arc`s (never `Arc<Inner>`), so it can reopen the port without ever pinning `Inner` — which
+        // `Inner::drop` joins it from.
         let reader = spawn_reader(
             Arc::clone(&transport),
             Arc::clone(&pending),
@@ -216,6 +224,14 @@ impl Device {
             logs_rx.clone(),
             Arc::clone(&counters),
             Arc::clone(&stop),
+            reboot::ReconnectCtx {
+                transport: Arc::clone(&transport),
+                write_lock: Arc::clone(&write_lock),
+                seq: Arc::clone(&seq),
+                counters: Arc::clone(&counters),
+                desired: Arc::clone(&desired),
+                reconnect_lock: Arc::clone(&reconnect_lock),
+            },
         );
 
         // Keepalive shares the write state and `desired`, never `Arc<Inner>` (anti-cycle, like the reader).
@@ -240,6 +256,7 @@ impl Device {
                 desired,
                 counters,
                 stop,
+                reconnect_lock,
                 query_timeout,
                 reader: Some(reader),
                 keepalive: Some(keepalive),
@@ -337,13 +354,11 @@ impl Device {
         &self.inner.desired
     }
 
-    /// The swappable transport slot (for [`reconnect`](Device::reconnect)).
+    /// The swappable transport slot — a test seam for exercising a transport swap directly (the
+    /// production reconnect path builds its own [`ReconnectCtx`](reboot::ReconnectCtx)).
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn transport_slot(&self) -> &Arc<TransportSlot> {
         &self.inner.transport
-    }
-
-    pub(crate) fn counters_inner(&self) -> &Counters {
-        &self.inner.counters
     }
 }
 
@@ -386,16 +401,23 @@ fn spawn_reader(
     logs_rx: flume::Receiver<LogLine>,
     counters: Arc<Counters>,
     stop: Arc<AtomicBool>,
+    reconnect_ctx: reboot::ReconnectCtx,
 ) -> JoinHandle<()> {
     std::thread::Builder::new()
         .name("medius-reader".into())
-        .spawn(move || reader_loop(&transport, &pending, &logs_tx, &logs_rx, &counters, &stop))
+        .spawn(move || {
+            reader_loop(
+                &transport,
+                &pending,
+                &logs_tx,
+                &logs_rx,
+                &counters,
+                &stop,
+                &reconnect_ctx,
+            )
+        })
         .expect("spawn medius-reader thread")
 }
-
-/// Back-off after a read error so the reader doesn't busy-spin on a dead port while a
-/// [`reconnect`](Device::reconnect) swap installs a fresh transport.
-const READER_ERROR_BACKOFF: std::time::Duration = std::time::Duration::from_millis(20);
 
 /// The reader loop. It loads the current transport each iteration, so after a reconnect swap the same
 /// thread follows onto the new transport with no restart. Exits **only** on `stop` (a read error backs
@@ -408,6 +430,7 @@ fn reader_loop(
     logs_rx: &flume::Receiver<LogLine>,
     counters: &Counters,
     stop: &AtomicBool,
+    reconnect_ctx: &reboot::ReconnectCtx,
 ) {
     let mut decoder = FrameDecoder::new();
     let mut buf = [0u8; 1024];
@@ -438,9 +461,10 @@ fn reader_loop(
                 counters.set_crc_drops(decoder.crc_error_count());
             }
             Err(_) => {
-                // Port gone or hiccuping: back off and retry rather than exit, since `reconnect` may be
-                // about to swap in a fresh transport. Drop's `stop` still ends the loop promptly.
-                std::thread::sleep(READER_ERROR_BACKOFF);
+                // Port errored — the box likely disconnected. Release our handle so it can close, then
+                // auto-reconnect with back-off. (Drop's `stop` still ends the loop promptly.)
+                drop(current);
+                reboot::auto_reconnect(reconnect_ctx, stop);
             }
         }
     }

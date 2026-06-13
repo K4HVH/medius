@@ -47,8 +47,10 @@ Every top-level concern is its own folder (`mod.rs` + submodules); `lib.rs` is t
 **Concurrency model.** `Device` is `&self`-only, `Send + Sync`, a cheap `Arc<Inner>` clone. Two
 background threads:
 - **reader** — sole transport reader: `read → FrameDecoder → route by TYPE` (RESP → fulfil the
-  SEQ+selector-matched waiter; LOG → fan out; unknown → ignore). Observes a stop flag within one read
-  timeout → deterministic shutdown.
+  SEQ+selector-matched waiter; LOG → fan out; unknown → ignore). On a read error (a likely disconnect)
+  it auto-reconnects in place with back-off — the same rescan/reopen/reapply path as the manual
+  `reconnect()` — via a `ReconnectCtx` of plain `Arc`s (never `Arc<Inner>`, so the joined-on-drop reader
+  can't self-join). Observes a stop flag within one read timeout → deterministic shutdown.
 - **keepalive** — sends a cheap `QUERY(HEALTH)` **only while desired-state is non-idle**, so a held
   button survives idle periods (the firmware honours any frame as activity). Silent when idle, so the
   firmware's silence auto-clear still fires on a real host crash.
@@ -127,7 +129,8 @@ unsolicited `RESP(VERSION)` (SEQ=0) at boot + on first contact as a presence/rea
   firmware from auto-clearing it (the firmware resets its silence timer on any frame). Idle = silent,
   so a real crash still clears (the no-stuck safety).
 - **Reconnect + reapply.** Recovers a re-enumerated port (VID/PID rescan) and re-asserts the held
-  desired state.
+  desired state — on demand via `reconnect()`, and automatically by the reader when a read errors (a
+  dropped link), with exponential back-off until it heals or the device is dropped.
 - **No-stuck safety.** On host silence > 1 s (or `RESET`, or a real disconnect), the firmware clears
   injection → passthrough. This is the *only* crash detector the hardware can have (no DTR/RTS / no
   port-close signal), so it stays.
@@ -175,7 +178,8 @@ To keep the host faithful (no host workarounds), three firmware changes were mad
   keepalive-holds, query-under-1kHz-load (SEQ correlation), reconnect+reapply, reboot-to-run recovery,
   the async gate (queries + fire-and-go), no-stuck/crash safety — **all PASS**, `crc_drops=0`. The soak
   holds **1000 reports/s** sustained and the no-halving check measures **1000 reports/s, sum 1000**
-  (full rate, no halving).
+  (full rate, no halving). An opt-in `MEDIUS_UNPLUG_TEST=1` phase additionally proves unattended
+  auto-reconnect after a real physical unplug (the reader self-heals with no manual `reconnect()`).
 
 ## 10. Tests & examples
 

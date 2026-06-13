@@ -7,7 +7,8 @@
 //!
 //! Coverage: handshake, all moves/wheel/buttons/reset, 1 kHz no-halving, a sustained soak,
 //! keepalive-holds, query-under-load, reconnect, reboot-to-run recovery, the async gate (queries +
-//! fire-and-go, with `--features async`), and host-crash no-stuck safety.
+//! fire-and-go, with `--features async`), host-crash no-stuck safety, and — opt-in — unattended
+//! auto-reconnect after a real link drop.
 //!
 //! ```text
 //! cargo run --example hw_full --all-features -- [event=/dev/input/event11] [port] [soak_secs=20]
@@ -16,6 +17,11 @@
 //! the soak. Needs read access to the event node (uaccess ACL, else run as root); the port defaults to
 //! the first medius box by VID/PID. Wrap in `timeout` when unattended — the grab freezes desktop input
 //! for the window, and the Drop guard releases it even on panic.
+//!
+//! Set `MEDIUS_UNPLUG_TEST=1` to append the **auto-reconnect** phase: after the grabbed suite finishes
+//! and the grab is released, it asks you to physically unplug + replug the box's control USB and proves
+//! the reader self-heals the link with no manual `reconnect()` call. It's opt-in and interactive (only
+//! a real unplug drops the CH343 link — no software reboot does), so the default run stays automated.
 
 #[cfg(not(target_os = "linux"))]
 fn main() {
@@ -689,6 +695,51 @@ mod linux {
         stop.store(true, Ordering::Relaxed);
         let _ = reader.join(); // non-blocking reader observes `stop` within ~1ms
         drop(grab);
+
+        // 16) AUTO-RECONNECT (opt-in, interactive) — prove the READER self-heals a real link drop with
+        //     NO manual reconnect() call. Only a physical unplug of the control USB drops the CH343 link
+        //     (no software reboot does), and that unplug re-enumerates the grabbed clone — so this phase
+        //     is opt-in (MEDIUS_UNPLUG_TEST=1) and runs LAST, after the grab is released, on a fresh
+        //     device. It asserts purely on the control link: counters().reconnects must rise and
+        //     query_version() must recover, both unattended. (Reapply-after-reconnect is covered by the
+        //     grabbed check 14; here the re-enumerated clone can't be grab-verified.)
+        if std::env::var_os("MEDIUS_UNPLUG_TEST").is_some() {
+            let reopened = match args.get(2) {
+                Some(p) => Device::open(p),
+                None => Device::find(),
+            };
+            match reopened {
+                Ok(dev) => {
+                    let base = dev.counters().reconnects;
+                    let up0 = matches!(dev.query_version(), Ok(v) if v.proto_ver == 1);
+                    println!(
+                        "\n>>> AUTO-RECONNECT: physically UNPLUG the box's control USB, wait ~2s, then \
+                         replug.\n    Waiting up to 60s for the reader to self-heal — NO reconnect() is \
+                         called by this test."
+                    );
+                    let deadline = Instant::now() + Duration::from_secs(60);
+                    let mut healed = false;
+                    while Instant::now() < deadline {
+                        std::thread::sleep(Duration::from_millis(500));
+                        if dev.counters().reconnects > base
+                            && matches!(dev.query_version(), Ok(v) if v.proto_ver == 1)
+                        {
+                            healed = true;
+                            break;
+                        }
+                    }
+                    let now = dev.counters().reconnects;
+                    check(
+                        "auto-reconnect",
+                        up0 && healed,
+                        format!(
+                            "unattended self-heal after unplug: reconnects {base}→{now}, version recovered={healed}"
+                        ),
+                    );
+                }
+                Err(e) => check("auto-reconnect", false, format!("reopen failed: {e}")),
+            }
+        }
 
         println!("\nRESULT: {}", if ok { "PASS" } else { "FAIL" });
         if ok {
