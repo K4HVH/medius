@@ -20,8 +20,8 @@
 //! - `flash` — `esptool` reboot + flash handoff.
 //! - `tracing` — library-side instrumentation.
 
-// Transport needs `unsafe` for platform FFI; require it to be explicitly scoped.
-#![forbid(unsafe_op_in_unsafe_fn)]
+// The library is unsafe-free (serial I/O goes through the `serialport` crate) — enforce it.
+#![forbid(unsafe_code)]
 #![warn(missing_debug_implementations)]
 
 // `#[macro_use]` first so `trace_event!` / `trace_span!` are in scope crate-wide (macro_rules is textual).
