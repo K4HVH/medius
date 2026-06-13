@@ -6,7 +6,7 @@
 
 use std::time::{Duration, Instant};
 
-use medius::{Button, Device, Error, FrameType, Health, LogLevel, MockBox, Version};
+use crate::{Button, Device, Error, FrameType, Health, LogLevel, MockBox, RebootTarget, Version};
 
 #[test]
 fn query_returns_configured_values_and_records_commands() {
@@ -115,4 +115,48 @@ fn a_clone_keeps_the_reader_alive_until_the_last_drop() {
 fn device_is_send_and_sync() {
     fn assert_send_sync<T: Send + Sync>() {}
     assert_send_sync::<Device>();
+}
+
+#[test]
+fn reapply_re_emits_only_held_overrides() {
+    let mock = MockBox::new();
+    let device = Device::with_mock(mock.clone());
+    device.press(Button::Left).unwrap();
+    device.force_release(Button::Side1).unwrap();
+    device.press(Button::Middle).unwrap();
+    device.soft_release(Button::Middle).unwrap(); // soft-release → not held
+    mock.clear_recorded(); // drain the command frames; watch only what reapply re-sends
+
+    device.reapply().unwrap();
+    let buttons: Vec<Vec<u8>> = mock
+        .recorded_frames()
+        .iter()
+        .filter(|f| f.ty == FrameType::Button)
+        .map(|f| f.payload.clone())
+        .collect();
+    // Held overrides re-emitted: Left=press [0,1], Side1=force-release [3,2]. Middle is NOT re-sent.
+    assert_eq!(buttons, vec![vec![0, 1], vec![3, 2]]);
+    drop(device);
+}
+
+#[test]
+fn reboot_emits_the_target_byte() {
+    let mock = MockBox::new();
+    let device = Device::with_mock(mock.clone());
+    for target in [
+        RebootTarget::DeviceRun,
+        RebootTarget::HostRun,
+        RebootTarget::DeviceDownload,
+        RebootTarget::HostDownload,
+    ] {
+        device.reboot(target).unwrap();
+    }
+    let reboots: Vec<u8> = mock
+        .recorded_frames()
+        .iter()
+        .filter(|f| f.ty == FrameType::RebootDl)
+        .map(|f| f.payload[0])
+        .collect();
+    assert_eq!(reboots, vec![2, 3, 0, 1]); // DeviceRun, HostRun, DeviceDownload, HostDownload
+    drop(device);
 }

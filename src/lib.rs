@@ -37,6 +37,9 @@ mod device;
 mod error;
 mod transport;
 
+#[cfg(test)]
+mod tests;
+
 #[cfg(feature = "async")]
 pub mod asyncv;
 

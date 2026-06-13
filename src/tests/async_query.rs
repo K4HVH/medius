@@ -6,7 +6,7 @@
 
 use futures::executor::block_on;
 
-use medius::{Device, Error, MockBox, Version};
+use crate::{Device, Error, MockBox, Version};
 
 #[test]
 fn async_query_returns_the_configured_version() {
