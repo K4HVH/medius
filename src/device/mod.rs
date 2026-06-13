@@ -1,8 +1,9 @@
-pub(crate) mod commands;
+pub(crate) mod admin;
+pub(crate) mod buttons;
 pub(crate) mod connect;
 pub(crate) mod logs;
+pub(crate) mod movement;
 pub(crate) mod query;
-pub(crate) mod reboot;
 
 use std::sync::Arc;
 
