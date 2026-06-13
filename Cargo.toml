@@ -51,12 +51,7 @@ windows-sys = { version = "0.59", features = [
 [[example]]
 name = "basic"
 
-# mock is fully runnable with no hardware (the scriptable fake box).
+# hw_full is the on-hardware validation suite (Linux; grabs the clone's evdev node). It compiles
+# without features; build with `--features async` (or `--all-features`) to include the async gate.
 [[example]]
-name = "mock"
-required-features = ["mock"]
-
-# async demo also runs hardware-free, over the mock box, on any executor.
-[[example]]
-name = "async"
-required-features = ["async", "mock"]
+name = "hw_full"

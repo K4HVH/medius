@@ -5,12 +5,16 @@
 //! measured here and never reaches the desktop. Each check prints `[name] ... PASS/FAIL`; the run ends
 //! `RESULT: PASS/FAIL` with a matching exit code.
 //!
+//! Coverage: handshake, all moves/wheel/buttons/reset, 1 kHz no-halving, a sustained soak,
+//! keepalive-holds, query-under-load, reconnect, reboot-to-run recovery, the async gate (queries +
+//! fire-and-go, with `--features async`), and host-crash no-stuck safety.
+//!
 //! ```text
-//! cargo run --example hw_full -- [event_node=/dev/input/event11] [port]
-//! cargo run --example hw_full --features async -- ...     # also runs the async query gate
+//! cargo run --example hw_full --all-features -- [event=/dev/input/event11] [port] [soak_secs=20]
 //! ```
-//! Needs read access to the event node (uaccess ACL, else run as root). The port defaults to the first
-//! medius box by VID/PID. Wrap in `timeout` when running unattended — the grab freezes desktop input
+//! Build with `--all-features` (or at least `--features async`) for the async gate; `soak_secs=0` skips
+//! the soak. Needs read access to the event node (uaccess ACL, else run as root); the port defaults to
+//! the first medius box by VID/PID. Wrap in `timeout` when unattended — the grab freezes desktop input
 //! for the window, and the Drop guard releases it even on panic.
 
 #[cfg(not(target_os = "linux"))]
@@ -31,7 +35,7 @@ mod linux {
     use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
     use std::time::{Duration, Instant};
 
-    use medius::{Button, ButtonAction, Device};
+    use medius::{Button, ButtonAction, Device, RebootTarget};
 
     // evdev constants (Linux UAPI, arch-invariant for these).
     const EVIOCGRAB: libc::c_ulong = 0x4004_4590; // _IOW('E', 0x90, int)
@@ -190,6 +194,8 @@ mod linux {
             .get(1)
             .cloned()
             .unwrap_or_else(|| "/dev/input/event11".to_string());
+        // Optional 3rd arg: soak duration in seconds (default 20). 0 skips the soak.
+        let soak_secs: u64 = args.get(3).and_then(|s| s.parse().ok()).unwrap_or(20);
 
         // Grab FIRST so nothing leaks to the desktop, then start reading.
         let grab = match EvdevGrab::open(&event) {
@@ -474,6 +480,42 @@ mod linux {
             );
         }
 
+        // 11b) SOAK — sustain the direct 1 kHz move_rel loop for `soak_secs` (default 20s) and confirm the
+        //      rate holds (no degradation/halving over a long run) with motion delivered. Skipped if 0.
+        if soak_secs > 0 {
+            let dev = device.as_ref().unwrap();
+            let _ = dev.reset();
+            std::thread::sleep(Duration::from_millis(100));
+            reset_motion(&acc);
+            println!(
+                "[{:<22}] soaking the 1 kHz loop for {soak_secs}s ...",
+                "soak"
+            );
+            let start = Instant::now();
+            let deadline = start + Duration::from_secs(soak_secs);
+            let mut next = Instant::now();
+            while Instant::now() < deadline {
+                let _ = dev.move_rel(1, 0);
+                next += Duration::from_millis(1);
+                let now = Instant::now();
+                if next > now {
+                    std::thread::sleep(next - now);
+                }
+            }
+            let elapsed = start.elapsed().as_secs_f64();
+            std::thread::sleep(Duration::from_millis(100));
+            let events = acc.rel_x_events.load(Ordering::Relaxed);
+            let sum = acc.rel_x.load(Ordering::Relaxed);
+            let rate = events as f64 / elapsed;
+            check(
+                "soak",
+                rate >= 950.0 && sum >= events,
+                format!(
+                    "{rate:.0} reports/s sustained over {elapsed:.1}s ({events} reports, sum REL_X={sum})"
+                ),
+            );
+        }
+
         // 12) KEEPALIVE HOLDS STATE — press(Right), then send NOTHING through the Device for 1.6s. The
         //     firmware auto-clears held state after 1000ms of silence; the library's keepalive thread
         //     (non-idle desired-state) sends a periodic QUERY the new firmware honors as activity, so the
@@ -554,6 +596,36 @@ mod linux {
             );
         }
 
+        // 14b) REBOOT-TO-RUN — reboot the host (capture) chip to RUN: a normal restart, NOT ROM download.
+        //      The control plane (device chip + clone + our grab) stays up, so the box must remain
+        //      responsive — and even if the link does blip, reconnect() must bring it back. (We reboot the
+        //      host chip, not the device chip, precisely so the grabbed clone node isn't re-enumerated.)
+        {
+            let dev = device.as_ref().unwrap();
+            let _ = dev.reboot(RebootTarget::HostRun);
+            std::thread::sleep(Duration::from_secs(2)); // restart window
+            let mut recovered = matches!(dev.query_version(), Ok(v) if v.proto_ver == 1);
+            for _ in 0..10 {
+                if recovered {
+                    break;
+                }
+                let _ = dev.reconnect();
+                std::thread::sleep(Duration::from_millis(500));
+                recovered = matches!(dev.query_version(), Ok(v) if v.proto_ver == 1);
+            }
+            // Injection still lands after the restart (device chip + grab unaffected).
+            reset_motion(&acc);
+            let _ = dev.move_rel(10, 0);
+            std::thread::sleep(Duration::from_millis(200));
+            let moved = acc.rel_x.load(Ordering::Relaxed);
+            let _ = dev.reset();
+            check(
+                "reboot-to-run",
+                recovered && moved == 10,
+                format!("reboot(HostRun) → responsive={recovered}, post-reboot move REL_X={moved}"),
+            );
+        }
+
         // Snapshot infrastructure surfaces (logs receiver, counters) before the host-crash check drops
         // the device — exercises the public diagnostic API.
         {
@@ -567,17 +639,29 @@ mod linux {
             );
         }
 
-        // Optional async gate: an AsyncDevice over the SAME core (no second port) must resolve a version
-        // query via futures' block_on. Compiled out without the `async` feature.
+        // Optional async gate: an AsyncDevice over the SAME core (no second port) must resolve both
+        // queries via futures' block_on AND land a fire-and-go move on the clone. Out without `async`.
         #[cfg(feature = "async")]
         {
+            use futures::executor::block_on;
             let adev = device.as_ref().unwrap().clone().into_async();
-            let av = futures::executor::block_on(adev.query_version());
-            let av_ok = av.as_ref().map(|v| v.proto_ver == 1).unwrap_or(false);
+            let av_ok = block_on(adev.query_version())
+                .map(|v| v.proto_ver == 1)
+                .unwrap_or(false);
+            let ah_ok = block_on(adev.query_health())
+                .map(|h| h.link_up)
+                .unwrap_or(false);
+            reset_motion(&acc);
+            let _ = adev.move_rel(12, 0); // async fire-and-go injection
+            std::thread::sleep(Duration::from_millis(200));
+            let amoved = acc.rel_x.load(Ordering::Relaxed);
+            let _ = adev.reset();
             check(
-                "async query",
-                av_ok,
-                format!("AsyncDevice::query_version → {av:?}"),
+                "async",
+                av_ok && ah_ok && amoved == 12,
+                format!(
+                    "AsyncDevice: version_ok={av_ok}, health_ok={ah_ok}, async move REL_X={amoved}"
+                ),
             );
         }
 
