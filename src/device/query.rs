@@ -66,8 +66,9 @@ impl Device {
     /// there is one correlation mechanism and one flume one-shot (§5). The caller MUST
     /// `cancel_query(seq, gen)` if it gives up (both timeout paths do).
     pub(crate) fn register_query(&self, what: u8) -> Result<(u8, u64, flume::Receiver<Vec<u8>>)> {
-        // Reserve the waiter BEFORE sending, so a fast RESP can never arrive before it exists.
-        let (seq, gen_id, rx) = self.register_pending();
+        // Reserve the waiter BEFORE sending, so a fast RESP can never arrive before it exists. The
+        // waiter records `what` so only a RESP echoing the same selector fulfils it (§4.1).
+        let (seq, gen_id, rx) = self.register_pending(what);
 
         // Send with the SAME seq the waiter is keyed on; on failure drop it (gen-checked).
         if let Err(e) = self.send_with_seq(seq, FrameType::Query, &query_payload(what)) {
@@ -131,6 +132,27 @@ mod tests {
             }
         }));
         Device::from_transport(mock)
+    }
+
+    /// An unsolicited RESP(VERSION) (the firmware boot/first-contact hello) landing on a HEALTH
+    /// query's SEQ must NOT corrupt it: selector-aware correlation drops the mismatched VERSION frame
+    /// and the real HEALTH reply still fulfils the waiter. Without the selector check this returns
+    /// `NoReply` (the VERSION payload fails to parse as HEALTH).
+    #[test]
+    fn mismatched_resp_selector_does_not_corrupt_query() {
+        let mock = Arc::new(MockTransport::with_responder(|ty, seq, payload| {
+            if ty == FrameType::Query && payload.first() == Some(&1) {
+                // HEALTH query: emit a VERSION hello FIRST (same seq, wrong selector), then HEALTH.
+                let mut out = encode(FrameType::Resp, seq, &[0, 1, 0, 1, 0]).unwrap();
+                out.extend(encode(FrameType::Resp, seq, &[1, 0x0F]).unwrap());
+                out
+            } else {
+                Vec::new()
+            }
+        }));
+        let device = Device::from_transport(mock);
+        let h = device.query_health().unwrap();
+        assert!(h.link_up && h.mouse_attached && h.clone_configured && h.injection_active);
     }
 
     #[test]
@@ -246,7 +268,7 @@ mod tests {
         let device = Device::from_transport(Arc::new(MockTransport::new()));
 
         // Register A, then cancel it so its SEQ is free again.
-        let (seq_a, gen_a, _rx_a) = device.register_pending();
+        let (seq_a, gen_a, _rx_a) = device.register_pending(0);
         device.cancel_query(seq_a, gen_a);
         assert_eq!(device.pending_len(), 0);
 
@@ -256,7 +278,7 @@ mod tests {
         }
 
         // B reuses A's freed SEQ but with a newer generation.
-        let (seq_b, gen_b, rx_b) = device.register_pending();
+        let (seq_b, gen_b, rx_b) = device.register_pending(0);
         assert_eq!(seq_b, seq_a, "B reuses A's freed SEQ");
         assert_ne!(gen_b, gen_a, "B has a newer generation");
 
