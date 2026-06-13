@@ -358,14 +358,16 @@ fn cmd_pace(cli: &Cli, args: &PaceArgs) -> medius::Result<()> {
         let vx = args.vx.unwrap_or(0);
         let vy = args.vy.unwrap_or(0);
         eprintln!(
-            "pushing ({vx}, {vy}) per ~1 ms at {} Hz for {} ms…",
+            "pushing ({vx}, {vy}) at {} Hz for {} ms…",
             args.rate, args.ms
         );
-        // Operator-driven push loop: feed (vx, vy) at ~1 kHz; the pacer emits one MOVE per tick.
+        // Operator-driven push loop paced to --rate so the pacer is fed at its own tick rate (a fixed
+        // 1 ms cadence would cap emission near 1 kHz regardless of a higher --rate).
+        let push_period = Duration::from_nanos(1_000_000_000 / args.rate.max(1) as u64);
         let deadline = Instant::now() + Duration::from_millis(args.ms);
         while Instant::now() < deadline {
             session.push(vx, vy);
-            std::thread::sleep(Duration::from_millis(1));
+            std::thread::sleep(push_period);
         }
     }
     drop(session); // joins the pacer thread
@@ -376,11 +378,12 @@ fn cmd_pace(cli: &Cli, args: &PaceArgs) -> medius::Result<()> {
 fn cmd_bench(cli: &Cli, args: &BenchArgs) -> medius::Result<()> {
     let device = open(cli)?;
     let session = device.movement_at(args.rate);
-    // Push (1,0) at ~1 kHz so one MOVE emits per tick, exercising the pacer.
+    // Push (1,0) paced to --rate (one push per tick) so the pacer is exercised at the chosen rate.
+    let push_period = Duration::from_nanos(1_000_000_000 / args.rate.max(1) as u64);
     let deadline = Instant::now() + Duration::from_millis(args.ms);
     while Instant::now() < deadline {
         session.push(1, 0);
-        std::thread::sleep(Duration::from_millis(1));
+        std::thread::sleep(push_period);
     }
     let stats = session.stats();
     drop(session);

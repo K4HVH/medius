@@ -280,7 +280,7 @@ mod tests {
         assert_eq!(device.pending_len(), 0);
 
         // Stand in for A's now-stale (seq, gen): register then cancel to capture a real freed slot.
-        let (seq_a, gen_a, _rx_a) = device.register_pending();
+        let (seq_a, gen_a, _rx_a) = device.register_pending(0);
         device.cancel_query(seq_a, gen_a);
 
         // Advance the rolling SEQ so the next register wraps back onto A's SEQ.
@@ -288,7 +288,7 @@ mod tests {
             let _ = device.next_seq();
         }
         // B reuses A's SEQ with a newer generation.
-        let (seq_b, gen_b, rx_b) = device.register_pending();
+        let (seq_b, gen_b, rx_b) = device.register_pending(0);
         assert_eq!(seq_b, seq_a, "B reuses A's freed SEQ");
         assert_ne!(gen_b, gen_a);
 

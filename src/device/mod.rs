@@ -49,6 +49,10 @@ const READER_IDLE_POLL: std::time::Duration = std::time::Duration::from_millis(2
 /// its own entry — never a newer query that reused the same wire `SEQ` (see [`Inner::cancel_query`]).
 struct PendingEntry {
     gen_id: u64,
+    /// The `QUERY` selector this waiter expects echoed back in `RESP[0]`. The reader only fulfils a
+    /// waiter whose selector matches, so an unsolicited `RESP` (e.g. the firmware boot/first-contact
+    /// VERSION hello, SEQ=0) can never satisfy — and corrupt — a query awaiting a different selector.
+    expected_what: u8,
     /// Bounded(1) one-shot the reader fulfils with the correlated `RESP` payload.
     tx: flume::Sender<Vec<u8>>,
 }
@@ -293,7 +297,10 @@ impl Device {
     /// cross-delivered (the two would be indistinguishable on the wire). The 256-draw sweep always finds
     /// a free slot unless all 256 are in flight (unreachable — the box answers in microseconds), in
     /// which case the last draw is reused.
-    pub(crate) fn register_pending(&self) -> (u8, u64, flume::Receiver<Vec<u8>>) {
+    pub(crate) fn register_pending(
+        &self,
+        expected_what: u8,
+    ) -> (u8, u64, flume::Receiver<Vec<u8>>) {
         let gen_id = self.inner.query_gen.fetch_add(1, Ordering::Relaxed);
         let (tx, rx) = flume::bounded::<Vec<u8>>(1);
         let mut pending = self.inner.pending.lock();
@@ -304,7 +311,14 @@ impl Device {
             }
             seq = self.next_seq();
         }
-        pending.insert(seq, PendingEntry { gen_id, tx });
+        pending.insert(
+            seq,
+            PendingEntry {
+                gen_id,
+                expected_what,
+                tx,
+            },
+        );
         (seq, gen_id, rx)
     }
 
@@ -459,10 +473,15 @@ fn route_frame(
     );
     match frame.ty {
         FrameType::Resp => {
-            // Correlate by SEQ. An absent SEQ (timed out / duplicate) is dropped. `register_pending`
-            // only assigns a free SEQ, so at most one waiter is keyed on it.
-            let entry = pending.lock().remove(&frame.seq);
-            if let Some(entry) = entry {
+            // Correlate by SEQ *and* selector: only fulfil a waiter whose expected `what` matches
+            // `RESP[0]`. A SEQ with no waiter (timed out / duplicate) is dropped; a SEQ-matched but
+            // selector-mismatched RESP — e.g. the unsolicited VERSION hello landing on a HEALTH
+            // query that reused SEQ=0 — is also dropped, leaving the real reply to fulfil the waiter.
+            let mut pending = pending.lock();
+            let deliver = pending
+                .get(&frame.seq)
+                .is_some_and(|e| frame.payload.first() == Some(&e.expected_what));
+            if deliver && let Some(entry) = pending.remove(&frame.seq) {
                 let _ = entry.tx.send(frame.payload);
             }
         }
