@@ -1,18 +1,11 @@
-//! Serial port discovery — enumerate USB serial ports and filter to the box by USB VID/PID.
-//!
-//! [`find_ports`] lists USB serial ports via `serialport::available_ports`; [`find_medius`] keeps the
-//! CH343 (WCH) ones. Reconnect rescans by VID/PID, not a fixed path, so a re-enumerated device is
-//! found again. The handshake is the final gate distinguishing a box from any other CH343 device.
+//! Serial port discovery: enumerate USB serial ports and filter to the box by USB VID/PID.
 
 use crate::types::PortInfo;
 
-/// WCH (Jiangsu Qinheng) USB vendor id — the CH343 USB-serial bridge the medius box uses (§6).
 pub(crate) const WCH_VID: u16 = 0x1A86;
 
-/// The CH343 USB product id, confirmed on the medius board hardware (`idProduct = 55d3`).
 pub(crate) const CH343_PID: u16 = 0x55D3;
 
-/// Every USB serial port with its VID/PID (empty if enumeration fails or the platform is unsupported).
 pub(crate) fn find_ports() -> Vec<PortInfo> {
     serialport::available_ports()
         .unwrap_or_default()
@@ -28,7 +21,7 @@ pub(crate) fn find_ports() -> Vec<PortInfo> {
         .collect()
 }
 
-/// Discover medius boxes: the USB serial ports filtered to the WCH vendor id and the CH343 product id.
+/// Discover medius boxes: USB serial ports filtered to the WCH vendor id and CH343 product id.
 pub fn find_medius() -> Vec<PortInfo> {
     find_ports()
         .into_iter()

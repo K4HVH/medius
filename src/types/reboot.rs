@@ -1,7 +1,6 @@
 //! `REBOOT_DL` target vocabulary.
 
-/// A `REBOOT_DL` target (§3.6); discriminants are the wire `target` byte. `*Download` enters ROM
-/// download mode (for flashing); `*Run` reboots to run the firmware.
+/// A `REBOOT_DL` target; discriminants are the wire `target` byte.
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum RebootTarget {
@@ -17,7 +16,7 @@ impl RebootTarget {
         self as u8
     }
 
-    /// Map a wire `target` byte to a [`RebootTarget`], or `None` for an unknown value.
+    /// Map a wire `target` byte to a [`RebootTarget`], or `None` if unknown.
     pub fn from_u8(v: u8) -> Option<Self> {
         Some(match v {
             0 => RebootTarget::DeviceDownload,

@@ -1,13 +1,10 @@
-//! Button command vocabulary — the five mouse buttons and the three injection-override actions.
+//! Button command vocabulary.
 
 use crate::protocol::opcode::{
     ACT_FORCEREL, ACT_PRESS, ACT_SOFTREL, BTN_LEFT, BTN_MIDDLE, BTN_RIGHT, BTN_SIDE1, BTN_SIDE2,
 };
 
 /// One of the five standard mouse buttons (§3.3).
-///
-/// `id`s bind at clone-time to the captured mouse's descriptor fields; a command for a button the
-/// attached mouse lacks is a firmware no-op.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Button {
     Left,

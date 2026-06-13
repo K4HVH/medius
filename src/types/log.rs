@@ -25,8 +25,7 @@ impl LogLevel {
         }
     }
 
-    /// Map a wire `level` byte to a [`LogLevel`]; unknown levels fall back to `Info` (matching
-    /// `medius.py`) so a forward-compat level never panics or loses the log text.
+    /// Map a wire `level` byte to a [`LogLevel`]; unknown levels fall back to `Info`.
     pub fn from_u8(v: u8) -> Self {
         match v {
             LOG_ERROR => LogLevel::Error,

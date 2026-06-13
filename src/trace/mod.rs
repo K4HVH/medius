@@ -1,18 +1,5 @@
-//! Internal `tracing` shim (Task 5.2) — feature-gated instrumentation with clean call sites.
-//!
-//! [`trace_event!`] / [`trace_span!`] expand to `tracing::event!` / `tracing::span!` with the
-//! `tracing` feature on and to nothing when off, so the default build carries no `tracing` dependency
-//! and no runtime cost without scattering `#[cfg]` through every call site. `#[macro_use]`d first in
-//! `lib.rs` so they are in scope crate-wide.
-//!
-//! Hot-path discipline (§10): per-frame TX/RX is traced at TRACE only, so a caller's tight MOVE loop
-//! is never perturbed by event work at higher levels. The shim is the mechanism; placement is the
-//! call site's job.
+//! Internal `tracing` shim: feature-gated instrumentation macros.
 
-/// Emit a tracing event when the `tracing` feature is on; expand to nothing otherwise.
-///
-/// Mirrors `tracing::event!`'s syntax. With the feature off the whole invocation — including field
-/// expressions — is dropped, so a side effect must never live in a trace field.
 #[cfg(feature = "tracing")]
 macro_rules! trace_event {
     ($($arg:tt)*) => {
@@ -20,16 +7,11 @@ macro_rules! trace_event {
     };
 }
 
-/// No-op form: the event and its field expressions vanish entirely.
 #[cfg(not(feature = "tracing"))]
 macro_rules! trace_event {
     ($($arg:tt)*) => {{}};
 }
 
-/// Open a tracing span when the `tracing` feature is on; expand to a no-op span stub otherwise.
-///
-/// Mirrors `tracing::span!`. With the feature off the stub's no-op `.entered()` keeps
-/// `let _g = trace_span!(…).entered()` type-checking.
 #[cfg(feature = "tracing")]
 macro_rules! trace_span {
     ($($arg:tt)*) => {
@@ -37,7 +19,6 @@ macro_rules! trace_span {
     };
 }
 
-/// No-op form: yields a [`SpanStub`] whose `.entered()` is also a no-op.
 #[cfg(not(feature = "tracing"))]
 macro_rules! trace_span {
     ($($arg:tt)*) => {
@@ -45,8 +26,6 @@ macro_rules! trace_span {
     };
 }
 
-/// Zero-sized `tracing::Span` stand-in when the feature is off, so `trace_span!(…).entered()`
-/// compiles feature-free.
 #[cfg(not(feature = "tracing"))]
 pub(crate) struct SpanStub;
 
@@ -57,11 +36,6 @@ impl SpanStub {
     }
 }
 
-/// Re-emit one decoded device `LOG` line as a host tracing event at the mapped level, under
-/// `target: "medius::device"` (§10). Additional to the `logs()` channel, which still gets the line.
-///
-/// `event!` needs a compile-time-constant level, so this dispatches over the five levels rather than
-/// passing a runtime `Level`.
 #[cfg(feature = "tracing")]
 pub(crate) fn emit_device_log(line: &crate::types::LogLine) {
     use crate::types::LogLevel;

@@ -1,7 +1,3 @@
-//! End-to-end library behavior through the **public** API + `MockBox` (feature `mock`).
-//!
-//! These exercise the device stack exactly as a downstream consumer would — connect/query/command,
-//! the log channel, the handshake path, and thread lifecycle — against the scriptable fake box.
 #![cfg(feature = "mock")]
 
 use std::time::{Duration, Instant};
@@ -31,7 +27,7 @@ fn query_returns_configured_values_and_records_commands() {
         .iter()
         .find(|f| f.ty == FrameType::Button)
         .expect("press recorded");
-    assert_eq!(button.payload, vec![0, 1]); // id=Left(0), action=Press(1)
+    assert_eq!(button.payload, vec![0, 1]);
     assert!(mock.saw(FrameType::Button));
 }
 
@@ -55,7 +51,7 @@ fn set_health_updates_subsequent_queries() {
     let mock = MockBox::new();
     let device = Device::with_mock(mock.clone());
     assert!(!device.query_health().unwrap().mouse_attached);
-    mock.set_health(Health::from_flags(0x02)); // mouse_attached bit
+    mock.set_health(Health::from_flags(0x02));
     assert!(device.query_health().unwrap().mouse_attached);
 }
 
@@ -102,7 +98,6 @@ fn a_clone_keeps_the_reader_alive_until_the_last_drop() {
     let device = Device::with_mock(mock.clone());
     let clone = device.clone();
     drop(device);
-    // Reader still alive on the surviving clone: a pushed log routes through.
     let rx = clone.logs();
     mock.push_log(LogLevel::Info, "still here");
     assert_eq!(
@@ -124,8 +119,8 @@ fn reapply_re_emits_only_held_overrides() {
     device.press(Button::Left).unwrap();
     device.force_release(Button::Side1).unwrap();
     device.press(Button::Middle).unwrap();
-    device.soft_release(Button::Middle).unwrap(); // soft-release → not held
-    mock.clear_recorded(); // drain the command frames; watch only what reapply re-sends
+    device.soft_release(Button::Middle).unwrap();
+    mock.clear_recorded();
 
     device.reapply().unwrap();
     let buttons: Vec<Vec<u8>> = mock
@@ -134,7 +129,6 @@ fn reapply_re_emits_only_held_overrides() {
         .filter(|f| f.ty == FrameType::Button)
         .map(|f| f.payload.clone())
         .collect();
-    // Held overrides re-emitted: Left=press [0,1], Side1=force-release [3,2]. Middle is NOT re-sent.
     assert_eq!(buttons, vec![vec![0, 1], vec![3, 2]]);
     drop(device);
 }
@@ -157,6 +151,6 @@ fn reboot_emits_the_target_byte() {
         .filter(|f| f.ty == FrameType::RebootDl)
         .map(|f| f.payload[0])
         .collect();
-    assert_eq!(reboots, vec![2, 3, 0, 1]); // DeviceRun, HostRun, DeviceDownload, HostDownload
+    assert_eq!(reboots, vec![2, 3, 0, 1]);
     drop(device);
 }

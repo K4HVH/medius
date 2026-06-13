@@ -1,12 +1,4 @@
 //! The medius wire protocol — pure, no-I/O codec.
-//!
-//! The whole wire layer: frame encode/decode, opcodes and constants, command payload encoders, and
-//! response decoders. No I/O, no threads, no `unsafe`, and panic-free on any malformed, truncated, or
-//! oversized input. The decoded value types live in [`crate::types`].
-//!
-//! Source of truth: `control-protocol.md` (byte-exact reference) and `ctrl_proto.h` (constants).
-//! Constants are pinned by the `opcode` module's `opcodes_match_firmware` /
-//! `opcodes_match_ctrl_proto_header` tests.
 
 pub mod command;
 pub mod crc;

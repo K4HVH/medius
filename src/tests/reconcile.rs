@@ -1,7 +1,3 @@
-//! `DesiredState` invariants — the held-override map the keepalive and reconnect-reapply act on.
-//! Internal unit tests (no feature needed): press/force-release are held, soft-release clears, and
-//! `held()` preserves button identity in order.
-
 use crate::device::reconcile::DesiredState;
 use crate::types::{Button, ButtonAction};
 
