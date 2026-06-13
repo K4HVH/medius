@@ -29,7 +29,7 @@ caller-commanded state, recovers the link, or paces caller-supplied data → inf
 
 ```
 src/
-  protocol/   PUBLIC, pure, no-I/O wire layer — crc16, frame codec, opcodes, command/response, types
+  protocol/   internal, pure, no-I/O wire layer — crc16, frame codec, opcodes, command/response, types
   transport/  PRIVATE — Transport trait; linux (termios2/4M/DTR-RTS), windows (DCB), mock, VID/PID scan
   device/     Device core — connect/handshake, commands, queries, logs, reconcile (DesiredState),
               reboot/reconnect/keepalive, counters
@@ -71,7 +71,7 @@ cross-delivered to a query awaiting a different selector).
 | `move_rel(dx: i16, dy: i16)` | MOVE | relative; firmware carries/clamps to the clone's descriptor field |
 | `wheel(delta: i16)` | WHEEL | no artificial cap |
 | `button(Button, ButtonAction)` | BUTTON | id × {soft-release, press, force-release} |
-| `press(Button)` / `release(Button)` / `force_release(Button)` | BUTTON | named aliases for the 3 actions (one fixed-action frame each) |
+| `press(Button)` / `soft_release(Button)` / `force_release(Button)` | BUTTON | named aliases for the 3 actions (one fixed-action frame each) |
 | `reset()` | RESET | clear all injection → passthrough |
 
 ### Queries — QUERY→RESP (the only round-trip)
@@ -86,20 +86,22 @@ cross-delivered to a query awaiting a different selector).
   histograms).
 
 ### Box management
-- `reboot(RebootTarget)` / `reboot_download(RebootTarget)` → REBOOT_DL (the only software reboot —
-  no DTR/RTS auto-reset on this board).
+- `reboot(RebootTarget)` → REBOOT_DL — the only software reboot (no DTR/RTS auto-reset on this board).
+  The target encodes run/download × device/host, so one method covers all four cases.
 - `reconnect()` — rescan VID/PID, reopen the port in place, **re-apply held desired state**.
 - `reapply()` — re-send currently-held overrides (used by reconnect; available on demand).
 
 ### Observability
-- `logs() -> flume::Receiver<LogLine>` — device LOG frames (level + text).
+- `logs() -> LogStream` — device LOG frames (level + text); a small newtype (`recv`/`try_recv`/
+  `recv_timeout`/`try_iter`/`IntoIterator`) so the channel impl (`flume`) isn't leaked.
 - `counters() -> CountersSnapshot` — frames_tx/rx, crc_drops, reconnects (always-on, cheap atomics).
 
 ### Public types
 `Device`, `AsyncDevice`, `MovementSession`, `Button`, `ButtonAction`, `RebootTarget`, `Version`,
 `Health`, `LogLine`, `LogLevel`, `ConnectOptions`, `CountersSnapshot`, `PacerStats`,
-`HistogramSnapshot`, `PortInfo`, `MockBox`, `Error`, `Result`, `WCH_VID`, `CH343_PID`,
-`DEFAULT_RATE_HZ`; plus the pure `protocol` module (frame/crc/opcode/command/response/types).
+`HistogramSnapshot`, `PortInfo`, `find_medius`, `MockBox`, `LogStream`, `Error`, `Result`,
+`DEFAULT_RATE_HZ`, plus `FrameType`/`DecodedFrame` (frame-inspection for `MockBox`). The wire codec
+(`protocol`) and low-level discovery (`find_ports`/`WCH_VID`/`CH343_PID`) are now crate-internal.
 
 ---
 
