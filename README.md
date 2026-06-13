@@ -97,15 +97,18 @@ device.press(Button::Left).unwrap();
 assert!(mock.saw(FrameType::Button));               // the command was recorded
 ```
 
-## Examples
+## Examples & tests
 
-Runnable examples live in [`examples/`](examples/):
+Two examples live in [`examples/`](examples/):
 
-- `basic` — compiles everywhere, but needs a **connected box** to run
+- `basic` — minimal usage; compiles everywhere, needs a **connected box** to run
   (`cargo run --example basic`).
-- `mock` — fully **hardware-free** (`cargo run --example mock --features mock`).
-- `async` — hardware-free over the mock box on any executor
-  (`cargo run --example async --features async,mock`).
+- `hw_full` — the on-hardware validation suite (Linux; grabs the clone's evdev node)
+  (`cargo run --example hw_full --all-features`).
+
+Automated tests are **integration tests** in [`tests/`](tests/), run through the public API + the
+scriptable `MockBox` — so the implementation files carry no test code. Run them with
+`cargo test --all-features` (the `MockBox`-based suites need the `mock` feature).
 
 ## How it differs from the makcu library
 
