@@ -7,8 +7,6 @@
 //!     cargo run --example basic -- /dev/ttyACM0      # Linux
 //!     cargo run --example basic -- COM7              # Windows
 
-use std::time::Duration;
-
 use medius::{Button, Device};
 
 fn main() -> medius::Result<()> {
@@ -30,8 +28,9 @@ fn main() -> medius::Result<()> {
     // +dx right, +dy down. Fire-and-go.
     device.move_rel(40, 0)?;
 
-    // Host-composed press/hold/soft-release; blocks for `hold`.
-    device.click(Button::Left, Duration::from_millis(40))?;
+    // Primitive press then soft-release (two fire-and-go calls).
+    device.press(Button::Left)?;
+    device.release(Button::Left)?;
 
     // Back to pure passthrough.
     device.reset()?;

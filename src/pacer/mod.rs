@@ -12,12 +12,8 @@
 //! without overflow. Each tick drains it, but the emitted `MOVE` carries only what fits in an `i16`
 //! wire field; the beyond-`i16` remainder stays in the accumulator for the next tick, so total motion
 //! is preserved exactly. (The firmware's separate, finer carry against the mouse's native descriptor
-//! width is not duplicated here.)
-//!
-//! [`set_velocity`](MovementSession::set_velocity) folds a constant `(vx, vy)` into the accumulator
-//! *before* draining every tick, so it combines additively with pushes through the same carry until
-//! changed or [`clear_velocity`](MovementSession::clear_velocity)ed. Zero velocity + no pushes drains
-//! to zero and emits nothing — the firmware frame clock handles stillness (§5.3).
+//! width is not duplicated here.) A tick with nothing accumulated emits nothing — the firmware frame
+//! clock handles stillness (§5.3).
 //!
 //! The session holds a [`Device`] clone and is **not** stored in the device's `Inner`, so there is no
 //! reference cycle. `Drop` sets the stop flag and joins the thread; residual deltas are not
@@ -54,18 +50,15 @@ fn rate_to_period(hz: u32) -> Duration {
     Duration::from_nanos(1_000_000_000u64 / hz as u64)
 }
 
-/// The shared per-tick movement state: an `i32` push accumulator plus the current constant velocity.
+/// The shared per-tick movement state: an `i32` push accumulator drained each tick.
 ///
 /// The pure, thread-free heart of the pacer: [`tick_emit`](Accumulator::tick_emit) computes one tick's
-/// emission with no clock or I/O, so coalescing / carry / idle / velocity is unit-tested directly.
+/// emission with no clock or I/O, so coalescing / carry / idle is unit-tested directly.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct Accumulator {
     /// Pending relative X (pushes + carried `i16` remainder), drained each tick.
     acc_x: i32,
     acc_y: i32,
-    /// Constant per-tick velocity X, folded into the accumulator every tick until changed/cleared.
-    vel_x: i16,
-    vel_y: i16,
 }
 
 impl Accumulator {
@@ -75,23 +68,10 @@ impl Accumulator {
         self.acc_y = self.acc_y.saturating_add(dy as i32);
     }
 
-    fn set_velocity(&mut self, vx: i16, vy: i16) {
-        self.vel_x = vx;
-        self.vel_y = vy;
-    }
-
-    fn clear_velocity(&mut self) {
-        self.vel_x = 0;
-        self.vel_y = 0;
-    }
-
-    /// One tick's emission decision: fold velocity in, emit `None` if both axes are now zero (idle tick
-    /// → no frame, firmware handles stillness §5.3), else clamp each axis to the `i16` wire field and
-    /// retain the remainder for the next tick. The retained remainder makes the emitted total exact.
+    /// One tick's emission decision: emit `None` if both axes are zero (idle tick → no frame, firmware
+    /// handles stillness §5.3), else clamp each axis to the `i16` wire field and retain the remainder
+    /// for the next tick. The retained remainder makes the emitted total exact.
     fn tick_emit(&mut self) -> Option<(i16, i16)> {
-        self.acc_x = self.acc_x.saturating_add(self.vel_x as i32);
-        self.acc_y = self.acc_y.saturating_add(self.vel_y as i32);
-
         if self.acc_x == 0 && self.acc_y == 0 {
             return None;
         }
@@ -118,7 +98,7 @@ struct Shared {
 /// A paced movement session over a [`Device`] — the headline 1 kHz frame pacer.
 ///
 /// Created by [`Device::movement`]. See the [module docs](self) for the no-humanization guarantee, the
-/// wire-field carry, velocity mode, and the stop/join lifecycle.
+/// wire-field carry, and the stop/join lifecycle.
 #[derive(Debug)]
 pub struct MovementSession {
     shared: Arc<Shared>,
@@ -168,17 +148,6 @@ impl MovementSession {
     /// coalesce into a single `MOVE` of their sum.
     pub fn push(&self, dx: i16, dy: i16) {
         self.shared.acc.lock().push(dx, dy);
-    }
-
-    /// Set a constant per-tick velocity: `(vx, vy)` is emitted every tick (combined additively with
-    /// pushes) until changed or [`clear_velocity`](Self::clear_velocity)ed.
-    pub fn set_velocity(&self, vx: i16, vy: i16) {
-        self.shared.acc.lock().set_velocity(vx, vy);
-    }
-
-    /// Clear the constant velocity (back to push-only). Already-accumulated pushes still drain.
-    pub fn clear_velocity(&self) {
-        self.shared.acc.lock().clear_velocity();
     }
 
     /// Change the tick rate in Hz. Takes effect next tick; the absolute-deadline grid retunes without

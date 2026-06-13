@@ -1,6 +1,6 @@
 //! Tests for the paced [`MovementSession`](super::MovementSession).
 //!
-//! The per-tick decision (coalescing / carry / idle / velocity) is tested directly on the pure
+//! The per-tick decision (coalescing / carry / idle) is tested directly on the pure
 //! [`Accumulator::tick_emit`](super::Accumulator) — no thread, no wall-clock, fully deterministic. A
 //! short tolerant integration test exercises the real `medius-pacer` thread against the mock.
 
@@ -86,29 +86,14 @@ fn first_emitted_field_is_clamped_to_i16_max() {
 }
 
 #[test]
-fn velocity_emits_every_tick() {
+fn each_push_is_a_one_shot_then_drains_to_idle() {
     let mut acc = Accumulator::default();
-    acc.set_velocity(2, -3);
-    for _ in 0..5 {
-        assert_eq!(acc.tick_emit(), Some((2, -3)));
-    }
-    acc.clear_velocity();
-    assert_eq!(acc.tick_emit(), None);
-}
-
-#[test]
-fn velocity_and_push_combine_additively_in_one_tick() {
-    let mut acc = Accumulator::default();
-    acc.set_velocity(10, 10);
+    acc.push(2, -3);
+    assert_eq!(acc.tick_emit(), Some((2, -3)));
+    assert_eq!(acc.tick_emit(), None); // a push is one-shot; the next tick is idle
+    acc.push(10, 10);
     acc.push(5, -4);
-    assert_eq!(acc.tick_emit(), Some((15, 6))); // velocity + push combined
-    assert_eq!(acc.tick_emit(), Some((10, 10))); // push was one-shot; velocity remains
-}
-
-#[test]
-fn zero_velocity_with_no_push_is_idle() {
-    let mut acc = Accumulator::default();
-    acc.set_velocity(0, 0);
+    assert_eq!(acc.tick_emit(), Some((15, 6))); // pushes in one window combine additively
     assert_eq!(acc.tick_emit(), None);
 }
 
@@ -122,18 +107,19 @@ fn decode_moves(mock: &MockTransport) -> Vec<DecodedFrame> {
         .collect()
 }
 
-/// End-to-end: spin the real pacer at a high rate, push deltas, assert a MOVE reached the mock, then
-/// drop and assert it stopped.
+/// End-to-end: spin the real pacer at a high rate, drive sustained motion with a push loop, assert a
+/// MOVE reached the mock, then drop and assert it stopped.
 #[test]
 fn pacer_thread_emits_moves_then_stops_on_drop() {
     let mock = Arc::new(MockTransport::new());
     let device = Device::from_transport(mock.clone());
 
-    // High rate so several ticks land in the short window; velocity guarantees an emission per tick.
+    // High rate so several ticks land in the short window; the push loop feeds an emission per tick.
     let session = device.movement_at(2000);
-    session.set_velocity(1, 0);
-
-    std::thread::sleep(Duration::from_millis(30));
+    for _ in 0..30 {
+        session.push(1, 0);
+        std::thread::sleep(Duration::from_millis(1));
+    }
 
     let moves = decode_moves(&mock);
     assert!(
@@ -158,7 +144,7 @@ fn pacer_thread_emits_moves_then_stops_on_drop() {
     assert_eq!(after[0].payload, vec![7, 0, 7, 0]);
 }
 
-/// Pushing deltas (no velocity) is paced out as MOVE frames whose total equals what was pushed.
+/// Pushing deltas is paced out as MOVE frames whose total equals what was pushed.
 #[test]
 fn pushed_deltas_are_paced_and_total_preserved() {
     let mock = Arc::new(MockTransport::new());
@@ -205,8 +191,10 @@ fn metrics_populate_after_running() {
     let mock = Arc::new(MockTransport::new());
     let device = Device::from_transport(mock.clone());
     let session = device.movement_at(2000);
-    session.set_velocity(1, 0); // emit every tick → write-latency samples too
-    std::thread::sleep(Duration::from_millis(30));
+    for _ in 0..30 {
+        session.push(1, 0); // drive emissions → write-latency samples too
+        std::thread::sleep(Duration::from_millis(1));
+    }
     let stats = session.stats();
     assert!(stats.ticks > 0, "the pacer should have recorded ticks");
     assert!(
@@ -215,7 +203,7 @@ fn metrics_populate_after_running() {
     );
     assert!(
         !stats.write_latency.is_empty(),
-        "write-latency histogram should have samples (velocity emits every tick)"
+        "write-latency histogram should have samples (pushed deltas emit MOVE frames)"
     );
     drop(session);
 }

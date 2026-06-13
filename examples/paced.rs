@@ -1,4 +1,4 @@
-//! Drive the 1 kHz frame pacer: push deltas and set a constant velocity, then drop the session.
+//! Drive the 1 kHz frame pacer: push deltas, then drop the session.
 //!
 //! NEEDS A CONNECTED BOX TO RUN (compiles without hardware).
 //!
@@ -31,11 +31,11 @@ fn main() -> medius::Result<()> {
         sleep(Duration::from_millis(1));
     }
 
-    // Velocity mode: a constant (vx, vy) emitted every tick until cleared. Combines additively with
-    // pushes through the same wire-field carry.
-    session.set_velocity(1, -1);
-    sleep(Duration::from_millis(100));
-    session.clear_velocity();
+    // Sustained motion is just a push loop paced at ~1 kHz: feed (1, -1) each tick.
+    for _ in 0..100 {
+        session.push(1, -1);
+        sleep(Duration::from_millis(1));
+    }
 
     // Drop stops the thread; residual deltas are not force-flushed.
     drop(session);

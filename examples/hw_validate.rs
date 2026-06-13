@@ -246,25 +246,29 @@ mod linux {
             pf(nostuck_ok)
         );
 
-        // 5) 1 kHz NO-HALVING — the headline: pacer at velocity (1,0) for 1 s should deliver ~1000
-        //    reports (halving would show ~500).
+        // 5) 1 kHz NO-HALVING — the headline: a push loop feeding (1,0) at ~1 kHz for 1 s should
+        //    deliver ~1000 reports (halving would show ~500).
         let _ = device.reset();
         std::thread::sleep(Duration::from_millis(100));
         acc.rel_x.store(0, Ordering::Relaxed);
         acc.rel_x_events.store(0, Ordering::Relaxed);
         let session = device.movement();
-        session.set_velocity(1, 0);
-        std::thread::sleep(Duration::from_millis(1000));
-        session.clear_velocity();
+        // Operator-driven push loop: feed one delta per ~1 ms; the pacer emits one MOVE per tick.
+        let deadline = std::time::Instant::now() + Duration::from_millis(1000);
+        while std::time::Instant::now() < deadline {
+            session.push(1, 0);
+            std::thread::sleep(Duration::from_millis(1));
+        }
         drop(session);
         std::thread::sleep(Duration::from_millis(100));
         let events = acc.rel_x_events.load(Ordering::Relaxed);
         let sum = acc.rel_x.load(Ordering::Relaxed);
-        // 998 Hz measured; accept ≥950 reports/s as "full rate, no halving".
-        let pace_ok = events >= 950 && sum >= 950;
+        // 998 Hz measured; accept ≥950 reports/s as "full rate, no halving" (push timing isn't exact,
+        // so judge on report count, with sum ≥ reports to confirm motion was delivered).
+        let pace_ok = events >= 950 && sum >= events;
         ok &= pace_ok;
         println!(
-            "[1kHz   ] pacer velocity(1,0) for 1s -> {events} reports, sum REL_X={sum}  (>=950 = no-halving)  {}",
+            "[1kHz   ] push(1,0) loop for 1s -> {events} reports, sum REL_X={sum}  (>=950 = no-halving)  {}",
             pf(pace_ok)
         );
         let _ = device.reset();
