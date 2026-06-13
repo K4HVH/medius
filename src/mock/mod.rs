@@ -44,7 +44,7 @@ impl Default for State {
     }
 }
 
-/// A scriptable fake medius box for hardware-free tests (feature = `mock`). See the [module docs](self).
+/// A scriptable fake medius box for hardware-free tests (feature = `mock`). See the module docs.
 #[derive(Clone, Debug)]
 pub struct MockBox {
     state: Arc<Mutex<State>>,
