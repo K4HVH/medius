@@ -76,7 +76,7 @@ impl AsyncDevice {
     /// Query the box version (§4.1), awaiting the correlated `RESP` with the default timeout.
     pub async fn query_version(&self) -> Result<Version> {
         let payload = self
-            .query(Q_VERSION, self.device.query_timeout_default())
+            .query(Q_VERSION, self.device.link.query_timeout_default())
             .await?;
         match parse_resp(&payload) {
             Some(Resp::Version(v)) => Ok(v),
@@ -87,7 +87,7 @@ impl AsyncDevice {
     /// Query the box health flags (§4.2), awaiting the correlated `RESP` with the default timeout.
     pub async fn query_health(&self) -> Result<Health> {
         let payload = self
-            .query(Q_HEALTH, self.device.query_timeout_default())
+            .query(Q_HEALTH, self.device.link.query_timeout_default())
             .await?;
         match parse_resp(&payload) {
             Some(Resp::Health(h)) => Ok(h),
@@ -96,10 +96,10 @@ impl AsyncDevice {
     }
 
     pub(crate) async fn query(&self, what: u8, timeout: Duration) -> Result<Vec<u8>> {
-        let (seq, gen_id, rx) = self.device.register_query(what)?;
+        let (seq, gen_id, rx) = self.device.link.register_query(what)?;
 
         let (cancel_tx, cancel_rx) = flume::bounded::<()>(1);
-        let weak = self.device.weak_inner();
+        let weak = self.device.link.weak();
         std::thread::Builder::new()
             .name("medius-query-timeout".into())
             .spawn(move || {
