@@ -9,8 +9,6 @@ use crate::types::{Health, LogLevel, LogLine, Version};
 
 /// A decoded `RESP` (§4.1), keyed by the `what` selector at `payload[0]`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
 pub enum Resp {
     /// `RESP(VERSION)` — `what = 0`.
     Version(Version),

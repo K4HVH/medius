@@ -63,8 +63,6 @@ pub const LOG_VERBOSE: u8 = 4;
 /// forward-compat).
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
 pub enum FrameType {
     /// `MOVE` — relative cursor movement (PC→box).
     Move = 0x01,

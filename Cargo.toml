@@ -21,17 +21,14 @@ async = []                              # thin wrapper over the sync core (flume
 mock = []                               # public scriptable fake box
 flash = []                              # esptool reboot+flash handoff
 tracing = ["dep:tracing"]               # library-side instrumentation
-serde = ["dep:serde"]                   # derives on value types
 
 [dependencies]
 thiserror = "2"
 flume = "0.11"
 parking_lot = "0.12"
 tracing = { version = "0.1", optional = true }
-serde = { version = "1", features = ["derive"], optional = true }
 
 [dev-dependencies]
-serde_json = "1"
 # Async tests use futures' executor::block_on — NO tokio (the wrapper is runtime-agnostic).
 futures = { version = "0.3", default-features = false, features = ["executor"] }
 

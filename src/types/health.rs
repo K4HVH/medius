@@ -4,7 +4,6 @@ use crate::protocol::opcode::{H_CLONE_CFG, H_INJECT_ON, H_LINK_UP, H_MOUSE_ATT};
 
 /// The decoded `RESP(HEALTH)` flags byte (§4.2).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Health {
     /// Inter-chip link to the host chip is up.
     pub link_up: bool,
@@ -73,13 +72,5 @@ mod tests {
         let h = Health::from_flags(0xF0);
         assert_eq!(h, Health::from_flags(0x00));
         assert_eq!(h.to_flags(), 0x00);
-    }
-
-    #[cfg(feature = "serde")]
-    #[test]
-    fn serde_round_trip() {
-        let h = Health::from_flags(0x05);
-        let j = serde_json::to_string(&h).unwrap();
-        assert_eq!(serde_json::from_str::<Health>(&j).unwrap(), h);
     }
 }

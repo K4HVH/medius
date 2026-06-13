@@ -19,7 +19,6 @@
 //! - `mock` — a public scriptable fake box for hardware-free tests.
 //! - `flash` — `esptool` reboot + flash handoff.
 //! - `tracing` — library-side instrumentation.
-//! - `serde` — derives on the public value types.
 
 // Transport needs `unsafe` for platform FFI; require it to be explicitly scoped.
 #![forbid(unsafe_op_in_unsafe_fn)]
