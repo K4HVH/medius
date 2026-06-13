@@ -16,9 +16,6 @@ use crate::protocol::{DecodedFrame, FrameType, encode};
 use crate::transport::mock::MockTransport;
 use crate::types::{Health, LogLevel, Version};
 
-/// One command the host sent the mock box, decoded — the recorded form used for assertions.
-pub type RecordedFrame = DecodedFrame;
-
 /// Configurable, recorded state shared between a [`MockBox`] handle and the responder closure.
 #[derive(Debug)]
 struct State {
@@ -151,7 +148,7 @@ impl MockBox {
     }
 
     /// A snapshot copy of every command the host has sent so far, decoded, in order.
-    pub fn recorded_frames(&self) -> Vec<RecordedFrame> {
+    pub fn recorded_frames(&self) -> Vec<DecodedFrame> {
         self.state.lock().recorded.clone()
     }
 

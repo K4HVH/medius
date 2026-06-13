@@ -80,9 +80,7 @@ fn main() -> medius::Result<()> {
 ### Hardware-free test with the `mock` feature
 
 ```rust
-use medius::mock::MockBox;
-use medius::protocol::FrameType;
-use medius::{Button, Device, Health, Version};
+use medius::{Button, Device, FrameType, Health, MockBox, Version};
 
 let mock = MockBox::new()
     .with_version(Version { proto_ver: 1, fw_major: 2, fw_minor: 3, fw_patch: 4 })

@@ -37,11 +37,11 @@ mod transport;
 pub mod types;
 
 #[cfg(feature = "async")]
-pub mod asyncv;
+mod asyncv;
 #[cfg(feature = "flash")]
 pub mod flash;
 #[cfg(feature = "mock")]
-pub mod mock;
+mod mock;
 
 #[cfg(test)]
 mod tests;
