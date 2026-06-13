@@ -80,7 +80,7 @@ impl Link {
     }
 
     pub(crate) fn query(&self, what: u8) -> Result<Vec<u8>> {
-        self.query_timeout(what, self.inner.query_timeout)
+        self.query_timeout(what, self.query_timeout_default())
     }
 
     pub(crate) fn query_timeout(&self, what: u8, timeout: Duration) -> Result<Vec<u8>> {
@@ -108,6 +108,29 @@ impl Link {
                 );
                 Err(Error::QueryTimeout)
             }
+        }
+    }
+
+    #[cfg(feature = "async")]
+    pub(crate) async fn query_async(&self, what: u8, timeout: Duration) -> Result<Vec<u8>> {
+        let (seq, gen_id, rx) = self.register_query(what)?;
+        let (cancel_tx, cancel_rx) = flume::bounded::<()>(1);
+        let weak = self.weak();
+        std::thread::Builder::new()
+            .name("medius-query-timeout".into())
+            .spawn(move || {
+                if let Err(flume::RecvTimeoutError::Timeout) = cancel_rx.recv_timeout(timeout)
+                    && let Some(inner) = weak.upgrade()
+                {
+                    inner.cancel_query(seq, gen_id);
+                }
+            })
+            .expect("spawn medius-query-timeout thread");
+        let res = rx.recv_async().await;
+        drop(cancel_tx);
+        match res {
+            Ok(payload) => Ok(payload),
+            Err(_) => Err(Error::QueryTimeout),
         }
     }
 }
