@@ -5,8 +5,6 @@ use crate::protocol::opcode::{LOG_DEBUG, LOG_ERROR, LOG_INFO, LOG_VERBOSE, LOG_W
 /// A device `LOG` frame severity level (§4.3).
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
 pub enum LogLevel {
     Error,
     Warn,
@@ -43,7 +41,6 @@ impl LogLevel {
 
 /// A decoded `LOG` frame (§4.3): a severity level and its UTF-8 text.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct LogLine {
     pub level: LogLevel,
     /// Decoded lossily from UTF-8; not NUL-terminated on the wire.

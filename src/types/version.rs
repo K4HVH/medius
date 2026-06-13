@@ -4,7 +4,6 @@ use core::fmt;
 
 /// The decoded `RESP(VERSION)` payload (§4.1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Version {
     /// Protocol version, expected to be `1`.
     pub proto_ver: u8,

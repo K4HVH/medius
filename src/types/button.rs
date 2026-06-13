@@ -9,8 +9,6 @@ use crate::protocol::opcode::{
 /// `id`s bind at clone-time to the captured mouse's descriptor fields; a command for a button the
 /// attached mouse lacks is a firmware no-op.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
 pub enum Button {
     Left,
     Right,
@@ -47,8 +45,6 @@ impl Button {
 /// A button injection override action (§3.3); discriminants are the wire `action` byte.
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
 pub enum ButtonAction {
     /// Clear our injected press; defer to physical state.
     SoftRelease = ACT_SOFTREL,
@@ -104,24 +100,5 @@ mod tests {
         assert_eq!(ButtonAction::from_u8(1), Some(ButtonAction::Press));
         assert_eq!(ButtonAction::from_u8(2), Some(ButtonAction::ForceRelease));
         assert_eq!(ButtonAction::from_u8(3), None);
-    }
-
-    #[cfg(feature = "serde")]
-    #[test]
-    fn serde_snake_case_round_trip() {
-        // Enum variants serialize to the protocol's own snake_case vocabulary.
-        assert_eq!(serde_json::to_string(&Button::Side1).unwrap(), "\"side1\"");
-        assert_eq!(
-            serde_json::to_string(&ButtonAction::ForceRelease).unwrap(),
-            "\"force_release\""
-        );
-        assert_eq!(
-            serde_json::from_str::<Button>("\"side1\"").unwrap(),
-            Button::Side1
-        );
-        assert_eq!(
-            serde_json::from_str::<ButtonAction>("\"force_release\"").unwrap(),
-            ButtonAction::ForceRelease
-        );
     }
 }

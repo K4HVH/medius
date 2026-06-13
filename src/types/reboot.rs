@@ -4,8 +4,6 @@
 /// download mode (for flashing); `*Run` reboots to run the firmware.
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-#[cfg_attr(feature = "serde", serde(rename_all = "snake_case"))]
 pub enum RebootTarget {
     DeviceDownload = 0,
     HostDownload = 1,

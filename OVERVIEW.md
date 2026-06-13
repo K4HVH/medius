@@ -16,7 +16,7 @@ Validated end-to-end on real hardware (see "Validation"). Tracks the firmware in
 |---|---|
 | 1:1 bindings of the firmware frames (MOVE/WHEEL/BUTTON/RESET/QUERY/REBOOT_DL/LOG) | `click`, `drag`, double-click, any composed multi-frame gesture |
 | Infrastructure: connect/handshake, keepalive (holds caller-commanded state), reconnect+reapply, the reader, SEQ correlation | `set_velocity` / any auto-generated motion |
-| Linux + Windows raw serial, async wrapper, mock, tracing, serde | a host-side pacer / frame clock — the caller drives MOVE timing |
+| Linux + Windows raw serial, async wrapper, mock, tracing | a host-side pacer / frame clock — the caller drives MOVE timing |
 | | smoothing / humanization / trajectory synthesis |
 
 **The test for "is this an extra":** a function that *generates/automates input the caller didn't
@@ -137,8 +137,7 @@ unsolicited `RESP(VERSION)` (SEQ=0) at boot + on first contact as a presence/rea
 ## 6. Feature flags
 
 `default` = lean sync core. `async` (AsyncDevice) · `mock` (MockBox) · `flash` (esptool handoff) ·
-`tracing` (library spans; per-frame TX/RX at TRACE only) · `serde` (derives on value types,
-snake_case).
+`tracing` (library spans; per-frame TX/RX at TRACE only).
 
 ---
 

@@ -26,7 +26,6 @@ host application's job — build it on top, not in here.
 | `mock`     |         | `MockBox` — a public scriptable fake box for hardware-free tests.         |
 | `flash`    |         | `esptool` reboot-to-download + flash handoff.                             |
 | `tracing`  |         | Library-side `tracing` instrumentation (per-frame TX/RX at TRACE only).   |
-| `serde`    |         | `Serialize`/`Deserialize` derives on the public value types (telemetry: `Version`, `Health`, `CountersSnapshot`, …). |
 
 ## Quick start
 
