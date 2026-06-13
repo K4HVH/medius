@@ -1,8 +1,8 @@
 //! Always-on atomic counters — cheap, lock-free diagnostics.
 //!
 //! [`Counters`] tracks four lifetime totals (frames sent/received, CRC-dropped frames, reconnects) as
-//! relaxed [`AtomicU64`]s. They are core (always compiled, effectively free on the hot path), distinct
-//! from the optional `metrics` histograms. [`Counters::snapshot`] reads them into a plain
+//! relaxed [`AtomicU64`]s. They are core (always compiled, effectively free on the hot path).
+//! [`Counters::snapshot`] reads them into a plain
 //! [`CountersSnapshot`] (serde-gated); the four reads are independent, so a snapshot is not
 //! transactional across fields — intentional and sufficient for diagnostics.
 

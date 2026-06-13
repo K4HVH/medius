@@ -19,7 +19,6 @@ rustdoc-args = ["--cfg", "docsrs"]
 default = []
 async = []                              # thin wrapper over the sync core (flume async recv, no runtime dep)
 mock = []                               # public scriptable fake box
-metrics = ["dep:hdrhistogram"]          # pacer jitter/latency histograms
 flash = []                              # esptool reboot+flash handoff
 tracing = ["dep:tracing"]               # library-side instrumentation
 serde = ["dep:serde"]                   # derives on value types
@@ -28,7 +27,6 @@ serde = ["dep:serde"]                   # derives on value types
 thiserror = "2"
 flume = "0.11"
 parking_lot = "0.12"
-hdrhistogram = { version = "7", optional = true }
 tracing = { version = "0.1", optional = true }
 serde = { version = "1", features = ["derive"], optional = true }
 
@@ -52,12 +50,9 @@ windows-sys = { version = "0.59", features = [
   "Win32_Devices_DeviceAndDriverInstallation",
 ] }
 
-# basic / paced open a real device — they compile everywhere, but need a connected box to RUN.
+# basic opens a real device — it compiles everywhere, but needs a connected box to RUN.
 [[example]]
 name = "basic"
-
-[[example]]
-name = "paced"
 
 # mock is fully runnable with no hardware (the scriptable fake box).
 [[example]]

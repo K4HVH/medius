@@ -167,12 +167,11 @@ fn device_is_send_sync() {
 }
 
 /// Tracing acceptance tests: a tiny capturing subscriber (no `tracing-subscriber` dev-dep) tallies
-/// events by `target`, to assert connect/query events fire and the pacer does NOT trace per tick.
+/// events by `target`, to assert connect/query events fire under the expected targets.
 #[cfg(feature = "tracing")]
 mod tracing_capture {
     use std::sync::Arc;
     use std::sync::atomic::{AtomicU64, Ordering};
-    use std::time::Duration;
 
     use tracing::span::{Attributes, Id, Record};
     use tracing::{Event, Metadata, Subscriber};
@@ -214,12 +213,11 @@ mod tracing_capture {
     }
 
     /// A minimal [`Subscriber`] counting emitted events bucketed by `target` prefix (`medius::device` /
-    /// `medius::transport` / `medius::pacer`).
+    /// `medius::transport`).
     #[derive(Clone, Default)]
     struct CountingSubscriber {
         device: Arc<AtomicU64>,
         transport: Arc<AtomicU64>,
-        pacer: Arc<AtomicU64>,
     }
 
     impl Subscriber for CountingSubscriber {
@@ -237,8 +235,6 @@ mod tracing_capture {
                 self.device.fetch_add(1, Ordering::Relaxed);
             } else if target.starts_with("medius::transport") {
                 self.transport.fetch_add(1, Ordering::Relaxed);
-            } else if target.starts_with("medius::pacer") {
-                self.pacer.fetch_add(1, Ordering::Relaxed);
             }
         }
         fn enter(&self, _: &Id) {}
@@ -288,30 +284,6 @@ mod tracing_capture {
         assert!(
             transport_count.load(Ordering::Relaxed) >= 1,
             "the TX (and RX) frames should emit medius::transport events"
-        );
-    }
-
-    /// The pacer must NOT trace per tick: over a 1 kHz run (hundreds of ticks) the `medius::pacer`
-    /// event count stays tiny (≈ elapsed seconds), proving the aggregate-only hot-path discipline.
-    #[test]
-    fn pacer_does_not_trace_per_tick() {
-        ensure_tracing_enabled();
-        let sub = CountingSubscriber::default();
-        let pacer_count = Arc::clone(&sub.pacer);
-        tracing::subscriber::with_default(sub, || {
-            let device = Device::from_transport(Arc::new(MockTransport::new()));
-            let mv = device.movement(); // 1 kHz
-            for _ in 0..250 {
-                mv.push(1, 0); // drive an emission per tick (≈250 ticks)
-                std::thread::sleep(Duration::from_millis(1));
-            }
-            drop(mv);
-        });
-        let pacer_events = pacer_count.load(Ordering::Relaxed);
-        // Per-tick would be ~250; the aggregate is ~1/sec, so over 250 ms expect a small handful.
-        assert!(
-            pacer_events <= 3,
-            "pacer must aggregate, not trace per tick — saw {pacer_events} pacer events"
         );
     }
 }

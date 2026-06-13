@@ -1,14 +1,11 @@
 //! Connection / session configuration ([`ConnectOptions`]) — the serde-able config surface (§10).
 //!
-//! A plain value type (no live handles) grouping the query timeout, keepalive cadence, and pacer rate.
-//! Applied at construction via [`Device::open_with`](crate::Device::open_with) /
-//! [`Device::find_with`](crate::Device::find_with) and at session open via
-//! [`Device::movement_with`](crate::Device::movement_with). The same knobs stay settable on the live
-//! objects; this is the declarative surface over them.
+//! A plain value type (no live handles) grouping the query timeout and keepalive cadence. Applied at
+//! construction via [`Device::open_with`](crate::Device::open_with) /
+//! [`Device::find_with`](crate::Device::find_with). The same knobs stay settable on the live objects;
+//! this is the declarative surface over them.
 
 use std::time::Duration;
-
-use crate::pacer::DEFAULT_RATE_HZ;
 
 /// Default query timeout: one second.
 pub const DEFAULT_QUERY_TIMEOUT: Duration = Duration::from_secs(1);
@@ -21,8 +18,7 @@ pub const DEFAULT_KEEPALIVE_CADENCE: Duration = Duration::from_millis(500);
 ///
 /// A plain, copyable, `serde`-able value type — set the `pub` fields directly (with `..Default::default()`
 /// for the rest) or deserialize from JSON/TOML, then pass it to
-/// [`Device::open_with`](crate::Device::open_with) / [`Device::find_with`](crate::Device::find_with) /
-/// [`Device::movement_with`](crate::Device::movement_with).
+/// [`Device::open_with`](crate::Device::open_with) / [`Device::find_with`](crate::Device::find_with).
 ///
 /// The two `Duration` fields serialize as integer-millisecond `_ms` pairs (`query_timeout_ms`,
 /// `keepalive_cadence_ms`) rather than serde's default `{secs,nanos}`, so hand-written config stays
@@ -45,10 +41,6 @@ pub struct ConnectOptions {
         serde(with = "duration_ms", rename = "keepalive_cadence_ms")
     )]
     pub keepalive_cadence: Duration,
-
-    /// The pacer tick rate in Hz for [`movement`](ConnectOptions::movement)-opened sessions. Default
-    /// [`DEFAULT_RATE_HZ`] (1000).
-    pub rate_hz: u32,
 }
 
 impl Default for ConnectOptions {
@@ -56,7 +48,6 @@ impl Default for ConnectOptions {
         ConnectOptions {
             query_timeout: DEFAULT_QUERY_TIMEOUT,
             keepalive_cadence: DEFAULT_KEEPALIVE_CADENCE,
-            rate_hz: DEFAULT_RATE_HZ,
         }
     }
 }
@@ -65,12 +56,6 @@ impl ConnectOptions {
     /// A fresh [`ConnectOptions`] with the defaults.
     pub fn new() -> Self {
         Self::default()
-    }
-
-    /// Open a [`MovementSession`](crate::MovementSession) over `device` at this config's `rate_hz`
-    /// (equivalent to [`Device::movement_with`](crate::Device::movement_with)).
-    pub fn movement(&self, device: &crate::Device) -> crate::MovementSession {
-        device.movement_with(self)
     }
 }
 
@@ -100,7 +85,6 @@ mod tests {
         let o = ConnectOptions::default();
         assert_eq!(o.query_timeout, DEFAULT_QUERY_TIMEOUT);
         assert_eq!(o.keepalive_cadence, DEFAULT_KEEPALIVE_CADENCE);
-        assert_eq!(o.rate_hz, DEFAULT_RATE_HZ);
     }
 
     #[test]
@@ -108,22 +92,19 @@ mod tests {
         let o = ConnectOptions {
             query_timeout: Duration::from_millis(250),
             keepalive_cadence: Duration::from_millis(300),
-            rate_hz: 500,
         };
         assert_eq!(o.query_timeout, Duration::from_millis(250));
         assert_eq!(o.keepalive_cadence, Duration::from_millis(300));
-        assert_eq!(o.rate_hz, 500);
     }
 
     #[test]
     fn struct_update_keeps_defaults() {
         let o = ConnectOptions {
-            rate_hz: 2000,
+            keepalive_cadence: Duration::from_millis(250),
             ..Default::default()
         };
-        assert_eq!(o.rate_hz, 2000);
+        assert_eq!(o.keepalive_cadence, Duration::from_millis(250));
         assert_eq!(o.query_timeout, DEFAULT_QUERY_TIMEOUT);
-        assert_eq!(o.keepalive_cadence, DEFAULT_KEEPALIVE_CADENCE);
     }
 
     #[cfg(feature = "serde")]
@@ -133,7 +114,6 @@ mod tests {
         let j = serde_json::to_string(&o).unwrap();
         assert!(j.contains("\"query_timeout_ms\":1000"), "json was {j}");
         assert!(j.contains("\"keepalive_cadence_ms\":500"), "json was {j}");
-        assert!(j.contains("\"rate_hz\":1000"), "json was {j}");
         let back: ConnectOptions = serde_json::from_str(&j).unwrap();
         assert_eq!(back, o);
     }
@@ -141,10 +121,9 @@ mod tests {
     #[cfg(feature = "serde")]
     #[test]
     fn serde_parses_a_handwritten_config() {
-        let j = r#"{"query_timeout_ms": 250, "keepalive_cadence_ms": 400, "rate_hz": 2000}"#;
+        let j = r#"{"query_timeout_ms": 250, "keepalive_cadence_ms": 400}"#;
         let o: ConnectOptions = serde_json::from_str(j).unwrap();
         assert_eq!(o.query_timeout, Duration::from_millis(250));
         assert_eq!(o.keepalive_cadence, Duration::from_millis(400));
-        assert_eq!(o.rate_hz, 2000);
     }
 }
