@@ -10,8 +10,8 @@
 //! firmware frame, and the firmware owns additive carry-remainder injection and descriptor-faithful
 //! clamping. The caller drives the timing of its own MOVE stream.
 //!
-//! See `docs/superpowers/specs/2026-06-13-medius-rust-library-design.md` for the full design and
-//! `docs/protocol/control-protocol.md` for the byte-exact wire reference.
+//! See `OVERVIEW.md` for the current library overview and
+//! `docs/protocol/control-protocol.md` (firmware repo) for the byte-exact wire reference.
 //!
 //! ## Feature flags
 //!
