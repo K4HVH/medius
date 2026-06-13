@@ -301,8 +301,10 @@ mod tracing_capture {
         tracing::subscriber::with_default(sub, || {
             let device = Device::from_transport(Arc::new(MockTransport::new()));
             let mv = device.movement(); // 1 kHz
-            mv.set_velocity(1, 0); // emit every tick
-            std::thread::sleep(Duration::from_millis(250)); // ≈250 ticks
+            for _ in 0..250 {
+                mv.push(1, 0); // drive an emission per tick (≈250 ticks)
+                std::thread::sleep(Duration::from_millis(1));
+            }
             drop(mv);
         });
         let pacer_events = pacer_count.load(Ordering::Relaxed);

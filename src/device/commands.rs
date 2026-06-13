@@ -7,8 +7,6 @@
 //! Lock ordering: `desired` is updated and released before the send takes the write lock (never two
 //! locks at once). The benign one-frame window where `desired` leads the box self-heals via reconcile.
 
-use std::time::Duration;
-
 use crate::error::Result;
 use crate::protocol::FrameType;
 use crate::protocol::command::{button_payload, move_payload, wheel_payload};
@@ -65,20 +63,11 @@ impl Device {
         self.desired().lock().clear();
         self.send(FrameType::Reset, &[])
     }
-
-    /// A host-composed click: press, block the calling thread for `hold`, then soft-release (§3.3 —
-    /// there is no firmware click).
-    pub fn click(&self, button: Button, hold: Duration) -> Result<()> {
-        self.press(button)?;
-        std::thread::sleep(hold);
-        self.release(button)
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use std::sync::Arc;
-    use std::time::Duration;
 
     use crate::protocol::{DecodedFrame, FrameDecoder, FrameType};
     use crate::transport::mock::MockTransport;
@@ -174,21 +163,6 @@ mod tests {
         device.press(Button::Middle).unwrap();
         device.release(Button::Middle).unwrap();
         assert!(device.desired().lock().is_idle());
-    }
-
-    #[test]
-    fn click_emits_press_then_soft_release() {
-        let (device, mock) = device_with_mock();
-        device
-            .click(Button::Left, Duration::from_millis(1))
-            .unwrap();
-        let frames = written_frames(&mock);
-        assert_eq!(frames.len(), 2, "click is press + soft-release");
-        assert_eq!(frames[0].ty, FrameType::Button);
-        assert_eq!(frames[0].payload, vec![0, 1]); // press Left
-        assert_eq!(frames[1].ty, FrameType::Button);
-        assert_eq!(frames[1].payload, vec![0, 0]); // soft-release Left
-        assert!(device.desired().lock().is_idle()); // pressed then released → idle
     }
 
     #[test]

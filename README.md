@@ -42,7 +42,6 @@ medius = "0.1"
 ### Sync: open, move, query
 
 ```rust,no_run
-use std::time::Duration;
 use medius::{Button, Device};
 
 fn main() -> medius::Result<()> {
@@ -54,7 +53,8 @@ fn main() -> medius::Result<()> {
     println!("injection active: {}", health.injection_active);
 
     device.move_rel(40, 0)?;                       // +dx right, +dy down (fire-and-go)
-    device.click(Button::Left, Duration::from_millis(40))?;
+    device.press(Button::Left)?;                   // primitive press …
+    device.release(Button::Left)?;                 // … then soft-release
     device.reset()?;                               // back to pure passthrough
     Ok(())
 }
@@ -71,15 +71,11 @@ fn main() -> medius::Result<()> {
     let session = device.movement();               // spawns the `medius-pacer` real-time thread
 
     // Pushes accumulate; the pacer drains them one MOVE per tick. The pacer clocks frame emission —
-    // it does NOT humanize or invent motion.
+    // it does NOT humanize or invent motion. Sustained motion is just a push loop paced at ~1 kHz.
     for _ in 0..200 {
         session.push(2, 0);
         sleep(Duration::from_millis(1));
     }
-
-    session.set_velocity(1, 0);                     // constant per-tick velocity until cleared
-    sleep(Duration::from_millis(100));
-    session.clear_velocity();
 
     drop(session);                                  // stops + joins the pacer thread
     Ok(())
@@ -116,8 +112,8 @@ cargo install medius --features cli      # or: cargo run --features cli --bin me
 medius list                              # enumerate boxes by CH343 VID/PID
 medius info                              # connect, print Version + Health
 medius move 40 0                         # one-shot relative move
-medius click left --hold 40              # press-hold-release
-medius pace --vx 5 --ms 3000             # drive the pacer at constant velocity
+medius button left press                 # one-shot button override (then `… left soft_release`)
+medius pace --vx 5 --ms 3000             # drive the pacer with a push loop at ~1 kHz
 medius bench                             # achieved-rate / jitter stats (uses `metrics`)
 medius monitor                           # stream device LOG frames + periodic health
 medius reset                             # clear all injection

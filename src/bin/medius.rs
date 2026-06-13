@@ -56,11 +56,9 @@ enum Command {
     Wheel(WheelArgs),
     /// One-shot button override: `button BUTTON ACTION`.
     Button(ButtonArgs),
-    /// Press-hold-release a button: `click BUTTON [--hold MS]`.
-    Click(ClickArgs),
     /// Clear all injection (return to passthrough).
     Reset,
-    /// Drive the pacer: constant velocity for a duration, or deltas streamed from stdin.
+    /// Drive the pacer: push a fixed delta each tick for a duration, or deltas streamed from stdin.
     Pace(PaceArgs),
     /// Run the pacer and print achieved-rate / jitter stats (uses `metrics`).
     Bench(BenchArgs),
@@ -145,30 +143,21 @@ struct ButtonArgs {
 }
 
 #[derive(Args, Debug)]
-struct ClickArgs {
-    /// Which button.
-    button: CliButton,
-    /// Hold duration in milliseconds.
-    #[arg(long, default_value_t = 40)]
-    hold: u64,
-}
-
-#[derive(Args, Debug)]
 #[command(allow_negative_numbers = true)]
 struct PaceArgs {
-    /// Constant velocity X per tick (with --vy, runs for --ms milliseconds).
+    /// Per-tick X delta to push (with --vy, pushed every ~1 ms for --ms milliseconds).
     #[arg(long)]
     vx: Option<i16>,
-    /// Constant velocity Y per tick.
+    /// Per-tick Y delta to push.
     #[arg(long)]
     vy: Option<i16>,
-    /// How long to pace, in milliseconds (constant-velocity mode).
+    /// How long to pace, in milliseconds (push-loop mode).
     #[arg(long, default_value_t = 1000)]
     ms: u64,
     /// Pacer rate in Hz.
     #[arg(long, default_value_t = medius::DEFAULT_RATE_HZ)]
     rate: u32,
-    /// Read `DX DY` delta pairs (one per line) from stdin and push them, instead of constant velocity.
+    /// Read `DX DY` delta pairs (one per line) from stdin and push them, instead of the push loop.
     #[arg(long)]
     stdin: bool,
 }
@@ -246,7 +235,6 @@ fn run(cli: &Cli) -> medius::Result<()> {
         Command::Move(a) => open(cli)?.move_rel(a.dx, a.dy),
         Command::Wheel(a) => open(cli)?.wheel(a.delta),
         Command::Button(a) => open(cli)?.button(a.button.into(), a.action.into()),
-        Command::Click(a) => open(cli)?.click(a.button.into(), Duration::from_millis(a.hold)),
         Command::Reset => open(cli)?.reset(),
         Command::Pace(a) => cmd_pace(cli, a),
         Command::Bench(a) => cmd_bench(cli, a),
@@ -337,7 +325,8 @@ fn cmd_selftest(cli: &Cli) -> medius::Result<()> {
     device.move_rel(-5, 0)?;
     device.wheel(1)?;
     device.wheel(-1)?;
-    device.click(Button::Left, Duration::from_millis(20))?;
+    device.press(Button::Left)?;
+    device.release(Button::Left)?;
     device.reset()?;
     let counters = device.counters();
     if cli.json {
@@ -369,12 +358,15 @@ fn cmd_pace(cli: &Cli, args: &PaceArgs) -> medius::Result<()> {
         let vx = args.vx.unwrap_or(0);
         let vy = args.vy.unwrap_or(0);
         eprintln!(
-            "pacing velocity ({vx}, {vy}) at {} Hz for {} ms…",
+            "pushing ({vx}, {vy}) per ~1 ms at {} Hz for {} ms…",
             args.rate, args.ms
         );
-        session.set_velocity(vx, vy);
-        std::thread::sleep(Duration::from_millis(args.ms));
-        session.clear_velocity();
+        // Operator-driven push loop: feed (vx, vy) at ~1 kHz; the pacer emits one MOVE per tick.
+        let deadline = Instant::now() + Duration::from_millis(args.ms);
+        while Instant::now() < deadline {
+            session.push(vx, vy);
+            std::thread::sleep(Duration::from_millis(1));
+        }
     }
     drop(session); // joins the pacer thread
     let _ = io::stdout().flush();
@@ -384,10 +376,12 @@ fn cmd_pace(cli: &Cli, args: &PaceArgs) -> medius::Result<()> {
 fn cmd_bench(cli: &Cli, args: &BenchArgs) -> medius::Result<()> {
     let device = open(cli)?;
     let session = device.movement_at(args.rate);
-    // velocity(1,0) emits one MOVE per tick, exercising the pacer.
-    session.set_velocity(1, 0);
-    std::thread::sleep(Duration::from_millis(args.ms));
-    session.clear_velocity();
+    // Push (1,0) at ~1 kHz so one MOVE emits per tick, exercising the pacer.
+    let deadline = Instant::now() + Duration::from_millis(args.ms);
+    while Instant::now() < deadline {
+        session.push(1, 0);
+        std::thread::sleep(Duration::from_millis(1));
+    }
     let stats = session.stats();
     drop(session);
 
@@ -485,7 +479,6 @@ mod tests {
             vec!["medius", "monitor"],
             vec!["medius", "selftest"],
             vec!["medius", "wheel", "3"],
-            vec!["medius", "click", "left", "--hold", "50"],
             vec!["medius", "reset"],
             vec!["medius", "pace", "--vx", "2", "--ms", "100"],
             vec!["medius", "pace", "--stdin"],
