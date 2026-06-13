@@ -4,22 +4,9 @@
 //! responder seam. It answers `QUERY` from a configurable `Version`/`Health`, records every command
 //! the host sent, and can push `LOG` lines. Matching is on **decoded** frames (semantic), not raw
 //! bytes. Cheap to clone (shares state and transport via `Arc`), so a test can keep a handle for
-//! assertions after the `Device` owns the transport.
-//!
-//! ```
-//! # use medius::mock::MockBox;
-//! # use medius::{Device, Button, FrameType, Version};
-//! let mock = MockBox::new().with_version(Version { proto_ver: 1, fw_major: 2, fw_minor: 3, fw_patch: 4 });
-//! let device = Device::with_mock(mock.clone());
-//! let v = device.query_version().unwrap();
-//! assert_eq!((v.fw_major, v.fw_minor, v.fw_patch), (2, 3, 4));
-//! device.press(Button::Left).unwrap();
-//! // The press was recorded.
-//! assert!(mock.recorded_frames().iter().any(|f| f.ty == FrameType::Button));
-//! ```
-//!
-//! The public seam to drive a real `Device` over the mock is [`Device::with_mock`](crate::Device::with_mock),
-//! which reaches the private transport without exposing the `Transport` trait.
+//! assertions after the `Device` owns the transport. Drive a real `Device` over it with
+//! [`Device::with_mock`](crate::Device::with_mock) (or [`open_mock`](crate::Device::open_mock) to run
+//! the handshake too); see `src/tests/behavior.rs` for worked usage.
 
 use std::sync::Arc;
 

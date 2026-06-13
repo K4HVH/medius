@@ -23,16 +23,6 @@ pub enum Resp {
 ///
 /// - `what = 0` VERSION → `[0, proto_ver, fw_major, fw_minor, fw_patch]` (needs ≥ 5 bytes).
 /// - `what = 1` HEALTH  → `[1, flags]` (needs ≥ 2 bytes).
-///
-/// # Examples
-/// ```ignore
-/// # use medius::protocol::response::{parse_resp, Resp};
-/// # use medius::types::Version;
-/// assert_eq!(
-///     parse_resp(&[0, 1, 0, 1, 0]),
-///     Some(Resp::Version(Version { proto_ver: 1, fw_major: 0, fw_minor: 1, fw_patch: 0 })),
-/// );
-/// ```
 pub fn parse_resp(payload: &[u8]) -> Option<Resp> {
     let what = *payload.first()?;
     match what {
@@ -61,15 +51,6 @@ pub fn parse_resp(payload: &[u8]) -> Option<Resp> {
 ///
 /// Text is decoded lossily; an unknown level falls back to [`LogLevel::Info`], and an empty payload
 /// yields an empty `Info` line.
-///
-/// # Examples
-/// ```ignore
-/// # use medius::protocol::response::parse_log;
-/// # use medius::types::LogLevel;
-/// let line = parse_log(&[1, b'h', b'i']);
-/// assert_eq!(line.level, LogLevel::Warn);
-/// assert_eq!(line.text, "hi");
-/// ```
 pub fn parse_log(payload: &[u8]) -> LogLine {
     match payload.split_first() {
         Some((&level, text)) => LogLine {

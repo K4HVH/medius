@@ -44,16 +44,6 @@ pub struct DecodedFrame {
 ///
 /// # Errors
 /// Returns [`FrameError::PayloadTooLong`] if `payload` exceeds [`MAX_PAYLOAD`].
-///
-/// # Examples
-/// ```ignore
-/// # use medius::protocol::frame::encode;
-/// # use medius::protocol::opcode::FrameType;
-/// let f = encode(FrameType::Reset, 7, &[]).unwrap();
-/// assert_eq!(f[0], 0xA5); // SOF
-/// assert_eq!(f[1], 0x04); // TYPE = RESET
-/// assert_eq!(f[2], 7); // SEQ
-/// ```
 pub fn encode(ty: FrameType, seq: u8, payload: &[u8]) -> Result<Vec<u8>, FrameError> {
     if payload.len() > MAX_PAYLOAD {
         return Err(FrameError::PayloadTooLong { len: payload.len() });
