@@ -1,8 +1,8 @@
-//! The decoded `RESP(VERSION)` payload — firmware/protocol identity.
+//! The decoded `RESP(VERSION)` payload.
 
 use core::fmt;
 
-/// The decoded `RESP(VERSION)` payload (§4.1).
+/// The decoded `RESP(VERSION)` payload.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Version {
     /// Protocol version, expected to be `1`.

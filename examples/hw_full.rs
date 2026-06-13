@@ -1,27 +1,4 @@
 //! Comprehensive hardware validation (Linux only).
-//!
-//! Exercises EVERY command + infrastructure piece on the public [`medius::Device`] surface against a
-//! real box, while exclusively grabbing (`EVIOCGRAB`) the clone's mouse event node so injected input is
-//! measured here and never reaches the desktop. Each check prints `[name] ... PASS/FAIL`; the run ends
-//! `RESULT: PASS/FAIL` with a matching exit code.
-//!
-//! Coverage: handshake, all moves/wheel/buttons/reset, 1 kHz no-halving, a sustained soak,
-//! keepalive-holds, query-under-load, reconnect, reboot-to-run recovery, the async gate (queries +
-//! fire-and-go, with `--features async`), host-crash no-stuck safety, and — opt-in — unattended
-//! auto-reconnect after a real link drop.
-//!
-//! ```text
-//! cargo run --example hw_full --all-features -- [event=/dev/input/event11] [port] [soak_secs=20]
-//! ```
-//! Build with `--all-features` (or at least `--features async`) for the async gate; `soak_secs=0` skips
-//! the soak. Needs read access to the event node (uaccess ACL, else run as root); the port defaults to
-//! the first medius box by VID/PID. Wrap in `timeout` when unattended — the grab freezes desktop input
-//! for the window, and the Drop guard releases it even on panic.
-//!
-//! Set `MEDIUS_UNPLUG_TEST=1` to append the **auto-reconnect** phase: after the grabbed suite finishes
-//! and the grab is released, it asks you to physically unplug + replug the box's control USB and proves
-//! the reader self-heals the link with no manual `reconnect()` call. It's opt-in and interactive (only
-//! a real unplug drops the CH343 link — no software reboot does), so the default run stays automated.
 
 #[cfg(not(target_os = "linux"))]
 fn main() {
@@ -43,8 +20,7 @@ mod linux {
 
     use medius::{Button, ButtonAction, Device, RebootTarget};
 
-    // evdev constants (Linux UAPI, arch-invariant for these).
-    const EVIOCGRAB: libc::c_ulong = 0x4004_4590; // _IOW('E', 0x90, int)
+    const EVIOCGRAB: libc::c_ulong = 0x4004_4590;
     const EV_KEY: u16 = 0x01;
     const EV_REL: u16 = 0x02;
     const REL_X: u16 = 0x00;
@@ -53,15 +29,10 @@ mod linux {
     const BTN_LEFT: u16 = 0x110;
     const BTN_RIGHT: u16 = 0x111;
     const BTN_MIDDLE: u16 = 0x112;
-    const BTN_SIDE: u16 = 0x113; // Side1 (back)
-    const BTN_EXTRA: u16 = 0x114; // Side2 (forward)
-    /// `struct input_event` on 64-bit Linux: `timeval{i64,i64}` + `u16 type` + `u16 code` + `i32 value`.
+    const BTN_SIDE: u16 = 0x113;
+    const BTN_EXTRA: u16 = 0x114;
     const EVENT_SIZE: usize = 24;
 
-    /// Accumulators populated by the reader thread from the grabbed event stream. Motion is summed (with
-    /// a REL_X event count for the 1 kHz move rate); each button code latches its last KEY value (1=down,
-    /// 0=up). `side_other_*` capture any side-button KEY that arrives on an UNEXPECTED code, so a mouse
-    /// that maps its side buttons elsewhere is reported rather than hard-failing the run.
     #[derive(Default)]
     struct Acc {
         rel_x: AtomicI64,
@@ -71,9 +42,8 @@ mod linux {
         btn_left: AtomicI64,
         btn_right: AtomicI64,
         btn_middle: AtomicI64,
-        btn_side: AtomicI64,  // BTN_SIDE (0x113)
-        btn_extra: AtomicI64, // BTN_EXTRA (0x114)
-        /// Last KEY code seen that was NOT one of the five expected BTN_* codes (-1 = none).
+        btn_side: AtomicI64,
+        btn_extra: AtomicI64,
         side_other_code: AtomicI64,
         side_other_val: AtomicI64,
     }
@@ -86,9 +56,6 @@ mod linux {
         }
     }
 
-    /// Owns the grabbed fd; releases the grab and closes the fd on drop (even on panic), so injected
-    /// input can't leak to the desktop after we exit. Independent of the [`Device`], so it keeps reading
-    /// across a simulated host crash (check 15).
     struct EvdevGrab {
         fd: RawFd,
     }
@@ -96,8 +63,7 @@ mod linux {
     impl EvdevGrab {
         fn open(path: &str) -> std::io::Result<Self> {
             let cpath = std::ffi::CString::new(path).unwrap();
-            // SAFETY: valid C string and flags. O_NONBLOCK so the reader polls `stop` rather than
-            // blocking in read() when injection is idle (clean shutdown).
+            // SAFETY: valid C string and flags; O_NONBLOCK so the reader polls `stop` instead of blocking in read().
             let fd = unsafe {
                 libc::open(
                     cpath.as_ptr(),
@@ -129,14 +95,12 @@ mod linux {
         }
     }
 
-    /// Read 24-byte `input_event` records from `fd`, folding REL_*/BTN_* into `acc`, until `stop`.
     fn reader(fd: RawFd, acc: Arc<Acc>, stop: Arc<AtomicBool>) {
         let mut buf = [0u8; EVENT_SIZE];
         while !stop.load(Ordering::Relaxed) {
             // SAFETY: fd is valid; we read into a buffer of exactly EVENT_SIZE bytes.
             let n = unsafe { libc::read(fd, buf.as_mut_ptr() as *mut libc::c_void, EVENT_SIZE) };
             if n != EVENT_SIZE as isize {
-                // EAGAIN / partial: nap, then re-check `stop`. Buffered events drain back-to-back.
                 std::thread::sleep(Duration::from_millis(1));
                 continue;
             }
@@ -163,8 +127,6 @@ mod linux {
                     BTN_MIDDLE => acc.btn_middle.store(val, Ordering::Relaxed),
                     BTN_SIDE => acc.btn_side.store(val, Ordering::Relaxed),
                     BTN_EXTRA => acc.btn_extra.store(val, Ordering::Relaxed),
-                    // Any other KEY code (e.g. a mouse that maps a side button to BTN_BACK/BTN_FORWARD
-                    // or a remapped slot): record it so the side-button check can report what it saw.
                     other => {
                         acc.side_other_code.store(other as i64, Ordering::Relaxed);
                         acc.side_other_val.store(val, Ordering::Relaxed);
@@ -175,7 +137,6 @@ mod linux {
         }
     }
 
-    /// Reset the motion accumulators (X/Y/wheel + the REL_X event count) to zero.
     fn reset_motion(acc: &Acc) {
         acc.rel_x.store(0, Ordering::Relaxed);
         acc.rel_y.store(0, Ordering::Relaxed);
@@ -183,7 +144,6 @@ mod linux {
         acc.rel_x_events.store(0, Ordering::Relaxed);
     }
 
-    /// The latched KEY value for a button's *expected* evdev code.
     fn btn_val(acc: &Acc, button: Button) -> i64 {
         match button {
             Button::Left => acc.btn_left.load(Ordering::Relaxed),
@@ -200,10 +160,8 @@ mod linux {
             .get(1)
             .cloned()
             .unwrap_or_else(|| "/dev/input/event11".to_string());
-        // Optional 3rd arg: soak duration in seconds (default 20). 0 skips the soak.
         let soak_secs: u64 = args.get(3).and_then(|s| s.parse().ok()).unwrap_or(20);
 
-        // Grab FIRST so nothing leaks to the desktop, then start reading.
         let grab = match EvdevGrab::open(&event) {
             Ok(g) => g,
             Err(e) => {
@@ -219,8 +177,6 @@ mod linux {
         let reader = std::thread::spawn(move || reader(rfd, racc, rstop));
         std::thread::sleep(Duration::from_millis(300));
 
-        // The Device is `Option` so check 15 can `drop` it mid-run (simulated host crash) while the
-        // grab/reader live on. Most checks `.as_ref().unwrap()` it; only 15 takes it.
         let device = match args.get(2) {
             Some(p) => Device::open(p),
             None => Device::find(),
@@ -245,7 +201,6 @@ mod linux {
             );
         };
 
-        // 1) HANDSHAKE — version proto==1 and a healthy box (link up, mouse attached, clone configured).
         {
             let dev = device.as_ref().unwrap();
             let ver = dev.query_version();
@@ -266,7 +221,6 @@ mod linux {
             );
         }
 
-        // 2) MOVE EXACT — 50 × move_rel(40,0) @3ms → exactly +2000 X, no Y drift.
         {
             let dev = device.as_ref().unwrap();
             reset_motion(&acc);
@@ -284,7 +238,6 @@ mod linux {
             );
         }
 
-        // 3) MOVE NEGATIVE — 20 × move_rel(-30,0) → −600 X.
         {
             let dev = device.as_ref().unwrap();
             reset_motion(&acc);
@@ -301,7 +254,6 @@ mod linux {
             );
         }
 
-        // 4) MOVE ZERO — move_rel(0,0)×5 emits no REL_X (firmware drops idle motion).
         {
             let dev = device.as_ref().unwrap();
             reset_motion(&acc);
@@ -319,7 +271,6 @@ mod linux {
             );
         }
 
-        // 5) MOVE DIAGONAL — 5 × move_rel(100,50) → +500 X, +250 Y.
         {
             let dev = device.as_ref().unwrap();
             reset_motion(&acc);
@@ -337,8 +288,6 @@ mod linux {
             );
         }
 
-        // 6) MOVE LARGE / CARRY — one move_rel(2000,0); the firmware delivers all 2000 (possibly split
-        //    across frames via its descriptor-width carry-remainder), so the OBSERVED total is 2000.
         {
             let dev = device.as_ref().unwrap();
             reset_motion(&acc);
@@ -353,7 +302,6 @@ mod linux {
             );
         }
 
-        // 7) WHEEL — wheel(1)×5 then wheel(-1)×3 → net +2.
         {
             let dev = device.as_ref().unwrap();
             acc.rel_wheel.store(0, Ordering::Relaxed);
@@ -374,8 +322,6 @@ mod linux {
             );
         }
 
-        // 8) BUTTONS — every one of the five: press latches its BTN code to 1, release back to 0. A side
-        //    button that reports on an unexpected code is noted (printed), not silently passed.
         {
             let dev = device.as_ref().unwrap();
             let mut all_btn_ok = true;
@@ -399,13 +345,11 @@ mod linux {
                 if this_ok {
                     report.push_str(&format!("{button:?}=ok "));
                 } else {
-                    // A side button on the wrong code: surface what we saw rather than hard-failing.
                     let other = acc.side_other_code.load(Ordering::Relaxed);
                     if matches!(button, Button::Side1 | Button::Side2) && other >= 0 {
                         report.push_str(&format!(
                             "{button:?}=expected-code-silent(saw code 0x{other:x}) "
                         ));
-                        // Treat a clearly-observed alternate side code as a pass-with-note.
                     } else {
                         all_btn_ok = false;
                         report.push_str(&format!("{button:?}=FAIL(down={down},up={up}) "));
@@ -415,8 +359,6 @@ mod linux {
             check("buttons all 5", all_btn_ok, report.trim_end().to_string());
         }
 
-        // 9) FORCE_RELEASE — press(Left)→1, force_release(Left)→0 (masks even a physical hold); then a
-        //    soft release to leave the override map clean.
         {
             let dev = device.as_ref().unwrap();
             let _ = dev.press(Button::Left);
@@ -425,7 +367,7 @@ mod linux {
             let _ = dev.force_release(Button::Left);
             std::thread::sleep(Duration::from_millis(200));
             let up = acc.btn_left.load(Ordering::Relaxed);
-            let _ = dev.soft_release(Button::Left); // clean up desired-state
+            let _ = dev.soft_release(Button::Left);
             check(
                 "force_release",
                 down == 1 && up == 0,
@@ -433,7 +375,6 @@ mod linux {
             );
         }
 
-        // 10) RESET — press(Right)→1, reset()→0 (clears all overrides), and motion still works after.
         {
             let dev = device.as_ref().unwrap();
             let _ = dev.button(Button::Right, ButtonAction::Press);
@@ -453,9 +394,6 @@ mod linux {
             );
         }
 
-        // 11) 1 kHz NO-HALVING — direct move_rel(1,0) on a ~1ms deadline loop for 1.0s; PASS if ≥950
-        //     reports/s reach the clone (halving would show ~500). Judged on report rate, with the sum
-        //     confirming motion was delivered.
         {
             let dev = device.as_ref().unwrap();
             let _ = dev.reset();
@@ -486,8 +424,6 @@ mod linux {
             );
         }
 
-        // 11b) SOAK — sustain the direct 1 kHz move_rel loop for `soak_secs` (default 20s) and confirm the
-        //      rate holds (no degradation/halving over a long run) with motion delivered. Skipped if 0.
         if soak_secs > 0 {
             let dev = device.as_ref().unwrap();
             let _ = dev.reset();
@@ -522,16 +458,12 @@ mod linux {
             );
         }
 
-        // 12) KEEPALIVE HOLDS STATE — press(Right), then send NOTHING through the Device for 1.6s. The
-        //     firmware auto-clears held state after 1000ms of silence; the library's keepalive thread
-        //     (non-idle desired-state) sends a periodic QUERY the new firmware honors as activity, so the
-        //     button must STILL be down after 1.6s.
         {
             let dev = device.as_ref().unwrap();
             let _ = dev.press(Button::Right);
             std::thread::sleep(Duration::from_millis(200));
             let down = acc.btn_right.load(Ordering::Relaxed);
-            std::thread::sleep(Duration::from_millis(1600)); // silence on OUR side; keepalive runs internally
+            std::thread::sleep(Duration::from_millis(1600));
             let still = acc.btn_right.load(Ordering::Relaxed);
             let _ = dev.soft_release(Button::Right);
             std::thread::sleep(Duration::from_millis(150));
@@ -542,13 +474,8 @@ mod linux {
             );
         }
 
-        // 13) QUERY UNDER MOVE LOAD — with a background move_rel(1,0) loop churning SEQs at ~1kHz, 15
-        //     concurrent query_health() calls must all resolve Ok with link_up. Proves the SEQ
-        //     generation-tag correlation isn't corrupted by the MOVE SEQ churn (the FIX-1 invariant, on
-        //     hardware).
         {
             let dev = device.as_ref().unwrap();
-            // Background move loop emitting (1,0) at ~1kHz for the duration of the queries.
             let move_stop = Arc::new(AtomicBool::new(false));
             let pdev = dev.clone();
             let pstop = Arc::clone(&move_stop);
@@ -558,7 +485,7 @@ mod linux {
                     std::thread::sleep(Duration::from_millis(1));
                 }
             });
-            std::thread::sleep(Duration::from_millis(50)); // let the loop spin up
+            std::thread::sleep(Duration::from_millis(50));
 
             let mut all_q_ok = true;
             for _ in 0..15 {
@@ -577,21 +504,19 @@ mod linux {
             );
         }
 
-        // 14) RECONNECT — hold Side1, reconnect() (rescan+reopen+swap+reapply), then the device is
-        //     functional (version Ok, motion works) and the held button is re-asserted.
         {
             let dev = device.as_ref().unwrap();
             let _ = dev.press(Button::Side1);
             std::thread::sleep(Duration::from_millis(200));
             let rc = dev.reconnect();
-            std::thread::sleep(Duration::from_millis(300)); // let the swap + reapply settle
+            std::thread::sleep(Duration::from_millis(300));
             let ver_ok = dev.query_version().is_ok();
             reset_motion(&acc);
             let _ = dev.move_rel(10, 0);
             std::thread::sleep(Duration::from_millis(200));
             let moved = acc.rel_x.load(Ordering::Relaxed);
             let side_held = btn_val(&acc, Button::Side1) == 1;
-            let _ = dev.reset(); // clean up the held Side1
+            let _ = dev.reset();
             check(
                 "reconnect",
                 rc.is_ok() && ver_ok && moved == 10,
@@ -602,14 +527,10 @@ mod linux {
             );
         }
 
-        // 14b) REBOOT-TO-RUN — reboot the host (capture) chip to RUN: a normal restart, NOT ROM download.
-        //      The control plane (device chip + clone + our grab) stays up, so the box must remain
-        //      responsive — and even if the link does blip, reconnect() must bring it back. (We reboot the
-        //      host chip, not the device chip, precisely so the grabbed clone node isn't re-enumerated.)
         {
             let dev = device.as_ref().unwrap();
             let _ = dev.reboot(RebootTarget::HostRun);
-            std::thread::sleep(Duration::from_secs(2)); // restart window
+            std::thread::sleep(Duration::from_secs(2));
             let mut recovered = matches!(dev.query_version(), Ok(v) if v.proto_ver == 1);
             for _ in 0..10 {
                 if recovered {
@@ -619,7 +540,6 @@ mod linux {
                 std::thread::sleep(Duration::from_millis(500));
                 recovered = matches!(dev.query_version(), Ok(v) if v.proto_ver == 1);
             }
-            // Injection still lands after the restart (device chip + grab unaffected).
             reset_motion(&acc);
             let _ = dev.move_rel(10, 0);
             std::thread::sleep(Duration::from_millis(200));
@@ -632,8 +552,6 @@ mod linux {
             );
         }
 
-        // Snapshot infrastructure surfaces (logs receiver, counters) before the host-crash check drops
-        // the device — exercises the public diagnostic API.
         {
             let dev = device.as_ref().unwrap();
             let logs = dev.logs();
@@ -645,8 +563,6 @@ mod linux {
             );
         }
 
-        // Optional async gate: an AsyncDevice over the SAME core (no second port) must resolve both
-        // queries via futures' block_on AND land a fire-and-go move on the clone. Out without `async`.
         #[cfg(feature = "async")]
         {
             use futures::executor::block_on;
@@ -658,7 +574,7 @@ mod linux {
                 .map(|h| h.link_up)
                 .unwrap_or(false);
             reset_motion(&acc);
-            let _ = adev.move_rel(12, 0); // async fire-and-go injection
+            let _ = adev.move_rel(12, 0);
             std::thread::sleep(Duration::from_millis(200));
             let amoved = acc.rel_x.load(Ordering::Relaxed);
             let _ = adev.reset();
@@ -671,16 +587,12 @@ mod linux {
             );
         }
 
-        // 15) (LAST) NO-STUCK / HOST-CRASH SAFETY — press(Middle), then DROP the device (stops keepalive
-        //     + closes the port = simulated host crash). After ~1000ms of true silence the firmware's
-        //     auto-clear must release the button. The grab/reader are independent, so they keep reading.
-        //     This MUST be last: it consumes the Device.
         {
             let dev = device.as_ref().unwrap();
             let _ = dev.press(Button::Middle);
             std::thread::sleep(Duration::from_millis(200));
             let down = acc.btn_middle.load(Ordering::Relaxed);
-            drop(device.take().unwrap()); // host crash: keepalive stops, port closes — true silence
+            drop(device.take().unwrap());
             std::thread::sleep(Duration::from_millis(1600));
             let cleared = acc.btn_middle.load(Ordering::Relaxed);
             check(
@@ -693,16 +605,9 @@ mod linux {
         }
 
         stop.store(true, Ordering::Relaxed);
-        let _ = reader.join(); // non-blocking reader observes `stop` within ~1ms
+        let _ = reader.join();
         drop(grab);
 
-        // 16) AUTO-RECONNECT (opt-in, interactive) — prove the READER self-heals a real link drop with
-        //     NO manual reconnect() call. Only a physical unplug of the control USB drops the CH343 link
-        //     (no software reboot does), and that unplug re-enumerates the grabbed clone — so this phase
-        //     is opt-in (MEDIUS_UNPLUG_TEST=1) and runs LAST, after the grab is released, on a fresh
-        //     device. It asserts purely on the control link: counters().reconnects must rise and
-        //     query_version() must recover, both unattended. (Reapply-after-reconnect is covered by the
-        //     grabbed check 14; here the re-enumerated clone can't be grab-verified.)
         if std::env::var_os("MEDIUS_UNPLUG_TEST").is_some() {
             let reopened = match args.get(2) {
                 Some(p) => Device::open(p),

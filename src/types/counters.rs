@@ -1,9 +1,6 @@
 //! Diagnostics snapshot of the device's always-on counters.
 
 /// A plain, copyable snapshot of the device's always-on counters, for display / diagnostics.
-///
-/// Produced by [`Device::counters`](crate::Device::counters); the source totals are the internal
-/// atomic `Counters` in the device core.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct CountersSnapshot {
     /// Total frames written to the transport.

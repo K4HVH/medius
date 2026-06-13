@@ -1,7 +1,3 @@
-//! Async query path through the public API: success and timeout (features `async` + `mock`).
-//!
-//! Runtime-agnostic — driven by `futures::executor::block_on`, no tokio. The timeout case exercises the
-//! detached cancellable timer against a [`MockBox::silent`] box that never replies.
 #![cfg(all(feature = "async", feature = "mock"))]
 
 use futures::executor::block_on;
@@ -23,7 +19,6 @@ fn async_query_returns_the_configured_version() {
 
 #[test]
 fn async_query_times_out_on_a_silent_box() {
-    // The default 1 s query timeout elapses, then the await resolves as QueryTimeout.
     let device = Device::with_mock(MockBox::new().silent()).into_async();
     let err = block_on(device.query_version()).unwrap_err();
     assert!(matches!(err, Error::QueryTimeout), "got {err:?}");

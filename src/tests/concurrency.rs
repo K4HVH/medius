@@ -1,8 +1,4 @@
 //! SEQ correlation under concurrent queries (feature `mock`).
-//!
-//! Many in-flight queries share one reader and one `SEQ` space; a reply must reach its own waiter and
-//! never cross-deliver. This drives the generation-tagged, selector-aware correlation under contention —
-//! a race that can't be reliably reproduced on hardware.
 #![cfg(feature = "mock")]
 
 use std::sync::Arc;
@@ -19,7 +15,7 @@ fn concurrent_queries_never_cross_deliver() {
             fw_minor: 3,
             fw_patch: 4,
         })
-        .with_health(Health::from_flags(0x01)); // link_up
+        .with_health(Health::from_flags(0x01));
     let device = Arc::new(Device::with_mock(mock));
 
     let mut handles = Vec::new();
@@ -27,8 +23,6 @@ fn concurrent_queries_never_cross_deliver() {
         let d = Arc::clone(&device);
         handles.push(thread::spawn(move || {
             for _ in 0..25 {
-                // A VERSION reply mis-correlated as HEALTH (or vice-versa) would fail to parse and
-                // surface as an error here — so success proves correct per-SEQ, per-selector delivery.
                 let v = d.query_version().unwrap();
                 assert_eq!((v.fw_major, v.fw_minor, v.fw_patch), (2, 3, 4));
                 let h = d.query_health().unwrap();

@@ -1,8 +1,4 @@
 //! Frame opcodes and wire constants, pinned to `ctrl_proto.h` / `control-protocol.md`.
-//!
-//! Two `tests` guards back these up: `opcodes_match_firmware` (Rust-vs-Rust, catches an in-crate
-//! edit) and `opcodes_match_ctrl_proto_header` (the real drift guard — parses the firmware header
-//! when reachable, skips otherwise).
 
 use core::fmt;
 
@@ -15,12 +11,8 @@ pub const MAX_PAYLOAD: usize = 512;
 /// Protocol version in `RESP(VERSION)` (§4.1); the handshake requires this exact value.
 pub const PROTO_VER: u8 = 1;
 
-// ---- QUERY selectors (§3.5 / ctrl_proto.h `CTRL_Q_*`) ----
-
 pub const Q_VERSION: u8 = 0;
 pub const Q_HEALTH: u8 = 1;
-
-// ---- BUTTON ids (§3.3 / ctrl_proto.h `CTRL_BTN_*`) ----
 
 pub const BTN_LEFT: u8 = 0;
 pub const BTN_RIGHT: u8 = 1;
@@ -29,16 +21,12 @@ pub const BTN_SIDE1: u8 = 3;
 pub const BTN_SIDE2: u8 = 4;
 pub const BTN_COUNT: u8 = 5;
 
-// ---- BUTTON actions (§3.3 / ctrl_proto.h `CTRL_ACT_*`) ----
-
 /// Clear our injected press; defer to physical state.
 pub const ACT_SOFTREL: u8 = 0;
 /// Force the button down regardless of physical state.
 pub const ACT_PRESS: u8 = 1;
 /// Force the button up, masking a physical hold.
 pub const ACT_FORCEREL: u8 = 2;
-
-// ---- HEALTH flag bits (§4.2 / ctrl_proto.h `CTRL_H_*`) ----
 
 /// Inter-chip link to the host chip is up.
 pub const H_LINK_UP: u8 = 0x01;
@@ -49,8 +37,6 @@ pub const H_CLONE_CFG: u8 = 0x04;
 /// Injection is currently active.
 pub const H_INJECT_ON: u8 = 0x08;
 
-// ---- LOG levels (§4.3 / ctrl_proto.h `CTRL_LOG_*`) ----
-
 pub const LOG_ERROR: u8 = 0;
 pub const LOG_WARN: u8 = 1;
 pub const LOG_INFO: u8 = 2;
@@ -58,9 +44,6 @@ pub const LOG_DEBUG: u8 = 3;
 pub const LOG_VERBOSE: u8 = 4;
 
 /// A frame opcode (the `TYPE` byte, §3 / §4).
-///
-/// `try_from` returns `Err` for an unknown byte so the decoder can consume-and-ignore it (§2
-/// forward-compat).
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum FrameType {
@@ -82,7 +65,7 @@ pub enum FrameType {
     Log = 0x08,
 }
 
-/// Error returned when a byte does not name a known [`FrameType`]; the decoder ignores the frame (§2).
+/// Error returned when a byte does not name a known [`FrameType`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct UnknownFrameType(pub u8);
 
