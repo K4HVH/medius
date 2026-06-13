@@ -163,19 +163,21 @@ To keep the host faithful (no host workarounds), three firmware changes were mad
 
 ## 9. Validation status
 
-- **Host-free:** every feature flag + `--all-features` (unit + doctests) pass; clippy
-  clean on Linux **and** `x86_64-pc-windows-msvc`; `cargo doc` link-clean; examples build.
+- **Host-free (`tests/`, via the public API + `MockBox`):** decoder robustness (garbage/resync,
+  bad-CRC drop+count, truncation), SEQ correlation under concurrent queries, async query
+  success/timeout, and end-to-end behavior (query/record/log, handshake accept/reject/silent, thread
+  lifecycle). All pass under `--all-features`; clippy clean on Linux **and** `x86_64-pc-windows-msvc`;
+  `cargo doc` link-clean; both examples build.
 - **Hardware (`examples/hw_full.rs`, grabbed):** handshake, move (exact/neg/zero/diagonal/carry),
-  wheel, all 5 buttons × actions, force-release, reset, 1 kHz no-halving, keepalive-holds,
-  query-under-1kHz-load (SEQ correlation), reconnect+reapply, async query, no-stuck/crash safety — **all
-  PASS**, `crc_drops=0`. Re-validated end-to-end after the whole refactor stack (pacer removal →
-  zero-config → folder reorg → types centralization → serde removal): the no-halving check now drives a
-  direct `move_rel` loop and measured **1000 reports/s, sum 1000** (full rate, no halving).
-- **Adversarial review:** 4-lens (firmware, concurrency, cleanup-regression, protocol-integration);
-  all confirmed findings fixed (selector-aware correlation, firmware linger decoupling).
+  wheel, all 5 buttons × actions, force-release, reset, 1 kHz no-halving, a sustained soak,
+  keepalive-holds, query-under-1kHz-load (SEQ correlation), reconnect+reapply, reboot-to-run recovery,
+  the async gate (queries + fire-and-go), no-stuck/crash safety — **all PASS**, `crc_drops=0`. The soak
+  holds **1000 reports/s** sustained and the no-halving check measures **1000 reports/s, sum 1000**
+  (full rate, no halving).
 
 ## 10. Tests & examples
 
-Unit + doctests across all features; a public scriptable `mock` for hardware-free downstream tests.
-Examples: `basic`, `mock`, `async`, `hw_validate`, `hw_soak`, `hw_full`. CI workflow checks
-fmt/clippy(both targets)/test/doc.
+Tests live **outside** the implementation: a small, high-value integration suite in `tests/` driven
+entirely through the public API + the scriptable `MockBox` (so impl files carry zero test code), plus
+the on-hardware `hw_full` suite for everything a mock can't prove. Two examples: `basic` (minimal
+usage) and `hw_full` (the grabbed hardware validation). CI checks fmt/clippy(both targets)/test/doc.
