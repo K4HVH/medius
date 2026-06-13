@@ -106,9 +106,10 @@ Two examples live in [`examples/`](examples/):
 - `hw_full` — the on-hardware validation suite (Linux; grabs the clone's evdev node)
   (`cargo run --example hw_full --all-features`).
 
-Automated tests are **integration tests** in [`tests/`](tests/), run through the public API + the
-scriptable `MockBox` — so the implementation files carry no test code. Run them with
-`cargo test --all-features` (the `MockBox`-based suites need the `mock` feature).
+Automated tests are collected in [`src/tests/`](src/tests/) — **out of the implementation files**, in
+one place. They mix integration-style tests (public API + the scriptable `MockBox`) with internal unit
+tests over crate-private seams. Run `cargo test --all-features` (the `MockBox` suites need the `mock`
+feature; the internal tests run on a plain `cargo test` too).
 
 ## How it differs from the makcu library
 

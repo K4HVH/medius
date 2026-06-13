@@ -8,7 +8,7 @@
 use std::sync::Arc;
 use std::thread;
 
-use medius::{Device, Health, MockBox, Version};
+use crate::{Device, Health, MockBox, Version};
 
 #[test]
 fn concurrent_queries_never_cross_deliver() {

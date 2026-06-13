@@ -7,7 +7,7 @@
 
 use std::time::{Duration, Instant};
 
-use medius::{Device, LogLevel, MockBox};
+use crate::{Device, LogLevel, MockBox};
 
 /// Poll `f` until true or a 1 s deadline (the reader processes inbound bytes on its own thread).
 fn wait_until(mut f: impl FnMut() -> bool) -> bool {

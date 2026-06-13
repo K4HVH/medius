@@ -4,12 +4,12 @@
 //! **silent while idle** — the latter is the no-stuck safety: idle silence lets the firmware's 1000 ms
 //! auto-clear release a button on a real host crash. A regression that fired while idle would defeat
 //! that and silently pass a result-only check, so this asserts the *behavior* (frames sent or not).
-//! Uses the fixed [`DEFAULT_KEEPALIVE_CADENCE`](medius::DEFAULT_KEEPALIVE_CADENCE) (500 ms).
+//! Uses the fixed [`DEFAULT_KEEPALIVE_CADENCE`](crate::DEFAULT_KEEPALIVE_CADENCE) (500 ms).
 #![cfg(feature = "mock")]
 
 use std::time::Duration;
 
-use medius::{Button, Device, FrameType, MockBox};
+use crate::{Button, Device, FrameType, MockBox};
 
 /// Comfortably longer than one keepalive cadence (500 ms), so at least one tick lands in the window.
 const PAST_ONE_CADENCE: Duration = Duration::from_millis(650);

@@ -163,11 +163,13 @@ To keep the host faithful (no host workarounds), three firmware changes were mad
 
 ## 9. Validation status
 
-- **Host-free (`tests/`, via the public API + `MockBox`):** decoder robustness (garbage/resync,
-  bad-CRC drop+count, truncation), SEQ correlation under concurrent queries, async query
-  success/timeout, and end-to-end behavior (query/record/log, handshake accept/reject/silent, thread
-  lifecycle). All pass under `--all-features`; clippy clean on Linux **and** `x86_64-pc-windows-msvc`;
-  `cargo doc` link-clean; both examples build.
+- **Host-free (`src/tests/`):** integration-style via the public API + `MockBox` — decoder robustness
+  (garbage/resync, bad-CRC drop+count, truncation), SEQ correlation under concurrent queries, async
+  query success/timeout, keepalive fire/silent/stop, end-to-end behavior (query/record/log, handshake
+  accept/reject/silent, reapply, reboot bytes, lifecycle); **plus** internal unit tests over the
+  crate-private seams (FIX-1 mismatched-selector + SEQ-wrap correlation, FIX-3 transport-swap decoder
+  reset, `DesiredState`) that run with no feature. All pass under `--all-features`; clippy clean on
+  Linux **and** `x86_64-pc-windows-msvc`; `cargo doc` link-clean; both examples build.
 - **Hardware (`examples/hw_full.rs`, grabbed):** handshake, move (exact/neg/zero/diagonal/carry),
   wheel, all 5 buttons × actions, force-release, reset, 1 kHz no-halving, a sustained soak,
   keepalive-holds, query-under-1kHz-load (SEQ correlation), reconnect+reapply, reboot-to-run recovery,
@@ -177,7 +179,8 @@ To keep the host faithful (no host workarounds), three firmware changes were mad
 
 ## 10. Tests & examples
 
-Tests live **outside** the implementation: a small, high-value integration suite in `tests/` driven
-entirely through the public API + the scriptable `MockBox` (so impl files carry zero test code), plus
-the on-hardware `hw_full` suite for everything a mock can't prove. Two examples: `basic` (minimal
-usage) and `hw_full` (the grabbed hardware validation). CI checks fmt/clippy(both targets)/test/doc.
+Tests live **outside** the implementation, collected in one place — `src/tests/` — so the impl files
+carry zero test code. It holds both integration-style tests (public API + the scriptable `MockBox`)
+and internal unit tests over crate-private seams, plus the on-hardware `hw_full` suite for everything a
+mock can't prove. Two examples: `basic` (minimal usage) and `hw_full` (the grabbed hardware
+validation). CI checks fmt/clippy(both targets)/test/doc.
