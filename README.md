@@ -137,7 +137,7 @@ the transport is a thin platform FFI layer (`libc` termios2 on Linux, `windows-s
 
 ## Design references
 
-- Library design spec: `docs/superpowers/specs/2026-06-13-medius-rust-library-design.md` (firmware repo).
+- Library overview: [`OVERVIEW.md`](OVERVIEW.md) — the current, authoritative description of the crate.
 - Byte-exact wire reference: `docs/protocol/control-protocol.md` (firmware repo).
 
 ## License
