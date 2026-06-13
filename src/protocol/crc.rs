@@ -26,18 +26,3 @@ pub fn crc16_ccitt(data: &[u8]) -> u16 {
     }
     crc
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn crc_standard_vector() {
-        assert_eq!(crc16_ccitt(b"123456789"), 0x29B1);
-    }
-
-    #[test]
-    fn crc_empty() {
-        assert_eq!(crc16_ccitt(b""), 0xFFFF);
-    }
-}

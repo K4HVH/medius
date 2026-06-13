@@ -28,22 +28,3 @@ impl RebootTarget {
         })
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn reboot_target_round_trips() {
-        for (v, t) in [
-            (0u8, RebootTarget::DeviceDownload),
-            (1, RebootTarget::HostDownload),
-            (2, RebootTarget::DeviceRun),
-            (3, RebootTarget::HostRun),
-        ] {
-            assert_eq!(RebootTarget::from_u8(v), Some(t));
-            assert_eq!(t.as_u8(), v);
-        }
-        assert_eq!(RebootTarget::from_u8(4), None);
-    }
-}

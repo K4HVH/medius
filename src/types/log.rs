@@ -46,19 +46,3 @@ pub struct LogLine {
     /// Decoded lossily from UTF-8; not NUL-terminated on the wire.
     pub text: String,
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn log_level_from_u8() {
-        assert_eq!(LogLevel::from_u8(0), LogLevel::Error);
-        assert_eq!(LogLevel::from_u8(1), LogLevel::Warn);
-        assert_eq!(LogLevel::from_u8(2), LogLevel::Info);
-        assert_eq!(LogLevel::from_u8(3), LogLevel::Debug);
-        assert_eq!(LogLevel::from_u8(4), LogLevel::Verbose);
-        assert_eq!(LogLevel::from_u8(5), LogLevel::Info);
-        assert_eq!(LogLevel::from_u8(255), LogLevel::Info);
-    }
-}

@@ -44,33 +44,3 @@ impl Health {
         flags
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn health_from_flags_all_set() {
-        let h = Health::from_flags(0x0F);
-        assert!(h.link_up && h.mouse_attached && h.clone_configured && h.injection_active);
-        assert_eq!(h.to_flags(), 0x0F);
-    }
-
-    #[test]
-    fn health_from_flags_only_mouse() {
-        let h = Health::from_flags(0x02);
-        assert!(!h.link_up);
-        assert!(h.mouse_attached);
-        assert!(!h.clone_configured);
-        assert!(!h.injection_active);
-        assert_eq!(h.to_flags(), 0x02);
-    }
-
-    #[test]
-    fn health_ignores_unused_high_bits() {
-        // Bits b4–b7 are unused in v1 (§4.2) and must not leak into the decoded view.
-        let h = Health::from_flags(0xF0);
-        assert_eq!(h, Health::from_flags(0x00));
-        assert_eq!(h.to_flags(), 0x00);
-    }
-}

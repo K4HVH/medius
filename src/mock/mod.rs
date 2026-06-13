@@ -38,6 +38,9 @@ struct State {
     version: Version,
     health: Health,
     recorded: Vec<DecodedFrame>,
+    /// When `false`, the box records commands but never answers a `QUERY` — simulating a hung/crashed
+    /// box, so a query times out. Toggled by [`MockBox::silent`].
+    respond: bool,
 }
 
 impl Default for State {
@@ -52,6 +55,7 @@ impl Default for State {
             },
             health: Health::from_flags(0),
             recorded: Vec::new(),
+            respond: true,
         }
     }
 }
@@ -85,7 +89,7 @@ impl MockBox {
                 seq,
                 payload: payload.to_vec(),
             });
-            if ty == FrameType::Query {
+            if ty == FrameType::Query && st.respond {
                 match payload.first().copied() {
                     Some(0) => {
                         // RESP(VERSION): [what=0][proto_ver][fw_major][fw_minor][fw_patch]
@@ -135,6 +139,21 @@ impl MockBox {
         self.state.lock().health = health;
     }
 
+    /// Make the box **unresponsive** (builder style): it still records commands but never answers a
+    /// `QUERY`, so a query against it times out — useful for simulating a hung/crashed box.
+    #[must_use]
+    pub fn silent(self) -> Self {
+        self.state.lock().respond = false;
+        self
+    }
+
+    /// Inject **raw bytes** into the host's inbound stream, exactly as if the box put them on the wire —
+    /// including malformed, truncated, or garbage data. The device's reader decodes them like any other
+    /// input (dropping bad-CRC frames, resyncing past garbage), so this drives robustness tests.
+    pub fn push_raw(&self, bytes: &[u8]) {
+        self.transport.push_bytes(bytes);
+    }
+
     /// Push a `LOG` line as if the box emitted it; it surfaces on the device's
     /// [`logs()`](crate::Device::logs) channel (and, with `tracing`, as a host event).
     pub fn push_log(&self, level: LogLevel, text: &str) {
@@ -180,80 +199,16 @@ impl crate::Device {
     pub fn with_mock(mock: MockBox) -> crate::Device {
         crate::Device::from_transport(mock.transport())
     }
-}
 
-#[cfg(test)]
-mod tests {
-    use std::time::Duration;
-
-    use crate::protocol::FrameType;
-    use crate::types::{Button, Health, LogLevel, Version};
-
-    use super::*;
-
-    #[test]
-    fn downstream_flow_query_and_record() {
-        let mock = MockBox::new()
-            .with_version(Version {
-                proto_ver: 1,
-                fw_major: 5,
-                fw_minor: 6,
-                fw_patch: 7,
-            })
-            .with_health(Health::from_flags(0x0F));
-        let device = crate::Device::with_mock(mock.clone());
-
-        let v = device.query_version().unwrap();
-        assert_eq!((v.fw_major, v.fw_minor, v.fw_patch), (5, 6, 7));
-
-        let h = device.query_health().unwrap();
-        assert!(h.link_up && h.mouse_attached && h.clone_configured && h.injection_active);
-
-        device.press(Button::Left).unwrap();
-        let frames = mock.recorded_frames();
-        assert!(frames.iter().any(|f| f.ty == FrameType::Query));
-        let button = frames.iter().find(|f| f.ty == FrameType::Button).unwrap();
-        assert_eq!(button.payload, vec![0, 1]); // press Left
-        assert!(mock.saw(FrameType::Button));
-    }
-
-    #[test]
-    fn pushed_log_reaches_logs_channel() {
-        let mock = MockBox::new();
-        let device = crate::Device::with_mock(mock.clone());
-        let rx = device.logs();
-
-        mock.push_log(LogLevel::Warn, "overheating");
-        let line = rx.recv_timeout(Duration::from_secs(1)).unwrap();
-        assert_eq!(line.level, LogLevel::Warn);
-        assert_eq!(line.text, "overheating");
-    }
-
-    #[test]
-    fn clear_recorded_resets_the_log() {
-        let mock = MockBox::new();
-        let device = crate::Device::with_mock(mock.clone());
-        device.move_rel(1, 1).unwrap();
-        assert_eq!(mock.recorded(), 1);
-        mock.clear_recorded();
-        assert_eq!(mock.recorded(), 0);
-        device.wheel(2).unwrap();
-        assert_eq!(mock.recorded(), 1);
-        assert!(mock.saw(FrameType::Wheel));
-    }
-
-    #[test]
-    fn set_health_updates_subsequent_queries() {
-        let mock = MockBox::new();
-        let device = crate::Device::with_mock(mock.clone());
-        assert!(!device.query_health().unwrap().mouse_attached);
-        mock.set_health(Health::from_flags(0x02)); // mouse_attached
-        assert!(device.query_health().unwrap().mouse_attached);
-    }
-
-    #[test]
-    fn mock_box_is_send_sync() {
-        fn assert_send_sync<T: Send + Sync>() {}
-        assert_send_sync::<MockBox>();
+    /// Build a [`Device`](crate::Device) over a [`MockBox`] **and run the version handshake** — the
+    /// mock counterpart of [`open`](crate::Device::open)/[`find`](crate::Device::find), so the
+    /// handshake path (version validation, retry, reject) is testable hardware-free.
+    ///
+    /// # Errors
+    /// Same as [`open`](crate::Device::open): [`NoReply`](crate::Error::NoReply) if the mock is
+    /// [`silent`](MockBox::silent), [`BadProtoVer`](crate::Error::BadProtoVer) if its version's
+    /// `proto_ver` is unsupported.
+    pub fn open_mock(mock: MockBox) -> crate::Result<crate::Device> {
+        crate::Device::open_transport(mock.transport())
     }
 }

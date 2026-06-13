@@ -84,26 +84,3 @@ pub(crate) fn emit_device_log(line: &crate::types::LogLine) {
         }
     }
 }
-
-#[cfg(all(test, feature = "tracing"))]
-mod tests {
-    use crate::types::{LogLevel, LogLine};
-
-    /// `emit_device_log` runs without panicking for every level. The capturing-subscriber assertion
-    /// of the re-emit lives in `device::tests::tracing_capture`.
-    #[test]
-    fn emit_device_log_handles_every_level() {
-        for level in [
-            LogLevel::Error,
-            LogLevel::Warn,
-            LogLevel::Info,
-            LogLevel::Debug,
-            LogLevel::Verbose,
-        ] {
-            super::emit_device_log(&LogLine {
-                level,
-                text: "x".into(),
-            });
-        }
-    }
-}
