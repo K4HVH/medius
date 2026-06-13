@@ -7,7 +7,7 @@
 /// no final XOR.
 ///
 /// # Examples
-/// ```
+/// ```ignore
 /// # use medius::protocol::crc::crc16_ccitt;
 /// assert_eq!(crc16_ccitt(b"123456789"), 0x29B1);
 /// assert_eq!(crc16_ccitt(b""), 0xFFFF);

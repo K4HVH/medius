@@ -4,8 +4,7 @@
 //!     cargo run --example mock --features mock
 
 use medius::mock::MockBox;
-use medius::protocol::FrameType;
-use medius::{Button, Device, Health, Version};
+use medius::{Button, Device, FrameType, Health, Version};
 
 fn main() {
     // The Version/Health the fake box answers queries with.

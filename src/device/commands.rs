@@ -46,8 +46,9 @@ impl Device {
     }
 
     /// Soft-release a button — `BUTTON(soft-release)` (§3.3). Clears *our* injected press; a physical
-    /// hold is left intact.
-    pub fn release(&self, button: Button) -> Result<()> {
+    /// hold is left intact. (For the safety-authority release that masks a physical hold too, use
+    /// [`force_release`](Device::force_release).)
+    pub fn soft_release(&self, button: Button) -> Result<()> {
         self.button(button, ButtonAction::SoftRelease)
     }
 
@@ -116,9 +117,9 @@ mod tests {
     }
 
     #[test]
-    fn release_is_soft_release() {
+    fn soft_release_is_soft_release() {
         let (device, mock) = device_with_mock();
-        device.release(Button::Right).unwrap();
+        device.soft_release(Button::Right).unwrap();
         let frames = written_frames(&mock);
         assert_eq!(frames[0].ty, FrameType::Button);
         // [id=Right(1)][action=soft-release(0)]
@@ -161,7 +162,7 @@ mod tests {
     fn soft_release_clears_desired_override() {
         let (device, _mock) = device_with_mock();
         device.press(Button::Middle).unwrap();
-        device.release(Button::Middle).unwrap();
+        device.soft_release(Button::Middle).unwrap();
         assert!(device.desired().lock().is_idle());
     }
 

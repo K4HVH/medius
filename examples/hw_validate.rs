@@ -218,7 +218,7 @@ mod linux {
             .query_health()
             .map(|h| h.injection_active)
             .unwrap_or(false);
-        let _ = device.release(Button::Left);
+        let _ = device.soft_release(Button::Left);
         std::thread::sleep(Duration::from_millis(250));
         let released = acc.btn_left.load(Ordering::Relaxed);
         let button_ok = pressed == 1 && released == 0 && inj;

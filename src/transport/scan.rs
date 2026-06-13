@@ -18,10 +18,10 @@ pub struct PortInfo {
 }
 
 /// WCH (Jiangsu Qinheng) USB vendor id — the CH343 USB-serial bridge the medius box uses (§6).
-pub const WCH_VID: u16 = 0x1A86;
+pub(crate) const WCH_VID: u16 = 0x1A86;
 
 /// The CH343 USB product id, confirmed on the medius board hardware (`idProduct = 55d3`).
-pub const CH343_PID: u16 = 0x55D3;
+pub(crate) const CH343_PID: u16 = 0x55D3;
 
 /// Parse a sysfs hex id string (e.g. `"1a86"`) into a `u16`. Tolerates surrounding whitespace, a
 /// trailing newline, and an optional `0x` prefix; `None` on invalid hex or `u16` overflow.
@@ -62,7 +62,7 @@ fn extract_hex4_after(upper: &str, marker: &str) -> Option<u16> {
 }
 
 /// Enumerate candidate serial ports with their USB VID/PID (empty on unsupported targets).
-pub fn find_ports() -> Vec<PortInfo> {
+pub(crate) fn find_ports() -> Vec<PortInfo> {
     #[cfg(target_os = "linux")]
     {
         linux_find_ports()
@@ -77,8 +77,9 @@ pub fn find_ports() -> Vec<PortInfo> {
     }
 }
 
-/// Discover medius boxes: [`find_ports`] filtered to [`WCH_VID`] and [`CH343_PID`] (§6). The
-/// handshake remains the final gate distinguishing a box from any other CH343-based serial device.
+/// Discover medius boxes: the candidate serial ports filtered to the WCH vendor id and the CH343
+/// product id (§6). The handshake remains the final gate distinguishing a box from any other
+/// CH343-based serial device.
 pub fn find_medius() -> Vec<PortInfo> {
     find_ports()
         .into_iter()

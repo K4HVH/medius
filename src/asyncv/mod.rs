@@ -52,7 +52,8 @@ impl Device {
 impl AsyncDevice {
     /// Borrow the underlying sync [`Device`] (same core) — e.g. to open a
     /// [`MovementSession`](crate::MovementSession) or read counters.
-    pub fn device(&self) -> &Device {
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn device(&self) -> &Device {
         &self.device
     }
 
@@ -83,9 +84,9 @@ impl AsyncDevice {
         self.device.press(button)
     }
 
-    /// Soft-release a button. Instant; see [`Device::release`].
-    pub fn release(&self, button: Button) -> Result<()> {
-        self.device.release(button)
+    /// Soft-release a button. Instant; see [`Device::soft_release`].
+    pub fn soft_release(&self, button: Button) -> Result<()> {
+        self.device.soft_release(button)
     }
 
     /// Force-release a button. Instant; see [`Device::force_release`].
@@ -98,14 +99,9 @@ impl AsyncDevice {
         self.device.reset()
     }
 
-    /// Reboot a chip to run. Instant; see [`Device::reboot`].
+    /// Reboot a chip (run or ROM download per the target). Instant; see [`Device::reboot`].
     pub fn reboot(&self, target: RebootTarget) -> Result<()> {
         self.device.reboot(target)
-    }
-
-    /// Reboot a chip to ROM download. Instant; see [`Device::reboot_download`].
-    pub fn reboot_download(&self, target: RebootTarget) -> Result<()> {
-        self.device.reboot_download(target)
     }
 
     // ---- async queries (the only methods that actually await) ----
@@ -139,7 +135,7 @@ impl AsyncDevice {
     /// is a cancellable detached `std::thread` timer that gen-checked-cancels the pending entry on
     /// expiry (see the [module docs](self)); it holds only a `Weak<Inner>` and is woken the instant the
     /// query resolves, so it never lingers.
-    pub async fn query(&self, what: u8, timeout: Duration) -> Result<Vec<u8>> {
+    pub(crate) async fn query(&self, what: u8, timeout: Duration) -> Result<Vec<u8>> {
         let (seq, gen_id, rx) = self.device.register_query(what)?;
 
         // Timer waits on `cancel_rx` up to `timeout`: a real timeout gen-checked-cancels the pending

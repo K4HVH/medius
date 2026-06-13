@@ -1,9 +1,8 @@
 //! The crate-wide structured error type (§8 of the design spec).
 //!
 //! Fully structured, no stringly-typed catch-all: callers match on each variant. CRC failures are
-//! deliberately absent — the decoder drops corrupt frames silently and only counts them
-//! ([`crate::protocol::FrameDecoder::crc_error_count`]), per the firmware's "corrupt frames are never
-//! acted on" rule (§8).
+//! deliberately absent — the decoder drops corrupt frames silently and only counts them, per the
+//! firmware's "corrupt frames are never acted on" rule (§8).
 
 use crate::protocol::FrameError;
 
@@ -38,7 +37,7 @@ pub enum Error {
     #[error("device disconnected")]
     Disconnected,
 
-    /// An outbound payload exceeded the maximum frame payload ([`crate::protocol::MAX_PAYLOAD`]).
+    /// An outbound payload exceeded the maximum frame payload.
     #[error("frame payload too long (max {max} bytes)", max = crate::protocol::MAX_PAYLOAD)]
     FrameTooLong,
 

@@ -25,8 +25,8 @@ const HANDSHAKE_ATTEMPT_TIMEOUT: Duration = Duration::from_millis(250);
 impl Device {
     /// Open the box at serial `path`, run the version handshake, and return a ready [`Device`].
     ///
-    /// The handshake sends `QUERY(VERSION)` and requires the reported `proto_ver` to equal
-    /// [`PROTO_VER`](crate::protocol::PROTO_VER) (§2.2).
+    /// The handshake sends `QUERY(VERSION)` and requires the reported `proto_ver` to equal the
+    /// library's supported protocol version (§2.2).
     ///
     /// # Errors
     /// - [`Error::Io`] if the port cannot be opened/configured.

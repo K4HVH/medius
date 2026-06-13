@@ -33,7 +33,7 @@
 #[macro_use]
 mod trace;
 
-pub mod protocol;
+pub(crate) mod protocol;
 
 mod config;
 mod device;
@@ -55,13 +55,17 @@ pub use config::ConnectOptions;
 #[cfg(feature = "async")]
 pub use asyncv::AsyncDevice;
 
+pub use device::logs::LogStream;
 pub use device::{CountersSnapshot, Device};
 pub use error::{Error, Result};
 #[cfg(feature = "mock")]
 pub use mock::MockBox;
 pub use pacer::{DEFAULT_RATE_HZ, MovementSession};
-pub use protocol::types::{Button, ButtonAction, Health, LogLevel, LogLine, RebootTarget, Version};
-pub use transport::scan::{CH343_PID, PortInfo, WCH_VID, find_medius, find_ports};
+// Frame-inspection types the public `mock` surface exposes (the wire codec stays crate-private).
+pub use protocol::{
+    Button, ButtonAction, DecodedFrame, FrameType, Health, LogLevel, LogLine, RebootTarget, Version,
+};
+pub use transport::scan::{PortInfo, find_medius};
 
 #[cfg(feature = "metrics")]
 pub use pacer::metrics::{HistogramSnapshot, PacerStats};

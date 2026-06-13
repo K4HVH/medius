@@ -92,7 +92,7 @@ fn sleep_cadence(stop: &AtomicBool, cadence: Duration) -> bool {
 impl Device {
     /// Re-send every currently held override — used after a reconnect and on demand to re-assert the
     /// intended state on the box (§8 auto-reapply).
-    pub fn reapply(&self) -> Result<()> {
+    pub(crate) fn reapply(&self) -> Result<()> {
         // Snapshot under the lock, then release before sending (lock-ordering).
         let held: Vec<_> = self.desired().lock().held().collect();
         for (button, action) in held {
@@ -101,15 +101,10 @@ impl Device {
         Ok(())
     }
 
-    /// Reboot a chip **to run** the firmware (§9): `REBOOT_DL` with target `2` (device) or `3` (host).
-    /// Fire-and-go (the chip is rebooting, no reply).
+    /// Reboot a chip (§9): `REBOOT_DL` with the [`RebootTarget`] byte, which fully encodes both the chip
+    /// (device/host) **and** the mode (run/download) — `2`/`3` run the firmware, `0`/`1` (device/host)
+    /// drop into ROM download for a pre-flash handoff. Fire-and-go (the chip is rebooting, no reply).
     pub fn reboot(&self, target: RebootTarget) -> Result<()> {
-        self.send(FrameType::RebootDl, &[target.as_u8()])
-    }
-
-    /// Reboot a chip **to ROM download** (§9, pre-flash): `REBOOT_DL` with target `0` (device) or `1`
-    /// (host). Fire-and-go.
-    pub fn reboot_download(&self, target: RebootTarget) -> Result<()> {
         self.send(FrameType::RebootDl, &[target.as_u8()])
     }
 
@@ -233,7 +228,7 @@ mod tests {
         device.press(Button::Left).unwrap();
         device.force_release(Button::Side1).unwrap();
         device.press(Button::Middle).unwrap();
-        device.release(Button::Middle).unwrap(); // soft-release → not held
+        device.soft_release(Button::Middle).unwrap(); // soft-release → not held
         let _ = mock.written(); // drain command frames
 
         device.reapply().unwrap();
@@ -247,7 +242,8 @@ mod tests {
         assert_eq!(buttons, vec![vec![0, 1], vec![3, 2]]);
     }
 
-    /// `reboot` emits `REBOOT_DL` with the run target byte; `reboot_download` with the download byte.
+    /// `reboot` emits `REBOOT_DL` with the target byte — run (`2`/`3`) and download (`0`/`1`) alike,
+    /// since [`RebootTarget`] fully encodes both chip and mode.
     #[test]
     fn reboot_emits_correct_target_bytes() {
         let mock = Arc::new(MockTransport::new());
@@ -255,10 +251,8 @@ mod tests {
 
         device.reboot(RebootTarget::DeviceRun).unwrap();
         device.reboot(RebootTarget::HostRun).unwrap();
-        device
-            .reboot_download(RebootTarget::DeviceDownload)
-            .unwrap();
-        device.reboot_download(RebootTarget::HostDownload).unwrap();
+        device.reboot(RebootTarget::DeviceDownload).unwrap();
+        device.reboot(RebootTarget::HostDownload).unwrap();
 
         let frames = written_frames(&mock);
         let reboots: Vec<u8> = frames

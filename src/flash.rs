@@ -1,4 +1,4 @@
-//! Host-driven flashing (feature = `flash`) — `reboot_download` → `esptool` handoff (§9).
+//! Host-driven flashing (feature = `flash`) — download-mode `reboot` → `esptool` handoff (§9).
 //!
 //! [`flash`] reboots a chip into ROM download mode then invokes `esptool` to write the firmware,
 //! mirroring `tools/flash_device.sh` **exactly**: `esptool --chip esp32s3 --port <PORT> --before
@@ -107,7 +107,7 @@ pub fn flash(port: &str, bin_path: impl AsRef<Path>, host: bool) -> Result<()> {
         |port, host| {
             // Close the port (drop) before esptool reopens it, then let the chip settle into ROM.
             let device = crate::Device::open(port)?;
-            device.reboot_download(reboot_target(host))?;
+            device.reboot(reboot_target(host))?;
             drop(device);
             std::thread::sleep(ROM_SETTLE);
             Ok(())
