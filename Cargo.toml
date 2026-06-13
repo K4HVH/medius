@@ -5,7 +5,7 @@ edition = "2024"
 rust-version = "1.85"
 description = "Host control library for the medius transparent mouse passthrough box"
 license = "MIT OR Apache-2.0"
-keywords = ["medius", "mouse", "hid", "serial", "injection"]
+keywords = ["medius", "mouse", "hid", "serial", "makcu"]
 categories = ["hardware-support", "api-bindings"]
 
 # docs.rs builds with every feature enabled and the `docsrs` cfg set, so the doc_auto_cfg feature
