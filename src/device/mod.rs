@@ -1,4 +1,6 @@
 pub(crate) mod admin;
+#[cfg(feature = "async")]
+pub(crate) mod asyncv;
 pub(crate) mod buttons;
 pub(crate) mod connect;
 pub(crate) mod logs;

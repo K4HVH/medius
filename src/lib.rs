@@ -13,8 +13,6 @@ pub(crate) mod protocol;
 mod transport;
 pub mod types;
 
-#[cfg(feature = "async")]
-mod asyncv;
 #[cfg(feature = "flash")]
 pub mod flash;
 #[cfg(feature = "mock")]
@@ -35,6 +33,6 @@ pub use types::{
 };
 
 #[cfg(feature = "async")]
-pub use asyncv::AsyncDevice;
+pub use device::asyncv::AsyncDevice;
 #[cfg(feature = "mock")]
 pub use mock::MockBox;
