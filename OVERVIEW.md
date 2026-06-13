@@ -168,11 +168,9 @@ To keep the host faithful (no host workarounds), three firmware changes were mad
 - **Hardware (`examples/hw_full.rs`, grabbed):** handshake, move (exact/neg/zero/diagonal/carry),
   wheel, all 5 buttons × actions, force-release, reset, 1 kHz no-halving, keepalive-holds,
   query-under-1kHz-load (SEQ correlation), reconnect+reapply, async query, no-stuck/crash safety — **all
-  PASS**, `crc_drops=0`.
-  These results are from the hardware runs *prior to* the pacer removal (then driven via the pacer).
-  Post-removal, the no-halving check drives a direct `move_rel` loop instead; that conversion is
-  host-free-verified (build/clippy/test/doc), and **on-hardware re-validation is pending** — the medius
-  box is currently disconnected (a stock-firmware box is on the port).
+  PASS**, `crc_drops=0`. Re-validated end-to-end after the whole refactor stack (pacer removal →
+  zero-config → folder reorg → types centralization → serde removal): the no-halving check now drives a
+  direct `move_rel` loop and measured **1000 reports/s, sum 1000** (full rate, no halving).
 - **Adversarial review:** 4-lens (firmware, concurrency, cleanup-regression, protocol-integration);
   all confirmed findings fixed (selector-aware correlation, firmware linger decoupling).
 
