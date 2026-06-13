@@ -45,6 +45,17 @@ pub use counters::CountersSnapshot;
 /// timeout (the mock). Real serial reads block ≈100 ms themselves, so this is a no-op there.
 const READER_IDLE_POLL: std::time::Duration = std::time::Duration::from_millis(2);
 
+/// How long [`query_version`](Device::query_version) / [`query_health`](Device::query_health) wait for
+/// the correlated `RESP` before returning [`Error::QueryTimeout`](crate::Error::QueryTimeout). Fixed:
+/// on the 4 Mbaud link a query round-trips in well under a millisecond, so a 1 s ceiling is generous
+/// for any real reply.
+pub const DEFAULT_QUERY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(1);
+
+/// How often the keepalive refreshes a held override to defeat the firmware's 1000 ms silence
+/// auto-clear. Fixed sub-1 s so a held button outlives the auto-clear; idle periods stay silent so a
+/// real host crash still clears (the no-stuck safety).
+pub const DEFAULT_KEEPALIVE_CADENCE: std::time::Duration = std::time::Duration::from_millis(500);
+
 /// One in-flight `QUERY`→`RESP` waiter, tagged with a monotonic `gen` so a stale canceller evicts only
 /// its own entry — never a newer query that reused the same wire `SEQ` (see [`Inner::cancel_query`]).
 struct PendingEntry {
@@ -120,7 +131,7 @@ pub(crate) struct Inner {
     counters: Arc<Counters>,
     /// Set on drop/disconnect; the reader and keepalive observe it and exit.
     stop: Arc<AtomicBool>,
-    /// Default `RESP` wait for [`query`](Device::query) (from [`ConnectOptions`], §10).
+    /// Default `RESP` wait for [`query`](Device::query) — the fixed [`DEFAULT_QUERY_TIMEOUT`].
     query_timeout: std::time::Duration,
     /// Thread handles, joined on drop.
     reader: Option<JoinHandle<()>>,
@@ -178,36 +189,19 @@ pub struct Device {
 
 impl Device {
     /// Wrap an already-open transport, spawn the reader and keepalive threads, and return the device —
-    /// **without** a handshake. The no-handshake seam for tests and the `mock` feature; [`Device::open`]
-    /// uses the handshaking forms. Default [`ConnectOptions`](crate::ConnectOptions).
-    #[cfg_attr(not(any(test, feature = "mock")), allow(dead_code))]
+    /// **without** a handshake. The no-handshake seam used by [`Device::open`]'s handshaking path, the
+    /// device tests, and the `mock` feature. Uses the fixed [`DEFAULT_KEEPALIVE_CADENCE`].
     pub(crate) fn from_transport(transport: Arc<dyn Transport>) -> Device {
-        Self::from_transport_with(transport, &crate::ConnectOptions::default())
+        Self::from_transport_with_cadence(transport, DEFAULT_KEEPALIVE_CADENCE)
     }
 
     /// As [`from_transport`](Device::from_transport) but with an explicit keepalive cadence, so tests
-    /// can observe keepalive behaviour without real 500 ms waits.
-    #[cfg_attr(not(test), allow(dead_code))]
+    /// can observe keepalive behaviour without real 500 ms waits. The single construction seam.
     pub(crate) fn from_transport_with_cadence(
         transport: Arc<dyn Transport>,
         keepalive_cadence: std::time::Duration,
     ) -> Device {
-        let opts = crate::ConnectOptions {
-            keepalive_cadence,
-            ..crate::ConnectOptions::default()
-        };
-        Self::from_transport_with(transport, &opts)
-    }
-
-    /// As [`from_transport`](Device::from_transport) but driven by full
-    /// [`ConnectOptions`](crate::ConnectOptions). The single construction seam the public
-    /// `open_with`/`find_with` constructors route through.
-    pub(crate) fn from_transport_with(
-        transport: Arc<dyn Transport>,
-        opts: &crate::ConnectOptions,
-    ) -> Device {
-        let keepalive_cadence = opts.keepalive_cadence;
-        let query_timeout = opts.query_timeout;
+        let query_timeout = DEFAULT_QUERY_TIMEOUT;
         // Build each shared piece as its own Arc BEFORE spawning, so threads capture only what they
         // need — never `Arc<Inner>` (a cycle that would block Drop's join).
         let pending: Arc<Mutex<HashMap<u8, PendingEntry>>> = Arc::new(Mutex::new(HashMap::new()));

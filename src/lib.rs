@@ -33,7 +33,6 @@ mod trace;
 
 pub(crate) mod protocol;
 
-mod config;
 mod device;
 mod error;
 mod transport;
@@ -47,13 +46,11 @@ pub mod flash;
 #[cfg(feature = "mock")]
 pub mod mock;
 
-pub use config::ConnectOptions;
-
 #[cfg(feature = "async")]
 pub use asyncv::AsyncDevice;
 
 pub use device::logs::LogStream;
-pub use device::{CountersSnapshot, Device};
+pub use device::{CountersSnapshot, DEFAULT_KEEPALIVE_CADENCE, DEFAULT_QUERY_TIMEOUT, Device};
 pub use error::{Error, Result};
 #[cfg(feature = "mock")]
 pub use mock::MockBox;

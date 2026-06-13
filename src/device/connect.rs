@@ -6,7 +6,6 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::config::ConnectOptions;
 use crate::error::{Error, Result};
 use crate::protocol::opcode::Q_VERSION;
 use crate::protocol::{PROTO_VER, Resp, parse_resp};
@@ -34,43 +33,22 @@ impl Device {
     /// - [`Error::BadProtoVer`] if it answers with an unsupported protocol version.
     #[cfg(target_os = "linux")]
     pub fn open(path: impl AsRef<std::path::Path>) -> Result<Device> {
-        Self::open_with(path, &ConnectOptions::default())
+        let serial = crate::transport::linux::LinuxSerial::open(path.as_ref())?;
+        Self::open_transport(Arc::new(serial))
     }
 
     /// Open the box at serial `path` (Windows `COMn`); see the Linux [`open`](Device::open) for the
     /// handshake contract and errors.
     #[cfg(windows)]
     pub fn open(path: impl AsRef<std::path::Path>) -> Result<Device> {
-        Self::open_with(path, &ConnectOptions::default())
-    }
-
-    /// As [`open`](Device::open) but configured by `opts` (§10).
-    #[cfg(target_os = "linux")]
-    pub fn open_with(path: impl AsRef<std::path::Path>, opts: &ConnectOptions) -> Result<Device> {
-        let serial = crate::transport::linux::LinuxSerial::open(path.as_ref())?;
-        Self::open_transport_with(Arc::new(serial), opts)
-    }
-
-    /// As [`open`](Device::open) (Windows) but configured by `opts` (§10).
-    #[cfg(windows)]
-    pub fn open_with(path: impl AsRef<std::path::Path>, opts: &ConnectOptions) -> Result<Device> {
         let serial = crate::transport::windows::WindowsSerial::open(path.as_ref())?;
-        Self::open_transport_with(Arc::new(serial), opts)
+        Self::open_transport(Arc::new(serial))
     }
 
-    /// Build a device over an already-open transport and run the handshake (default
-    /// [`ConnectOptions`]). No-options convenience used by the device tests.
-    #[cfg_attr(not(test), allow(dead_code))]
+    /// Build a device over an already-open transport and run the handshake. The transport seam shared by
+    /// [`open`](Device::open) and the device tests.
     pub(crate) fn open_transport(transport: Arc<dyn Transport>) -> Result<Device> {
-        Self::open_transport_with(transport, &ConnectOptions::default())
-    }
-
-    /// As [`open_transport`](Device::open_transport) but configured by `opts` (§10).
-    pub(crate) fn open_transport_with(
-        transport: Arc<dyn Transport>,
-        opts: &ConnectOptions,
-    ) -> Result<Device> {
-        let device = Device::from_transport_with(transport, opts);
+        let device = Device::from_transport(transport);
         device.handshake()?;
         Ok(device)
     }
@@ -141,17 +119,11 @@ impl Device {
     /// [`Error::NotFound`] if no port matches; otherwise the same errors as [`open`](Device::open).
     #[cfg(any(target_os = "linux", windows))]
     pub fn find() -> Result<Device> {
-        Self::find_with(&ConnectOptions::default())
-    }
-
-    /// As [`find`](Device::find) but configured by `opts` (§10).
-    #[cfg(any(target_os = "linux", windows))]
-    pub fn find_with(opts: &ConnectOptions) -> Result<Device> {
         let port = crate::transport::scan::find_medius()
             .into_iter()
             .next()
             .ok_or(Error::NotFound)?;
-        Device::open_with(port.path, opts)
+        Device::open(port.path)
     }
 }
 
