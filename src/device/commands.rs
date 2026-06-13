@@ -10,7 +10,7 @@
 use crate::error::Result;
 use crate::protocol::FrameType;
 use crate::protocol::command::{button_payload, move_payload, wheel_payload};
-use crate::protocol::types::{Button, ButtonAction};
+use crate::types::{Button, ButtonAction};
 
 use super::Device;
 

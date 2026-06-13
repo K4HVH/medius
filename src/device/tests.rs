@@ -7,9 +7,9 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crate::error::Error;
-use crate::protocol::types::LogLevel;
 use crate::protocol::{FrameType, encode};
 use crate::transport::mock::MockTransport;
+use crate::types::LogLevel;
 
 use super::Device;
 

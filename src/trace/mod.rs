@@ -63,8 +63,8 @@ impl SpanStub {
 /// `event!` needs a compile-time-constant level, so this dispatches over the five levels rather than
 /// passing a runtime `Level`.
 #[cfg(feature = "tracing")]
-pub(crate) fn emit_device_log(line: &crate::protocol::types::LogLine) {
-    use crate::protocol::types::LogLevel;
+pub(crate) fn emit_device_log(line: &crate::types::LogLine) {
+    use crate::types::LogLevel;
     let text = line.text.as_str();
     match line.level {
         LogLevel::Error => {
@@ -87,7 +87,7 @@ pub(crate) fn emit_device_log(line: &crate::protocol::types::LogLine) {
 
 #[cfg(all(test, feature = "tracing"))]
 mod tests {
-    use crate::protocol::types::{LogLevel, LogLine};
+    use crate::types::{LogLevel, LogLine};
 
     /// `emit_device_log` runs without panicking for every level. The capturing-subscriber assertion
     /// of the re-emit lives in `device::tests::tracing_capture`.

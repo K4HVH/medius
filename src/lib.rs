@@ -32,6 +32,7 @@
 mod trace;
 
 pub(crate) mod protocol;
+pub mod types;
 
 mod device;
 mod error;
@@ -50,12 +51,15 @@ pub mod mock;
 pub use asyncv::AsyncDevice;
 
 pub use device::logs::LogStream;
-pub use device::{CountersSnapshot, DEFAULT_KEEPALIVE_CADENCE, DEFAULT_QUERY_TIMEOUT, Device};
+pub use device::{DEFAULT_KEEPALIVE_CADENCE, DEFAULT_QUERY_TIMEOUT, Device};
 pub use error::{Error, Result};
 #[cfg(feature = "mock")]
 pub use mock::MockBox;
 // Frame-inspection types the public `mock` surface exposes (the wire codec stays crate-private).
-pub use protocol::{
-    Button, ButtonAction, DecodedFrame, FrameType, Health, LogLevel, LogLine, RebootTarget, Version,
+pub use protocol::{DecodedFrame, FrameType};
+pub use transport::scan::find_medius;
+// The centralized public value vocabulary; also browsable as `medius::types::*`.
+pub use types::{
+    Button, ButtonAction, CountersSnapshot, Health, LogLevel, LogLine, PortInfo, RebootTarget,
+    Version,
 };
-pub use transport::scan::{PortInfo, find_medius};

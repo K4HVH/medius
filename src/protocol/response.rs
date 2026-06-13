@@ -5,7 +5,7 @@
 //! `None` (or a safe default for `LOG`), never a panic.
 
 use super::opcode::{Q_HEALTH, Q_VERSION};
-use super::types::{Health, LogLevel, LogLine, Version};
+use crate::types::{Health, LogLevel, LogLine, Version};
 
 /// A decoded `RESP` (§4.1), keyed by the `what` selector at `payload[0]`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -29,7 +29,7 @@ pub enum Resp {
 /// # Examples
 /// ```ignore
 /// # use medius::protocol::response::{parse_resp, Resp};
-/// # use medius::protocol::types::Version;
+/// # use medius::types::Version;
 /// assert_eq!(
 ///     parse_resp(&[0, 1, 0, 1, 0]),
 ///     Some(Resp::Version(Version { proto_ver: 1, fw_major: 0, fw_minor: 1, fw_patch: 0 })),
@@ -67,7 +67,7 @@ pub fn parse_resp(payload: &[u8]) -> Option<Resp> {
 /// # Examples
 /// ```ignore
 /// # use medius::protocol::response::parse_log;
-/// # use medius::protocol::types::LogLevel;
+/// # use medius::types::LogLevel;
 /// let line = parse_log(&[1, b'h', b'i']);
 /// assert_eq!(line.level, LogLevel::Warn);
 /// assert_eq!(line.text, "hi");

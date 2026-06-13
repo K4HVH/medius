@@ -10,8 +10,8 @@ use std::time::Duration;
 use crate::error::{Error, Result};
 use crate::protocol::command::query_payload;
 use crate::protocol::opcode::{Q_HEALTH, Q_VERSION};
-use crate::protocol::types::{Health, Version};
 use crate::protocol::{FrameType, Resp, parse_resp};
+use crate::types::{Health, Version};
 
 use super::Device;
 

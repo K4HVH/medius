@@ -25,9 +25,9 @@ use std::sync::Arc;
 
 use parking_lot::Mutex;
 
-use crate::protocol::types::{Health, LogLevel, Version};
 use crate::protocol::{DecodedFrame, FrameType, encode};
 use crate::transport::mock::MockTransport;
+use crate::types::{Health, LogLevel, Version};
 
 /// One command the host sent the mock box, decoded — the recorded form used for assertions.
 pub type RecordedFrame = DecodedFrame;
@@ -187,7 +187,7 @@ mod tests {
     use std::time::Duration;
 
     use crate::protocol::FrameType;
-    use crate::protocol::types::{Button, Health, LogLevel, Version};
+    use crate::types::{Button, Health, LogLevel, Version};
 
     use super::*;
 
