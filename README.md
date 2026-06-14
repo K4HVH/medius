@@ -1,8 +1,27 @@
 # medius
 
-A Rust library for controlling **medius** mouse-passthrough boxes.
+[![Crates.io](https://img.shields.io/crates/v/medius)](https://crates.io/crates/medius)
+[![Docs](https://img.shields.io/badge/docs-medius.k4tech.net-blue)](https://medius.k4tech.net)
+[![CI](https://img.shields.io/github/actions/workflow/status/K4HVH/medius/ci.yml?label=CI)](https://github.com/K4HVH/medius/actions)
+[![License](https://img.shields.io/crates/l/medius)](./LICENSE)
+[![Discord](https://img.shields.io/badge/discord-firmware-5865F2?logo=discord&logoColor=white)](https://discord.gg/ArRqcA84pB)
 
-A medius box sits inline between a mouse and a PC: the real mouse passes through transparently while a control PC injects movement, buttons, and scroll over USB-serial. This crate is the host-side control plane — a 1:1 binding of the firmware's commands plus the infrastructure to drive the box reliably (handshake, keepalive, reconnect). It does not smooth, pace, or synthesize input; each method sends exactly one firmware frame.
+Custom firmware for MAKCU mouse-passthrough boxes, and the Rust library that drives it.
+
+A MAKCU box sits inline between a mouse and a PC: the real mouse passes through to the PC while a control program injects movement, buttons, and scroll over USB-serial. medius replaces the stock firmware with a clean binary protocol; this crate binds its commands 1:1 and adds what you need to run the box reliably (handshake, keepalive, reconnect). Each call sends one firmware frame.
+
+Flash the firmware onto a MAKCU box from the [Discord](https://discord.gg/ArRqcA84pB).
+
+## Why medius vs stock firmware
+
+Same MAKCU box, different firmware. Both clone your mouse's USB descriptor byte for byte, since that's the hardware. What changes is how the firmware behaves:
+
+| | medius | stock MAKCU |
+|---|---|---|
+| **Your motion** | Injection **adds** to your real movement. Both go through, nothing lost. | Injection **overwrites** it. At 1 kHz your real motion never arrives. |
+| **Detection** | Measured against the native mouse and matched: timing, control values, USB conformance. | Copies the descriptor; no published native-behaviour audit. |
+| **Reliability** | Clears all injection after 1 s of host silence, so a crashed controller never leaves a button held. | No silence release documented; a forced button stays held until you clear it. |
+| **Link** | Binary frames with CRC and request IDs, at a fixed baud. | An ASCII command prompt, replies matched by arrival order, behind a baud handshake that doesn't persist a power cycle. |
 
 ## Quick start
 
@@ -33,8 +52,8 @@ The base crate is the lean sync core. Optional features:
 
 | Feature   | Description |
 |-----------|-------------|
-| `async`   | `AsyncDevice` — async queries over the same core, runtime-agnostic (no tokio) |
-| `mock`    | `MockBox` — in-process fake box for tests without hardware |
+| `async`   | `AsyncDevice`, async queries over the same core, runtime-agnostic (no tokio) |
+| `mock`    | `MockBox`, an in-process fake box for tests without hardware |
 | `flash`   | `esptool` reboot-to-download + firmware flash handoff |
 | `tracing` | per-frame TX/RX `tracing` instrumentation |
 
@@ -67,11 +86,11 @@ device.button(Button::Right, ButtonAction::Press)?; // the generic form
 device.reset()?;                     // clear all injection → passthrough
 ```
 
-Buttons are `Left`, `Right`, `Middle`, `Side1`, `Side2`. Move/wheel take a full `i16` with no artificial caps — the firmware clamps to the mouse's descriptor with carry, so `move_rel(2000, 0)` lands as exactly 2000.
+Buttons are `Left`, `Right`, `Middle`, `Side1`, `Side2`. Move and wheel take a full `i16`; the firmware clamps to the mouse's descriptor with carry, so `move_rel(2000, 0)` lands as exactly 2000.
 
 ### Sustained motion
 
-There is no host-side pacer. Sustained motion is a caller-driven loop — one fire-and-go `move_rel` per tick. The firmware merges additively with no halving, so a tight 1 kHz loop lands at full rate:
+You drive sustained motion yourself, one fire-and-forget `move_rel` per tick. The firmware merges additively with no halving, so a tight 1 kHz loop lands at full rate:
 
 ```rust
 for _ in 0..1000 {
@@ -109,7 +128,7 @@ let c = device.counters();        // frames_tx / frames_rx / crc_drops / reconne
 
 ### Async (feature = `async`)
 
-The async wrapper is the same core — only queries await; fire-and-go commands are identical:
+The async wrapper is the same core. Only queries await; the fire-and-forget commands are identical:
 
 ```rust
 let device = Device::find()?.into_async();
@@ -117,7 +136,7 @@ device.move_rel(10, 0)?;                // instant, not async
 let v = device.query_version().await?;  // awaits the correlated reply
 ```
 
-It uses `flume`'s async recv, so there is no runtime dependency — it runs on any executor.
+It uses `flume`'s async recv, so there's no runtime dependency and it runs on any executor.
 
 ### Mock (feature = `mock`)
 
@@ -144,17 +163,12 @@ cargo run --example hw_full --all-features   # on-hardware validation suite (Lin
 
 ## Architecture
 
-Four layers, `protocol → transport → link → device`:
+Four layers, `protocol → transport → link → device`, each depending only on the one below it. `protocol` is the wire codec: framed binary (SOF, type, rolling SEQ, length, payload, CRC16), no I/O. `transport` is the byte pipe over the `serialport` crate (cross-platform, no `unsafe`) plus VID/PID discovery. `link` runs the live connection: the reader thread, SEQ-correlated queries, keepalive, and reconnect. `device` is the typed API on top, where each command is one `link.send(...)`.
 
-- **`protocol`** — pure, no-I/O wire codec (framed binary: SOF, type, rolling SEQ, length, payload, CRC16).
-- **`transport`** — the byte pipe (`serialport` crate, cross-platform, no `unsafe`) and VID/PID discovery.
-- **`link`** — the connection engine: a reader thread, SEQ-correlated queries, keepalive, reconnect.
-- **`device`** — the thin typed API (`Device` / `AsyncDevice`), one `link.send(...)` per command.
-
-`Device` is `&self`-only, `Send + Sync`, and cheap to clone. The link is a fixed 4 Mbaud framed-binary connection (no baud dance, no ASCII REPL); queries correlate by SEQ, not response order. The firmware clears all injection after ~1 s of host silence, so a crash never leaves a button stuck — the keepalive thread keeps an intentionally-held button alive. Tested on **Linux** and **Windows**.
+`Device` takes `&self`, is `Send + Sync`, and clones cheaply. The link runs at a fixed 4 Mbaud in framed binary (no baud dance, no ASCII REPL), and queries correlate by SEQ rather than arrival order. If the host goes quiet for ~1 s the firmware clears all injection, so a crash never leaves a button stuck; a keepalive thread keeps an intentionally-held button alive. Tested on Linux and Windows.
 
 See [`docs/architecture.md`](docs/architecture.md) for the deeper design notes.
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT, see [LICENSE](LICENSE).
