@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2024"
 rust-version = "1.85"
 description = "Host control library for the medius transparent mouse passthrough box"
-license = "MIT OR Apache-2.0"
+license = "MIT"
 keywords = ["medius", "mouse", "hid", "serial", "makcu"]
 categories = ["hardware-support", "api-bindings"]
 
