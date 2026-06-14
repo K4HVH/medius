@@ -2,10 +2,10 @@ name: CI
 
 on:
   push:
-    branches: [master, main]
+    branches: [master]
   pull_request:
+    branches: [master]
 
-# Cancel superseded runs on the same ref to save CI minutes.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -15,14 +15,58 @@ env:
   RUSTFLAGS: -D warnings
 
 jobs:
+  check:
+    name: check (${{ matrix.features }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        features:
+          - ""
+          - "async"
+          - "mock"
+          - "flash"
+          - "tracing"
+          - "async,mock"
+          - "async,mock,flash,tracing"
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup toolchain install stable --profile minimal
+      - run: sudo apt-get update && sudo apt-get install -y libudev-dev
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo check --all-targets --features "${{ matrix.features }}"
+
+  build:
+    name: build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup toolchain install stable --profile minimal
+      - if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libudev-dev
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --all-features
+      - run: cargo build --examples --all-features
+
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup toolchain install stable --profile minimal
+      - run: sudo apt-get update && sudo apt-get install -y libudev-dev
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo test
+      - run: cargo test --all-features
+
   fmt:
     name: rustfmt
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Install stable toolchain (rustfmt)
-        run: rustup toolchain install stable --profile minimal --component rustfmt
-      - uses: Swatinem/rust-cache@v2
+      - run: rustup toolchain install stable --profile minimal --component rustfmt
       - run: cargo fmt --all --check
 
   clippy:
@@ -30,41 +74,58 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Install stable toolchain (clippy + windows target)
-        run: |
+      - run: |
           rustup toolchain install stable --profile minimal --component clippy
           rustup target add x86_64-pc-windows-msvc
+      - run: sudo apt-get update && sudo apt-get install -y libudev-dev
       - uses: Swatinem/rust-cache@v2
-      # Native (Linux) lint of all targets and features.
-      - name: clippy (host)
-        run: cargo clippy --all-targets --all-features -- -D warnings
-      # Cross-lint the Windows code path so the platform FFI stays warning-clean too.
-      - name: clippy (x86_64-pc-windows-msvc)
-        run: cargo clippy --all-targets --all-features --target x86_64-pc-windows-msvc -- -D warnings
-
-  test:
-    name: test
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Install stable toolchain
-        run: rustup toolchain install stable --profile minimal
-      - uses: Swatinem/rust-cache@v2
-      # Default (no-feature) build, then the full feature matrix.
-      - name: cargo test (default features)
-        run: cargo test
-      - name: cargo test (all features)
-        run: cargo test --all-features
+      - run: cargo clippy --all-targets --all-features -- -D warnings
+      - run: cargo clippy --all-targets --all-features --target x86_64-pc-windows-msvc -- -D warnings
 
   doc:
-    name: doc (link + warning clean)
+    name: doc
     runs-on: ubuntu-latest
     env:
       RUSTDOCFLAGS: -D warnings
     steps:
       - uses: actions/checkout@v4
-      - name: Install stable toolchain
-        run: rustup toolchain install stable --profile minimal
+      - run: rustup toolchain install stable --profile minimal
+      - run: sudo apt-get update && sudo apt-get install -y libudev-dev
       - uses: Swatinem/rust-cache@v2
-      - name: cargo doc
-        run: cargo doc --no-deps --all-features
+      - run: cargo doc --no-deps --all-features
+
+  audit:
+    name: security audit
+    runs-on: ubuntu-latest
+    env:
+      RUSTFLAGS: ""
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup toolchain install stable --profile minimal
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo install cargo-audit --locked
+      - run: cargo audit
+
+  publish:
+    name: publish to crates.io
+    runs-on: ubuntu-latest
+    needs: [check, build, test, fmt, clippy, doc, audit]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    steps:
+      - uses: actions/checkout@v4
+      - run: rustup toolchain install stable --profile minimal
+      - run: sudo apt-get update && sudo apt-get install -y libudev-dev
+      - name: publish if the version is new and a token is set
+        env:
+          CRATES_IO_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
+        run: |
+          VERSION=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[0].version')
+          if curl -s "https://crates.io/api/v1/crates/medius" | jq -e ".versions[]? | select(.num == \"$VERSION\")" >/dev/null 2>&1; then
+            echo "medius $VERSION already on crates.io, skipping"
+            exit 0
+          fi
+          if [ -z "$CRATES_IO_TOKEN" ]; then
+            echo "CRATES_IO_TOKEN not set, skipping publish"
+            exit 0
+          fi
+          cargo publish --token "$CRATES_IO_TOKEN"
