@@ -10,7 +10,7 @@ impl Device {
         self.link.reapply()
     }
 
-    /// Reboot a chip via `REBOOT_DL` with the [`RebootTarget`] byte (fire-and-go).
+    /// Reboot a chip via `REBOOT_DL` with the [`RebootTarget`] byte (fire-and-forget).
     pub fn reboot(&self, target: RebootTarget) -> Result<()> {
         self.link.send(FrameType::RebootDl, &[target.as_u8()])
     }
