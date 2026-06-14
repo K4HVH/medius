@@ -1,145 +1,159 @@
 # medius
 
-Host control library for the **medius** transparent mouse passthrough box — the compiled control
-plane for a box whose firmware the project owns. It speaks a clean framed binary protocol over the
-device-chip USB-serial link, binds the firmware's command primitives 1:1 — a small fire-and-go
-control surface (`move`, `wheel`, button press/release, `reset`) plus the two SEQ-correlated queries
-(`version`, `health`) — and adds the infrastructure to drive the box reliably (handshake, keepalive,
-reconnect). It is the production replacement for the C and Python reference clients.
+A Rust library for controlling **medius** mouse-passthrough boxes.
 
-## Transparent control + injection — NOT a humanizer or smoother
-
-**`medius` does not smooth, humanize, ease, interpolate, pace, or synthesize any fake mouse
-behaviour.** It is a transparent, precise control + injection layer: each method binds exactly one
-firmware frame. The firmware guarantees additive "no-halving" merge and descriptor-faithful
-carry-remainder clamping (a `MOVE 2000` lands as exactly 2000), and the firmware sustains 1 kHz
-injection — the host just emits `MOVE` frames as fast as the caller drives them. The library never
-invents trajectory and never clocks motion for you. If you want pacing or humanization, that is the
-host application's job — build it on top, not in here.
-
-## Feature flags
-
-| Flag       | Default | What it adds                                                              |
-| ---------- | :-----: | ------------------------------------------------------------------------- |
-| (none)     |   ✓     | Sync `Device`: 1:1 frame commands, queries, logs, keepalive, reconnect.   |
-| `async`    |         | `AsyncDevice` — a thin wrapper over the **same** sync core; `async` queries, runtime-agnostic timeout, no tokio dep. |
-| `mock`     |         | `MockBox` — a public scriptable fake box for hardware-free tests.         |
-| `flash`    |         | `esptool` reboot-to-download + flash handoff.                             |
-| `tracing`  |         | Library-side `tracing` instrumentation (per-frame TX/RX at TRACE only).   |
+A medius box sits inline between a mouse and a PC: the real mouse passes through transparently while a control PC injects movement, buttons, and scroll over USB-serial. This crate is the host-side control plane — a 1:1 binding of the firmware's commands plus the infrastructure to drive the box reliably (handshake, keepalive, reconnect). It does not smooth, pace, or synthesize input; each method sends exactly one firmware frame.
 
 ## Quick start
-
-Add it to `Cargo.toml`:
 
 ```toml
 [dependencies]
 medius = "0.1"
 ```
 
-### Sync: open, move, query
+```rust
+use medius::{Button, Device, Result};
 
-```rust,no_run
-use medius::{Button, Device};
+fn main() -> Result<()> {
+    let device = Device::find()?;             // auto-detect by USB VID/PID
 
-fn main() -> medius::Result<()> {
-    // Auto-discover the first box by VID/PID (or `Device::open("/dev/ttyACM0")`).
-    let device = Device::find()?;
-
-    println!("{}", device.query_version()?);     // e.g. "fw 1.2.3"
-    let health = device.query_health()?;
-    println!("injection active: {}", health.injection_active);
-
-    device.move_rel(40, 0)?;                       // +dx right, +dy down (fire-and-go)
-    device.press(Button::Left)?;                   // primitive press …
-    device.soft_release(Button::Left)?;            // … then soft-release
-    device.reset()?;                               // back to pure passthrough
+    println!("{}", device.query_version()?);  // firmware version
+    device.move_rel(100, -50)?;               // relative move
+    device.press(Button::Left)?;
+    device.soft_release(Button::Left)?;
+    device.wheel(-3)?;
+    device.reset()?;                          // back to pure passthrough
     Ok(())
 }
 ```
 
-### Sustained 1 kHz motion (caller-driven)
+## Features
 
-```rust,no_run
-use std::{thread::sleep, time::Duration};
-use medius::Device;
+The base crate is the lean sync core. Optional features:
 
-fn main() -> medius::Result<()> {
-    let device = Device::find()?;
+| Feature   | Description |
+|-----------|-------------|
+| `async`   | `AsyncDevice` — async queries over the same core, runtime-agnostic (no tokio) |
+| `mock`    | `MockBox` — in-process fake box for tests without hardware |
+| `flash`   | `esptool` reboot-to-download + firmware flash handoff |
+| `tracing` | per-frame TX/RX `tracing` instrumentation |
 
-    // Sustained motion is just a caller-driven loop: one fire-and-go MOVE per tick. The firmware
-    // merges additively with no halving, so a tight 1 kHz loop lands as full-rate motion. The library
-    // does NOT pace, smooth, or invent motion — you own the timing (use your own real-time loop).
-    for _ in 0..200 {
-        device.move_rel(2, 0)?;
-        sleep(Duration::from_millis(1));
-    }
-    Ok(())
+```toml
+medius = { version = "0.1", features = ["async", "mock"] }
+```
+
+## API
+
+### Connect
+
+```rust
+let device = Device::find()?;                 // first box by VID/PID (0x1A86:0x55D3)
+let device = Device::open("/dev/ttyACM0")?;   // a specific port
+```
+
+`open`/`find` run a version handshake and reject a mismatched protocol.
+
+### Mouse control
+
+```rust
+device.move_rel(100, -50)?;          // relative move (+x right, +y down)
+device.wheel(3)?;                    // scroll
+
+device.press(Button::Left)?;         // force down
+device.soft_release(Button::Left)?;  // release our press (a physical hold stays)
+device.force_release(Button::Left)?; // force up, masking a physical hold
+device.button(Button::Right, ButtonAction::Press)?; // the generic form
+
+device.reset()?;                     // clear all injection → passthrough
+```
+
+Buttons are `Left`, `Right`, `Middle`, `Side1`, `Side2`. Move/wheel take a full `i16` with no artificial caps — the firmware clamps to the mouse's descriptor with carry, so `move_rel(2000, 0)` lands as exactly 2000.
+
+### Sustained motion
+
+There is no host-side pacer. Sustained motion is a caller-driven loop — one fire-and-go `move_rel` per tick. The firmware merges additively with no halving, so a tight 1 kHz loop lands at full rate:
+
+```rust
+for _ in 0..1000 {
+    device.move_rel(1, 0)?;
+    std::thread::sleep(Duration::from_millis(1));
 }
 ```
 
-### Hardware-free test with the `mock` feature
+### Queries
+
+```rust
+let v = device.query_version()?;  // proto_ver + fw_major / fw_minor / fw_patch
+let h = device.query_health()?;   // link_up, mouse_attached, clone_configured, injection_active
+```
+
+### Box management
+
+```rust
+device.reboot(RebootTarget::DeviceRun)?;  // restart a chip (run / ROM-download × device / host)
+device.reconnect()?;                      // rescan VID/PID, reopen, re-assert held state
+device.reapply()?;                        // re-send currently-held overrides on demand
+```
+
+The reader also reconnects on its own if the link drops.
+
+### Observability
+
+```rust
+for line in device.logs() {       // device LOG stream
+    println!("[{:?}] {}", line.level, line.text);
+}
+
+let c = device.counters();        // frames_tx / frames_rx / crc_drops / reconnects
+```
+
+### Async (feature = `async`)
+
+The async wrapper is the same core — only queries await; fire-and-go commands are identical:
+
+```rust
+let device = Device::find()?.into_async();
+device.move_rel(10, 0)?;                // instant, not async
+let v = device.query_version().await?;  // awaits the correlated reply
+```
+
+It uses `flume`'s async recv, so there is no runtime dependency — it runs on any executor.
+
+### Mock (feature = `mock`)
 
 ```rust
 use medius::{Button, Device, FrameType, Health, MockBox, Version};
 
 let mock = MockBox::new()
-    .with_version(Version { proto_ver: 1, fw_major: 2, fw_minor: 3, fw_patch: 4 })
+    .with_version(Version { proto_ver: 1, fw_major: 1, fw_minor: 2, fw_patch: 3 })
     .with_health(Health::from_flags(0x0F));
 
-let device = Device::with_mock(mock.clone());       // the real device stack over a fake box
+let device = Device::with_mock(mock.clone());  // the real stack over a fake box
 
-let v = device.query_version().unwrap();
-assert_eq!((v.fw_major, v.fw_minor, v.fw_patch), (2, 3, 4));
-
-device.press(Button::Left).unwrap();
-assert!(mock.saw(FrameType::Button));               // the command was recorded
+assert_eq!(device.query_version()?.fw_minor, 2);
+device.press(Button::Left)?;
+assert!(mock.saw(FrameType::Button));          // commands are recorded
 ```
 
-## Examples & tests
+## Examples
 
-Two examples live in [`examples/`](examples/):
+```bash
+cargo run --example basic                   # minimal usage (needs a connected box)
+cargo run --example hw_full --all-features   # on-hardware validation suite (Linux)
+```
 
-- `basic` — minimal usage; compiles everywhere, needs a **connected box** to run
-  (`cargo run --example basic`).
-- `hw_full` — the on-hardware validation suite (Linux; grabs the clone's evdev node)
-  (`cargo run --example hw_full --all-features`).
+## Architecture
 
-Automated tests are collected in [`src/tests/`](src/tests/) — **out of the implementation files**, in
-one place. They mix integration-style tests (public API + the scriptable `MockBox`) with internal unit
-tests over crate-private seams. Run `cargo test --all-features` (the `MockBox` suites need the `mock`
-feature; the internal tests run on a plain `cargo test` too).
+Four layers, `protocol → transport → link → device`:
 
-## How it differs from the makcu library
+- **`protocol`** — pure, no-I/O wire codec (framed binary: SOF, type, rolling SEQ, length, payload, CRC16).
+- **`transport`** — the byte pipe (`serialport` crate, cross-platform, no `unsafe`) and VID/PID discovery.
+- **`link`** — the connection engine: a reader thread, SEQ-correlated queries, keepalive, reconnect.
+- **`device`** — the thin typed API (`Device` / `AsyncDevice`), one `link.send(...)` per command.
 
-We **own the firmware** on this box, so the host library is clean by construction rather than working
-around a black-box device:
+`Device` is `&self`-only, `Send + Sync`, and cheap to clone. The link is a fixed 4 Mbaud framed-binary connection (no baud dance, no ASCII REPL); queries correlate by SEQ, not response order. The firmware clears all injection after ~1 s of host silence, so a crash never leaves a button stuck — the keepalive thread keeps an intentionally-held button alive. Tested on **Linux** and **Windows**.
 
-- **A clean framed binary protocol** — length-delimited frames with a type, a rolling `SEQ`, and a
-  payload. No ASCII REPL, no text parsing.
-- **No baud dance** — one fixed raw serial config (4 Mbaud); no magic-baud command channel to enter a
-  control mode.
-- **No positional response queue** — queries are correlated by `SEQ` (each `RESP` echoes its request's
-  `SEQ`), so replies are matched explicitly and two in-flight queries never cross-deliver. makcu
-  relied on response ordering.
-- **No artificial wheel cap** — `wheel` takes a full `i16`; the firmware clamps to the clone's native
-  descriptor field with carry. The library imposes no arbitrary limits (shaping is the host app's job).
-- **Fire-and-go hot path** — commands return the instant their bytes are flushed; no per-command ACK,
-  no `spawn_blocking`-per-command thread. The `async` wrapper is the *same* core, not a second
-  transport.
-- **1 kHz injection lives in firmware** — the firmware does the additive no-halving merge, so the host
-  stays a thin 1:1 frame binding. There is no host-side pacer/smoother; the caller drives MOVE timing.
-
-## Platform notes
-
-Supported on **Linux** and **Windows**, talking to the box's CH343 (WCH) USB-serial bridge at
-**4 Mbaud** via the `serialport` crate (cross-platform, no `unsafe`). Port discovery is by USB VID/PID
-(`0x1A86` / `0x55D3`); reconnect rescans by VID/PID rather than a fixed path, so a re-enumerated device
-is found again.
-
-## Design references
-
-- Library overview: [`OVERVIEW.md`](OVERVIEW.md) — the current, authoritative description of the crate.
-- Byte-exact wire reference: `docs/protocol/control-protocol.md` (firmware repo).
+See [`docs/architecture.md`](docs/architecture.md) for the deeper design notes.
 
 ## License
 
