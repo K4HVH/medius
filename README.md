@@ -10,7 +10,7 @@ Custom firmware for MAKCU mouse-passthrough boxes, and the Rust library that dri
 
 A MAKCU box sits inline between a mouse and a PC: the real mouse passes through to the PC while a control program injects movement, buttons, and scroll over USB-serial. medius replaces the stock firmware with a clean binary protocol; this crate binds its commands 1:1 and adds what you need to run the box reliably (handshake, keepalive, reconnect). Each call sends one firmware frame.
 
-Flash the firmware onto a MAKCU box from the [Discord](https://discord.gg/ArRqcA84pB).
+Flash and test a box from your browser at **[medius.k4tech.net/dashboard](https://medius.k4tech.net/dashboard)**: no drivers, nothing to install. Full documentation is at **[medius.k4tech.net](https://medius.k4tech.net)**.
 
 ## Why medius vs stock firmware
 
