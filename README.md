@@ -90,7 +90,7 @@ Buttons are `Left`, `Right`, `Middle`, `Side1`, `Side2`. Move and wheel take a f
 
 ### Sustained motion
 
-You drive sustained motion yourself, one fire-and-forget `move_rel` per tick. The firmware merges additively with no halving, so a tight 1 kHz loop lands at full rate:
+You drive sustained motion yourself, one fire-and-forget `move_rel` per tick. The firmware merges additively with no halving and carries the remainder, so a tight 1 kHz loop lands the full distance (the box paces the emitted reports to the mouse's native report rate):
 
 ```rust
 for _ in 0..1000 {
