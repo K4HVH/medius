@@ -71,7 +71,7 @@ early RX make the first frame reliable. A timeout becomes `NoReply`, a wrong ver
 firmware's silence timer so the hold survives; idle stays silent, so a real crash still clears.
 Reconnect recovers a re-enumerated port by VID/PID rescan and re-asserts held state, either manually via
 `reconnect()` or automatically from the reader on a dropped link. The no-stuck safety lives in firmware:
-after ~1 s of host silence (or a RESET, or a real disconnect) it clears injection back to passthrough.
+after ~1 s of host silence (or a RESET, an inter-chip link loss, or a real disconnect) it clears injection back to passthrough.
 That's the only crash detector the hardware can have, so it stays.
 
 ## Firmware coupling
