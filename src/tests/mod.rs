@@ -3,6 +3,7 @@ mod behavior;
 mod concurrency;
 mod device_info;
 mod keepalive;
+mod led;
 mod robustness;
 
 mod correlation;

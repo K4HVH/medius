@@ -90,6 +90,8 @@ pub enum FrameType {
     RebootDl = 0x07,
     /// `LOG` — unsolicited device diagnostics (box→PC).
     Log = 0x08,
+    /// `LED` — status LED override (PC→box).
+    Led = 0x09,
 }
 
 /// Error returned when a byte does not name a known [`FrameType`].
@@ -117,6 +119,7 @@ impl TryFrom<u8> for FrameType {
             0x06 => FrameType::Resp,
             0x07 => FrameType::RebootDl,
             0x08 => FrameType::Log,
+            0x09 => FrameType::Led,
             other => return Err(UnknownFrameType(other)),
         })
     }
