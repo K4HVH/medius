@@ -3,7 +3,8 @@ use crate::link::Link;
 use crate::protocol::opcode::{Q_CAPS, Q_HEALTH, Q_MOUSE_INFO, Q_RATE, Q_STATS, Q_VERSION};
 use crate::protocol::{Resp, parse_resp};
 use crate::types::{
-    Button, ButtonAction, Caps, Health, MouseInfo, Rate, RebootTarget, Stats, Version,
+    Button, ButtonAction, Caps, Health, LedMode, LedTarget, MouseInfo, Rate, RebootTarget, Stats,
+    Version,
 };
 
 use super::Device;
@@ -77,6 +78,11 @@ impl AsyncDevice {
     /// Reboot a chip (run or ROM download per the target). Instant; see [`Device::reboot`].
     pub fn reboot(&self, target: RebootTarget) -> Result<()> {
         self.dev().reboot(target)
+    }
+
+    /// `LED` — override a status LED. Instant; see [`Device::led`].
+    pub fn led(&self, target: LedTarget, mode: LedMode, level: u8) -> Result<()> {
+        self.dev().led(target, mode, level)
     }
 
     /// Query the box version, awaiting the correlated `RESP` with the default timeout.
