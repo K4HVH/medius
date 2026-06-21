@@ -1,15 +1,23 @@
 mod button;
+mod caps;
 mod counters;
 mod health;
 mod log;
+mod mouse_info;
 mod port;
+mod rate;
 mod reboot;
+mod stats;
 mod version;
 
 pub use button::{Button, ButtonAction};
+pub use caps::Caps;
 pub use counters::CountersSnapshot;
 pub use health::Health;
 pub use log::{LogLevel, LogLine};
+pub use mouse_info::MouseInfo;
 pub use port::PortInfo;
+pub use rate::Rate;
 pub use reboot::RebootTarget;
+pub use stats::Stats;
 pub use version::Version;

@@ -85,9 +85,11 @@ handshake; (3) the silence constant extracted as a named value.
 
 The host-free tests in `src/tests/` cover decoder behaviour under garbage, resync, bad CRC, and
 truncation; SEQ correlation under concurrent queries; async query success and timeout; keepalive
-fire/silent/stop; end-to-end behaviour through `MockBox`; and internal unit tests over crate-private
-seams. They pass under `--all-features`, clippy is clean on Linux and `x86_64-pc-windows-msvc`, and the
-docs link-check.
+fire/silent/stop; the device-info requests in `device_info.rs` (exact-byte MOUSE_INFO / CAPS / RATE /
+STATS decoders, short-payload truncation → `None`, the `rate_confident` HEALTH bit, and a `MockBox`
+round-trip); end-to-end behaviour through `MockBox`; and internal unit tests over crate-private seams.
+They pass under `--all-features`, clippy is clean on Linux and `x86_64-pc-windows-msvc`, and the docs
+link-check.
 
 The hardware suite in `examples/hw_full.rs` (grabbed evdev) runs handshake, every move/wheel/button/
 reset, 1 kHz no-halving, a sustained soak, keepalive-holds, query-under-load, reconnect and reapply,

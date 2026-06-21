@@ -1,12 +1,16 @@
 [package]
 name = "medius"
-version = "0.1.0"
+version = "1.4.0"
 edition = "2024"
 rust-version = "1.85"
 description = "Host control library for the medius transparent mouse passthrough box"
 license = "MIT"
 keywords = ["medius", "mouse", "hid", "serial", "makcu"]
 categories = ["hardware-support", "api-bindings"]
+
+# Render the feature-gated async queries + mock builders on docs.rs.
+[package.metadata.docs.rs]
+all-features = true
 
 [features]
 default = []

@@ -28,8 +28,8 @@ pub use link::{DEFAULT_KEEPALIVE_CADENCE, DEFAULT_QUERY_TIMEOUT};
 pub use protocol::{DecodedFrame, FrameType};
 pub use transport::scan::find_medius;
 pub use types::{
-    Button, ButtonAction, CountersSnapshot, Health, LogLevel, LogLine, PortInfo, RebootTarget,
-    Version,
+    Button, ButtonAction, Caps, CountersSnapshot, Health, LogLevel, LogLine, MouseInfo, PortInfo,
+    Rate, RebootTarget, Stats, Version,
 };
 
 #[cfg(feature = "async")]
