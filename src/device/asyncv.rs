@@ -2,7 +2,9 @@ use crate::error::{Error, Result};
 use crate::link::Link;
 use crate::protocol::opcode::{Q_CAPS, Q_HEALTH, Q_MOUSE_INFO, Q_RATE, Q_STATS, Q_VERSION};
 use crate::protocol::{Resp, parse_resp};
-use crate::types::{Button, ButtonAction, Caps, Health, MouseInfo, Rate, RebootTarget, Stats, Version};
+use crate::types::{
+    Button, ButtonAction, Caps, Health, MouseInfo, Rate, RebootTarget, Stats, Version,
+};
 
 use super::Device;
 
