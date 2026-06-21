@@ -28,7 +28,11 @@ fn main() -> medius::Result<()> {
         "caps: {} buttons, x={} y={} wheel={}",
         caps.n_buttons, caps.has_x, caps.has_y, caps.has_wheel,
     );
-    println!("rate: {:?} Hz (confident={})", rate.native_hz(), rate.confident);
+    println!(
+        "rate: {:?} Hz (confident={})",
+        rate.native_hz(),
+        rate.confident
+    );
 
     device.move_rel(40, 0)?;
 

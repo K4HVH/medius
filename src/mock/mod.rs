@@ -36,7 +36,8 @@ impl Default for State {
             mouse_info: MouseInfo::from_payload(&[2, 0, 0, 0, 0, 0, 0, 0, 0, 0]).unwrap(),
             caps: Caps::from_payload(&[3, 0, 0, 0]).unwrap(),
             rate: Rate::from_payload(&[4, 0, 0, 0, 0, 0]).unwrap(),
-            stats: Stats::from_payload(&[5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]).unwrap(),
+            stats: Stats::from_payload(&[5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
+                .unwrap(),
             recorded: Vec::new(),
             respond: true,
         }
@@ -118,44 +119,43 @@ impl MockBox {
         let state = Arc::new(Mutex::new(State::default()));
         let responder_state = Arc::clone(&state);
 
-        let transport = Arc::new(MockTransport::with_responder(move |ty, seq, payload| {
-            let mut st = responder_state.lock();
-            st.recorded.push(DecodedFrame {
-                ty,
-                seq,
-                payload: payload.to_vec(),
-            });
-            if ty == FrameType::Query && st.respond {
-                match payload.first().copied() {
-                    Some(0) => {
-                        let v = st.version;
-                        encode(
-                            FrameType::Resp,
-                            seq,
-                            &[0, v.proto_ver, v.fw_major, v.fw_minor, v.fw_patch],
-                        )
-                        .expect("resp fits")
+        let transport =
+            Arc::new(MockTransport::with_responder(move |ty, seq, payload| {
+                let mut st = responder_state.lock();
+                st.recorded.push(DecodedFrame {
+                    ty,
+                    seq,
+                    payload: payload.to_vec(),
+                });
+                if ty == FrameType::Query && st.respond {
+                    match payload.first().copied() {
+                        Some(0) => {
+                            let v = st.version;
+                            encode(
+                                FrameType::Resp,
+                                seq,
+                                &[0, v.proto_ver, v.fw_major, v.fw_minor, v.fw_patch],
+                            )
+                            .expect("resp fits")
+                        }
+                        Some(1) => encode(FrameType::Resp, seq, &[1, st.health.to_flags()])
+                            .expect("resp fits"),
+                        Some(2) => encode(FrameType::Resp, seq, &mouse_info_payload(st.mouse_info))
+                            .expect("resp fits"),
+                        Some(3) => {
+                            encode(FrameType::Resp, seq, &caps_payload(st.caps)).expect("resp fits")
+                        }
+                        Some(4) => {
+                            encode(FrameType::Resp, seq, &rate_payload(st.rate)).expect("resp fits")
+                        }
+                        Some(5) => encode(FrameType::Resp, seq, &stats_payload(st.stats))
+                            .expect("resp fits"),
+                        _ => Vec::new(),
                     }
-                    Some(1) => {
-                        encode(FrameType::Resp, seq, &[1, st.health.to_flags()]).expect("resp fits")
-                    }
-                    Some(2) => encode(FrameType::Resp, seq, &mouse_info_payload(st.mouse_info))
-                        .expect("resp fits"),
-                    Some(3) => {
-                        encode(FrameType::Resp, seq, &caps_payload(st.caps)).expect("resp fits")
-                    }
-                    Some(4) => {
-                        encode(FrameType::Resp, seq, &rate_payload(st.rate)).expect("resp fits")
-                    }
-                    Some(5) => {
-                        encode(FrameType::Resp, seq, &stats_payload(st.stats)).expect("resp fits")
-                    }
-                    _ => Vec::new(),
+                } else {
+                    Vec::new()
                 }
-            } else {
-                Vec::new()
-            }
-        }));
+            }));
 
         MockBox { state, transport }
     }

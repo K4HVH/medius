@@ -1,8 +1,6 @@
 //! Decoded `RESP(HEALTH)` flags.
 
-use crate::protocol::opcode::{
-    H_CLONE_CFG, H_INJECT_ON, H_LINK_UP, H_MOUSE_ATT, H_RATE_CONFIDENT,
-};
+use crate::protocol::opcode::{H_CLONE_CFG, H_INJECT_ON, H_LINK_UP, H_MOUSE_ATT, H_RATE_CONFIDENT};
 
 /// The decoded `RESP(HEALTH)` flags byte.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

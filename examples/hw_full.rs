@@ -244,7 +244,10 @@ mod linux {
             // native_hz lands in a sane band once learned; None (not yet learned) is allowed.
             let rate_ok = rate
                 .as_ref()
-                .map(|r| r.native_hz().is_none_or(|hz| (100.0..=8000.0).contains(&hz)))
+                .map(|r| {
+                    r.native_hz()
+                        .is_none_or(|hz| (100.0..=8000.0).contains(&hz))
+                })
                 .unwrap_or(false);
             let stats_ok = stats.as_ref().map(|s| s.tx_drops == 0).unwrap_or(false);
 
