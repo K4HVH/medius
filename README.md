@@ -27,7 +27,7 @@ Same MAKCU box, different firmware. Both clone your mouse's USB descriptor byte 
 
 ```toml
 [dependencies]
-medius = "0.1"
+medius = "1.4"
 ```
 
 ```rust
@@ -58,7 +58,7 @@ The base crate is the lean sync core. Optional features:
 | `tracing` | per-frame TX/RX `tracing` instrumentation |
 
 ```toml
-medius = { version = "0.1", features = ["async", "mock"] }
+medius = { version = "1.4", features = ["async", "mock"] }
 ```
 
 ## API
@@ -103,7 +103,12 @@ for _ in 0..1000 {
 
 ```rust
 let v = device.query_version()?;  // proto_ver + fw_major / fw_minor / fw_patch
-let h = device.query_health()?;   // link_up, mouse_attached, clone_configured, injection_active
+let h = device.query_health()?;   // link_up, mouse_attached, clone_configured, injection_active, rate_confident
+
+let info = device.query_mouse_info()?;  // cloned mouse identity (vid:pid, bcd, serial/BOS flags)
+let caps = device.query_caps()?;        // semantic caps; caps.is_composite(), caps.n_buttons
+let rate = device.query_rate()?;        // live native report rate; rate.native_hz()
+let stats = device.query_stats()?;      // delivery counters; stats.tx_drops / stats.tx_wedges
 ```
 
 ### Box management
@@ -141,15 +146,17 @@ It uses `flume`'s async recv, so there's no runtime dependency and it runs on an
 ### Mock (feature = `mock`)
 
 ```rust
-use medius::{Button, Device, FrameType, Health, MockBox, Version};
+use medius::{Button, Device, FrameType, Health, MockBox, Rate, Version};
 
 let mock = MockBox::new()
     .with_version(Version { proto_ver: 1, fw_major: 1, fw_minor: 2, fw_patch: 3 })
-    .with_health(Health::from_flags(0x0F));
+    .with_health(Health::from_flags(0x0F))
+    .with_rate(Rate { native_period_us: 1000, poll_period_us: 1000, confident: true });
 
 let device = Device::with_mock(mock.clone());  // the real stack over a fake box
 
 assert_eq!(device.query_version()?.fw_minor, 2);
+assert_eq!(device.query_rate()?.native_hz(), Some(1000.0));
 device.press(Button::Left)?;
 assert!(mock.saw(FrameType::Button));          // commands are recorded
 ```

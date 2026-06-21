@@ -1,8 +1,8 @@
 use crate::error::{Error, Result};
 use crate::link::Link;
-use crate::protocol::opcode::{Q_HEALTH, Q_VERSION};
+use crate::protocol::opcode::{Q_CAPS, Q_HEALTH, Q_MOUSE_INFO, Q_RATE, Q_STATS, Q_VERSION};
 use crate::protocol::{Resp, parse_resp};
-use crate::types::{Button, ButtonAction, Health, RebootTarget, Version};
+use crate::types::{Button, ButtonAction, Caps, Health, MouseInfo, Rate, RebootTarget, Stats, Version};
 
 use super::Device;
 
@@ -97,6 +97,54 @@ impl AsyncDevice {
             .await?;
         match parse_resp(&payload) {
             Some(Resp::Health(h)) => Ok(h),
+            _ => Err(Error::NoReply),
+        }
+    }
+
+    /// Query the cloned mouse's USB identity (§4.3), awaiting the correlated `RESP`.
+    pub async fn query_mouse_info(&self) -> Result<MouseInfo> {
+        let payload = self
+            .link
+            .query_async(Q_MOUSE_INFO, self.link.query_timeout_default())
+            .await?;
+        match parse_resp(&payload) {
+            Some(Resp::MouseInfo(m)) => Ok(m),
+            _ => Err(Error::NoReply),
+        }
+    }
+
+    /// Query the emulated mouse's capabilities (§4.4), awaiting the correlated `RESP`.
+    pub async fn query_caps(&self) -> Result<Caps> {
+        let payload = self
+            .link
+            .query_async(Q_CAPS, self.link.query_timeout_default())
+            .await?;
+        match parse_resp(&payload) {
+            Some(Resp::Caps(c)) => Ok(c),
+            _ => Err(Error::NoReply),
+        }
+    }
+
+    /// Query the live native report rate (§4.5), awaiting the correlated `RESP`.
+    pub async fn query_rate(&self) -> Result<Rate> {
+        let payload = self
+            .link
+            .query_async(Q_RATE, self.link.query_timeout_default())
+            .await?;
+        match parse_resp(&payload) {
+            Some(Resp::Rate(r)) => Ok(r),
+            _ => Err(Error::NoReply),
+        }
+    }
+
+    /// Query the box's delivery/telemetry counters (§4.6), awaiting the correlated `RESP`.
+    pub async fn query_stats(&self) -> Result<Stats> {
+        let payload = self
+            .link
+            .query_async(Q_STATS, self.link.query_timeout_default())
+            .await?;
+        match parse_resp(&payload) {
+            Some(Resp::Stats(s)) => Ok(s),
             _ => Err(Error::NoReply),
         }
     }

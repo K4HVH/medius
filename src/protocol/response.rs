@@ -1,13 +1,17 @@
 //! Typed response/event decoders (box → PC).
 
-use super::opcode::{Q_HEALTH, Q_VERSION};
-use crate::types::{Health, LogLevel, LogLine, Version};
+use super::opcode::{Q_CAPS, Q_HEALTH, Q_MOUSE_INFO, Q_RATE, Q_STATS, Q_VERSION};
+use crate::types::{Caps, Health, LogLevel, LogLine, MouseInfo, Rate, Stats, Version};
 
 /// A decoded `RESP` (§4.1), keyed by the `what` selector at `payload[0]`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Resp {
     Version(Version),
     Health(Health),
+    MouseInfo(MouseInfo),
+    Caps(Caps),
+    Rate(Rate),
+    Stats(Stats),
 }
 
 /// Parse a `RESP` payload (§4.1): `[what u8][data..]`.
@@ -31,6 +35,10 @@ pub fn parse_resp(payload: &[u8]) -> Option<Resp> {
             }
             Some(Resp::Health(Health::from_flags(payload[1])))
         }
+        Q_MOUSE_INFO => MouseInfo::from_payload(payload).map(Resp::MouseInfo),
+        Q_CAPS => Caps::from_payload(payload).map(Resp::Caps),
+        Q_RATE => Rate::from_payload(payload).map(Resp::Rate),
+        Q_STATS => Stats::from_payload(payload).map(Resp::Stats),
         _ => None,
     }
 }
