@@ -13,6 +13,14 @@ pub const PROTO_VER: u8 = 1;
 
 pub const Q_VERSION: u8 = 0;
 pub const Q_HEALTH: u8 = 1;
+/// Cloned mouse identity: vid/pid/bcd + serial/bos flags (§4.3).
+pub const Q_MOUSE_INFO: u8 = 2;
+/// Semantic capabilities: button count, axes, interface count (§4.4).
+pub const Q_CAPS: u8 = 3;
+/// Live native report rate + clone poll period + confidence (§4.5).
+pub const Q_RATE: u8 = 4;
+/// Delivery/telemetry counters (§4.6).
+pub const Q_STATS: u8 = 5;
 
 pub const BTN_LEFT: u8 = 0;
 pub const BTN_RIGHT: u8 = 1;
@@ -36,6 +44,25 @@ pub const H_MOUSE_ATT: u8 = 0x02;
 pub const H_CLONE_CFG: u8 = 0x04;
 /// Injection is currently active.
 pub const H_INJECT_ON: u8 = 0x08;
+/// The native-rate estimator window is full, so the `RATE` value is trustworthy (§4.2, v1.4.0).
+pub const H_RATE_CONFIDENT: u8 = 0x10;
+
+/// `MOUSE_INFO` flag: the clone serves a serial string (§4.3).
+pub const MI_HAS_SERIAL: u8 = 0x01;
+/// `MOUSE_INFO` flag: the clone serves a BOS descriptor (§4.3).
+pub const MI_HAS_BOS: u8 = 0x02;
+
+/// `CAPS` axis flag: relative X present (§4.4).
+pub const CAP_X: u8 = 0x01;
+/// `CAPS` axis flag: relative Y present (§4.4).
+pub const CAP_Y: u8 = 0x02;
+/// `CAPS` axis flag: wheel present (§4.4).
+pub const CAP_WHEEL: u8 = 0x04;
+/// `CAPS` axis flag: the mouse report sits behind a HID report ID (§4.4).
+pub const CAP_REPORT_ID: u8 = 0x08;
+
+/// `RATE` flag: estimator window full (same source as [`H_RATE_CONFIDENT`], §4.5).
+pub const RATE_CONFIDENT: u8 = 0x01;
 
 pub const LOG_ERROR: u8 = 0;
 pub const LOG_WARN: u8 = 1;

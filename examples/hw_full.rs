@@ -223,6 +223,57 @@ mod linux {
 
         {
             let dev = device.as_ref().unwrap();
+            let attached = dev
+                .query_health()
+                .map(|h| h.mouse_attached)
+                .unwrap_or(false);
+            let caps = dev.query_caps();
+            let info = dev.query_mouse_info();
+            let rate = dev.query_rate();
+            let stats = dev.query_stats();
+
+            let caps_ok = caps
+                .as_ref()
+                .map(|c| c.has_x && c.has_y && c.n_buttons > 0)
+                .unwrap_or(false);
+            // vid != 0 once a mouse is cloned; zero is allowed when none is attached.
+            let info_ok = info
+                .as_ref()
+                .map(|i| if attached { i.vid != 0 } else { true })
+                .unwrap_or(false);
+            // native_hz lands in a sane band once learned; None (not yet learned) is allowed.
+            let rate_ok = rate
+                .as_ref()
+                .map(|r| r.native_hz().is_none_or(|hz| (100.0..=8000.0).contains(&hz)))
+                .unwrap_or(false);
+            let stats_ok = stats.as_ref().map(|s| s.tx_drops == 0).unwrap_or(false);
+
+            let hz = rate
+                .as_ref()
+                .ok()
+                .and_then(|r| r.native_hz())
+                .map(|hz| format!("{hz:.0}"))
+                .unwrap_or_else(|| "?".into());
+            let confident = rate.as_ref().map(|r| r.confident).unwrap_or(false);
+            let (drops, wedges) = stats
+                .as_ref()
+                .map(|s| (s.tx_drops, s.tx_wedges))
+                .unwrap_or((u16::MAX, u8::MAX));
+            let id = info
+                .as_ref()
+                .map(|i| i.to_string())
+                .unwrap_or_else(|_| "?".into());
+            check(
+                "device info",
+                caps_ok && info_ok && rate_ok && stats_ok,
+                format!(
+                    "mouse={id} caps={caps:?}  rate={hz}Hz confident={confident}  tx_drops={drops} tx_wedges={wedges}"
+                ),
+            );
+        }
+
+        {
+            let dev = device.as_ref().unwrap();
             reset_motion(&acc);
             for _ in 0..50 {
                 let _ = dev.move_rel(40, 0);

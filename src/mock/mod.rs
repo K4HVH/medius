@@ -4,14 +4,21 @@ use std::sync::Arc;
 
 use parking_lot::Mutex;
 
+use crate::protocol::opcode::{
+    CAP_REPORT_ID, CAP_WHEEL, CAP_X, CAP_Y, MI_HAS_BOS, MI_HAS_SERIAL, RATE_CONFIDENT,
+};
 use crate::protocol::{DecodedFrame, FrameType, encode};
 use crate::transport::mock::MockTransport;
-use crate::types::{Health, LogLevel, Version};
+use crate::types::{Caps, Health, LogLevel, MouseInfo, Rate, Stats, Version};
 
 #[derive(Debug)]
 struct State {
     version: Version,
     health: Health,
+    mouse_info: MouseInfo,
+    caps: Caps,
+    rate: Rate,
+    stats: Stats,
     recorded: Vec<DecodedFrame>,
     respond: bool,
 }
@@ -26,10 +33,70 @@ impl Default for State {
                 fw_patch: 0,
             },
             health: Health::from_flags(0),
+            mouse_info: MouseInfo::from_payload(&[2, 0, 0, 0, 0, 0, 0, 0, 0, 0]).unwrap(),
+            caps: Caps::from_payload(&[3, 0, 0, 0]).unwrap(),
+            rate: Rate::from_payload(&[4, 0, 0, 0, 0, 0]).unwrap(),
+            stats: Stats::from_payload(&[5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]).unwrap(),
             recorded: Vec::new(),
             respond: true,
         }
     }
+}
+
+fn mouse_info_payload(m: MouseInfo) -> Vec<u8> {
+    let mut flags = 0u8;
+    if m.has_serial {
+        flags |= MI_HAS_SERIAL;
+    }
+    if m.has_bos {
+        flags |= MI_HAS_BOS;
+    }
+    let mut p = vec![2u8];
+    p.extend_from_slice(&m.vid.to_le_bytes());
+    p.extend_from_slice(&m.pid.to_le_bytes());
+    p.extend_from_slice(&m.bcd_device.to_le_bytes());
+    p.extend_from_slice(&m.bcd_usb.to_le_bytes());
+    p.push(flags);
+    p
+}
+
+fn caps_payload(c: Caps) -> Vec<u8> {
+    let mut axis = 0u8;
+    if c.has_x {
+        axis |= CAP_X;
+    }
+    if c.has_y {
+        axis |= CAP_Y;
+    }
+    if c.has_wheel {
+        axis |= CAP_WHEEL;
+    }
+    if c.has_report_id {
+        axis |= CAP_REPORT_ID;
+    }
+    vec![3u8, c.n_buttons, axis, c.n_hid]
+}
+
+fn rate_payload(r: Rate) -> Vec<u8> {
+    let flags = if r.confident { RATE_CONFIDENT } else { 0 };
+    let mut p = vec![4u8];
+    p.extend_from_slice(&r.native_period_us.to_le_bytes());
+    p.extend_from_slice(&r.poll_period_us.to_le_bytes());
+    p.push(flags);
+    p
+}
+
+fn stats_payload(s: Stats) -> Vec<u8> {
+    let mut p = vec![5u8];
+    p.extend_from_slice(&s.inject_emits.to_le_bytes());
+    p.extend_from_slice(&s.tx_drops.to_le_bytes());
+    p.extend_from_slice(&s.tx_merges.to_le_bytes());
+    p.push(s.tx_maxdepth);
+    p.push(s.tx_wedges);
+    p.extend_from_slice(&s.wakeups.to_le_bytes());
+    p.extend_from_slice(&s.reset_count.to_le_bytes());
+    p.extend_from_slice(&s.config_count.to_le_bytes());
+    p
 }
 
 /// A scriptable fake medius box for hardware-free tests (feature = `mock`).
@@ -72,6 +139,17 @@ impl MockBox {
                     Some(1) => {
                         encode(FrameType::Resp, seq, &[1, st.health.to_flags()]).expect("resp fits")
                     }
+                    Some(2) => encode(FrameType::Resp, seq, &mouse_info_payload(st.mouse_info))
+                        .expect("resp fits"),
+                    Some(3) => {
+                        encode(FrameType::Resp, seq, &caps_payload(st.caps)).expect("resp fits")
+                    }
+                    Some(4) => {
+                        encode(FrameType::Resp, seq, &rate_payload(st.rate)).expect("resp fits")
+                    }
+                    Some(5) => {
+                        encode(FrameType::Resp, seq, &stats_payload(st.stats)).expect("resp fits")
+                    }
                     _ => Vec::new(),
                 }
             } else {
@@ -93,6 +171,34 @@ impl MockBox {
     #[must_use]
     pub fn with_health(self, health: Health) -> Self {
         self.state.lock().health = health;
+        self
+    }
+
+    /// Set the [`MouseInfo`] answered to `QUERY(MOUSE_INFO)` (builder style).
+    #[must_use]
+    pub fn with_mouse_info(self, mouse_info: MouseInfo) -> Self {
+        self.state.lock().mouse_info = mouse_info;
+        self
+    }
+
+    /// Set the [`Caps`] answered to `QUERY(CAPS)` (builder style).
+    #[must_use]
+    pub fn with_caps(self, caps: Caps) -> Self {
+        self.state.lock().caps = caps;
+        self
+    }
+
+    /// Set the [`Rate`] answered to `QUERY(RATE)` (builder style).
+    #[must_use]
+    pub fn with_rate(self, rate: Rate) -> Self {
+        self.state.lock().rate = rate;
+        self
+    }
+
+    /// Set the [`Stats`] answered to `QUERY(STATS)` (builder style).
+    #[must_use]
+    pub fn with_stats(self, stats: Stats) -> Self {
+        self.state.lock().stats = stats;
         self
     }
 
