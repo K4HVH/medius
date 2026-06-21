@@ -19,3 +19,8 @@ pub fn button_payload(id: u8, action: u8) -> [u8; 2] {
 pub fn query_payload(what: u8) -> [u8; 1] {
     [what]
 }
+
+/// `LED` (§3.7): `[target u8][mode u8][level u8]`.
+pub fn led_payload(target: u8, mode: u8, level: u8) -> [u8; 3] {
+    [target, mode, level]
+}
