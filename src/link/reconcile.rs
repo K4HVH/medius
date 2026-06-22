@@ -45,10 +45,9 @@ impl DesiredState {
     }
 
     pub(crate) fn clear(&mut self) {
-        // Clears injection overrides only. Catch is deliberately NOT cleared by reset(): the firmware
-        // keeps a subscription streaming across a RESET (it's passive observation, not injection), so
-        // dropping the host's view here would orphan a live EventStream into a silent hang. A catch
-        // subscription ends only when its stream is dropped (unsubscribe) or the control PC goes silent.
+        // Injection overrides only. Catch teardown on reset() is handled by Link::catch_disconnect_all
+        // (it drops the EventStream senders so recv() returns Err — a plain field-clear here couldn't);
+        // catch otherwise clears firmware-side on the same lifecycle as injection.
         self.overrides = [Override::None; BTN_COUNT as usize];
     }
 

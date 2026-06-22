@@ -146,6 +146,20 @@ fn pushed_event_arrives_on_the_stream() {
 
 #[cfg(feature = "mock")]
 #[test]
+fn reset_disconnects_the_stream() {
+    use crate::{CatchMask, Device, MockBox};
+    let mock = MockBox::new();
+    let device = Device::with_mock(mock.clone());
+    let stream = device.catch_events(CatchMask::all()).unwrap();
+    device.reset().unwrap();
+    // reset() ends the catch stream by disconnecting it — recv returns Err, never a silent hang
+    // (the firmware drops the mask on the same RESET, so the host doesn't re-subscribe).
+    assert!(stream.recv().is_err());
+    assert!(mock.saw(FrameType::Reset));
+}
+
+#[cfg(feature = "mock")]
+#[test]
 fn query_catch_roundtrips_mask_and_drops() {
     use crate::{CatchMask, CatchState, Device, MockBox};
     // wheel + buttons (0x06), 5 box-side drops

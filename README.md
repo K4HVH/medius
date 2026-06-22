@@ -27,7 +27,7 @@ Same MAKCU box, different firmware. Both clone your mouse's USB descriptor byte 
 
 ```toml
 [dependencies]
-medius = "1.4"
+medius = "1.6"
 ```
 
 ```rust

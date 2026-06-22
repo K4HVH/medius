@@ -23,6 +23,9 @@ pub(crate) struct CatchSub {
     id: u64,
     mask: CatchMask,
     tx: flume::Sender<InputReport>,
+    // A receiver clone the reader evicts from when the buffer is full (drop-oldest, like logs::push).
+    // The consumer's own receiver lives in the EventStream; both share the one MPMC channel.
+    evict_rx: flume::Receiver<InputReport>,
     dropped: Arc<AtomicU64>,
 }
 
@@ -37,8 +40,9 @@ impl CatchReg {
     }
 }
 
-/// Broadcast one decoded `EVENT` to every subscriber. A full channel drops the newest event (counted);
-/// a disconnected one is skipped — its [`EventStream`](crate::EventStream) guard deregisters it.
+/// Broadcast one decoded `EVENT` to every subscriber. A full buffer drops the OLDEST event (evict then
+/// resend, like [`logs::push`](super::logs)) so a slow consumer keeps the freshest input, not the
+/// stalest; the drop is counted. A disconnected sub is skipped (its guard deregisters it).
 pub(crate) fn deliver_event(reg: &Mutex<CatchReg>, payload: &[u8]) {
     let Some(report) = InputReport::from_payload(payload) else {
         return;
@@ -47,7 +51,9 @@ pub(crate) fn deliver_event(reg: &Mutex<CatchReg>, payload: &[u8]) {
     for sub in &reg.subs {
         match sub.tx.try_send(report) {
             Ok(()) => {}
-            Err(flume::TrySendError::Full(_)) => {
+            Err(flume::TrySendError::Full(r)) => {
+                let _ = sub.evict_rx.try_recv(); // drop the oldest queued report
+                let _ = sub.tx.try_send(r); // room freed; re-send the newest
                 sub.dropped.fetch_add(1, Ordering::Relaxed);
             }
             Err(flume::TrySendError::Disconnected(_)) => {}
@@ -67,6 +73,7 @@ impl Link {
         // caller's, which could leave the box streaming a mask the registry no longer matches.
         let _serial = self.inner.catch_lock.lock();
         let (tx, rx) = flume::bounded::<InputReport>(CATCH_CAPACITY);
+        let evict_rx = rx.clone();
         let dropped = Arc::new(AtomicU64::new(0));
         let id = self.inner.catch_gen.fetch_add(1, Ordering::Relaxed);
         let effective = {
@@ -75,6 +82,7 @@ impl Link {
                 id,
                 mask,
                 tx,
+                evict_rx,
                 dropped: Arc::clone(&dropped),
             });
             reg.effective()
@@ -93,6 +101,16 @@ impl Link {
         let _serial = self.inner.catch_lock.lock();
         let effective = self.detach_sub(id);
         let _ = self.send(FrameType::Catch, &catch_payload(effective.bits()));
+    }
+
+    /// Tear down EVERY catch subscription: drop all subscribers so each open
+    /// [`EventStream`](crate::EventStream) sees its channel disconnect (`recv()` returns `Err`, never a
+    /// silent hang), and clear the desired mask. Used by `reset()` — catch clears like injection, and
+    /// the firmware drops `g_catch_mask` on the same `RESET`, so the host doesn't re-assert it.
+    pub(crate) fn catch_disconnect_all(&self) {
+        let _serial = self.inner.catch_lock.lock();
+        self.inner.events.lock().subs.clear();
+        self.inner.desired.lock().set_catch(CatchMask::empty());
     }
 
     fn detach_sub(&self, id: u64) -> CatchMask {
