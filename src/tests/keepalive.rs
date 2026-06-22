@@ -2,9 +2,25 @@
 
 use std::time::Duration;
 
-use crate::{Button, Device, FrameType, MockBox};
+use crate::{Button, CatchMask, Device, FrameType, MockBox};
 
 const PAST_ONE_CADENCE: Duration = Duration::from_millis(650);
+
+#[test]
+fn keepalive_reasserts_catch_while_subscribed() {
+    let mock = MockBox::new();
+    let device = Device::with_mock(mock.clone());
+    let _stream = device.catch_events(CatchMask::all()).unwrap();
+    mock.clear_recorded(); // ignore the initial subscribe frame
+    std::thread::sleep(PAST_ONE_CADENCE);
+    assert!(
+        mock.saw(FrameType::Catch),
+        "keepalive must re-send CATCH while subscribed (restores the mask after a device-side clear, \
+         and feeds the silence timer); saw {} frames",
+        mock.recorded()
+    );
+    drop(device);
+}
 
 #[test]
 fn keepalive_fires_while_a_button_is_held() {

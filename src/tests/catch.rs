@@ -146,6 +146,41 @@ fn pushed_event_arrives_on_the_stream() {
 
 #[cfg(feature = "mock")]
 #[test]
+fn catch_buffer_drops_oldest_on_overflow() {
+    use crate::{Button, CatchMask, Device, InputReport, MockBox};
+    use std::time::{Duration, Instant};
+    let mock = MockBox::new();
+    let device = Device::with_mock(mock.clone());
+    let stream = device.catch_events(CatchMask::all()).unwrap();
+    // Push well past the 256-deep buffer without draining; the oldest get evicted.
+    const TOTAL: u16 = 300;
+    const KEPT: u16 = 256; // CATCH_CAPACITY
+    for i in 0..TOTAL {
+        mock.push_event(
+            (i & 0xff) as u8,
+            InputReport {
+                buttons: 0,
+                dx: i as i16, // a monotonic marker so we can tell oldest from newest
+                dy: 0,
+                wheel: 0,
+            },
+        );
+    }
+    // Wait until the reader has processed every push (drop count reaches the overflow).
+    let want_dropped = (TOTAL - KEPT) as u64;
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while stream.dropped() < want_dropped && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert_eq!(stream.dropped(), want_dropped, "exactly the overflow count was dropped");
+    // The freshest survive: the oldest readable event is the first one NOT evicted, not dx=0.
+    let first = stream.recv_timeout(Duration::from_secs(1)).expect("an event survived");
+    assert_eq!(first.dx, (TOTAL - KEPT) as i16, "the oldest events were dropped, the newest kept");
+    assert!(!first.is_pressed(Button::Left));
+}
+
+#[cfg(feature = "mock")]
+#[test]
 fn reset_disconnects_the_stream() {
     use crate::{CatchMask, Device, MockBox};
     let mock = MockBox::new();
