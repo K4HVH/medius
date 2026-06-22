@@ -11,7 +11,7 @@ and nothing that automates, paces, or composes input.
 
 | In | Out (deliberately) |
 |---|---|
-| 1:1 frame commands (MOVE / WHEEL / BUTTON / RESET / QUERY / REBOOT_DL / LOG) | click, drag, double-click, any composed gesture |
+| 1:1 frame commands (MOVE / WHEEL / BUTTON / RESET / QUERY / REBOOT_DL / LOG / LED / LOCK / CATCH; EVENT box→PC) | click, drag, double-click, any composed gesture |
 | connect/handshake, keepalive, reconnect+reapply, the reader, SEQ correlation | `set_velocity` / generated motion; a host-side pacer or frame clock |
 | Linux + Windows serial, async wrapper, mock, tracing | smoothing / humanization / trajectory synthesis |
 
@@ -30,7 +30,7 @@ transport/  byte pipe: Transport trait, serial (serialport crate), mock, VID/PID
 link/       connection engine: Link handle + state, TX path, reader, correlation,
             keepalive, reconnect, plus the counters/reconcile/log-push link state
 device/     thin typed API over a Link: Device/AsyncDevice, connect, movement,
-            buttons, admin, query, logs
+            buttons, admin, query, led, lock, catch, logs
 ```
 
 `device/` is a skin; each command is one `self.link.send(...)`. The engine lives in `link/`, one
@@ -52,9 +52,10 @@ threads do the work. The reader is the only thing that reads the transport: it l
 `read → FrameDecoder → route by TYPE`, fulfilling the SEQ-and-selector-matched waiter for a RESP,
 fanning out a LOG, and ignoring anything else. On a read error it reconnects in place with back-off, the
 same rescan/reopen/reapply path as a manual `reconnect()`, and it checks a stop flag once per read
-timeout so shutdown is deterministic. The keepalive thread sends a `QUERY(HEALTH)` only while
-desired-state is non-idle, which keeps a held button alive through idle periods; while idle it sends
-nothing, so the firmware's silence auto-clear still fires on a real crash.
+timeout so shutdown is deterministic. The keepalive thread, only while desired-state is non-idle, sends
+a `QUERY(HEALTH)` — or re-sends `CATCH` while a catch subscription is open — which keeps a held button
+or subscription alive through idle periods and restores a catch mask the box cleared on a device-side
+blip; while idle it sends nothing, so the firmware's silence auto-clear still fires on a real crash.
 
 Both threads capture individual `Arc`s, never `Arc<LinkInner>`, so `LinkInner::drop` can join the reader
 without the reader ever holding the last reference. Writes take one mutex, held only around
@@ -71,8 +72,10 @@ early RX make the first frame reliable. A timeout becomes `NoReply`, a wrong ver
 firmware's silence timer so the hold survives; idle stays silent, so a real crash still clears.
 Reconnect recovers a re-enumerated port by VID/PID rescan and re-asserts held state, either manually via
 `reconnect()` or automatically from the reader on a dropped link. The no-stuck safety lives in firmware:
-after ~1 s of host silence (or a RESET, an inter-chip link loss, or a real disconnect) it clears injection back to passthrough.
-That's the only crash detector the hardware can have, so it stays.
+after ~1 s of host silence (or a RESET, an inter-chip link loss, or a real disconnect) it clears all
+PC-owned state — injection, locks, and any catch subscription — back to passthrough; reset() also
+disconnects a live catch `EventStream` so its `recv()` returns `Err`. That's the only crash detector the
+hardware can have, so it stays.
 
 ## Firmware coupling
 
@@ -91,7 +94,8 @@ round-trip); end-to-end behaviour through `MockBox`; and internal unit tests ove
 They pass under `--all-features`, clippy is clean on Linux and `x86_64-pc-windows-msvc`, and the docs
 link-check.
 
-The hardware suite in `examples/hw_full.rs` (grabbed evdev) runs handshake, every move/wheel/button/
-reset, 1 kHz no-halving, a sustained soak, keepalive-holds, query-under-load, reconnect and reapply,
-reboot-to-run, the async gate, and the no-stuck safety. All pass, `crc_drops=0`. An opt-in
+The hardware suite in `examples/hw_full.rs` (grabbed evdev) runs handshake, the LED / LOCK / CATCH
+checks, every move/wheel/button/reset, 1 kHz no-halving, a sustained soak, keepalive-holds,
+query-under-load, reconnect and reapply, reboot-to-run, the async gate, and the no-stuck safety. All
+pass, `crc_drops=0`. An opt-in
 `MEDIUS_UNPLUG_TEST=1` phase also proves unattended auto-reconnect across a real link drop.
