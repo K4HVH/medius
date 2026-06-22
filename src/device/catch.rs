@@ -12,9 +12,10 @@ use super::Device;
 ///
 /// Created by [`Device::catch_events`]. Cloning shares the queue (like [`LogStream`](crate::LogStream));
 /// for an independent stream, call [`catch_events`](Device::catch_events) again. The subscription ends
-/// when the stream and all its clones drop, and the box returns to pure passthrough. The buffer is
-/// bounded and lossy: if the consumer falls behind, the newest events are dropped and counted in
-/// [`dropped`](Self::dropped).
+/// when the stream and all its clones drop — and also on [`reset`](crate::Device::reset), which
+/// disconnects it so `recv` returns `Err` rather than hanging — returning the box to pure passthrough.
+/// The buffer is bounded and lossy: if the consumer falls behind, the OLDEST events are dropped (so you
+/// keep the freshest input) and counted in [`dropped`](Self::dropped).
 #[derive(Clone, Debug)]
 pub struct EventStream {
     rx: flume::Receiver<InputReport>,
@@ -90,8 +91,8 @@ impl Device {
     /// targets you've locked or are injecting on (the report is captured before suppression). The
     /// returned [`EventStream`] receives every report; dropping it unsubscribes. Combine classes with
     /// `|`, or pass [`CatchMask::all`] for the full mirror. The subscription is held alive by the
-    /// library's keepalive and re-asserted across a reconnect; it clears on its own if the host goes
-    /// silent (§5.4).
+    /// library's keepalive (which also re-asserts it after a device-side blip) and across a reconnect;
+    /// it clears like injection — on control-PC silence, [`reset`](Device::reset), or link loss (§5.4).
     ///
     /// ```no_run
     /// # use medius::{Device, CatchMask, Button};
