@@ -30,9 +30,12 @@ impl Device {
         self.button(button, ButtonAction::ForceRelease)
     }
 
-    /// `RESET` — return to pure passthrough immediately.
+    /// `RESET` — return to pure passthrough immediately. Clears injection and ends any open catch
+    /// stream (its [`EventStream`](crate::EventStream) `recv()` returns `Err`), matching the firmware,
+    /// which drops every PC-owned state on the same `RESET`.
     pub fn reset(&self) -> Result<()> {
         self.link.desired().lock().clear();
+        self.link.catch_disconnect_all();
         self.link.send(FrameType::Reset, &[])
     }
 }

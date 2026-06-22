@@ -1,7 +1,9 @@
 //! Typed response/event decoders (box → PC).
 
-use super::opcode::{Q_CAPS, Q_HEALTH, Q_LOCKS, Q_MOUSE_INFO, Q_RATE, Q_STATS, Q_VERSION};
-use crate::types::{Caps, Health, Locks, LogLevel, LogLine, MouseInfo, Rate, Stats, Version};
+use super::opcode::{Q_CAPS, Q_CATCH, Q_HEALTH, Q_LOCKS, Q_MOUSE_INFO, Q_RATE, Q_STATS, Q_VERSION};
+use crate::types::{
+    Caps, CatchState, Health, Locks, LogLevel, LogLine, MouseInfo, Rate, Stats, Version,
+};
 
 /// A decoded `RESP` (§4.1), keyed by the `what` selector at `payload[0]`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -13,6 +15,7 @@ pub enum Resp {
     Rate(Rate),
     Stats(Stats),
     Locks(Locks),
+    Catch(CatchState),
 }
 
 /// Parse a `RESP` payload (§4.1): `[what u8][data..]`.
@@ -41,6 +44,7 @@ pub fn parse_resp(payload: &[u8]) -> Option<Resp> {
         Q_RATE => Rate::from_payload(payload).map(Resp::Rate),
         Q_STATS => Stats::from_payload(payload).map(Resp::Stats),
         Q_LOCKS => Locks::from_payload(payload).map(Resp::Locks),
+        Q_CATCH => CatchState::from_payload(payload).map(Resp::Catch),
         _ => None,
     }
 }

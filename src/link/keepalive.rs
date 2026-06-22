@@ -6,7 +6,7 @@ use std::time::Duration;
 use parking_lot::Mutex;
 
 use crate::protocol::FrameType;
-use crate::protocol::command::query_payload;
+use crate::protocol::command::{catch_payload, query_payload};
 use crate::protocol::opcode::Q_HEALTH;
 
 use super::counters::Counters;
@@ -38,18 +38,29 @@ fn keepalive_loop(ctx: KeepaliveCtx) {
         if sleep_cadence(&ctx.stop, ctx.cadence) {
             return;
         }
-        let idle = ctx.desired.lock().is_idle();
+        let (idle, catch) = {
+            let d = ctx.desired.lock();
+            (d.is_idle(), d.catch())
+        };
         if idle {
             continue;
         }
         let seq = ctx.seq.fetch_add(1, Ordering::Relaxed);
+        // Both frames feed the firmware silence timer (§5.4) to keep a held override / subscription
+        // alive. When catch is active we re-send CATCH instead of a bare QUERY: that also restores the
+        // mask if a device-side blip (mouse detach / inter-chip link loss) made the box clear it.
+        let (ty, payload): (FrameType, Vec<u8>) = if catch.is_empty() {
+            (FrameType::Query, query_payload(Q_HEALTH).to_vec())
+        } else {
+            (FrameType::Catch, catch_payload(catch.bits()).to_vec())
+        };
         let _ = write_frame(
             &ctx.transport,
             &ctx.write_lock,
             &ctx.counters,
             seq,
-            FrameType::Query,
-            &query_payload(Q_HEALTH),
+            ty,
+            &payload,
         );
     }
 }
