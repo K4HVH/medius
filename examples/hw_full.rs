@@ -19,7 +19,8 @@ mod linux {
     use std::time::{Duration, Instant};
 
     use medius::{
-        Button, ButtonAction, Device, LedMode, LedTarget, LockDirection, LockTarget, RebootTarget,
+        Button, ButtonAction, CatchMask, Device, LedMode, LedTarget, LockDirection, LockTarget,
+        RebootTarget,
     };
 
     const EVIOCGRAB: libc::c_ulong = 0x4004_4590;
@@ -381,6 +382,47 @@ mod linux {
                 after_reset == 0 && before == 0x000C && after_silence == 0,
                 format!(
                     "reset->0x{after_reset:04X}; y-lock 0x{before:04X} after 1.4s silence 0x{after_silence:04X}"
+                ),
+            );
+        }
+
+        {
+            // CATCH: subscribe and confirm the box reports it (CATCH_ON + the mask via query_catch),
+            // that no events fire while the mouse is idle, that a RESET leaves the subscription intact
+            // (catch is passive observation, not injection), and that dropping the stream unsubscribes.
+            // Live physical-input delivery needs a hand on the mouse — watch it with `medius.py watch`.
+            let dev = device.as_ref().unwrap();
+            let on;
+            let mask;
+            let idle_quiet;
+            let survives_reset;
+            {
+                let stream = dev.catch_events(CatchMask::all()).ok();
+                std::thread::sleep(Duration::from_millis(100));
+                on = dev.query_health().map(|h| h.catch_on).unwrap_or(false);
+                mask = dev
+                    .query_catch()
+                    .map(|c| c.mask)
+                    .unwrap_or(CatchMask::empty());
+                idle_quiet = stream
+                    .as_ref()
+                    .map(|s| s.try_recv().is_none())
+                    .unwrap_or(false);
+                let _ = dev.reset(); // clears injection, NOT catch
+                std::thread::sleep(Duration::from_millis(100));
+                survives_reset = dev.query_health().map(|h| h.catch_on).unwrap_or(false);
+            } // stream dropped -> unsubscribe
+            std::thread::sleep(Duration::from_millis(100));
+            let off = dev.query_health().map(|h| !h.catch_on).unwrap_or(false);
+            let cleared = dev
+                .query_catch()
+                .map(|c| c.mask == CatchMask::empty())
+                .unwrap_or(false);
+            check(
+                "catch: subscribe/safety",
+                on && mask == CatchMask::all() && idle_quiet && survives_reset && off && cleared,
+                format!(
+                    "CATCH_ON={on} mask={mask:?} idle_quiet={idle_quiet} survives_reset={survives_reset}; after drop off={off} cleared={cleared}"
                 ),
             );
         }

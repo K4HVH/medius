@@ -1,15 +1,16 @@
 use crate::error::{Error, Result};
 use crate::link::Link;
 use crate::protocol::opcode::{
-    Q_CAPS, Q_HEALTH, Q_LOCKS, Q_MOUSE_INFO, Q_RATE, Q_STATS, Q_VERSION,
+    Q_CAPS, Q_CATCH, Q_HEALTH, Q_LOCKS, Q_MOUSE_INFO, Q_RATE, Q_STATS, Q_VERSION,
 };
 use crate::protocol::{Resp, parse_resp};
 use crate::types::{
-    Button, ButtonAction, Caps, Health, LedMode, LedTarget, LockDirection, LockTarget, Locks,
-    MouseInfo, Rate, RebootTarget, Stats, Version,
+    Button, ButtonAction, Caps, CatchMask, CatchState, Health, LedMode, LedTarget, LockDirection,
+    LockTarget, Locks, MouseInfo, Rate, RebootTarget, Stats, Version,
 };
 
 use super::Device;
+use super::catch::EventStream;
 
 /// An async view over a [`Device`] — the same `Link` core, with `async` queries.
 #[derive(Clone, Debug)]
@@ -97,6 +98,12 @@ impl AsyncDevice {
         self.dev().unlock(target, direction)
     }
 
+    /// Subscribe to the physical-input event stream. Instant; the returned [`EventStream`] offers
+    /// `recv_async`. See [`Device::catch_events`].
+    pub fn catch_events(&self, mask: CatchMask) -> Result<EventStream> {
+        self.dev().catch_events(mask)
+    }
+
     /// Query the box version, awaiting the correlated `RESP` with the default timeout.
     pub async fn query_version(&self) -> Result<Version> {
         let payload = self
@@ -177,6 +184,18 @@ impl AsyncDevice {
             .await?;
         match parse_resp(&payload) {
             Some(Resp::Locks(l)) => Ok(l),
+            _ => Err(Error::NoReply),
+        }
+    }
+
+    /// Query the catch subscription mask + box-side dropped count (§4.9), awaiting the correlated `RESP`.
+    pub async fn query_catch(&self) -> Result<CatchState> {
+        let payload = self
+            .link
+            .query_async(Q_CATCH, self.link.query_timeout_default())
+            .await?;
+        match parse_resp(&payload) {
+            Some(Resp::Catch(c)) => Ok(c),
             _ => Err(Error::NoReply),
         }
     }

@@ -6,7 +6,7 @@ use parking_lot::Mutex;
 
 use crate::error::{Error, Result};
 use crate::protocol::FrameType;
-use crate::protocol::command::button_payload;
+use crate::protocol::command::{button_payload, catch_payload};
 
 use super::counters::Counters;
 use super::reconcile::DesiredState;
@@ -47,7 +47,10 @@ fn reconnect(ctx: &ReconnectCtx) -> Result<()> {
 }
 
 fn reapply_held(ctx: &ReconnectCtx) -> Result<()> {
-    let held: Vec<_> = ctx.desired.lock().held().collect();
+    let (held, catch) = {
+        let d = ctx.desired.lock();
+        (d.held().collect::<Vec<_>>(), d.catch())
+    };
     for (button, action) in held {
         let seq = ctx.seq.fetch_add(1, Ordering::Relaxed);
         write_frame(
@@ -57,6 +60,20 @@ fn reapply_held(ctx: &ReconnectCtx) -> Result<()> {
             seq,
             FrameType::Button,
             &button_payload(button.as_id(), action.as_u8()),
+        )?;
+    }
+    // Re-assert the catch subscription: a control-link drop longer than the firmware's ~1 s silence
+    // window makes the box silence-clear the mask, so without this the stream would stay dead after a
+    // long blip. Idempotent if the drop was short (the mask was never cleared).
+    if !catch.is_empty() {
+        let seq = ctx.seq.fetch_add(1, Ordering::Relaxed);
+        write_frame(
+            &ctx.transport,
+            &ctx.write_lock,
+            &ctx.counters,
+            seq,
+            FrameType::Catch,
+            &catch_payload(catch.bits()),
         )?;
     }
     Ok(())

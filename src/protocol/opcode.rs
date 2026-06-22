@@ -23,6 +23,8 @@ pub const Q_RATE: u8 = 4;
 pub const Q_STATS: u8 = 5;
 /// Active lock bitmask (§4.8, v1.5.0).
 pub const Q_LOCKS: u8 = 6;
+/// Active catch subscription mask + dropped-event count (§4.9, v1.6.0).
+pub const Q_CATCH: u8 = 7;
 
 pub const BTN_LEFT: u8 = 0;
 pub const BTN_RIGHT: u8 = 1;
@@ -50,6 +52,19 @@ pub const H_INJECT_ON: u8 = 0x08;
 pub const H_RATE_CONFIDENT: u8 = 0x10;
 /// At least one lock is active (§4.2, v1.5.0).
 pub const H_LOCK_ON: u8 = 0x20;
+/// A catch subscription is active — physical-input events are streaming (§4.2, v1.6.0).
+pub const H_CATCH_ON: u8 = 0x40;
+
+/// `CATCH` mask: stream reports whose X or Y delta is non-zero (§3.9).
+pub const CATCH_MOTION: u8 = 0x01;
+/// `CATCH` mask: stream reports whose wheel delta is non-zero (§3.9).
+pub const CATCH_WHEEL: u8 = 0x02;
+/// `CATCH` mask: stream reports with a button edge (§3.9).
+pub const CATCH_BUTTONS: u8 = 0x04;
+/// `CATCH` mask: every class (§3.9).
+pub const CATCH_ALL: u8 = 0x07;
+/// Valid `CATCH` mask bits; the firmware ignores any others (§3.9).
+pub const CATCH_MASK: u8 = 0x07;
 
 /// `MOUSE_INFO` flag: the clone serves a serial string (§4.3).
 pub const MI_HAS_SERIAL: u8 = 0x01;
@@ -98,6 +113,10 @@ pub enum FrameType {
     Led = 0x09,
     /// `LOCK` — lock/unlock an axis or button edge (PC→box).
     Lock = 0x0A,
+    /// `CATCH` — subscribe to the physical-input event stream (PC→box).
+    Catch = 0x0B,
+    /// `EVENT` — one unsolicited physical-input snapshot; `SEQ` is a rolling counter (box→PC).
+    Event = 0x0C,
 }
 
 /// Error returned when a byte does not name a known [`FrameType`].
@@ -127,6 +146,8 @@ impl TryFrom<u8> for FrameType {
             0x08 => FrameType::Log,
             0x09 => FrameType::Led,
             0x0A => FrameType::Lock,
+            0x0B => FrameType::Catch,
+            0x0C => FrameType::Event,
             other => return Err(UnknownFrameType(other)),
         })
     }

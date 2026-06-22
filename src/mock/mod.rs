@@ -9,7 +9,9 @@ use crate::protocol::opcode::{
 };
 use crate::protocol::{DecodedFrame, FrameType, encode};
 use crate::transport::mock::MockTransport;
-use crate::types::{Caps, Health, Locks, LogLevel, MouseInfo, Rate, Stats, Version};
+use crate::types::{
+    Caps, CatchState, Health, InputReport, Locks, LogLevel, MouseInfo, Rate, Stats, Version,
+};
 
 #[derive(Debug)]
 struct State {
@@ -20,6 +22,7 @@ struct State {
     rate: Rate,
     stats: Stats,
     locks: Locks,
+    catch: CatchState,
     recorded: Vec<DecodedFrame>,
     respond: bool,
 }
@@ -40,6 +43,7 @@ impl Default for State {
             stats: Stats::from_payload(&[5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
                 .unwrap(),
             locks: Locks::from_payload(&[6, 0, 0]).unwrap(),
+            catch: CatchState::from_payload(&[7, 0, 0, 0, 0, 0]).unwrap(),
             recorded: Vec::new(),
             respond: true,
         }
@@ -108,6 +112,21 @@ fn locks_payload(l: Locks) -> Vec<u8> {
     p
 }
 
+fn catch_resp_payload(c: CatchState) -> Vec<u8> {
+    let mut p = vec![7u8, c.mask.bits()];
+    p.extend_from_slice(&c.dropped.to_le_bytes());
+    p
+}
+
+fn event_payload(r: InputReport) -> Vec<u8> {
+    let mut p = Vec::with_capacity(7);
+    p.push(r.buttons);
+    p.extend_from_slice(&r.dx.to_le_bytes());
+    p.extend_from_slice(&r.dy.to_le_bytes());
+    p.extend_from_slice(&r.wheel.to_le_bytes());
+    p
+}
+
 /// A scriptable fake medius box for hardware-free tests (feature = `mock`).
 #[derive(Clone, Debug)]
 pub struct MockBox {
@@ -159,6 +178,8 @@ impl MockBox {
                         Some(5) => encode(FrameType::Resp, seq, &stats_payload(st.stats))
                             .expect("resp fits"),
                         Some(6) => encode(FrameType::Resp, seq, &locks_payload(st.locks))
+                            .expect("resp fits"),
+                        Some(7) => encode(FrameType::Resp, seq, &catch_resp_payload(st.catch))
                             .expect("resp fits"),
                         _ => Vec::new(),
                     }
@@ -219,6 +240,13 @@ impl MockBox {
         self
     }
 
+    /// Set the [`CatchState`] answered to `QUERY(CATCH)` (builder style).
+    #[must_use]
+    pub fn with_catch_state(self, catch: CatchState) -> Self {
+        self.state.lock().catch = catch;
+        self
+    }
+
     /// Update the configured [`Version`] in place (e.g. mid-test).
     pub fn set_version(&self, version: Version) {
         self.state.lock().version = version;
@@ -247,6 +275,14 @@ impl MockBox {
         payload.push(level.as_u8());
         payload.extend_from_slice(text.as_bytes());
         self.transport.push_frame(FrameType::Log, 0, &payload);
+    }
+
+    /// Push an `EVENT` (physical-input snapshot) as if the box emitted it; it surfaces on a subscribed
+    /// [`EventStream`](crate::EventStream). `seq` is the rolling event counter the host sees as the
+    /// frame `SEQ`.
+    pub fn push_event(&self, seq: u8, report: InputReport) {
+        self.transport
+            .push_frame(FrameType::Event, seq, &event_payload(report));
     }
 
     /// A snapshot copy of every command the host has sent so far, decoded, in order.

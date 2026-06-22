@@ -2,6 +2,7 @@ pub(crate) mod admin;
 #[cfg(feature = "async")]
 pub(crate) mod asyncv;
 pub(crate) mod buttons;
+pub(crate) mod catch;
 pub(crate) mod connect;
 pub(crate) mod led;
 pub(crate) mod lock;

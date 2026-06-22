@@ -1,3 +1,4 @@
+pub(crate) mod catch;
 pub(crate) mod correlation;
 pub(crate) mod counters;
 pub(crate) mod keepalive;
@@ -20,6 +21,7 @@ use crate::protocol::{FrameType, encode};
 use crate::transport::Transport;
 use crate::types::{CountersSnapshot, LogLine};
 
+use catch::CatchReg;
 use correlation::PendingEntry;
 use counters::Counters;
 use reconcile::DesiredState;
@@ -39,6 +41,12 @@ pub(crate) struct LinkInner {
     pending: Arc<Mutex<HashMap<u8, PendingEntry>>>,
     logs_rx: flume::Receiver<LogLine>,
     desired: Arc<Mutex<DesiredState>>,
+    events: Arc<Mutex<CatchReg>>,
+    catch_gen: Arc<AtomicU64>,
+    // Serializes a whole subscribe/unsubscribe sequence (registry mutate -> union recompute ->
+    // desired update -> CATCH send) so concurrent callers can't commit their masks out of order and
+    // leave the box streaming a mask that disagrees with the registry. Not taken on the reader path.
+    catch_lock: Arc<Mutex<()>>,
     counters: Arc<Counters>,
     stop: Arc<AtomicBool>,
     reconnect_lock: Arc<Mutex<()>>,
@@ -91,6 +99,9 @@ impl Link {
         let counters = Arc::new(Counters::default());
         let stop = Arc::new(AtomicBool::new(false));
         let desired = Arc::new(Mutex::new(DesiredState::default()));
+        let events = Arc::new(Mutex::new(CatchReg::default()));
+        let catch_gen = Arc::new(AtomicU64::new(0));
+        let catch_lock = Arc::new(Mutex::new(()));
         let write_lock = Arc::new(Mutex::new(()));
         let seq = Arc::new(AtomicU8::new(0));
         let query_gen = Arc::new(AtomicU64::new(0));
@@ -102,6 +113,7 @@ impl Link {
             Arc::clone(&pending),
             logs_tx.clone(),
             logs_rx.clone(),
+            Arc::clone(&events),
             Arc::clone(&counters),
             Arc::clone(&stop),
             reconnect::ReconnectCtx {
@@ -133,6 +145,9 @@ impl Link {
                 pending,
                 logs_rx,
                 desired,
+                events,
+                catch_gen,
+                catch_lock,
                 counters,
                 stop,
                 reconnect_lock,
