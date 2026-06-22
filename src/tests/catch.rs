@@ -172,10 +172,20 @@ fn catch_buffer_drops_oldest_on_overflow() {
     while stream.dropped() < want_dropped && Instant::now() < deadline {
         std::thread::sleep(Duration::from_millis(10));
     }
-    assert_eq!(stream.dropped(), want_dropped, "exactly the overflow count was dropped");
+    assert_eq!(
+        stream.dropped(),
+        want_dropped,
+        "exactly the overflow count was dropped"
+    );
     // The freshest survive: the oldest readable event is the first one NOT evicted, not dx=0.
-    let first = stream.recv_timeout(Duration::from_secs(1)).expect("an event survived");
-    assert_eq!(first.dx, (TOTAL - KEPT) as i16, "the oldest events were dropped, the newest kept");
+    let first = stream
+        .recv_timeout(Duration::from_secs(1))
+        .expect("an event survived");
+    assert_eq!(
+        first.dx,
+        (TOTAL - KEPT) as i16,
+        "the oldest events were dropped, the newest kept"
+    );
     assert!(!first.is_pressed(Button::Left));
 }
 
