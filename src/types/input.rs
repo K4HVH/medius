@@ -30,7 +30,7 @@ impl CatchMask {
         CatchMask(CATCH_ALL)
     }
 
-    /// Build a mask from raw bits, dropping any bits outside [`CATCH_MASK`](crate::protocol).
+    /// Build a mask from raw bits, dropping any bits outside the valid set (motion / wheel / buttons).
     pub const fn from_bits_truncate(bits: u8) -> CatchMask {
         CatchMask(bits & CATCH_MASK)
     }
