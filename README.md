@@ -103,12 +103,13 @@ for _ in 0..1000 {
 
 ```rust
 let v = device.query_version()?;  // proto_ver + fw_major / fw_minor / fw_patch
-let h = device.query_health()?;   // link_up, mouse_attached, clone_configured, injection_active, rate_confident
+let h = device.query_health()?;   // link_up, mouse_attached, clone_configured, injection_active, rate_confident, lock_on
 
 let info = device.query_mouse_info()?;  // cloned mouse identity (vid:pid, bcd, serial/BOS flags)
 let caps = device.query_caps()?;        // semantic caps; caps.is_composite(), caps.n_buttons
 let rate = device.query_rate()?;        // live native report rate; rate.native_hz()
 let stats = device.query_stats()?;      // delivery counters; stats.tx_drops / stats.tx_wedges
+let locks = device.query_locks()?;      // active input locks; locks.is_locked(target, direction)
 ```
 
 ### Box management

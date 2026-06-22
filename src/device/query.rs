@@ -1,7 +1,9 @@
 use crate::error::{Error, Result};
-use crate::protocol::opcode::{Q_CAPS, Q_HEALTH, Q_MOUSE_INFO, Q_RATE, Q_STATS, Q_VERSION};
+use crate::protocol::opcode::{
+    Q_CAPS, Q_HEALTH, Q_LOCKS, Q_MOUSE_INFO, Q_RATE, Q_STATS, Q_VERSION,
+};
 use crate::protocol::{Resp, parse_resp};
-use crate::types::{Caps, Health, MouseInfo, Rate, Stats, Version};
+use crate::types::{Caps, Health, Locks, MouseInfo, Rate, Stats, Version};
 
 use super::Device;
 
@@ -56,6 +58,15 @@ impl Device {
         let payload = self.link.query(Q_STATS)?;
         match parse_resp(&payload) {
             Some(Resp::Stats(s)) => Ok(s),
+            _ => Err(Error::NoReply),
+        }
+    }
+
+    /// Query the active lock bitmask (§4.8).
+    pub fn query_locks(&self) -> Result<Locks> {
+        let payload = self.link.query(Q_LOCKS)?;
+        match parse_resp(&payload) {
+            Some(Resp::Locks(l)) => Ok(l),
             _ => Err(Error::NoReply),
         }
     }

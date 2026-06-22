@@ -21,6 +21,8 @@ pub const Q_CAPS: u8 = 3;
 pub const Q_RATE: u8 = 4;
 /// Delivery/telemetry counters (§4.6).
 pub const Q_STATS: u8 = 5;
+/// Active lock bitmask (§4.8, v1.5.0).
+pub const Q_LOCKS: u8 = 6;
 
 pub const BTN_LEFT: u8 = 0;
 pub const BTN_RIGHT: u8 = 1;
@@ -46,6 +48,8 @@ pub const H_CLONE_CFG: u8 = 0x04;
 pub const H_INJECT_ON: u8 = 0x08;
 /// The native-rate estimator window is full, so the `RATE` value is trustworthy (§4.2, v1.4.0).
 pub const H_RATE_CONFIDENT: u8 = 0x10;
+/// At least one lock is active (§4.2, v1.5.0).
+pub const H_LOCK_ON: u8 = 0x20;
 
 /// `MOUSE_INFO` flag: the clone serves a serial string (§4.3).
 pub const MI_HAS_SERIAL: u8 = 0x01;
@@ -92,6 +96,8 @@ pub enum FrameType {
     Log = 0x08,
     /// `LED` — status LED override (PC→box).
     Led = 0x09,
+    /// `LOCK` — lock/unlock an axis or button edge (PC→box).
+    Lock = 0x0A,
 }
 
 /// Error returned when a byte does not name a known [`FrameType`].
@@ -120,6 +126,7 @@ impl TryFrom<u8> for FrameType {
             0x07 => FrameType::RebootDl,
             0x08 => FrameType::Log,
             0x09 => FrameType::Led,
+            0x0A => FrameType::Lock,
             other => return Err(UnknownFrameType(other)),
         })
     }

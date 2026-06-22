@@ -9,7 +9,7 @@ use crate::protocol::opcode::{
 };
 use crate::protocol::{DecodedFrame, FrameType, encode};
 use crate::transport::mock::MockTransport;
-use crate::types::{Caps, Health, LogLevel, MouseInfo, Rate, Stats, Version};
+use crate::types::{Caps, Health, Locks, LogLevel, MouseInfo, Rate, Stats, Version};
 
 #[derive(Debug)]
 struct State {
@@ -19,6 +19,7 @@ struct State {
     caps: Caps,
     rate: Rate,
     stats: Stats,
+    locks: Locks,
     recorded: Vec<DecodedFrame>,
     respond: bool,
 }
@@ -38,6 +39,7 @@ impl Default for State {
             rate: Rate::from_payload(&[4, 0, 0, 0, 0, 0]).unwrap(),
             stats: Stats::from_payload(&[5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
                 .unwrap(),
+            locks: Locks::from_payload(&[6, 0, 0]).unwrap(),
             recorded: Vec::new(),
             respond: true,
         }
@@ -100,6 +102,12 @@ fn stats_payload(s: Stats) -> Vec<u8> {
     p
 }
 
+fn locks_payload(l: Locks) -> Vec<u8> {
+    let mut p = vec![6u8];
+    p.extend_from_slice(&l.mask().to_le_bytes());
+    p
+}
+
 /// A scriptable fake medius box for hardware-free tests (feature = `mock`).
 #[derive(Clone, Debug)]
 pub struct MockBox {
@@ -150,6 +158,8 @@ impl MockBox {
                         }
                         Some(5) => encode(FrameType::Resp, seq, &stats_payload(st.stats))
                             .expect("resp fits"),
+                        Some(6) => encode(FrameType::Resp, seq, &locks_payload(st.locks))
+                            .expect("resp fits"),
                         _ => Vec::new(),
                     }
                 } else {
@@ -199,6 +209,13 @@ impl MockBox {
     #[must_use]
     pub fn with_stats(self, stats: Stats) -> Self {
         self.state.lock().stats = stats;
+        self
+    }
+
+    /// Set the [`Locks`] answered to `QUERY(LOCKS)` (builder style).
+    #[must_use]
+    pub fn with_locks(self, locks: Locks) -> Self {
+        self.state.lock().locks = locks;
         self
     }
 

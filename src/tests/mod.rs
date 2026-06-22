@@ -4,6 +4,7 @@ mod concurrency;
 mod device_info;
 mod keepalive;
 mod led;
+mod lock;
 mod robustness;
 
 mod correlation;
