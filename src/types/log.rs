@@ -2,7 +2,7 @@
 
 use crate::protocol::opcode::{LOG_DEBUG, LOG_ERROR, LOG_INFO, LOG_VERBOSE, LOG_WARN};
 
-/// A device `LOG` frame severity level (§4.3).
+/// A device `LOG` frame severity level (§4.7).
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum LogLevel {
@@ -38,7 +38,7 @@ impl LogLevel {
     }
 }
 
-/// A decoded `LOG` frame (§4.3): a severity level and its UTF-8 text.
+/// A decoded `LOG` frame (§4.7): a severity level and its UTF-8 text.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct LogLine {
     pub level: LogLevel,
