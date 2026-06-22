@@ -9,6 +9,7 @@ use parking_lot::Mutex;
 use crate::protocol::{DecodedFrame, FrameDecoder, FrameType, parse_log};
 use crate::types::LogLine;
 
+use super::catch::{self, CatchReg};
 use super::correlation::{self, PendingEntry};
 use super::counters::Counters;
 use super::logs;
@@ -23,6 +24,7 @@ pub(crate) fn spawn_reader(
     pending: Arc<Mutex<HashMap<u8, PendingEntry>>>,
     logs_tx: flume::Sender<LogLine>,
     logs_rx: flume::Receiver<LogLine>,
+    events: Arc<Mutex<CatchReg>>,
     counters: Arc<Counters>,
     stop: Arc<AtomicBool>,
     reconnect_ctx: ReconnectCtx,
@@ -35,6 +37,7 @@ pub(crate) fn spawn_reader(
                 &pending,
                 &logs_tx,
                 &logs_rx,
+                &events,
                 &counters,
                 &stop,
                 &reconnect_ctx,
@@ -49,6 +52,7 @@ fn reader_loop(
     pending: &Mutex<HashMap<u8, PendingEntry>>,
     logs_tx: &flume::Sender<LogLine>,
     logs_rx: &flume::Receiver<LogLine>,
+    events: &Mutex<CatchReg>,
     counters: &Counters,
     stop: &AtomicBool,
     reconnect_ctx: &ReconnectCtx,
@@ -73,7 +77,7 @@ fn reader_loop(
             }
             Ok(n) => {
                 decoder.feed(&buf[..n], |frame| {
-                    route_frame(frame, pending, logs_tx, logs_rx, counters);
+                    route_frame(frame, pending, logs_tx, logs_rx, events, counters);
                 });
                 counters.set_crc_drops(decoder.crc_error_count());
             }
@@ -90,6 +94,7 @@ fn route_frame(
     pending: &Mutex<HashMap<u8, PendingEntry>>,
     logs_tx: &flume::Sender<LogLine>,
     logs_rx: &flume::Receiver<LogLine>,
+    events: &Mutex<CatchReg>,
     counters: &Counters,
 ) {
     counters.inc_rx();
@@ -109,6 +114,7 @@ fn route_frame(
             crate::trace::emit_device_log(&line);
             logs::push(logs_tx, logs_rx, line);
         }
+        FrameType::Event => catch::deliver_event(events, &frame.payload),
         _ => {}
     }
 }

@@ -1,9 +1,9 @@
 use crate::error::{Error, Result};
 use crate::protocol::opcode::{
-    Q_CAPS, Q_HEALTH, Q_LOCKS, Q_MOUSE_INFO, Q_RATE, Q_STATS, Q_VERSION,
+    Q_CAPS, Q_CATCH, Q_HEALTH, Q_LOCKS, Q_MOUSE_INFO, Q_RATE, Q_STATS, Q_VERSION,
 };
 use crate::protocol::{Resp, parse_resp};
-use crate::types::{Caps, Health, Locks, MouseInfo, Rate, Stats, Version};
+use crate::types::{Caps, CatchState, Health, Locks, MouseInfo, Rate, Stats, Version};
 
 use super::Device;
 
@@ -67,6 +67,15 @@ impl Device {
         let payload = self.link.query(Q_LOCKS)?;
         match parse_resp(&payload) {
             Some(Resp::Locks(l)) => Ok(l),
+            _ => Err(Error::NoReply),
+        }
+    }
+
+    /// Query the active catch subscription mask and box-side dropped-event count (§4.9).
+    pub fn query_catch(&self) -> Result<CatchState> {
+        let payload = self.link.query(Q_CATCH)?;
+        match parse_resp(&payload) {
+            Some(Resp::Catch(c)) => Ok(c),
             _ => Err(Error::NoReply),
         }
     }

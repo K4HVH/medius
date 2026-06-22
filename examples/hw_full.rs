@@ -19,7 +19,8 @@ mod linux {
     use std::time::{Duration, Instant};
 
     use medius::{
-        Button, ButtonAction, Device, LedMode, LedTarget, LockDirection, LockTarget, RebootTarget,
+        Button, ButtonAction, CatchMask, Device, LedMode, LedTarget, LockDirection, LockTarget,
+        RebootTarget,
     };
 
     const EVIOCGRAB: libc::c_ulong = 0x4004_4590;
@@ -381,6 +382,40 @@ mod linux {
                 after_reset == 0 && before == 0x000C && after_silence == 0,
                 format!(
                     "reset->0x{after_reset:04X}; y-lock 0x{before:04X} after 1.4s silence 0x{after_silence:04X}"
+                ),
+            );
+        }
+
+        {
+            // CATCH: subscribe and confirm the box reports it (CATCH_ON + the mask via query_catch),
+            // no events while the mouse is idle, and that a RESET clears catch like injection AND
+            // disconnects the host stream (recv -> Err, not a silent hang). Live physical-input delivery
+            // needs a hand on the mouse — watch it with `medius.py watch`.
+            let dev = device.as_ref().unwrap();
+            let stream = dev.catch_events(CatchMask::all());
+            std::thread::sleep(Duration::from_millis(100));
+            let on = dev.query_health().map(|h| h.catch_on).unwrap_or(false);
+            let mask = dev
+                .query_catch()
+                .map(|c| c.mask)
+                .unwrap_or(CatchMask::empty());
+            let idle_quiet = stream
+                .as_ref()
+                .map(|s| s.try_recv().is_none())
+                .unwrap_or(false);
+            let _ = dev.reset(); // clears catch like injection + disconnects the host stream
+            std::thread::sleep(Duration::from_millis(100));
+            let off = dev.query_health().map(|h| !h.catch_on).unwrap_or(false);
+            let cleared = dev
+                .query_catch()
+                .map(|c| c.mask == CatchMask::empty())
+                .unwrap_or(false);
+            let stream_ended = stream.as_ref().map(|s| s.recv().is_err()).unwrap_or(false);
+            check(
+                "catch: subscribe + reset",
+                on && mask == CatchMask::all() && idle_quiet && off && cleared && stream_ended,
+                format!(
+                    "CATCH_ON={on} mask={mask:?} idle_quiet={idle_quiet}; reset->off={off} cleared={cleared} stream_ended={stream_ended}"
                 ),
             );
         }

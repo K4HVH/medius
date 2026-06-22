@@ -29,3 +29,8 @@ pub fn led_payload(target: u8, mode: u8, level: u8) -> [u8; 3] {
 pub fn lock_payload(target: u8, direction: u8, state: u8) -> [u8; 3] {
     [target, direction, state]
 }
+
+/// `CATCH` (§3.9): `[mask u8]` — subscribe to physical-input event classes (0 = unsubscribe).
+pub fn catch_payload(mask: u8) -> [u8; 1] {
+    [mask]
+}
