@@ -1,5 +1,6 @@
 //! LED command (§3.7): payload bytes, enum wire values, and that `Device::led` sends a `LED` frame.
 
+#[cfg(feature = "mock")]
 use crate::protocol::FrameType;
 use crate::protocol::command::led_payload;
 use crate::types::{LedMode, LedTarget};
