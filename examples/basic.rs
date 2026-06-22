@@ -12,12 +12,14 @@ fn main() -> medius::Result<()> {
     let health = device.query_health()?;
     println!("connected: {version}");
     println!(
-        "health: link_up={} mouse_attached={} clone_configured={} injection_active={} rate_confident={}",
+        "health: link_up={} mouse_attached={} clone_configured={} injection_active={} rate_confident={} lock_on={} catch_on={}",
         health.link_up,
         health.mouse_attached,
         health.clone_configured,
         health.injection_active,
         health.rate_confident,
+        health.lock_on,
+        health.catch_on,
     );
 
     let info = device.query_mouse_info()?;
