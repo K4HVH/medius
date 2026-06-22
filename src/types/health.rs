@@ -1,6 +1,8 @@
 //! Decoded `RESP(HEALTH)` flags.
 
-use crate::protocol::opcode::{H_CLONE_CFG, H_INJECT_ON, H_LINK_UP, H_MOUSE_ATT, H_RATE_CONFIDENT};
+use crate::protocol::opcode::{
+    H_CLONE_CFG, H_INJECT_ON, H_LINK_UP, H_LOCK_ON, H_MOUSE_ATT, H_RATE_CONFIDENT,
+};
 
 /// The decoded `RESP(HEALTH)` flags byte.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -15,6 +17,8 @@ pub struct Health {
     pub injection_active: bool,
     /// The native-rate estimator window is full, so the [`Rate`](crate::Rate) value is trustworthy.
     pub rate_confident: bool,
+    /// At least one lock is active.
+    pub lock_on: bool,
 }
 
 impl Health {
@@ -26,6 +30,7 @@ impl Health {
             clone_configured: flags & H_CLONE_CFG != 0,
             injection_active: flags & H_INJECT_ON != 0,
             rate_confident: flags & H_RATE_CONFIDENT != 0,
+            lock_on: flags & H_LOCK_ON != 0,
         }
     }
 
@@ -46,6 +51,9 @@ impl Health {
         }
         if self.rate_confident {
             flags |= H_RATE_CONFIDENT;
+        }
+        if self.lock_on {
+            flags |= H_LOCK_ON;
         }
         flags
     }

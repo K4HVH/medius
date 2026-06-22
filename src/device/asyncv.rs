@@ -1,10 +1,12 @@
 use crate::error::{Error, Result};
 use crate::link::Link;
-use crate::protocol::opcode::{Q_CAPS, Q_HEALTH, Q_MOUSE_INFO, Q_RATE, Q_STATS, Q_VERSION};
+use crate::protocol::opcode::{
+    Q_CAPS, Q_HEALTH, Q_LOCKS, Q_MOUSE_INFO, Q_RATE, Q_STATS, Q_VERSION,
+};
 use crate::protocol::{Resp, parse_resp};
 use crate::types::{
-    Button, ButtonAction, Caps, Health, LedMode, LedTarget, MouseInfo, Rate, RebootTarget, Stats,
-    Version,
+    Button, ButtonAction, Caps, Health, LedMode, LedTarget, LockDirection, LockTarget, Locks,
+    MouseInfo, Rate, RebootTarget, Stats, Version,
 };
 
 use super::Device;
@@ -85,6 +87,16 @@ impl AsyncDevice {
         self.dev().led(target, mode, level)
     }
 
+    /// `LOCK` — lock an axis or button edge. Instant; see [`Device::lock`].
+    pub fn lock(&self, target: LockTarget, direction: LockDirection) -> Result<()> {
+        self.dev().lock(target, direction)
+    }
+
+    /// `LOCK` — release a locked axis or button edge. Instant; see [`Device::unlock`].
+    pub fn unlock(&self, target: LockTarget, direction: LockDirection) -> Result<()> {
+        self.dev().unlock(target, direction)
+    }
+
     /// Query the box version, awaiting the correlated `RESP` with the default timeout.
     pub async fn query_version(&self) -> Result<Version> {
         let payload = self
@@ -153,6 +165,18 @@ impl AsyncDevice {
             .await?;
         match parse_resp(&payload) {
             Some(Resp::Stats(s)) => Ok(s),
+            _ => Err(Error::NoReply),
+        }
+    }
+
+    /// Query the active lock bitmask (§4.8), awaiting the correlated `RESP`.
+    pub async fn query_locks(&self) -> Result<Locks> {
+        let payload = self
+            .link
+            .query_async(Q_LOCKS, self.link.query_timeout_default())
+            .await?;
+        match parse_resp(&payload) {
+            Some(Resp::Locks(l)) => Ok(l),
             _ => Err(Error::NoReply),
         }
     }

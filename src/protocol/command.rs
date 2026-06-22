@@ -24,3 +24,8 @@ pub fn query_payload(what: u8) -> [u8; 1] {
 pub fn led_payload(target: u8, mode: u8, level: u8) -> [u8; 3] {
     [target, mode, level]
 }
+
+/// `LOCK` (§3.8): `[target u8][direction u8][state u8]` — state 0 unlock / 1 lock.
+pub fn lock_payload(target: u8, direction: u8, state: u8) -> [u8; 3] {
+    [target, direction, state]
+}
