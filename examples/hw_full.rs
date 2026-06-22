@@ -18,7 +18,9 @@ mod linux {
     use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
     use std::time::{Duration, Instant};
 
-    use medius::{Button, ButtonAction, Device, RebootTarget};
+    use medius::{
+        Button, ButtonAction, Device, LedMode, LedTarget, LockDirection, LockTarget, RebootTarget,
+    };
 
     const EVIOCGRAB: libc::c_ulong = 0x4004_4590;
     const EV_KEY: u16 = 0x01;
@@ -271,6 +273,114 @@ mod linux {
                 caps_ok && info_ok && rate_ok && stats_ok,
                 format!(
                     "mouse={id} caps={caps:?}  rate={hz}Hz confident={confident}  tx_drops={drops} tx_wedges={wedges}"
+                ),
+            );
+        }
+
+        {
+            // LED override is not visible on the clone, so this is a smoke check: every mode is
+            // accepted, the box stays healthy, and the LED is handed back to its status display.
+            let dev = device.as_ref().unwrap();
+            let mut accepted = true;
+            for (mode, level) in [
+                (LedMode::Off, 0u8),
+                (LedMode::Solid, 200),
+                (LedMode::Blink, 200),
+                (LedMode::Auto, 0),
+            ] {
+                accepted &= dev.led(LedTarget::Both, mode, level).is_ok();
+                std::thread::sleep(Duration::from_millis(60));
+            }
+            let healthy = dev.query_health().map(|h| h.link_up).unwrap_or(false);
+            check(
+                "led override",
+                accepted && healthy,
+                format!("off/solid/blink/auto accepted={accepted}, healthy after={healthy}"),
+            );
+        }
+
+        {
+            // LOCK: a locked axis still moves under injection (the lock suppresses the physical
+            // mouse only). The 3 ms inject cadence doubles as the keepalive that holds the lock.
+            let dev = device.as_ref().unwrap();
+            let _ = dev.reset();
+            let _ = dev.lock(LockTarget::X, LockDirection::Both);
+            reset_motion(&acc);
+            for _ in 0..50 {
+                let _ = dev.move_rel(40, 0);
+                std::thread::sleep(Duration::from_millis(3));
+            }
+            std::thread::sleep(Duration::from_millis(400));
+            let x = acc.rel_x.load(Ordering::Relaxed);
+            check(
+                "lock: inject passes",
+                x == 2000,
+                format!("X locked, injected +2000 still emitted X={x}"),
+            );
+            let _ = dev.reset();
+        }
+
+        {
+            // LOCK: the LOCKS query reflects the set, is_locked() reads individual edges, and the
+            // mask matches the wire layout (X+ = bit0, Left press = bit6 => 0x0041). LOCK_ON is set.
+            let dev = device.as_ref().unwrap();
+            let _ = dev.reset();
+            let _ = dev.lock(LockTarget::X, LockDirection::Positive);
+            let _ = dev.lock(LockTarget::Button(Button::Left), LockDirection::Positive);
+            let locks = dev.query_locks();
+            let lock_on = dev.query_health().map(|h| h.lock_on).unwrap_or(false);
+            let mask = locks.as_ref().map(|l| l.mask()).unwrap_or(0);
+            let q_ok = locks
+                .as_ref()
+                .map(|l| {
+                    l.is_locked(LockTarget::X, LockDirection::Positive)
+                        && !l.is_locked(LockTarget::X, LockDirection::Negative)
+                        && l.is_locked(LockTarget::Button(Button::Left), LockDirection::Positive)
+                        && l.mask() == 0x0041
+                })
+                .unwrap_or(false);
+            check(
+                "lock: query + health",
+                q_ok && lock_on,
+                format!("mask=0x{mask:04X} lock_on={lock_on}"),
+            );
+            let _ = dev.reset();
+        }
+
+        {
+            // LOCK: injection overrides a hand-locked button (block-press, but a forced press wins).
+            let dev = device.as_ref().unwrap();
+            let _ = dev.reset();
+            let _ = dev.lock(LockTarget::Button(Button::Left), LockDirection::Positive);
+            let _ = dev.press(Button::Left);
+            std::thread::sleep(Duration::from_millis(200));
+            let down = btn_val(&acc, Button::Left);
+            check(
+                "lock: inject overrides",
+                down == 1,
+                format!("Left press-locked, injected press -> BTN_LEFT={down}"),
+            );
+            let _ = dev.reset();
+            std::thread::sleep(Duration::from_millis(150));
+        }
+
+        {
+            // LOCK safety: RESET clears every lock, and a lock-only state self-clears after ~1 s of
+            // control-PC silence so a locked mouse is never stranded.
+            let dev = device.as_ref().unwrap();
+            let _ = dev.lock(LockTarget::Y, LockDirection::Both);
+            let _ = dev.reset();
+            let after_reset = dev.query_locks().map(|l| l.mask()).unwrap_or(0xFFFF);
+
+            let _ = dev.lock(LockTarget::Y, LockDirection::Both);
+            let before = dev.query_locks().map(|l| l.mask()).unwrap_or(0);
+            std::thread::sleep(Duration::from_millis(1400)); // silent: no frames sent
+            let after_silence = dev.query_locks().map(|l| l.mask()).unwrap_or(0xFFFF);
+            check(
+                "lock: safety clear",
+                after_reset == 0 && before == 0x000C && after_silence == 0,
+                format!(
+                    "reset->0x{after_reset:04X}; y-lock 0x{before:04X} after 1.4s silence 0x{after_silence:04X}"
                 ),
             );
         }
