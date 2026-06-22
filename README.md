@@ -58,7 +58,7 @@ The base crate is the lean sync core. Optional features:
 | `tracing` | per-frame TX/RX `tracing` instrumentation |
 
 ```toml
-medius = { version = "1.4", features = ["async", "mock"] }
+medius = { version = "1.6", features = ["async", "mock"] }
 ```
 
 ## API
@@ -103,14 +103,32 @@ for _ in 0..1000 {
 
 ```rust
 let v = device.query_version()?;  // proto_ver + fw_major / fw_minor / fw_patch
-let h = device.query_health()?;   // link_up, mouse_attached, clone_configured, injection_active, rate_confident, lock_on
+let h = device.query_health()?;   // link_up, mouse_attached, clone_configured, injection_active, rate_confident, lock_on, catch_on
 
 let info = device.query_mouse_info()?;  // cloned mouse identity (vid:pid, bcd, serial/BOS flags)
 let caps = device.query_caps()?;        // semantic caps; caps.is_composite(), caps.n_buttons
 let rate = device.query_rate()?;        // live native report rate; rate.native_hz()
 let stats = device.query_stats()?;      // delivery counters; stats.tx_drops / stats.tx_wedges
 let locks = device.query_locks()?;      // active input locks; locks.is_locked(target, direction)
+let catch = device.query_catch()?;      // active catch mask + box-side dropped count
 ```
+
+### Catch (physical input events)
+
+Subscribe to the user's real mouse input — buttons, wheel, and X/Y — as it happens. The box reports each physical report *before* any lock suppression or injection, so you can intercept an input (lock it) and rebind it (catch it) in one loop. Dropping the stream unsubscribes.
+
+```rust
+use medius::{CatchMask, Button};
+
+let events = device.catch_events(CatchMask::all())?;  // or MOTION | WHEEL | BUTTONS
+while let Ok(report) = events.recv() {
+    if report.is_pressed(Button::Side1) {
+        // the side button was pressed; rebind it…
+    }
+}
+```
+
+The mask picks which classes trigger an event; each event carries the full snapshot (`buttons`, `dx`, `dy`, `wheel`), so diff `buttons` for edges. The stream is bounded and lossy under back-pressure (`events.dropped()`), and the subscription is held alive by the keepalive and re-asserted across a reconnect. Under `async`, `events.recv_async().await`.
 
 ### Box management
 
