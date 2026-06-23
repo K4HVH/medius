@@ -128,9 +128,10 @@ impl KeyboardEvent {
             return None;
         }
         let n = p[1] as usize;
-        let keys = (0..n)
-            .filter_map(|i| p.get(2 + i).map(|&u| Key(u)))
-            .collect();
+        if p.len() < 2 + n {
+            return None; // truncated: fewer keycodes than the count claims
+        }
+        let keys = p[2..2 + n].iter().map(|&u| Key(u)).collect();
         Some(KeyboardEvent {
             modifiers: p[0],
             keys,

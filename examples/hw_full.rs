@@ -34,6 +34,7 @@ mod linux {
     const BTN_MIDDLE: u16 = 0x112;
     const BTN_SIDE: u16 = 0x113;
     const BTN_EXTRA: u16 = 0x114;
+    const KEY_A: u16 = 30; // evdev keycode for the 'A' key (HID usage 0x04)
     const EVENT_SIZE: usize = 24;
 
     #[derive(Default)]
@@ -49,6 +50,7 @@ mod linux {
         btn_extra: AtomicI64,
         side_other_code: AtomicI64,
         side_other_val: AtomicI64,
+        key_a: AtomicI64,
     }
 
     impl Acc {
@@ -130,6 +132,7 @@ mod linux {
                     BTN_MIDDLE => acc.btn_middle.store(val, Ordering::Relaxed),
                     BTN_SIDE => acc.btn_side.store(val, Ordering::Relaxed),
                     BTN_EXTRA => acc.btn_extra.store(val, Ordering::Relaxed),
+                    KEY_A => acc.key_a.store(val, Ordering::Relaxed),
                     other => {
                         acc.side_other_code.store(other as i64, Ordering::Relaxed);
                         acc.side_other_val.store(val, Ordering::Relaxed);
@@ -421,29 +424,38 @@ mod linux {
         }
 
         {
-            // KEYBOARD + MEDIA (v1.7.0): query KBD_CAPS; if a keyboard is bound, inject a key (and a
-            // media key when the board has a Consumer collection) and confirm injection_active toggles.
-            // Real keystroke/media delivery needs a keyboard on the box + a grabbed evdev — watch it
-            // with `medius.py watch keys`. With a mouse-only clone, this just confirms KBD_CAPS replies.
+            // KEYBOARD + MEDIA (v1.7.0): query KBD_CAPS; if a keyboard is bound, inject KEY_A and verify it
+            // is REALLY delivered to the grabbed evdev (key_a goes 1 then 0), not just that injection_active
+            // toggled. This catches a key injected onto the wrong interface: the game reads typing from the
+            // active keyboard interface, so an injected key landing elsewhere never reaches it. For this
+            // check the grabbed event node must be the KEYBOARD's node (the standard/boot keyboard interface
+            // the OS types on). Media injection verifies injection_active only (its Consumer reports land on
+            // a different evdev node than the grabbed one).
             let dev = device.as_ref().unwrap();
             let caps = dev.query_kbd_caps();
             let attached = dev.query_health().map(|h| h.kbd_attached).unwrap_or(false);
             let mut inject_ok = true;
             let mut detail = format!("kbd_caps={caps:?} attached={attached}");
             if attached {
+                acc.key_a.store(0, Ordering::Relaxed);
                 let _ = dev.key_down(Key::A);
                 let key_on = dev
                     .query_health()
                     .map(|h| h.injection_active)
                     .unwrap_or(false);
+                std::thread::sleep(Duration::from_millis(200));
+                let evdev_down = acc.key_a.load(Ordering::Relaxed) == 1;
                 let _ = dev.key_up(Key::A);
+                std::thread::sleep(Duration::from_millis(200));
+                let evdev_up = acc.key_a.load(Ordering::Relaxed) == 0;
                 let _ = dev.reset();
                 let key_off = dev
                     .query_health()
                     .map(|h| !h.injection_active)
                     .unwrap_or(false);
-                inject_ok = key_on && key_off;
-                detail = format!("{detail} key[on={key_on} off={key_off}]");
+                inject_ok = key_on && key_off && evdev_down && evdev_up;
+                detail =
+                    format!("{detail} key[on={key_on} off={key_off} evdev_down={evdev_down} evdev_up={evdev_up}]");
                 if caps.as_ref().map(|c| c.has_consumer).unwrap_or(false) {
                     let _ = dev.media_down(MediaKey::VOLUME_UP);
                     let med_on = dev
