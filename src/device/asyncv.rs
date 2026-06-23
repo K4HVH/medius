@@ -1,12 +1,12 @@
 use crate::error::{Error, Result};
 use crate::link::Link;
 use crate::protocol::opcode::{
-    Q_CAPS, Q_CATCH, Q_HEALTH, Q_LOCKS, Q_MOUSE_INFO, Q_RATE, Q_STATS, Q_VERSION,
+    Q_CAPS, Q_CATCH, Q_HEALTH, Q_KBD_CAPS, Q_LOCKS, Q_MOUSE_INFO, Q_RATE, Q_STATS, Q_VERSION,
 };
 use crate::protocol::{Resp, parse_resp};
 use crate::types::{
-    Button, ButtonAction, Caps, CatchMask, CatchState, Health, LedMode, LedTarget, LockDirection,
-    LockTarget, Locks, MouseInfo, Rate, RebootTarget, Stats, Version,
+    Action, Button, CatchMask, CatchState, Health, KbdCaps, Key, LedMode, LedTarget, LockDirection,
+    LockTarget, Locks, MediaKey, MouseCaps, MouseInfo, Rate, RebootTarget, Stats, Version,
 };
 
 use super::Device;
@@ -54,7 +54,7 @@ impl AsyncDevice {
     }
 
     /// `BUTTON` — set an injection override. Instant; see [`Device::button`].
-    pub fn button(&self, button: Button, action: ButtonAction) -> Result<()> {
+    pub fn button(&self, button: Button, action: Action) -> Result<()> {
         self.dev().button(button, action)
     }
 
@@ -71,6 +71,46 @@ impl AsyncDevice {
     /// Force-release a button. Instant; see [`Device::force_release`].
     pub fn force_release(&self, button: Button) -> Result<()> {
         self.dev().force_release(button)
+    }
+
+    /// `KEY` — set a keyboard key/modifier override. Instant; see [`Device::key`].
+    pub fn key(&self, key: Key, action: Action) -> Result<()> {
+        self.dev().key(key, action)
+    }
+
+    /// Press (hold) a key. Instant; see [`Device::key_down`].
+    pub fn key_down(&self, key: Key) -> Result<()> {
+        self.dev().key_down(key)
+    }
+
+    /// Soft-release a key. Instant; see [`Device::key_up`].
+    pub fn key_up(&self, key: Key) -> Result<()> {
+        self.dev().key_up(key)
+    }
+
+    /// Force-release a key. Instant; see [`Device::key_force_release`].
+    pub fn key_force_release(&self, key: Key) -> Result<()> {
+        self.dev().key_force_release(key)
+    }
+
+    /// `CONSUMER` — set a media-key override. Instant; see [`Device::media`].
+    pub fn media(&self, key: MediaKey, action: Action) -> Result<()> {
+        self.dev().media(key, action)
+    }
+
+    /// Press (hold) a media key. Instant; see [`Device::media_down`].
+    pub fn media_down(&self, key: MediaKey) -> Result<()> {
+        self.dev().media_down(key)
+    }
+
+    /// Soft-release a media key. Instant; see [`Device::media_up`].
+    pub fn media_up(&self, key: MediaKey) -> Result<()> {
+        self.dev().media_up(key)
+    }
+
+    /// Force-release a media key. Instant; see [`Device::media_force_release`].
+    pub fn media_force_release(&self, key: MediaKey) -> Result<()> {
+        self.dev().media_force_release(key)
     }
 
     /// `RESET` — return to passthrough. Instant; see [`Device::reset`].
@@ -141,13 +181,13 @@ impl AsyncDevice {
     }
 
     /// Query the emulated mouse's capabilities (§4.4), awaiting the correlated `RESP`.
-    pub async fn query_caps(&self) -> Result<Caps> {
+    pub async fn query_mouse_caps(&self) -> Result<MouseCaps> {
         let payload = self
             .link
             .query_async(Q_CAPS, self.link.query_timeout_default())
             .await?;
         match parse_resp(&payload) {
-            Some(Resp::Caps(c)) => Ok(c),
+            Some(Resp::MouseCaps(c)) => Ok(c),
             _ => Err(Error::NoReply),
         }
     }
@@ -196,6 +236,18 @@ impl AsyncDevice {
             .await?;
         match parse_resp(&payload) {
             Some(Resp::Catch(c)) => Ok(c),
+            _ => Err(Error::NoReply),
+        }
+    }
+
+    /// Query the cloned keyboard's semantic capabilities (§4.11), awaiting the correlated `RESP`.
+    pub async fn query_kbd_caps(&self) -> Result<KbdCaps> {
+        let payload = self
+            .link
+            .query_async(Q_KBD_CAPS, self.link.query_timeout_default())
+            .await?;
+        match parse_resp(&payload) {
+            Some(Resp::KbdCaps(k)) => Ok(k),
             _ => Err(Error::NoReply),
         }
     }

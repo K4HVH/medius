@@ -20,6 +20,17 @@ pub fn query_payload(what: u8) -> [u8; 1] {
     [what]
 }
 
+/// `KEY` (§3.10): `[usage u8][action u8]` — a HID keycode (0xE0..=0xE7 = a modifier), tri-state action.
+pub fn key_payload(usage: u8, action: u8) -> [u8; 2] {
+    [usage, action]
+}
+
+/// `CONSUMER` (§3.11): `[usage u16 LE][action u8]` — a 16-bit Consumer (media) usage, tri-state action.
+pub fn consumer_payload(usage: u16, action: u8) -> [u8; 3] {
+    let u = usage.to_le_bytes();
+    [u[0], u[1], action]
+}
+
 /// `LED` (§3.7): `[target u8][mode u8][level u8]`.
 pub fn led_payload(target: u8, mode: u8, level: u8) -> [u8; 3] {
     [target, mode, level]

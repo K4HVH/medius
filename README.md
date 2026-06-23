@@ -81,12 +81,28 @@ device.wheel(3)?;                    // scroll
 device.press(Button::Left)?;         // force down
 device.soft_release(Button::Left)?;  // release our press (a physical hold stays)
 device.force_release(Button::Left)?; // force up, masking a physical hold
-device.button(Button::Right, ButtonAction::Press)?; // the generic form
+device.button(Button::Right, Action::Press)?; // the generic form
 
 device.reset()?;                     // clear all injection → passthrough
 ```
 
 Buttons are `Left`, `Right`, `Middle`, `Side1`, `Side2`. Move and wheel take a full `i16`; the firmware clamps to the mouse's descriptor with carry, so `move_rel(2000, 0)` lands as exactly 2000.
+
+### Keyboard & media
+
+```rust
+use medius::{Action, Key, MediaKey};
+
+device.key_down(Key::A)?;            // hold a key (a modifier like Key::LEFT_SHIFT folds in)
+device.key_up(Key::A)?;             // release our press (a physical hold stays)
+device.key_force_release(Key::A)?;  // force up, masking a physical hold
+device.key(Key::ENTER, Action::Press)?; // the generic form
+
+device.media_down(MediaKey::VOLUME_UP)?; // a media key by 16-bit Consumer usage
+device.media_up(MediaKey::VOLUME_UP)?;
+```
+
+Keys are HID keycodes (`Key::A`, `Key::ENTER`, the eight modifiers, F-keys, arrows…) or any usage via `Key::new(0x04)`; media keys are Consumer usages (`MediaKey::VOLUME_UP`, `PLAY_PAUSE`, `MUTE`…). The tri-state `Action` (press / soft-release / force-release) is shared with buttons. Held keys and media survive a reconnect, like buttons. Both are present-gated — a key the board can't report is a silent no-op; see `query_kbd_caps()`.
 
 ### Sustained motion
 
@@ -103,10 +119,11 @@ for _ in 0..1000 {
 
 ```rust
 let v = device.query_version()?;  // proto_ver + fw_major / fw_minor / fw_patch
-let h = device.query_health()?;   // link_up, mouse_attached, clone_configured, injection_active, rate_confident, lock_on, catch_on
+let h = device.query_health()?;   // link_up, mouse_attached, clone_configured, injection_active, rate_confident, lock_on, catch_on, kbd_attached
 
 let info = device.query_mouse_info()?;  // cloned mouse identity (vid:pid, bcd, serial/BOS flags)
-let caps = device.query_caps()?;        // semantic caps; caps.is_composite(), caps.n_buttons
+let caps = device.query_mouse_caps()?;  // mouse caps; caps.is_composite(), caps.n_buttons
+let kcaps = device.query_kbd_caps()?;   // keyboard caps; kcaps.nkro, kcaps.has_consumer, kcaps.n_keys
 let rate = device.query_rate()?;        // live native report rate; rate.native_hz()
 let stats = device.query_stats()?;      // delivery counters; stats.tx_drops / stats.tx_wedges
 let locks = device.query_locks()?;      // active input locks; locks.is_locked(target, direction)
@@ -115,20 +132,23 @@ let catch = device.query_catch()?;      // active catch mask + box-side dropped 
 
 ### Catch (physical input events)
 
-Subscribe to the user's real mouse input — buttons, wheel, and X/Y — as it happens. The box reports each physical report *before* any lock suppression or injection, so you can intercept an input (lock it) and rebind it (catch it) in one loop. Dropping the stream unsubscribes.
+Subscribe to the user's real input — mouse buttons/wheel/motion, keyboard keys, and media keys — as it happens. The box reports each physical report *before* any lock suppression or injection, so you can intercept an input (lock it) and rebind it (catch it) in one loop. One device-class-generic stream yields a `CatchEvent`; match on the variant. Dropping the stream unsubscribes.
 
 ```rust
-use medius::{CatchMask, Button};
+use medius::{Button, CatchEvent, CatchMask, Key};
 
-let events = device.catch_events(CatchMask::all())?;  // or MOTION | WHEEL | BUTTONS
-while let Ok(report) = events.recv() {
-    if report.is_pressed(Button::Side1) {
-        // the side button was pressed; rebind it…
+let events = device.catch_events(CatchMask::all())?;  // MOTION | WHEEL | BUTTONS | KEYS
+while let Ok(event) = events.recv() {
+    match event {
+        CatchEvent::Mouse(m) if m.is_pressed(Button::Side1) => { /* rebind the side button… */ }
+        CatchEvent::Keyboard(kb) if kb.is_pressed(Key::ESCAPE) => { /* … */ }
+        CatchEvent::Media(md) => { /* a media key changed: md.keys */ }
+        _ => {}
     }
 }
 ```
 
-The mask picks which classes trigger an event; each event carries the full snapshot (`buttons`, `dx`, `dy`, `wheel`), so diff `buttons` for edges. The stream is bounded and lossy under back-pressure (`events.dropped()`), and the subscription is held alive by the keepalive and re-asserted across a reconnect. Under `async`, `events.recv_async().await`.
+The mask picks which classes stream; each `CatchEvent` is a full snapshot — `Mouse` (buttons + dx/dy/wheel), `Keyboard` (modifier bitmap + pressed keys), or `Media` (active Consumer usages) — so diff successive snapshots for edges. The stream is bounded and lossy under back-pressure (`events.dropped()`), and the subscription is held alive by the keepalive and re-asserted across a reconnect. Under `async`, `events.recv_async().await`.
 
 ### Box management
 

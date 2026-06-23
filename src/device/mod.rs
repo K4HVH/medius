@@ -4,9 +4,11 @@ pub(crate) mod asyncv;
 pub(crate) mod buttons;
 pub(crate) mod catch;
 pub(crate) mod connect;
+pub(crate) mod keyboard;
 pub(crate) mod led;
 pub(crate) mod lock;
 pub(crate) mod logs;
+pub(crate) mod media;
 pub(crate) mod movement;
 pub(crate) mod query;
 

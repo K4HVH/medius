@@ -42,7 +42,7 @@ impl Button {
 /// A button injection override action (§3.3); discriminants are the wire `action` byte.
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum ButtonAction {
+pub enum Action {
     /// Clear our injected press; defer to physical state.
     SoftRelease = ACT_SOFTREL,
     /// Force the button down regardless of physical state.
@@ -51,18 +51,18 @@ pub enum ButtonAction {
     ForceRelease = ACT_FORCEREL,
 }
 
-impl ButtonAction {
+impl Action {
     /// The wire `action` byte for this action.
     pub fn as_u8(self) -> u8 {
         self as u8
     }
 
-    /// Map a wire `action` byte to a [`ButtonAction`], or `None` for an unknown value.
+    /// Map a wire `action` byte to a [`Action`], or `None` for an unknown value.
     pub fn from_u8(v: u8) -> Option<Self> {
         Some(match v {
-            ACT_SOFTREL => ButtonAction::SoftRelease,
-            ACT_PRESS => ButtonAction::Press,
-            ACT_FORCEREL => ButtonAction::ForceRelease,
+            ACT_SOFTREL => Action::SoftRelease,
+            ACT_PRESS => Action::Press,
+            ACT_FORCEREL => Action::ForceRelease,
             _ => return None,
         })
     }

@@ -25,6 +25,8 @@ pub const Q_STATS: u8 = 5;
 pub const Q_LOCKS: u8 = 6;
 /// Active catch subscription mask + dropped-event count (§4.9, v1.6.0).
 pub const Q_CATCH: u8 = 7;
+/// Semantic keyboard capabilities: key count, NKRO, Consumer/System collections, report ID (v1.7.0).
+pub const Q_KBD_CAPS: u8 = 8;
 
 pub const BTN_LEFT: u8 = 0;
 pub const BTN_RIGHT: u8 = 1;
@@ -54,6 +56,8 @@ pub const H_RATE_CONFIDENT: u8 = 0x10;
 pub const H_LOCK_ON: u8 = 0x20;
 /// A catch subscription is active — physical-input events are streaming (§4.2, v1.6.0).
 pub const H_CATCH_ON: u8 = 0x40;
+/// A keyboard is attached on the host chip — cloned and injectable (§4.2, v1.7.0).
+pub const H_KBD_ATT: u8 = 0x80;
 
 /// `CATCH` mask: stream reports whose X or Y delta is non-zero (§3.9).
 pub const CATCH_MOTION: u8 = 0x01;
@@ -61,10 +65,21 @@ pub const CATCH_MOTION: u8 = 0x01;
 pub const CATCH_WHEEL: u8 = 0x02;
 /// `CATCH` mask: stream reports with a button edge (§3.9).
 pub const CATCH_BUTTONS: u8 = 0x04;
+/// `CATCH` mask: stream keyboard + media changes (`KB_EVENT` / `CONS_EVENT`, v1.7.0).
+pub const CATCH_KEYS: u8 = 0x08;
 /// `CATCH` mask: every class (§3.9).
-pub const CATCH_ALL: u8 = 0x07;
+pub const CATCH_ALL: u8 = 0x0F;
 /// Valid `CATCH` mask bits; the firmware ignores any others (§3.9).
-pub const CATCH_MASK: u8 = 0x07;
+pub const CATCH_MASK: u8 = 0x0F;
+
+/// `KBD_CAPS` flag: keys are an NKRO bitmap (`n_keys` = 0xFF), else a keycode array (v1.7.0, §4.11).
+pub const KBC_NKRO: u8 = 0x01;
+/// `KBD_CAPS` flag: a Consumer (media-key) collection is present and injectable/catchable.
+pub const KBC_CONSUMER: u8 = 0x02;
+/// `KBD_CAPS` flag: a System-control collection is present (passthrough-only, not injectable).
+pub const KBC_SYSTEM: u8 = 0x04;
+/// `KBD_CAPS` flag: the keyboard report sits behind a HID report ID.
+pub const KBC_REPORT_ID: u8 = 0x08;
 
 /// `MOUSE_INFO` flag: the clone serves a serial string (§4.3).
 pub const MI_HAS_SERIAL: u8 = 0x01;
@@ -117,6 +132,14 @@ pub enum FrameType {
     Catch = 0x0B,
     /// `EVENT` — one unsolicited physical-input snapshot; `SEQ` is a rolling counter (box→PC).
     Event = 0x0C,
+    /// `KEY` — set a keyboard key/modifier injection override (PC→box, v1.7.0).
+    Key = 0x0D,
+    /// `CONSUMER` — set a media-key injection override by 16-bit Consumer usage (PC→box, v1.7.0).
+    Consumer = 0x0E,
+    /// `KB_EVENT` — one unsolicited keyboard snapshot (modifiers + pressed keys); box→PC (v1.7.0).
+    KbEvent = 0x0F,
+    /// `CONS_EVENT` — one unsolicited media snapshot (active Consumer usages); box→PC (v1.7.0).
+    ConsEvent = 0x10,
 }
 
 /// Error returned when a byte does not name a known [`FrameType`].
@@ -148,6 +171,10 @@ impl TryFrom<u8> for FrameType {
             0x0A => FrameType::Lock,
             0x0B => FrameType::Catch,
             0x0C => FrameType::Event,
+            0x0D => FrameType::Key,
+            0x0E => FrameType::Consumer,
+            0x0F => FrameType::KbEvent,
+            0x10 => FrameType::ConsEvent,
             other => return Err(UnknownFrameType(other)),
         })
     }
