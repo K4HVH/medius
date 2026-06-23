@@ -4,21 +4,23 @@ use std::time::Duration;
 
 use crate::error::{Error, Result};
 use crate::link::Link;
-use crate::types::{CatchMask, InputReport};
+use crate::types::{CatchEvent, CatchMask};
 
 use super::Device;
 
-/// A live stream of physical-input [`InputReport`]s from the box (the `CATCH` feature, §3.9).
+/// A live stream of physical-input [`CatchEvent`]s from the box (the `CATCH` feature, §3.9).
 ///
-/// Created by [`Device::catch_events`]. Cloning shares the queue (like [`LogStream`](crate::LogStream));
-/// for an independent stream, call [`catch_events`](Device::catch_events) again. The subscription ends
-/// when the stream and all its clones drop — and also on [`reset`](crate::Device::reset), which
-/// disconnects it so `recv` returns `Err` rather than hanging — returning the box to pure passthrough.
-/// The buffer is bounded and lossy: if the consumer falls behind, the OLDEST events are dropped (so you
-/// keep the freshest input) and counted in [`dropped`](Self::dropped).
+/// One device-class-generic stream: mouse, keyboard, and media changes all arrive here as
+/// [`CatchEvent`] variants, gated by the subscription [`CatchMask`]. Created by
+/// [`Device::catch_events`]. Cloning shares the queue (like [`LogStream`](crate::LogStream)); for an
+/// independent stream, call [`catch_events`](Device::catch_events) again. The subscription ends when
+/// the stream and all its clones drop — and also on [`reset`](crate::Device::reset), which disconnects
+/// it so `recv` returns `Err` rather than hanging — returning the box to pure passthrough. The buffer
+/// is bounded and lossy: if the consumer falls behind, the OLDEST events are dropped (so you keep the
+/// freshest input) and counted in [`dropped`](Self::dropped).
 #[derive(Clone, Debug)]
 pub struct EventStream {
-    rx: flume::Receiver<InputReport>,
+    rx: flume::Receiver<CatchEvent>,
     dropped: Arc<AtomicU64>,
     // Unsubscribes when the last clone drops; the Arc keeps it alive across clones.
     _guard: Arc<CatchGuard>,
@@ -38,7 +40,7 @@ impl Drop for CatchGuard {
 
 impl EventStream {
     pub(crate) fn new(
-        rx: flume::Receiver<InputReport>,
+        rx: flume::Receiver<CatchEvent>,
         dropped: Arc<AtomicU64>,
         link: Link,
         id: u64,
@@ -50,30 +52,30 @@ impl EventStream {
         }
     }
 
-    /// Block until the next physical-input report arrives.
-    pub fn recv(&self) -> Result<InputReport> {
+    /// Block until the next physical-input event arrives.
+    pub fn recv(&self) -> Result<CatchEvent> {
         self.rx.recv().map_err(|_| Error::Disconnected)
     }
 
-    /// The next buffered report, or `None` if none is queued (never blocks).
-    pub fn try_recv(&self) -> Option<InputReport> {
+    /// The next buffered event, or `None` if none is queued (never blocks).
+    pub fn try_recv(&self) -> Option<CatchEvent> {
         self.rx.try_recv().ok()
     }
 
-    /// Block up to `timeout` for the next report; `None` on timeout (or a closed channel).
-    pub fn recv_timeout(&self, timeout: Duration) -> Option<InputReport> {
+    /// Block up to `timeout` for the next event; `None` on timeout (or a closed channel).
+    pub fn recv_timeout(&self, timeout: Duration) -> Option<CatchEvent> {
         self.rx.recv_timeout(timeout).ok()
     }
 
-    /// Drain every currently-buffered report without blocking.
-    pub fn try_iter(&self) -> impl Iterator<Item = InputReport> + '_ {
+    /// Drain every currently-buffered event without blocking.
+    pub fn try_iter(&self) -> impl Iterator<Item = CatchEvent> + '_ {
         self.rx.try_iter()
     }
 
-    /// Await the next report. Runtime-agnostic (the same `flume` channel as the sync methods), so it
+    /// Await the next event. Runtime-agnostic (the same `flume` channel as the sync methods), so it
     /// runs under any executor. Available with the `async` feature.
     #[cfg(feature = "async")]
-    pub async fn recv_async(&self) -> Result<InputReport> {
+    pub async fn recv_async(&self) -> Result<CatchEvent> {
         self.rx.recv_async().await.map_err(|_| Error::Disconnected)
     }
 
@@ -87,21 +89,24 @@ impl EventStream {
 impl Device {
     /// Subscribe to the physical-input event stream for the given classes (the `CATCH` feature, §3.9).
     ///
-    /// The box streams the user's real mouse input — buttons, wheel, and X/Y — as it happens, even on
-    /// targets you've locked or are injecting on (the report is captured before suppression). The
-    /// returned [`EventStream`] receives every report; dropping it unsubscribes. Combine classes with
-    /// `|`, or pass [`CatchMask::all`] for the full mirror. The subscription is held alive by the
-    /// library's keepalive (which also re-asserts it after a device-side blip) and across a reconnect;
-    /// it clears like injection — on control-PC silence, [`reset`](Device::reset), or link loss (§5.4).
+    /// The box streams the user's real input — mouse buttons/wheel/motion, keyboard keys, and media
+    /// keys — as it happens, even on targets you've locked or are injecting on (the report is captured
+    /// before suppression). The returned [`EventStream`] yields a [`CatchEvent`] per change; match on
+    /// the variant. Combine classes with `|`, or pass [`CatchMask::all`] for the full mirror. The
+    /// subscription is held alive by the library's keepalive (which also re-asserts it after a
+    /// device-side blip) and across a reconnect; it clears like injection — on control-PC silence,
+    /// [`reset`](Device::reset), or link loss (§5.4). Dropping the stream unsubscribes.
     ///
     /// ```no_run
-    /// # use medius::{Device, CatchMask, Button};
+    /// # use medius::{Device, CatchMask, CatchEvent, Key};
     /// # fn main() -> medius::Result<()> {
     /// let device = Device::find()?;
-    /// let events = device.catch_events(CatchMask::all())?;
-    /// while let Ok(report) = events.recv() {
-    ///     if report.is_pressed(Button::Side1) {
-    ///         // rebind the side button...
+    /// let events = device.catch_events(CatchMask::KEYS)?;
+    /// while let Ok(event) = events.recv() {
+    ///     if let CatchEvent::Keyboard(kb) = event {
+    ///         if kb.is_pressed(Key::ESCAPE) {
+    ///             // ...
+    ///         }
     ///     }
     /// }
     /// # Ok(())

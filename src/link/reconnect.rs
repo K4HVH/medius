@@ -6,7 +6,7 @@ use parking_lot::Mutex;
 
 use crate::error::{Error, Result};
 use crate::protocol::FrameType;
-use crate::protocol::command::{button_payload, catch_payload};
+use crate::protocol::command::{button_payload, catch_payload, consumer_payload, key_payload};
 
 use super::counters::Counters;
 use super::reconcile::DesiredState;
@@ -47,9 +47,14 @@ fn reconnect(ctx: &ReconnectCtx) -> Result<()> {
 }
 
 fn reapply_held(ctx: &ReconnectCtx) -> Result<()> {
-    let (held, catch) = {
+    let (held, held_keys, held_media, catch) = {
         let d = ctx.desired.lock();
-        (d.held().collect::<Vec<_>>(), d.catch())
+        (
+            d.held().collect::<Vec<_>>(),
+            d.held_keys().collect::<Vec<_>>(),
+            d.held_media().collect::<Vec<_>>(),
+            d.catch(),
+        )
     };
     for (button, action) in held {
         let seq = ctx.seq.fetch_add(1, Ordering::Relaxed);
@@ -60,6 +65,28 @@ fn reapply_held(ctx: &ReconnectCtx) -> Result<()> {
             seq,
             FrameType::Button,
             &button_payload(button.as_id(), action.as_u8()),
+        )?;
+    }
+    for (key, action) in held_keys {
+        let seq = ctx.seq.fetch_add(1, Ordering::Relaxed);
+        write_frame(
+            &ctx.transport,
+            &ctx.write_lock,
+            &ctx.counters,
+            seq,
+            FrameType::Key,
+            &key_payload(key.usage(), action.as_u8()),
+        )?;
+    }
+    for (key, action) in held_media {
+        let seq = ctx.seq.fetch_add(1, Ordering::Relaxed);
+        write_frame(
+            &ctx.transport,
+            &ctx.write_lock,
+            &ctx.counters,
+            seq,
+            FrameType::Consumer,
+            &consumer_payload(key.usage(), action.as_u8()),
         )?;
     }
     // Re-assert the catch subscription: a control-link drop longer than the firmware's ~1 s silence

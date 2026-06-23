@@ -114,7 +114,9 @@ fn route_frame(
             crate::trace::emit_device_log(&line);
             logs::push(logs_tx, logs_rx, line);
         }
-        FrameType::Event => catch::deliver_event(events, &frame.payload),
+        FrameType::Event | FrameType::KbEvent | FrameType::ConsEvent => {
+            catch::deliver_event(events, frame.ty, &frame.payload)
+        }
         _ => {}
     }
 }

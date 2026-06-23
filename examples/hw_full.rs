@@ -19,8 +19,8 @@ mod linux {
     use std::time::{Duration, Instant};
 
     use medius::{
-        Button, ButtonAction, CatchMask, Device, LedMode, LedTarget, LockDirection, LockTarget,
-        RebootTarget,
+        Action, Button, CatchMask, Device, Key, LedMode, LedTarget, LockDirection, LockTarget,
+        MediaKey, RebootTarget,
     };
 
     const EVIOCGRAB: libc::c_ulong = 0x4004_4590;
@@ -230,7 +230,7 @@ mod linux {
                 .query_health()
                 .map(|h| h.mouse_attached)
                 .unwrap_or(false);
-            let caps = dev.query_caps();
+            let caps = dev.query_mouse_caps();
             let info = dev.query_mouse_info();
             let rate = dev.query_rate();
             let stats = dev.query_stats();
@@ -421,6 +421,45 @@ mod linux {
         }
 
         {
+            // KEYBOARD + MEDIA (v1.7.0): query KBD_CAPS; if a keyboard is bound, inject a key (and a
+            // media key when the board has a Consumer collection) and confirm injection_active toggles.
+            // Real keystroke/media delivery needs a keyboard on the box + a grabbed evdev — watch it
+            // with `medius.py watch keys`. With a mouse-only clone, this just confirms KBD_CAPS replies.
+            let dev = device.as_ref().unwrap();
+            let caps = dev.query_kbd_caps();
+            let attached = dev.query_health().map(|h| h.kbd_attached).unwrap_or(false);
+            let mut inject_ok = true;
+            let mut detail = format!("kbd_caps={caps:?} attached={attached}");
+            if attached {
+                let _ = dev.key_down(Key::A);
+                let key_on = dev
+                    .query_health()
+                    .map(|h| h.injection_active)
+                    .unwrap_or(false);
+                let _ = dev.key_up(Key::A);
+                let _ = dev.reset();
+                let key_off = dev
+                    .query_health()
+                    .map(|h| !h.injection_active)
+                    .unwrap_or(false);
+                inject_ok = key_on && key_off;
+                detail = format!("{detail} key[on={key_on} off={key_off}]");
+                if caps.as_ref().map(|c| c.has_consumer).unwrap_or(false) {
+                    let _ = dev.media_down(MediaKey::VOLUME_UP);
+                    let med_on = dev
+                        .query_health()
+                        .map(|h| h.injection_active)
+                        .unwrap_or(false);
+                    let _ = dev.media_up(MediaKey::VOLUME_UP);
+                    let _ = dev.reset();
+                    inject_ok = inject_ok && med_on;
+                    detail = format!("{detail} media[on={med_on}]");
+                }
+            }
+            check("keyboard + media", caps.is_ok() && inject_ok, detail);
+        }
+
+        {
             let dev = device.as_ref().unwrap();
             reset_motion(&acc);
             for _ in 0..50 {
@@ -576,7 +615,7 @@ mod linux {
 
         {
             let dev = device.as_ref().unwrap();
-            let _ = dev.button(Button::Right, ButtonAction::Press);
+            let _ = dev.button(Button::Right, Action::Press);
             std::thread::sleep(Duration::from_millis(200));
             let down = acc.btn_right.load(Ordering::Relaxed);
             let _ = dev.reset();

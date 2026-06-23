@@ -5,12 +5,14 @@ use std::sync::Arc;
 use parking_lot::Mutex;
 
 use crate::protocol::opcode::{
-    CAP_REPORT_ID, CAP_WHEEL, CAP_X, CAP_Y, MI_HAS_BOS, MI_HAS_SERIAL, RATE_CONFIDENT,
+    CAP_REPORT_ID, CAP_WHEEL, CAP_X, CAP_Y, KBC_CONSUMER, KBC_NKRO, KBC_REPORT_ID, KBC_SYSTEM,
+    MI_HAS_BOS, MI_HAS_SERIAL, RATE_CONFIDENT,
 };
 use crate::protocol::{DecodedFrame, FrameType, encode};
 use crate::transport::mock::MockTransport;
 use crate::types::{
-    Caps, CatchState, Health, InputReport, Locks, LogLevel, MouseInfo, Rate, Stats, Version,
+    CatchState, Health, KbdCaps, KeyboardEvent, Locks, LogLevel, MediaEvent, MouseCaps, MouseEvent,
+    MouseInfo, Rate, Stats, Version,
 };
 
 #[derive(Debug)]
@@ -18,7 +20,8 @@ struct State {
     version: Version,
     health: Health,
     mouse_info: MouseInfo,
-    caps: Caps,
+    caps: MouseCaps,
+    kbd_caps: KbdCaps,
     rate: Rate,
     stats: Stats,
     locks: Locks,
@@ -38,7 +41,8 @@ impl Default for State {
             },
             health: Health::from_flags(0),
             mouse_info: MouseInfo::from_payload(&[2, 0, 0, 0, 0, 0, 0, 0, 0, 0]).unwrap(),
-            caps: Caps::from_payload(&[3, 0, 0, 0]).unwrap(),
+            caps: MouseCaps::from_payload(&[3, 0, 0, 0]).unwrap(),
+            kbd_caps: KbdCaps::from_payload(&[8, 0, 0]).unwrap(),
             rate: Rate::from_payload(&[4, 0, 0, 0, 0, 0]).unwrap(),
             stats: Stats::from_payload(&[5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
                 .unwrap(),
@@ -67,7 +71,7 @@ fn mouse_info_payload(m: MouseInfo) -> Vec<u8> {
     p
 }
 
-fn caps_payload(c: Caps) -> Vec<u8> {
+fn mouse_caps_payload(c: MouseCaps) -> Vec<u8> {
     let mut axis = 0u8;
     if c.has_x {
         axis |= CAP_X;
@@ -118,7 +122,38 @@ fn catch_resp_payload(c: CatchState) -> Vec<u8> {
     p
 }
 
-fn event_payload(r: InputReport) -> Vec<u8> {
+fn kbd_caps_payload(k: KbdCaps) -> Vec<u8> {
+    let mut flags = 0u8;
+    if k.nkro {
+        flags |= KBC_NKRO;
+    }
+    if k.has_consumer {
+        flags |= KBC_CONSUMER;
+    }
+    if k.has_system {
+        flags |= KBC_SYSTEM;
+    }
+    if k.has_report_id {
+        flags |= KBC_REPORT_ID;
+    }
+    vec![8u8, k.n_keys, flags]
+}
+
+fn kb_event_payload(e: &KeyboardEvent) -> Vec<u8> {
+    let mut p = vec![e.modifiers, e.keys.len() as u8];
+    p.extend(e.keys.iter().map(|k| k.usage()));
+    p
+}
+
+fn cons_event_payload(e: &MediaEvent) -> Vec<u8> {
+    let mut p = vec![e.keys.len() as u8];
+    for k in &e.keys {
+        p.extend_from_slice(&k.usage().to_le_bytes());
+    }
+    p
+}
+
+fn event_payload(r: MouseEvent) -> Vec<u8> {
     let mut p = Vec::with_capacity(7);
     p.push(r.buttons);
     p.extend_from_slice(&r.dx.to_le_bytes());
@@ -169,9 +204,8 @@ impl MockBox {
                             .expect("resp fits"),
                         Some(2) => encode(FrameType::Resp, seq, &mouse_info_payload(st.mouse_info))
                             .expect("resp fits"),
-                        Some(3) => {
-                            encode(FrameType::Resp, seq, &caps_payload(st.caps)).expect("resp fits")
-                        }
+                        Some(3) => encode(FrameType::Resp, seq, &mouse_caps_payload(st.caps))
+                            .expect("resp fits"),
                         Some(4) => {
                             encode(FrameType::Resp, seq, &rate_payload(st.rate)).expect("resp fits")
                         }
@@ -180,6 +214,8 @@ impl MockBox {
                         Some(6) => encode(FrameType::Resp, seq, &locks_payload(st.locks))
                             .expect("resp fits"),
                         Some(7) => encode(FrameType::Resp, seq, &catch_resp_payload(st.catch))
+                            .expect("resp fits"),
+                        Some(8) => encode(FrameType::Resp, seq, &kbd_caps_payload(st.kbd_caps))
                             .expect("resp fits"),
                         _ => Vec::new(),
                     }
@@ -212,10 +248,17 @@ impl MockBox {
         self
     }
 
-    /// Set the [`Caps`] answered to `QUERY(CAPS)` (builder style).
+    /// Set the [`MouseCaps`] answered to `QUERY(CAPS)` (builder style).
     #[must_use]
-    pub fn with_caps(self, caps: Caps) -> Self {
+    pub fn with_mouse_caps(self, caps: MouseCaps) -> Self {
         self.state.lock().caps = caps;
+        self
+    }
+
+    /// Set the [`KbdCaps`] answered to `QUERY(KBD_CAPS)` (builder style).
+    #[must_use]
+    pub fn with_kbd_caps(self, kbd_caps: KbdCaps) -> Self {
+        self.state.lock().kbd_caps = kbd_caps;
         self
     }
 
@@ -277,12 +320,24 @@ impl MockBox {
         self.transport.push_frame(FrameType::Log, 0, &payload);
     }
 
-    /// Push an `EVENT` (physical-input snapshot) as if the box emitted it; it surfaces on a subscribed
-    /// [`EventStream`](crate::EventStream). `seq` is the rolling event counter the host sees as the
-    /// frame `SEQ`.
-    pub fn push_event(&self, seq: u8, report: InputReport) {
+    /// Push an `EVENT` (mouse snapshot) as if the box emitted it; it surfaces on a subscribed
+    /// [`EventStream`](crate::EventStream) as [`CatchEvent::Mouse`](crate::CatchEvent). `seq` is the
+    /// rolling event counter the host sees as the frame `SEQ`.
+    pub fn push_event(&self, seq: u8, report: MouseEvent) {
         self.transport
             .push_frame(FrameType::Event, seq, &event_payload(report));
+    }
+
+    /// Push a `KB_EVENT` (keyboard snapshot); surfaces as [`CatchEvent::Keyboard`](crate::CatchEvent).
+    pub fn push_kb_event(&self, seq: u8, event: &KeyboardEvent) {
+        self.transport
+            .push_frame(FrameType::KbEvent, seq, &kb_event_payload(event));
+    }
+
+    /// Push a `CONS_EVENT` (media snapshot); surfaces as [`CatchEvent::Media`](crate::CatchEvent).
+    pub fn push_cons_event(&self, seq: u8, event: &MediaEvent) {
+        self.transport
+            .push_frame(FrameType::ConsEvent, seq, &cons_event_payload(event));
     }
 
     /// A snapshot copy of every command the host has sent so far, decoded, in order.
