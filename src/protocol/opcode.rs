@@ -23,7 +23,8 @@ pub const Q_VERSION: u8 = 0;
 pub const Q_HEALTH: u8 = 1;
 /// Cloned mouse identity: vid/pid/bcd + serial/bos flags (§4.3).
 pub const Q_MOUSE_INFO: u8 = 2;
-/// Semantic capabilities: button count, axes, interface count (§4.4).
+/// Unified device capabilities: mouse (buttons/axes/ifaces) + keyboard (keys/NKRO/media/system) +
+/// per-class change_driven. One query describes the whole cloned device (§4.4).
 pub const Q_CAPS: u8 = 3;
 /// Live native report rate + clone poll period + confidence (§4.5).
 pub const Q_RATE: u8 = 4;
@@ -33,8 +34,7 @@ pub const Q_STATS: u8 = 5;
 pub const Q_LOCKS: u8 = 6;
 /// Active catch subscription mask + dropped-event count (§4.9, v1.6.0).
 pub const Q_CATCH: u8 = 7;
-/// Semantic keyboard capabilities: key count, NKRO, Consumer/System collections, report ID (v1.7.0).
-pub const Q_KBD_CAPS: u8 = 8;
+// selector 8 retired (was Q_KBD_CAPS; keyboard caps folded into the unified Q_CAPS = 3).
 
 pub const BTN_LEFT: u8 = 0;
 pub const BTN_RIGHT: u8 = 1;
@@ -80,14 +80,19 @@ pub const CATCH_ALL: u8 = 0x0F;
 /// Valid `CATCH` mask bits; the firmware ignores any others (§3.9).
 pub const CATCH_MASK: u8 = 0x0F;
 
-/// `KBD_CAPS` flag: keys are an NKRO bitmap (`n_keys` = 0xFF), else a keycode array (v1.7.0, §4.11).
+/// `CAPS` kbd_flags: keys are an NKRO bitmap (`n_keys` = 0xFF), else a keycode array (§4.4).
 pub const KBC_NKRO: u8 = 0x01;
-/// `KBD_CAPS` flag: a Consumer (media-key) collection is present and injectable/catchable.
+/// `CAPS` kbd_flags: a Consumer (media-key) collection is present and injectable/catchable.
 pub const KBC_CONSUMER: u8 = 0x02;
-/// `KBD_CAPS` flag: a System-control collection is present (passthrough-only, not injectable).
+/// `CAPS` kbd_flags: a System-control collection is present (passthrough-only, not injectable).
 pub const KBC_SYSTEM: u8 = 0x04;
-/// `KBD_CAPS` flag: the keyboard report sits behind a HID report ID.
+/// `CAPS` kbd_flags: the keyboard report sits behind a HID report ID.
 pub const KBC_REPORT_ID: u8 = 0x08;
+
+/// `CAPS` change_driven flag: the mouse class is change-driven (never set — mouse motion is continuous).
+pub const CAPS_CD_MOUSE: u8 = 0x01;
+/// `CAPS` change_driven flag: the keyboard/media class is change-driven (set when a keyboard is bound).
+pub const CAPS_CD_KBD: u8 = 0x02;
 
 /// `MOUSE_INFO` flag: the clone serves a serial string (§4.3).
 pub const MI_HAS_SERIAL: u8 = 0x01;

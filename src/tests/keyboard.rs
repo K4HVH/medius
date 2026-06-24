@@ -3,7 +3,7 @@
 
 use crate::protocol::command::inject_payload;
 use crate::protocol::opcode::{INJ_KEY, INJ_MEDIA};
-use crate::types::{KbdCaps, Key, MediaKey};
+use crate::types::{Key, MediaKey};
 
 #[test]
 fn key_inject_bytes() {
@@ -37,12 +37,16 @@ fn key_modifier_classification() {
 
 #[test]
 fn kbd_caps_decodes() {
-    // n_keys=255 (NKRO bitmap), flags = NKRO | CONSUMER | REPORT_ID
-    let k = KbdCaps::from_payload(&[8, 0xFF, 0x0B]).unwrap();
+    use crate::Caps;
+    // unified CAPS, keyboard half: n_keys=255 (NKRO bitmap), kbd_flags = NKRO|CONSUMER|REPORT_ID,
+    // keyboard class change-driven
+    let c = Caps::from_payload(&[3, 0, 0, 0, 0xFF, 0x0B, 0x02]).unwrap();
+    let k = c.keyboard;
     assert_eq!(k.n_keys, 0xFF);
     assert!(k.nkro && k.has_consumer && k.has_report_id);
     assert!(!k.has_system);
-    assert!(KbdCaps::from_payload(&[8, 0]).is_none()); // needs 3
+    assert!(c.has_keyboard() && c.kbd_change_driven && !c.has_mouse());
+    assert!(Caps::from_payload(&[3, 0]).is_none()); // needs 7
 }
 
 #[cfg(feature = "mock")]
@@ -89,7 +93,7 @@ fn query_kbd_caps_roundtrips() {
         has_report_id: true,
     };
     let device = Device::with_mock(MockBox::new().with_kbd_caps(caps));
-    assert_eq!(device.query_kbd_caps().unwrap(), caps);
+    assert_eq!(device.caps().unwrap().keyboard, caps);
 }
 
 #[cfg(feature = "mock")]

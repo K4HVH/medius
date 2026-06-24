@@ -23,12 +23,12 @@ fn main() -> medius::Result<()> {
     );
 
     let info = device.query_mouse_info()?;
-    let caps = device.query_mouse_caps()?;
+    let caps = device.caps()?;
     let rate = device.query_rate()?;
     println!("mouse: {info} (composite={})", caps.is_composite());
     println!(
         "caps: {} buttons, x={} y={} wheel={}",
-        caps.n_buttons, caps.has_x, caps.has_y, caps.has_wheel,
+        caps.mouse.n_buttons, caps.mouse.has_x, caps.mouse.has_y, caps.mouse.has_wheel,
     );
     println!(
         "rate: {:?} Hz (confident={})",
