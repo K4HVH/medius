@@ -285,7 +285,7 @@ mod linux {
             // IMPERFECT: a normal mouse fits the box's endpoints, so it's never over-capacity and the
             // live clone is faithful. The opt-in toggle is informational here (just printed).
             let dev = device.as_ref().unwrap();
-            let imp = dev.imperfect();
+            let imp = dev.query_imperfect();
             let faithful = imp
                 .as_ref()
                 .map(|i| !i.over_capacity && !i.clone_imperfect)

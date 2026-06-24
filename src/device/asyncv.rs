@@ -144,9 +144,9 @@ impl AsyncDevice {
         self.dev().catch_events(mask)
     }
 
-    /// `IMPERFECT` — opt into cloning an over-capacity device. Instant; see [`Device::set_imperfect_allowed`].
-    pub fn set_imperfect_allowed(&self, allow: bool) -> Result<()> {
-        self.dev().set_imperfect_allowed(allow)
+    /// `IMPERFECT` — opt into cloning an over-capacity device. Instant; see [`Device::allow_imperfect_clones`].
+    pub fn allow_imperfect_clones(&self, allow: bool) -> Result<()> {
+        self.dev().allow_imperfect_clones(allow)
     }
 
     /// Query the box version, awaiting the correlated `RESP` with the default timeout.
@@ -246,7 +246,7 @@ impl AsyncDevice {
     }
 
     /// Query the imperfect-clone status (§4.14), awaiting the correlated `RESP`.
-    pub async fn imperfect(&self) -> Result<ImperfectStatus> {
+    pub async fn query_imperfect(&self) -> Result<ImperfectStatus> {
         let payload = self
             .link
             .query_async(Q_IMPERFECT, self.link.query_timeout_default())

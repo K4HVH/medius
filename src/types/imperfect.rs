@@ -1,11 +1,7 @@
 //! Decoded `RESP(IMPERFECT)` — the imperfect-clone opt-in and over-capacity status (§4.14).
 
-/// Imperfect-clone state from one [`imperfect()`](crate::Device::imperfect) query.
-///
-/// Some devices need more interrupt-IN endpoints than the box's silicon has, so one interface can't be
-/// cloned. The box refuses such an over-capacity device by default;
-/// [`set_imperfect_allowed`](crate::Device::set_imperfect_allowed) opts into cloning it anyway, with one
-/// interface left dead.
+/// The imperfect-clone opt-in plus whether the attached device is over-capacity (needs more interrupt-IN
+/// endpoints than the box has) and whether the live clone went ahead anyway with one interface dead.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct ImperfectStatus {
     /// The opt-in toggle: cloning over-capacity devices is allowed.
