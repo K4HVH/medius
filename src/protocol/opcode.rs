@@ -35,6 +35,8 @@ pub const Q_LOCKS: u8 = 6;
 /// Active catch subscription mask + dropped-event count (§4.9, v1.6.0).
 pub const Q_CATCH: u8 = 7;
 // selector 8 retired (was Q_KBD_CAPS; keyboard caps folded into the unified Q_CAPS = 3).
+/// Imperfect-clone opt-in + over-capacity status (§4.14).
+pub const Q_IMPERFECT: u8 = 9;
 
 pub const BTN_LEFT: u8 = 0;
 pub const BTN_RIGHT: u8 = 1;
@@ -149,6 +151,8 @@ pub enum FrameType {
     KbEvent = 0x0F,
     /// `CONS_EVENT` — one unsolicited media snapshot (active Consumer usages); box→PC (v1.7.0).
     ConsEvent = 0x10,
+    /// `IMPERFECT` — opt into cloning an over-capacity device imperfectly (PC→box).
+    Imperfect = 0x11,
 }
 
 /// Error returned when a byte does not name a known [`FrameType`].
@@ -181,6 +185,7 @@ impl TryFrom<u8> for FrameType {
             0x0C => FrameType::Event,
             0x0F => FrameType::KbEvent,
             0x10 => FrameType::ConsEvent,
+            0x11 => FrameType::Imperfect,
             other => return Err(UnknownFrameType(other)),
         })
     }
