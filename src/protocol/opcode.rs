@@ -9,7 +9,15 @@ pub const SOF: u8 = 0xA5;
 pub const MAX_PAYLOAD: usize = 512;
 
 /// Protocol version in `RESP(VERSION)` (§4.1); the handshake requires this exact value.
-pub const PROTO_VER: u8 = 2; // v2: generic LOCK (class/usage/dir/state)
+pub const PROTO_VER: u8 = 2; // v2: the unified-input-core redesign (generic INJECT/MOVE/LOCK, class-aware RATE)
+
+/// `INJECT` class byte: the momentary-usage field kind.
+pub const INJ_BTN: u8 = 0;
+pub const INJ_KEY: u8 = 1;
+pub const INJ_MEDIA: u8 = 2;
+/// `MOVE` motion byte: the relative-axis field kind.
+pub const INJ_MOTION_CURSOR: u8 = 0;
+pub const INJ_MOTION_WHEEL: u8 = 1;
 
 pub const Q_VERSION: u8 = 0;
 pub const Q_HEALTH: u8 = 1;
@@ -110,12 +118,10 @@ pub const LOG_VERBOSE: u8 = 4;
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum FrameType {
-    /// `MOVE` — relative cursor movement (PC→box).
+    /// `MOVE` — relative-axis movement, motion-tagged (cursor dx/dy or wheel dz) (PC→box).
     Move = 0x01,
-    /// `WHEEL` — vertical scroll (PC→box).
-    Wheel = 0x02,
-    /// `BUTTON` — set a button injection override (PC→box).
-    Button = 0x03,
+    /// `INJECT` — set a momentary-usage override (button/key/media), class-tagged (PC→box).
+    Inject = 0x03,
     /// `RESET` — clear all injection (PC→box).
     Reset = 0x04,
     /// `QUERY` — request a state snapshot, elicits `RESP` (PC→box).
@@ -134,10 +140,6 @@ pub enum FrameType {
     Catch = 0x0B,
     /// `EVENT` — one unsolicited physical-input snapshot; `SEQ` is a rolling counter (box→PC).
     Event = 0x0C,
-    /// `KEY` — set a keyboard key/modifier injection override (PC→box, v1.7.0).
-    Key = 0x0D,
-    /// `CONSUMER` — set a media-key injection override by 16-bit Consumer usage (PC→box, v1.7.0).
-    Consumer = 0x0E,
     /// `KB_EVENT` — one unsolicited keyboard snapshot (modifiers + pressed keys); box→PC (v1.7.0).
     KbEvent = 0x0F,
     /// `CONS_EVENT` — one unsolicited media snapshot (active Consumer usages); box→PC (v1.7.0).
@@ -162,8 +164,7 @@ impl TryFrom<u8> for FrameType {
     fn try_from(value: u8) -> Result<Self, Self::Error> {
         Ok(match value {
             0x01 => FrameType::Move,
-            0x02 => FrameType::Wheel,
-            0x03 => FrameType::Button,
+            0x03 => FrameType::Inject,
             0x04 => FrameType::Reset,
             0x05 => FrameType::Query,
             0x06 => FrameType::Resp,
@@ -173,8 +174,6 @@ impl TryFrom<u8> for FrameType {
             0x0A => FrameType::Lock,
             0x0B => FrameType::Catch,
             0x0C => FrameType::Event,
-            0x0D => FrameType::Key,
-            0x0E => FrameType::Consumer,
             0x0F => FrameType::KbEvent,
             0x10 => FrameType::ConsEvent,
             other => return Err(UnknownFrameType(other)),
