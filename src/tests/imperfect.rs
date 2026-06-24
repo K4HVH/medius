@@ -37,11 +37,11 @@ fn decode_imperfect_through_parse_resp() {
 
 #[cfg(feature = "mock")]
 #[test]
-fn set_imperfect_allowed_sends_an_imperfect_frame() {
+fn allow_imperfect_clones_sends_an_imperfect_frame() {
     use crate::{Device, MockBox};
     let mock = MockBox::new();
     let device = Device::with_mock(mock.clone());
-    device.set_imperfect_allowed(true).unwrap();
+    device.allow_imperfect_clones(true).unwrap();
     let frame = mock
         .recorded_frames()
         .into_iter()
@@ -61,7 +61,7 @@ fn imperfect_query_roundtrips_the_status() {
     };
     let mock = MockBox::new().with_imperfect_status(status);
     let device = Device::with_mock(mock);
-    assert_eq!(device.imperfect().unwrap(), status);
+    assert_eq!(device.query_imperfect().unwrap(), status);
 }
 
 #[cfg(all(feature = "async", feature = "mock"))]
@@ -76,5 +76,5 @@ fn async_imperfect_query_roundtrips_the_status() {
     };
     let mock = MockBox::new().with_imperfect_status(status);
     let device = Device::with_mock(mock).into_async();
-    assert_eq!(block_on(device.imperfect()).unwrap(), status);
+    assert_eq!(block_on(device.query_imperfect()).unwrap(), status);
 }

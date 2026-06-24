@@ -84,7 +84,7 @@ impl Device {
     }
 
     /// Query the imperfect-clone opt-in and over-capacity status (§4.14).
-    pub fn imperfect(&self) -> Result<ImperfectStatus> {
+    pub fn query_imperfect(&self) -> Result<ImperfectStatus> {
         let payload = self.link.query(Q_IMPERFECT)?;
         match parse_resp(&payload) {
             Some(Resp::Imperfect(i)) => Ok(i),
