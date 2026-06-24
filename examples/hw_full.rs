@@ -19,8 +19,8 @@ mod linux {
     use std::time::{Duration, Instant};
 
     use medius::{
-        Action, Button, CatchMask, Device, Key, LedMode, LedTarget, LockDirection, LockTarget,
-        MediaKey, RebootTarget,
+        Action, Blanket, Button, CatchMask, Device, Key, LedMode, LedTarget, LockDirection,
+        LockTarget, MediaKey, RebootTarget,
     };
 
     const EVIOCGRAB: libc::c_ulong = 0x4004_4590;
@@ -390,6 +390,34 @@ mod linux {
         }
 
         {
+            // LOCK (keyboard/blanket): a key lock and a blanket all-keys lock both register on HEALTH's
+            // lock_on, and RESET clears them. The physical block needs a hand on the keyboard (run
+            // `medius.py` and type); here we confirm the box accepts and reflects the generic classes.
+            let dev = device.as_ref().unwrap();
+            let has_kbd = dev.query_health().map(|h| h.kbd_attached).unwrap_or(false);
+            if has_kbd {
+                let _ = dev.lock_key(Key::A, LockDirection::Both);
+                let on1 = dev.query_health().map(|h| h.lock_on).unwrap_or(false);
+                let _ = dev.unlock_key(Key::A, LockDirection::Both);
+                let _ = dev.lock_all(Blanket::Keys);
+                let on2 = dev.query_health().map(|h| h.lock_on).unwrap_or(false);
+                let _ = dev.reset();
+                let off = dev.query_health().map(|h| !h.lock_on).unwrap_or(false);
+                check(
+                    "lock: keyboard + blanket",
+                    on1 && on2 && off,
+                    format!("key-lock lock_on={on1}, all-keys lock_on={on2}, reset-cleared={off}"),
+                );
+            } else {
+                check(
+                    "lock: keyboard + blanket",
+                    true,
+                    "skipped (no keyboard attached)".into(),
+                );
+            }
+        }
+
+        {
             // CATCH: subscribe and confirm the box reports it (CATCH_ON + the mask via query_catch),
             // no events while the mouse is idle, and that a RESET clears catch like injection AND
             // disconnects the host stream (recv -> Err, not a silent hang). Live physical-input delivery
@@ -454,8 +482,9 @@ mod linux {
                     .map(|h| !h.injection_active)
                     .unwrap_or(false);
                 inject_ok = key_on && key_off && evdev_down && evdev_up;
-                detail =
-                    format!("{detail} key[on={key_on} off={key_off} evdev_down={evdev_down} evdev_up={evdev_up}]");
+                detail = format!(
+                    "{detail} key[on={key_on} off={key_off} evdev_down={evdev_down} evdev_up={evdev_up}]"
+                );
                 if caps.as_ref().map(|c| c.has_consumer).unwrap_or(false) {
                     let _ = dev.media_down(MediaKey::VOLUME_UP);
                     let med_on = dev

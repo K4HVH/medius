@@ -36,9 +36,11 @@ pub fn led_payload(target: u8, mode: u8, level: u8) -> [u8; 3] {
     [target, mode, level]
 }
 
-/// `LOCK` (§3.8): `[target u8][direction u8][state u8]` — state 0 unlock / 1 lock.
-pub fn lock_payload(target: u8, direction: u8, state: u8) -> [u8; 3] {
-    [target, direction, state]
+/// `LOCK` (§3.8): `[class u8][usage u16 LE][direction u8][state u8]` — state 0 unlock / 1 lock.
+/// `usage` is class-specific (mouse target, keyboard usage, or media usage; ignored for blanket classes).
+pub fn lock_payload(class: u8, usage: u16, direction: u8, state: u8) -> [u8; 5] {
+    let u = usage.to_le_bytes();
+    [class, u[0], u[1], direction, state]
 }
 
 /// `CATCH` (§3.9): `[mask u8]` — subscribe to physical-input event classes (0 = unsubscribe).

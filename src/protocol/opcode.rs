@@ -9,7 +9,7 @@ pub const SOF: u8 = 0xA5;
 pub const MAX_PAYLOAD: usize = 512;
 
 /// Protocol version in `RESP(VERSION)` (§4.1); the handshake requires this exact value.
-pub const PROTO_VER: u8 = 1;
+pub const PROTO_VER: u8 = 2; // v2: generic LOCK (class/usage/dir/state)
 
 pub const Q_VERSION: u8 = 0;
 pub const Q_HEALTH: u8 = 1;

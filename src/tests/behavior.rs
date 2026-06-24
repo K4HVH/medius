@@ -134,6 +134,29 @@ fn reapply_re_emits_only_held_overrides() {
 }
 
 #[test]
+fn reapply_re_emits_held_locks_but_not_released_ones() {
+    use crate::{Blanket, Key, LockDirection, LockTarget};
+    let mock = MockBox::new();
+    let device = Device::with_mock(mock.clone());
+    device.lock(LockTarget::X, LockDirection::Positive).unwrap();
+    device.lock_key(Key::A, LockDirection::Both).unwrap();
+    device.lock_all(Blanket::Keys).unwrap();
+    device.unlock_key(Key::A, LockDirection::Both).unwrap(); // released -> must not reappear
+    mock.clear_recorded();
+
+    device.reapply().unwrap();
+    let locks: Vec<Vec<u8>> = mock
+        .recorded_frames()
+        .iter()
+        .filter(|f| f.ty == FrameType::Lock)
+        .map(|f| f.payload.clone())
+        .collect();
+    // Only the two still-held locks, each re-asserted with state=1; key A is gone.
+    assert_eq!(locks, vec![vec![0, 0, 0, 1, 1], vec![3, 0, 0, 0, 1]]);
+    drop(device);
+}
+
+#[test]
 fn reboot_emits_the_target_byte() {
     let mock = MockBox::new();
     let device = Device::with_mock(mock.clone());
