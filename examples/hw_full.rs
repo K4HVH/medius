@@ -211,7 +211,7 @@ mod linux {
             let dev = device.as_ref().unwrap();
             let ver = dev.query_version();
             let health = dev.query_health();
-            let ver_ok = ver.as_ref().map(|v| v.proto_ver == 1).unwrap_or(false);
+            let ver_ok = ver.as_ref().map(|v| v.proto_ver == 2).unwrap_or(false);
             let h_ok = health
                 .as_ref()
                 .map(|h| h.link_up && h.mouse_attached && h.clone_configured)
@@ -223,7 +223,7 @@ mod linux {
             check(
                 "handshake",
                 ver_ok && h_ok,
-                format!("proto_ver==1 ({fw})  health={health:?}"),
+                format!("proto_ver==2 ({fw})  health={health:?}"),
             );
         }
 
