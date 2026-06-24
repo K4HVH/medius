@@ -97,6 +97,8 @@ pub const CAP_REPORT_ID: u8 = 0x08;
 
 /// `RATE` flag: estimator window full (same source as [`H_RATE_CONFIDENT`], §4.5).
 pub const RATE_CONFIDENT: u8 = 0x01;
+/// `RATE` flag: the active input is change-driven (keyboard/media) — no continuous cadence, poll floor only.
+pub const RATE_CHANGE_DRIVEN: u8 = 0x02;
 
 pub const LOG_ERROR: u8 = 0;
 pub const LOG_WARN: u8 = 1;

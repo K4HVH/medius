@@ -8,6 +8,25 @@ use crate::protocol::{Resp, parse_resp};
 use crate::types::Health;
 
 #[test]
+fn rate_decodes_continuous_vs_change_driven() {
+    // [what=4][native u16][poll u16][flags]. Continuous mouse: 1000us, confident, not change-driven.
+    let Some(Resp::Rate(r)) = parse_resp(&[4, 0xE8, 0x03, 0xE8, 0x03, 0x01]) else {
+        panic!("expected Rate");
+    };
+    assert_eq!(r.native_period_us, 1000);
+    assert!(r.confident && !r.change_driven);
+    assert_eq!(r.native_hz(), Some(1000.0));
+    // Change-driven keyboard: native N/A (0), poll floor 1000us, CHANGE_DRIVEN set.
+    let Some(Resp::Rate(k)) = parse_resp(&[4, 0x00, 0x00, 0xE8, 0x03, 0x02]) else {
+        panic!("expected Rate");
+    };
+    assert_eq!(k.native_period_us, 0);
+    assert!(k.change_driven && !k.confident);
+    assert_eq!(k.native_hz(), None);
+    assert_eq!(k.poll_period_us, 1000);
+}
+
+#[test]
 fn decode_mouse_info_exact_bytes() {
     // vid 0x046D, pid 0xC08B, bcdDevice 0x0110, bcdUSB 0x0200, flags HAS_SERIAL|HAS_BOS
     let p = [2u8, 0x6D, 0x04, 0x8B, 0xC0, 0x10, 0x01, 0x00, 0x02, 0x03];
@@ -124,6 +143,7 @@ fn device_queries_roundtrip_through_mock() {
         native_period_us: 1000,
         poll_period_us: 1000,
         confident: true,
+        change_driven: false,
     };
     let stats = Stats {
         inject_emits: 1234,
