@@ -1,7 +1,10 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::protocol::opcode::BTN_COUNT;
 use crate::types::{Action, Button, CatchMask, Key, MediaKey};
+
+/// A lock the host wants held, keyed by its wire fields so a reapply is exact and idempotent.
+pub(crate) type LockKey = (u8, u16, u8); // (class, usage, direction)
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(crate) enum Override {
@@ -38,6 +41,7 @@ pub(crate) struct DesiredState {
     overrides: [Override; BTN_COUNT as usize],
     keys: BTreeMap<u8, Override>, // usage -> Press/Force (a key never sits at None in the map)
     media: BTreeMap<u16, Override>, // Consumer usage -> Press/Force
+    locks: BTreeSet<LockKey>,     // active locks (any class), re-asserted after a reconnect
     catch: CatchMask,
 }
 
@@ -47,6 +51,7 @@ impl Default for DesiredState {
             overrides: [Override::None; BTN_COUNT as usize],
             keys: BTreeMap::new(),
             media: BTreeMap::new(),
+            locks: BTreeSet::new(),
             catch: CatchMask::empty(),
         }
     }
@@ -76,13 +81,23 @@ impl DesiredState {
         apply_to_map(&mut self.media, key.usage(), action);
     }
 
+    /// Track a lock (any class) so a reconnect re-asserts it. `on=false` forgets it.
+    pub(crate) fn apply_lock(&mut self, key: LockKey, on: bool) {
+        if on {
+            self.locks.insert(key);
+        } else {
+            self.locks.remove(&key);
+        }
+    }
+
     pub(crate) fn clear(&mut self) {
-        // Injection overrides only. Catch teardown on reset() is handled by Link::catch_disconnect_all
+        // Injection overrides + locks. Catch teardown on reset() is handled by Link::catch_disconnect_all
         // (it drops the EventStream senders so recv() returns Err — a plain field-clear here couldn't);
         // catch otherwise clears firmware-side on the same lifecycle as injection.
         self.overrides = [Override::None; BTN_COUNT as usize];
         self.keys.clear();
         self.media.clear();
+        self.locks.clear();
     }
 
     /// The catch subscription mask the box should be streaming (re-asserted on reconnect).
@@ -100,6 +115,7 @@ impl DesiredState {
         self.catch.is_empty()
             && self.keys.is_empty()
             && self.media.is_empty()
+            && self.locks.is_empty()
             && self.overrides.iter().all(|o| *o == Override::None)
     }
 
@@ -121,5 +137,9 @@ impl DesiredState {
         self.media
             .iter()
             .filter_map(|(&usage, ov)| Some((MediaKey::new(usage), ov.as_action()?)))
+    }
+
+    pub(crate) fn held_locks(&self) -> impl Iterator<Item = LockKey> + '_ {
+        self.locks.iter().copied()
     }
 }

@@ -9,8 +9,12 @@ use crate::types::{Button, Health, LockDirection, LockTarget, Locks};
 
 #[test]
 fn lock_payload_bytes() {
-    // Wheel / Negative / lock.
-    assert_eq!(lock_payload(2, 2, 1), [2, 2, 1]);
+    // [class][usage u16 LE][direction][state]. Mouse wheel / Negative / lock.
+    assert_eq!(lock_payload(0, 2, 2, 1), [0, 2, 0, 2, 1]);
+    // Media usage round-trips its 16 bits (VolumeUp 0x00E9).
+    assert_eq!(lock_payload(2, 0x00E9, 0, 1), [2, 0xE9, 0x00, 0, 1]);
+    // Blanket all-keys (class 3), usage/direction ignored.
+    assert_eq!(lock_payload(3, 0, 0, 1), [3, 0, 0, 0, 1]);
 }
 
 #[test]
@@ -117,7 +121,7 @@ fn lock_sends_a_lock_frame() {
         .iter()
         .find(|f| f.ty == FrameType::Lock)
         .expect("a LOCK frame was recorded");
-    assert_eq!(lock.payload, vec![2, 2, 1]);
+    assert_eq!(lock.payload, vec![0, 2, 0, 2, 1]); // mouse / wheel / neg / lock
 }
 
 #[cfg(feature = "mock")]
@@ -132,7 +136,27 @@ fn unlock_sends_state_zero() {
         .iter()
         .find(|f| f.ty == FrameType::Lock)
         .expect("a LOCK frame was recorded");
-    assert_eq!(lock.payload, vec![0, 0, 0]);
+    assert_eq!(lock.payload, vec![0, 0, 0, 0, 0]); // mouse / X / both / unlock
+}
+
+#[cfg(feature = "mock")]
+#[test]
+fn key_media_and_blanket_locks_send_the_right_class() {
+    use crate::{Blanket, Device, Key, MediaKey, MockBox};
+    let mock = MockBox::new();
+    let device = Device::with_mock(mock.clone());
+    device.lock_key(Key::A, LockDirection::Both).unwrap();
+    device.lock_media(MediaKey::VOLUME_UP).unwrap();
+    device.lock_all(Blanket::Keys).unwrap();
+    let locks: Vec<_> = mock
+        .recorded_frames()
+        .into_iter()
+        .filter(|f| f.ty == FrameType::Lock)
+        .map(|f| f.payload)
+        .collect();
+    assert_eq!(locks[0], vec![1, 0x04, 0x00, 0, 1]); // key A, both, lock
+    assert_eq!(locks[1], vec![2, 0xE9, 0x00, 0, 1]); // media VolumeUp, lock
+    assert_eq!(locks[2], vec![3, 0x00, 0x00, 0, 1]); // blanket all-keys, lock
 }
 
 #[cfg(feature = "mock")]
