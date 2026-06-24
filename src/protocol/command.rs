@@ -40,3 +40,8 @@ pub fn lock_payload(class: u8, usage: u16, direction: u8, state: u8) -> [u8; 5] 
 pub fn catch_payload(mask: u8) -> [u8; 1] {
     [mask]
 }
+
+/// `IMPERFECT` (§3.10): `[allow u8]` — 1 = opt into cloning over-capacity devices, 0 = faithful-only.
+pub fn imperfect_payload(allow: bool) -> [u8; 1] {
+    [allow as u8]
+}

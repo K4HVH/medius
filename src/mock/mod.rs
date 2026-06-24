@@ -11,8 +11,8 @@ use crate::protocol::opcode::{
 use crate::protocol::{DecodedFrame, FrameType, encode};
 use crate::transport::mock::MockTransport;
 use crate::types::{
-    Caps, CatchState, Health, KbdCaps, KeyboardEvent, Locks, LogLevel, MediaEvent, MouseCaps,
-    MouseEvent, MouseInfo, Rate, Stats, Version,
+    Caps, CatchState, Health, ImperfectStatus, KbdCaps, KeyboardEvent, Locks, LogLevel, MediaEvent,
+    MouseCaps, MouseEvent, MouseInfo, Rate, Stats, Version,
 };
 
 #[derive(Debug)]
@@ -25,6 +25,7 @@ struct State {
     stats: Stats,
     locks: Locks,
     catch: CatchState,
+    imperfect: ImperfectStatus,
     recorded: Vec<DecodedFrame>,
     respond: bool,
 }
@@ -46,6 +47,7 @@ impl Default for State {
                 .unwrap(),
             locks: Locks::from_payload(&[6, 0, 0]).unwrap(),
             catch: CatchState::from_payload(&[7, 0, 0, 0, 0, 0]).unwrap(),
+            imperfect: ImperfectStatus::default(),
             recorded: Vec::new(),
             respond: true,
         }
@@ -148,6 +150,15 @@ fn catch_resp_payload(c: CatchState) -> Vec<u8> {
     p
 }
 
+fn imperfect_payload(i: ImperfectStatus) -> Vec<u8> {
+    vec![
+        9u8,
+        i.allowed as u8,
+        i.over_capacity as u8,
+        i.clone_imperfect as u8,
+    ]
+}
+
 fn kb_event_payload(e: &KeyboardEvent) -> Vec<u8> {
     let mut p = vec![e.modifiers, e.keys.len() as u8];
     p.extend(e.keys.iter().map(|k| k.usage()));
@@ -223,6 +234,8 @@ impl MockBox {
                         Some(6) => encode(FrameType::Resp, seq, &locks_payload(st.locks))
                             .expect("resp fits"),
                         Some(7) => encode(FrameType::Resp, seq, &catch_resp_payload(st.catch))
+                            .expect("resp fits"),
+                        Some(9) => encode(FrameType::Resp, seq, &imperfect_payload(st.imperfect))
                             .expect("resp fits"),
                         _ => Vec::new(),
                     }
@@ -308,6 +321,13 @@ impl MockBox {
         self
     }
 
+    /// Set the [`ImperfectStatus`] answered to `QUERY(IMPERFECT)` (builder style).
+    #[must_use]
+    pub fn with_imperfect_status(self, imperfect: ImperfectStatus) -> Self {
+        self.state.lock().imperfect = imperfect;
+        self
+    }
+
     /// Update the configured [`Version`] in place (e.g. mid-test).
     pub fn set_version(&self, version: Version) {
         self.state.lock().version = version;
@@ -316,6 +336,11 @@ impl MockBox {
     /// Update the configured [`Health`] in place (e.g. to simulate the mouse attaching).
     pub fn set_health(&self, health: Health) {
         self.state.lock().health = health;
+    }
+
+    /// Update the configured [`ImperfectStatus`] in place (e.g. to simulate an over-capacity device).
+    pub fn set_imperfect_status(&self, imperfect: ImperfectStatus) {
+        self.state.lock().imperfect = imperfect;
     }
 
     /// Make the box unresponsive (builder style): it records commands but never answers a `QUERY`.

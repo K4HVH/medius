@@ -1,12 +1,12 @@
 use crate::error::{Error, Result};
 use crate::link::Link;
 use crate::protocol::opcode::{
-    Q_CAPS, Q_CATCH, Q_HEALTH, Q_LOCKS, Q_MOUSE_INFO, Q_RATE, Q_STATS, Q_VERSION,
+    Q_CAPS, Q_CATCH, Q_HEALTH, Q_IMPERFECT, Q_LOCKS, Q_MOUSE_INFO, Q_RATE, Q_STATS, Q_VERSION,
 };
 use crate::protocol::{Resp, parse_resp};
 use crate::types::{
-    Action, Button, Caps, CatchMask, CatchState, Health, Key, LedMode, LedTarget, LockDirection,
-    LockTarget, Locks, MediaKey, MouseInfo, Rate, RebootTarget, Stats, Version,
+    Action, Button, Caps, CatchMask, CatchState, Health, ImperfectStatus, Key, LedMode, LedTarget,
+    LockDirection, LockTarget, Locks, MediaKey, MouseInfo, Rate, RebootTarget, Stats, Version,
 };
 
 use super::Device;
@@ -144,6 +144,11 @@ impl AsyncDevice {
         self.dev().catch_events(mask)
     }
 
+    /// `IMPERFECT` — opt into cloning an over-capacity device. Instant; see [`Device::set_imperfect_allowed`].
+    pub fn set_imperfect_allowed(&self, allow: bool) -> Result<()> {
+        self.dev().set_imperfect_allowed(allow)
+    }
+
     /// Query the box version, awaiting the correlated `RESP` with the default timeout.
     pub async fn query_version(&self) -> Result<Version> {
         let payload = self
@@ -236,6 +241,18 @@ impl AsyncDevice {
             .await?;
         match parse_resp(&payload) {
             Some(Resp::Catch(c)) => Ok(c),
+            _ => Err(Error::NoReply),
+        }
+    }
+
+    /// Query the imperfect-clone status (§4.14), awaiting the correlated `RESP`.
+    pub async fn imperfect(&self) -> Result<ImperfectStatus> {
+        let payload = self
+            .link
+            .query_async(Q_IMPERFECT, self.link.query_timeout_default())
+            .await?;
+        match parse_resp(&payload) {
+            Some(Resp::Imperfect(i)) => Ok(i),
             _ => Err(Error::NoReply),
         }
     }
