@@ -1,4 +1,5 @@
 mod button;
+mod caps;
 mod counters;
 mod health;
 mod inject;
@@ -18,6 +19,7 @@ mod stats;
 mod version;
 
 pub use button::{Action, Button};
+pub use caps::Caps;
 pub use counters::CountersSnapshot;
 pub use health::Health;
 pub use inject::{Input, Motion};

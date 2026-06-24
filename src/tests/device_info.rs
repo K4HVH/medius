@@ -43,16 +43,18 @@ fn decode_mouse_info_exact_bytes() {
 
 #[test]
 fn decode_caps_exact_bytes() {
-    // 5 buttons, X|Y|WHEEL (0x07), 2 HID interfaces
-    let p = [3u8, 5, 0x07, 2];
-    let Some(Resp::MouseCaps(c)) = parse_resp(&p) else {
-        panic!("expected MouseCaps");
+    // unified CAPS: 5 buttons, X|Y|WHEEL (0x07), 2 HID interfaces; no keyboard; not change-driven
+    let p = [3u8, 5, 0x07, 2, 0, 0, 0];
+    let Some(Resp::Caps(c)) = parse_resp(&p) else {
+        panic!("expected Caps");
     };
-    assert_eq!(c.n_buttons, 5);
-    assert!(c.has_x && c.has_y && c.has_wheel);
-    assert!(!c.has_report_id);
-    assert_eq!(c.n_hid, 2);
+    assert_eq!(c.mouse.n_buttons, 5);
+    assert!(c.mouse.has_x && c.mouse.has_y && c.mouse.has_wheel);
+    assert!(!c.mouse.has_report_id);
+    assert_eq!(c.mouse.n_hid, 2);
     assert!(c.is_composite());
+    assert!(c.has_mouse() && !c.has_keyboard());
+    assert!(!c.mouse_change_driven && !c.kbd_change_driven);
 }
 
 #[test]
@@ -164,7 +166,7 @@ fn device_queries_roundtrip_through_mock() {
     let device = Device::with_mock(mock);
 
     assert_eq!(device.query_mouse_info().unwrap(), mouse);
-    assert_eq!(device.query_mouse_caps().unwrap(), caps);
+    assert_eq!(device.caps().unwrap().mouse, caps);
     assert_eq!(device.query_rate().unwrap(), rate);
     assert_eq!(device.query_stats().unwrap(), stats);
 }

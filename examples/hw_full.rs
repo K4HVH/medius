@@ -233,14 +233,14 @@ mod linux {
                 .query_health()
                 .map(|h| h.mouse_attached)
                 .unwrap_or(false);
-            let caps = dev.query_mouse_caps();
+            let caps = dev.caps();
             let info = dev.query_mouse_info();
             let rate = dev.query_rate();
             let stats = dev.query_stats();
 
             let caps_ok = caps
                 .as_ref()
-                .map(|c| c.has_x && c.has_y && c.n_buttons > 0)
+                .map(|c| c.mouse.has_x && c.mouse.has_y && c.mouse.n_buttons > 0)
                 .unwrap_or(false);
             // vid != 0 once a mouse is cloned; zero is allowed when none is attached.
             let info_ok = info
@@ -460,7 +460,7 @@ mod linux {
             // the OS types on). Media injection verifies injection_active only (its Consumer reports land on
             // a different evdev node than the grabbed one).
             let dev = device.as_ref().unwrap();
-            let caps = dev.query_kbd_caps();
+            let caps = dev.caps().map(|c| c.keyboard);
             let attached = dev.query_health().map(|h| h.kbd_attached).unwrap_or(false);
             let mut inject_ok = true;
             let mut detail = format!("kbd_caps={caps:?} attached={attached}");

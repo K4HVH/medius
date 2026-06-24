@@ -29,10 +29,10 @@ pub use link::{DEFAULT_KEEPALIVE_CADENCE, DEFAULT_QUERY_TIMEOUT};
 pub use protocol::{DecodedFrame, FrameType};
 pub use transport::scan::find_medius;
 pub use types::{
-    Action, Blanket, Button, CatchEvent, CatchMask, CatchState, CountersSnapshot, Health, Input,
-    KbdCaps, Key, KeyboardEvent, LedMode, LedTarget, LockClass, LockDirection, LockTarget, Locks,
-    LogLevel, LogLine, MediaEvent, MediaKey, Motion, MouseCaps, MouseEvent, MouseInfo, PortInfo,
-    Rate, RebootTarget, Stats, Version,
+    Action, Blanket, Button, Caps, CatchEvent, CatchMask, CatchState, CountersSnapshot, Health,
+    Input, KbdCaps, Key, KeyboardEvent, LedMode, LedTarget, LockClass, LockDirection, LockTarget,
+    Locks, LogLevel, LogLine, MediaEvent, MediaKey, Motion, MouseCaps, MouseEvent, MouseInfo,
+    PortInfo, Rate, RebootTarget, Stats, Version,
 };
 
 #[cfg(feature = "async")]
