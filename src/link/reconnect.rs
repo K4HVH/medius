@@ -6,9 +6,8 @@ use parking_lot::Mutex;
 
 use crate::error::{Error, Result};
 use crate::protocol::FrameType;
-use crate::protocol::command::{
-    button_payload, catch_payload, consumer_payload, key_payload, lock_payload,
-};
+use crate::protocol::command::{catch_payload, inject_payload, lock_payload};
+use crate::protocol::opcode::{INJ_BTN, INJ_KEY, INJ_MEDIA};
 
 use super::counters::Counters;
 use super::reconcile::DesiredState;
@@ -66,8 +65,8 @@ fn reapply_held(ctx: &ReconnectCtx) -> Result<()> {
             &ctx.write_lock,
             &ctx.counters,
             seq,
-            FrameType::Button,
-            &button_payload(button.as_id(), action.as_u8()),
+            FrameType::Inject,
+            &inject_payload(INJ_BTN, button.as_id() as u16, action.as_u8()),
         )?;
     }
     for (key, action) in held_keys {
@@ -77,8 +76,8 @@ fn reapply_held(ctx: &ReconnectCtx) -> Result<()> {
             &ctx.write_lock,
             &ctx.counters,
             seq,
-            FrameType::Key,
-            &key_payload(key.usage(), action.as_u8()),
+            FrameType::Inject,
+            &inject_payload(INJ_KEY, key.usage() as u16, action.as_u8()),
         )?;
     }
     for (key, action) in held_media {
@@ -88,8 +87,8 @@ fn reapply_held(ctx: &ReconnectCtx) -> Result<()> {
             &ctx.write_lock,
             &ctx.counters,
             seq,
-            FrameType::Consumer,
-            &consumer_payload(key.usage(), action.as_u8()),
+            FrameType::Inject,
+            &inject_payload(INJ_MEDIA, key.usage(), action.as_u8()),
         )?;
     }
     // Re-assert held locks: like injection, the firmware silence-clears every lock after the ~1 s

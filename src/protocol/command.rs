@@ -1,34 +1,27 @@
-/// `MOVE` (§3.1): `[dx i16 LE][dy i16 LE]`, no clamp (firmware clamps with carry).
-pub fn move_payload(dx: i16, dy: i16) -> [u8; 4] {
+use super::opcode::{INJ_MOTION_CURSOR, INJ_MOTION_WHEEL};
+
+/// `MOVE` cursor (§3.1): `[motion=0][dx i16 LE][dy i16 LE]`, no clamp (firmware clamps with carry).
+pub fn move_cursor_payload(dx: i16, dy: i16) -> [u8; 5] {
     let dx = dx.to_le_bytes();
     let dy = dy.to_le_bytes();
-    [dx[0], dx[1], dy[0], dy[1]]
+    [INJ_MOTION_CURSOR, dx[0], dx[1], dy[0], dy[1]]
 }
 
-/// `WHEEL` (§3.2): `[delta i16 LE]`, no clamp (firmware paces across frames with carry).
-pub fn wheel_payload(delta: i16) -> [u8; 2] {
-    delta.to_le_bytes()
+/// `MOVE` wheel (§3.1): `[motion=1][dz i16 LE]`, no clamp (firmware paces across frames with carry).
+pub fn move_wheel_payload(dz: i16) -> [u8; 3] {
+    let d = dz.to_le_bytes();
+    [INJ_MOTION_WHEEL, d[0], d[1]]
 }
 
-/// `BUTTON` (§3.3): `[id u8][action u8]` — id 0..=4, action 0 soft-release / 1 press / 2 force-release.
-pub fn button_payload(id: u8, action: u8) -> [u8; 2] {
-    [id, action]
+/// `INJECT` (§3.2): `[class u8][id u16 LE][action u8]` — class 0 button / 1 key / 2 media; tri-state action.
+pub fn inject_payload(class: u8, id: u16, action: u8) -> [u8; 4] {
+    let u = id.to_le_bytes();
+    [class, u[0], u[1], action]
 }
 
 /// `QUERY` (§3.5): `[what u8]` — 0 = VERSION, 1 = HEALTH.
 pub fn query_payload(what: u8) -> [u8; 1] {
     [what]
-}
-
-/// `KEY` (§3.10): `[usage u8][action u8]` — a HID keycode (0xE0..=0xE7 = a modifier), tri-state action.
-pub fn key_payload(usage: u8, action: u8) -> [u8; 2] {
-    [usage, action]
-}
-
-/// `CONSUMER` (§3.11): `[usage u16 LE][action u8]` — a 16-bit Consumer (media) usage, tri-state action.
-pub fn consumer_payload(usage: u16, action: u8) -> [u8; 3] {
-    let u = usage.to_le_bytes();
-    [u[0], u[1], action]
 }
 
 /// `LED` (§3.7): `[target u8][mode u8][level u8]`.

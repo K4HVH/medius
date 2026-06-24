@@ -1,6 +1,7 @@
 mod button;
 mod counters;
 mod health;
+mod inject;
 mod input;
 mod kbd_caps;
 mod keyboard;
@@ -19,6 +20,7 @@ mod version;
 pub use button::{Action, Button};
 pub use counters::CountersSnapshot;
 pub use health::Health;
+pub use inject::{Input, Motion};
 pub use input::{CatchEvent, CatchMask, CatchState, MouseEvent};
 pub use kbd_caps::KbdCaps;
 pub use keyboard::{Key, KeyboardEvent};

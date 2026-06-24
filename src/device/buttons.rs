@@ -1,17 +1,18 @@
 use crate::error::Result;
 use crate::protocol::FrameType;
-use crate::protocol::command::button_payload;
+use crate::protocol::command::inject_payload;
+use crate::protocol::opcode::INJ_BTN;
 use crate::types::{Action, Button};
 
 use super::Device;
 
 impl Device {
-    /// `BUTTON` — set an injection override for one button.
+    /// `INJECT` (button) — set an injection override for one button.
     pub fn button(&self, button: Button, action: Action) -> Result<()> {
         self.link.desired().lock().apply(button, action);
         self.link.send(
-            FrameType::Button,
-            &button_payload(button.as_id(), action.as_u8()),
+            FrameType::Inject,
+            &inject_payload(INJ_BTN, button.as_id() as u16, action.as_u8()),
         )
     }
 

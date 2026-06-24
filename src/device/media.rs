@@ -1,19 +1,20 @@
 use crate::error::Result;
 use crate::protocol::FrameType;
-use crate::protocol::command::consumer_payload;
+use crate::protocol::command::inject_payload;
+use crate::protocol::opcode::INJ_MEDIA;
 use crate::types::{Action, MediaKey};
 
 use super::Device;
 
 impl Device {
-    /// `CONSUMER` — set an injection override for one media key by 16-bit Consumer usage, merged with
-    /// the user's real media keys. Present-gated: a media key on a board with no Consumer collection
+    /// `INJECT` (media) — set an injection override for one media key by 16-bit Consumer usage, merged
+    /// with the user's real media keys. Present-gated: a media key on a board with no Consumer collection
     /// is a silent no-op (check [`KbdCaps::has_consumer`](crate::KbdCaps::has_consumer)).
     pub fn media(&self, key: MediaKey, action: Action) -> Result<()> {
         self.link.desired().lock().apply_media(key, action);
         self.link.send(
-            FrameType::Consumer,
-            &consumer_payload(key.usage(), action.as_u8()),
+            FrameType::Inject,
+            &inject_payload(INJ_MEDIA, key.usage(), action.as_u8()),
         )
     }
 
