@@ -58,7 +58,7 @@ fn set_health_updates_subsequent_queries() {
 #[test]
 fn handshake_accepts_matching_proto_ver() {
     let device = Device::open_mock(MockBox::new()).expect("default proto_ver matches");
-    assert_eq!(device.query_version().unwrap().proto_ver, 1);
+    assert_eq!(device.query_version().unwrap().proto_ver, 2);
 }
 
 #[test]
