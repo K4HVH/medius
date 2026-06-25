@@ -368,7 +368,7 @@ impl MockBox {
     /// rolling event counter the host sees as the frame `SEQ`.
     pub fn push_event(&self, seq: u8, report: MouseEvent) {
         self.transport
-            .push_frame(FrameType::Event, seq, &event_payload(report));
+            .push_frame(FrameType::MouseEvent, seq, &event_payload(report));
     }
 
     /// Push a `KB_EVENT` (keyboard snapshot); surfaces as [`CatchEvent::Keyboard`](crate::CatchEvent).

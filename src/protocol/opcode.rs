@@ -145,8 +145,8 @@ pub enum FrameType {
     Lock = 0x0A,
     /// `CATCH` — subscribe to the physical-input event stream (PC→box).
     Catch = 0x0B,
-    /// `EVENT` — one unsolicited physical-input snapshot; `SEQ` is a rolling counter (box→PC).
-    Event = 0x0C,
+    /// `MOUSE_EVENT` — one unsolicited mouse snapshot; `SEQ` is a rolling counter (box→PC).
+    MouseEvent = 0x0C,
     /// `KB_EVENT` — one unsolicited keyboard snapshot (modifiers + pressed keys); box→PC (v2.0.0).
     KbEvent = 0x0F,
     /// `CONS_EVENT` — one unsolicited media snapshot (active Consumer usages); box→PC (v2.0.0).
@@ -182,7 +182,7 @@ impl TryFrom<u8> for FrameType {
             0x09 => FrameType::Led,
             0x0A => FrameType::Lock,
             0x0B => FrameType::Catch,
-            0x0C => FrameType::Event,
+            0x0C => FrameType::MouseEvent,
             0x0F => FrameType::KbEvent,
             0x10 => FrameType::ConsEvent,
             0x11 => FrameType::Imperfect,
