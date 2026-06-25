@@ -10,7 +10,7 @@ use crate::{Device, Health, MockBox, Version};
 fn concurrent_queries_never_cross_deliver() {
     let mock = MockBox::new()
         .with_version(Version {
-            proto_ver: 1,
+            proto_ver: 2,
             fw_major: 2,
             fw_minor: 3,
             fw_patch: 4,

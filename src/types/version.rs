@@ -5,7 +5,7 @@ use core::fmt;
 /// The decoded `RESP(VERSION)` payload.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Version {
-    /// Protocol version, expected to be `1`.
+    /// Protocol version, expected to be `2`.
     pub proto_ver: u8,
     pub fw_major: u8,
     pub fw_minor: u8,

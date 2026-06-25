@@ -8,7 +8,7 @@ use crate::{Button, Device, Error, FrameType, Health, LogLevel, MockBox, RebootT
 fn query_returns_configured_values_and_records_commands() {
     let mock = MockBox::new()
         .with_version(Version {
-            proto_ver: 1,
+            proto_ver: 2,
             fw_major: 5,
             fw_minor: 6,
             fw_patch: 7,
