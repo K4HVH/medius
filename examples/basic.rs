@@ -23,7 +23,7 @@ fn main() -> medius::Result<()> {
     );
 
     let info = device.query_mouse_info()?;
-    let caps = device.query_caps()?;
+    let caps = device.query_mouse_caps()?;
     let rate = device.query_rate()?;
     println!("mouse: {info} (composite={})", caps.is_composite());
     println!(

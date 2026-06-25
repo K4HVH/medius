@@ -26,8 +26,8 @@ fn decode_mouse_info_exact_bytes() {
 fn decode_caps_exact_bytes() {
     // 5 buttons, X|Y|WHEEL (0x07), 2 HID interfaces
     let p = [3u8, 5, 0x07, 2];
-    let Some(Resp::Caps(c)) = parse_resp(&p) else {
-        panic!("expected Caps");
+    let Some(Resp::MouseCaps(c)) = parse_resp(&p) else {
+        panic!("expected MouseCaps");
     };
     assert_eq!(c.n_buttons, 5);
     assert!(c.has_x && c.has_y && c.has_wheel);
@@ -101,7 +101,7 @@ fn truncated_payloads_decode_to_none() {
 #[cfg(feature = "mock")]
 #[test]
 fn device_queries_roundtrip_through_mock() {
-    use crate::types::{Caps, MouseInfo, Rate, Stats};
+    use crate::types::{MouseCaps, MouseInfo, Rate, Stats};
     use crate::{Device, MockBox};
 
     let mouse = MouseInfo {
@@ -112,7 +112,7 @@ fn device_queries_roundtrip_through_mock() {
         has_serial: true,
         has_bos: true,
     };
-    let caps = Caps {
+    let caps = MouseCaps {
         n_buttons: 5,
         has_x: true,
         has_y: true,
@@ -138,13 +138,13 @@ fn device_queries_roundtrip_through_mock() {
 
     let mock = MockBox::new()
         .with_mouse_info(mouse)
-        .with_caps(caps)
+        .with_mouse_caps(caps)
         .with_rate(rate)
         .with_stats(stats);
     let device = Device::with_mock(mock);
 
     assert_eq!(device.query_mouse_info().unwrap(), mouse);
-    assert_eq!(device.query_caps().unwrap(), caps);
+    assert_eq!(device.query_mouse_caps().unwrap(), caps);
     assert_eq!(device.query_rate().unwrap(), rate);
     assert_eq!(device.query_stats().unwrap(), stats);
 }
