@@ -1,21 +1,29 @@
-//! `KEY` / `CONSUMER` inject (§3.10/3.11), `KBD_CAPS` (§4.11), and keyboard/media catch events.
+//! `INJECT` key/media (§3.2), `CAPS` (§4.4), and keyboard/media catch events.
 //! Bytes are pinned to the firmware wire format in `ctrl_proto.h`.
 
-use crate::protocol::command::{consumer_payload, key_payload};
-use crate::types::{KbdCaps, Key, MediaKey};
+use crate::protocol::command::inject_payload;
+use crate::protocol::opcode::{INJ_KEY, INJ_MEDIA};
+use crate::types::{Key, MediaKey};
 
 #[test]
-fn key_payload_bytes() {
-    assert_eq!(key_payload(Key::A.usage(), 1), [0x04, 1]); // 'a' press
-    assert_eq!(key_payload(Key::LEFT_SHIFT.usage(), 1), [0xE1, 1]); // modifier
+fn key_inject_bytes() {
+    // INJECT [class=key][id u16 LE][action]: 'a' press, LeftShift modifier press.
+    assert_eq!(
+        inject_payload(INJ_KEY, Key::A.usage() as u16, 1),
+        [1, 0x04, 0x00, 1]
+    );
+    assert_eq!(
+        inject_payload(INJ_KEY, Key::LEFT_SHIFT.usage() as u16, 1),
+        [1, 0xE1, 0x00, 1]
+    );
 }
 
 #[test]
-fn consumer_payload_bytes() {
-    // Vol+ = 0x00E9 little-endian + press
+fn media_inject_bytes() {
+    // INJECT [class=media][id u16 LE][action]: Vol+ = 0x00E9, press.
     assert_eq!(
-        consumer_payload(MediaKey::VOLUME_UP.usage(), 1),
-        [0xE9, 0x00, 1]
+        inject_payload(INJ_MEDIA, MediaKey::VOLUME_UP.usage(), 1),
+        [2, 0xE9, 0x00, 1]
     );
 }
 
@@ -29,12 +37,16 @@ fn key_modifier_classification() {
 
 #[test]
 fn kbd_caps_decodes() {
-    // n_keys=255 (NKRO bitmap), flags = NKRO | CONSUMER | REPORT_ID
-    let k = KbdCaps::from_payload(&[8, 0xFF, 0x0B]).unwrap();
+    use crate::Caps;
+    // unified CAPS, keyboard half: n_keys=255 (NKRO bitmap), kbd_flags = NKRO|CONSUMER|REPORT_ID,
+    // keyboard class change-driven
+    let c = Caps::from_payload(&[3, 0, 0, 0, 0xFF, 0x0B, 0x02]).unwrap();
+    let k = c.keyboard;
     assert_eq!(k.n_keys, 0xFF);
     assert!(k.nkro && k.has_consumer && k.has_report_id);
     assert!(!k.has_system);
-    assert!(KbdCaps::from_payload(&[8, 0]).is_none()); // needs 3
+    assert!(c.has_keyboard() && c.kbd_change_driven && !c.has_mouse());
+    assert!(Caps::from_payload(&[3, 0]).is_none()); // needs 7
 }
 
 #[cfg(feature = "mock")]
@@ -48,9 +60,9 @@ fn key_down_sends_a_key_frame() {
     let f = mock
         .recorded_frames()
         .into_iter()
-        .find(|f| f.ty == FrameType::Key)
-        .expect("a KEY frame was recorded");
-    assert_eq!(f.payload, vec![0x04, 1]);
+        .find(|f| f.ty == FrameType::Inject)
+        .expect("an INJECT frame was recorded");
+    assert_eq!(f.payload, vec![1, 0x04, 0x00, 1]); // class=key id=A action=press
 }
 
 #[cfg(feature = "mock")]
@@ -64,9 +76,9 @@ fn media_down_sends_a_consumer_frame() {
     let f = mock
         .recorded_frames()
         .into_iter()
-        .find(|f| f.ty == FrameType::Consumer)
-        .expect("a CONSUMER frame was recorded");
-    assert_eq!(f.payload, vec![0xE9, 0x00, 1]);
+        .find(|f| f.ty == FrameType::Inject)
+        .expect("an INJECT frame was recorded");
+    assert_eq!(f.payload, vec![2, 0xE9, 0x00, 1]); // class=media id=Vol+ action=press
 }
 
 #[cfg(feature = "mock")]
@@ -81,7 +93,7 @@ fn query_kbd_caps_roundtrips() {
         has_report_id: true,
     };
     let device = Device::with_mock(MockBox::new().with_kbd_caps(caps));
-    assert_eq!(device.query_kbd_caps().unwrap(), caps);
+    assert_eq!(device.caps().unwrap().keyboard, caps);
 }
 
 #[cfg(feature = "mock")]

@@ -1,4 +1,4 @@
-//! Keyboard command vocabulary: a key by HID keycode, and the keyboard catch snapshot (v1.7.0).
+//! Keyboard command vocabulary: a key by HID keycode, and the keyboard catch snapshot (v2.0.0).
 
 /// A keyboard key, addressed by HID Usage (Keyboard/Keypad page, §3.10).
 ///
@@ -108,7 +108,7 @@ impl Key {
     pub const RIGHT_GUI: Key = Key(0xE7);
 }
 
-/// A keyboard catch snapshot — a `KB_EVENT` frame (§4.12, v1.7.0).
+/// A keyboard catch snapshot — a `KB_EVENT` frame (§4.12, v2.0.0).
 ///
 /// Carries the modifier bitmap and every currently-pressed key, so it is self-correcting: a dropped
 /// frame is recovered by the next one. Diff successive snapshots for down/up edges, or use

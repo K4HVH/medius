@@ -1,10 +1,10 @@
 use crate::error::{Error, Result};
 use crate::protocol::opcode::{
-    Q_CAPS, Q_CATCH, Q_HEALTH, Q_KBD_CAPS, Q_LOCKS, Q_MOUSE_INFO, Q_RATE, Q_STATS, Q_VERSION,
+    Q_CAPS, Q_CATCH, Q_HEALTH, Q_IMPERFECT, Q_LOCKS, Q_MOUSE_INFO, Q_RATE, Q_STATS, Q_VERSION,
 };
 use crate::protocol::{Resp, parse_resp};
 use crate::types::{
-    CatchState, Health, KbdCaps, Locks, MouseCaps, MouseInfo, Rate, Stats, Version,
+    Caps, CatchState, Health, ImperfectStatus, Locks, MouseInfo, Rate, Stats, Version,
 };
 
 use super::Device;
@@ -37,11 +37,12 @@ impl Device {
         }
     }
 
-    /// Query the emulated mouse's semantic capabilities (button count, axes, interfaces, §4.4).
-    pub fn query_mouse_caps(&self) -> Result<MouseCaps> {
+    /// Query the whole cloned device's semantic capabilities in one request: mouse + keyboard + the
+    /// per-class change_driven flags (§4.4). A class that is not present reads all-zero/false.
+    pub fn caps(&self) -> Result<Caps> {
         let payload = self.link.query(Q_CAPS)?;
         match parse_resp(&payload) {
-            Some(Resp::MouseCaps(c)) => Ok(c),
+            Some(Resp::Caps(c)) => Ok(c),
             _ => Err(Error::NoReply),
         }
     }
@@ -82,12 +83,11 @@ impl Device {
         }
     }
 
-    /// Query the cloned keyboard's semantic capabilities (key count, NKRO, Consumer/System, §4.11).
-    /// All-zero/false when no keyboard is bound — check [`Health::kbd_attached`](crate::Health) first.
-    pub fn query_kbd_caps(&self) -> Result<KbdCaps> {
-        let payload = self.link.query(Q_KBD_CAPS)?;
+    /// Query the imperfect-clone opt-in and over-capacity status (§4.14).
+    pub fn query_imperfect(&self) -> Result<ImperfectStatus> {
+        let payload = self.link.query(Q_IMPERFECT)?;
         match parse_resp(&payload) {
-            Some(Resp::KbdCaps(k)) => Ok(k),
+            Some(Resp::Imperfect(i)) => Ok(i),
             _ => Err(Error::NoReply),
         }
     }

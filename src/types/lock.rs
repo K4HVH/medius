@@ -2,6 +2,44 @@
 
 use crate::types::Button;
 
+/// Which input class a `LOCK` addresses (the wire `class` byte). A lock blocks physical input on the
+/// addressed field while host injection still drives it.
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum LockClass {
+    Mouse = 0,
+    Key = 1,
+    Media = 2,
+    AllKeys = 3,
+    AllMedia = 4,
+    AllButtons = 5,
+}
+
+impl LockClass {
+    /// The wire `class` byte.
+    pub fn as_u8(self) -> u8 {
+        self as u8
+    }
+}
+
+/// A whole-class blanket lock: every physical key, every media usage, or every mouse button.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Blanket {
+    Keys,
+    Media,
+    Buttons,
+}
+
+impl Blanket {
+    pub(crate) fn class(self) -> LockClass {
+        match self {
+            Blanket::Keys => LockClass::AllKeys,
+            Blanket::Media => LockClass::AllMedia,
+            Blanket::Buttons => LockClass::AllButtons,
+        }
+    }
+}
+
 /// What a `LOCK` command targets; the wire `target` byte is `as_u8()`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum LockTarget {

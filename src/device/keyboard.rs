@@ -1,18 +1,21 @@
 use crate::error::Result;
 use crate::protocol::FrameType;
-use crate::protocol::command::key_payload;
+use crate::protocol::command::inject_payload;
+use crate::protocol::opcode::INJ_KEY;
 use crate::types::{Action, Key};
 
 use super::Device;
 
 impl Device {
-    /// `KEY` — set an injection override for one keyboard key. A modifier (usage `0xE0..=0xE7`) folds
-    /// into the report's modifier byte; every other key fills a keycode slot, merged with the user's
-    /// real typing. Present-gated: a key the cloned board cannot report is a silent no-op.
+    /// `INJECT` (key) — set an injection override for one keyboard key. A modifier (usage `0xE0..=0xE7`)
+    /// folds into the report's modifier byte; every other key fills a keycode slot, merged with the
+    /// user's real typing. Present-gated: a key the cloned board cannot report is a silent no-op.
     pub fn key(&self, key: Key, action: Action) -> Result<()> {
         self.link.desired().lock().apply_key(key, action);
-        self.link
-            .send(FrameType::Key, &key_payload(key.usage(), action.as_u8()))
+        self.link.send(
+            FrameType::Inject,
+            &inject_payload(INJ_KEY, key.usage() as u16, action.as_u8()),
+        )
     }
 
     /// Press (hold down) a key.

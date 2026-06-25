@@ -1,12 +1,12 @@
 use crate::error::{Error, Result};
 use crate::link::Link;
 use crate::protocol::opcode::{
-    Q_CAPS, Q_CATCH, Q_HEALTH, Q_KBD_CAPS, Q_LOCKS, Q_MOUSE_INFO, Q_RATE, Q_STATS, Q_VERSION,
+    Q_CAPS, Q_CATCH, Q_HEALTH, Q_IMPERFECT, Q_LOCKS, Q_MOUSE_INFO, Q_RATE, Q_STATS, Q_VERSION,
 };
 use crate::protocol::{Resp, parse_resp};
 use crate::types::{
-    Action, Button, CatchMask, CatchState, Health, KbdCaps, Key, LedMode, LedTarget, LockDirection,
-    LockTarget, Locks, MediaKey, MouseCaps, MouseInfo, Rate, RebootTarget, Stats, Version,
+    Action, Button, Caps, CatchMask, CatchState, Health, ImperfectStatus, Key, LedMode, LedTarget,
+    LockDirection, LockTarget, Locks, MediaKey, MouseInfo, Rate, RebootTarget, Stats, Version,
 };
 
 use super::Device;
@@ -144,6 +144,11 @@ impl AsyncDevice {
         self.dev().catch_events(mask)
     }
 
+    /// `IMPERFECT` — opt into cloning an over-capacity device. Instant; see [`Device::allow_imperfect_clones`].
+    pub fn allow_imperfect_clones(&self, allow: bool) -> Result<()> {
+        self.dev().allow_imperfect_clones(allow)
+    }
+
     /// Query the box version, awaiting the correlated `RESP` with the default timeout.
     pub async fn query_version(&self) -> Result<Version> {
         let payload = self
@@ -180,14 +185,14 @@ impl AsyncDevice {
         }
     }
 
-    /// Query the emulated mouse's capabilities (§4.4), awaiting the correlated `RESP`.
-    pub async fn query_mouse_caps(&self) -> Result<MouseCaps> {
+    /// Query the whole cloned device's capabilities in one request (§4.4), awaiting the correlated `RESP`.
+    pub async fn caps(&self) -> Result<Caps> {
         let payload = self
             .link
             .query_async(Q_CAPS, self.link.query_timeout_default())
             .await?;
         match parse_resp(&payload) {
-            Some(Resp::MouseCaps(c)) => Ok(c),
+            Some(Resp::Caps(c)) => Ok(c),
             _ => Err(Error::NoReply),
         }
     }
@@ -240,14 +245,14 @@ impl AsyncDevice {
         }
     }
 
-    /// Query the cloned keyboard's semantic capabilities (§4.11), awaiting the correlated `RESP`.
-    pub async fn query_kbd_caps(&self) -> Result<KbdCaps> {
+    /// Query the imperfect-clone status (§4.14), awaiting the correlated `RESP`.
+    pub async fn query_imperfect(&self) -> Result<ImperfectStatus> {
         let payload = self
             .link
-            .query_async(Q_KBD_CAPS, self.link.query_timeout_default())
+            .query_async(Q_IMPERFECT, self.link.query_timeout_default())
             .await?;
         match parse_resp(&payload) {
-            Some(Resp::KbdCaps(k)) => Ok(k),
+            Some(Resp::Imperfect(i)) => Ok(i),
             _ => Err(Error::NoReply),
         }
     }

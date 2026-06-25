@@ -19,8 +19,8 @@ mod linux {
     use std::time::{Duration, Instant};
 
     use medius::{
-        Action, Button, CatchMask, Device, Key, LedMode, LedTarget, LockDirection, LockTarget,
-        MediaKey, RebootTarget,
+        Action, Blanket, Button, CatchMask, Device, Key, LedMode, LedTarget, LockDirection,
+        LockTarget, MediaKey, RebootTarget,
     };
 
     const EVIOCGRAB: libc::c_ulong = 0x4004_4590;
@@ -211,7 +211,7 @@ mod linux {
             let dev = device.as_ref().unwrap();
             let ver = dev.query_version();
             let health = dev.query_health();
-            let ver_ok = ver.as_ref().map(|v| v.proto_ver == 1).unwrap_or(false);
+            let ver_ok = ver.as_ref().map(|v| v.proto_ver == 2).unwrap_or(false);
             let h_ok = health
                 .as_ref()
                 .map(|h| h.link_up && h.mouse_attached && h.clone_configured)
@@ -223,7 +223,7 @@ mod linux {
             check(
                 "handshake",
                 ver_ok && h_ok,
-                format!("proto_ver==1 ({fw})  health={health:?}"),
+                format!("proto_ver==2 ({fw})  health={health:?}"),
             );
         }
 
@@ -233,14 +233,14 @@ mod linux {
                 .query_health()
                 .map(|h| h.mouse_attached)
                 .unwrap_or(false);
-            let caps = dev.query_mouse_caps();
+            let caps = dev.caps();
             let info = dev.query_mouse_info();
             let rate = dev.query_rate();
             let stats = dev.query_stats();
 
             let caps_ok = caps
                 .as_ref()
-                .map(|c| c.has_x && c.has_y && c.n_buttons > 0)
+                .map(|c| c.mouse.has_x && c.mouse.has_y && c.mouse.n_buttons > 0)
                 .unwrap_or(false);
             // vid != 0 once a mouse is cloned; zero is allowed when none is attached.
             let info_ok = info
@@ -278,6 +278,23 @@ mod linux {
                 format!(
                     "mouse={id} caps={caps:?}  rate={hz}Hz confident={confident}  tx_drops={drops} tx_wedges={wedges}"
                 ),
+            );
+        }
+
+        {
+            // IMPERFECT: a normal mouse fits the box's endpoints, so it's never over-capacity and the
+            // live clone is faithful. The opt-in toggle is informational here (just printed).
+            let dev = device.as_ref().unwrap();
+            let imp = dev.query_imperfect();
+            let faithful = imp
+                .as_ref()
+                .map(|i| !i.over_capacity && !i.clone_imperfect)
+                .unwrap_or(false);
+            let allowed = imp.as_ref().map(|i| i.allowed).unwrap_or(false);
+            check(
+                "imperfect clone",
+                imp.is_ok() && faithful,
+                format!("allowed={allowed} status={imp:?}"),
             );
         }
 
@@ -390,6 +407,34 @@ mod linux {
         }
 
         {
+            // LOCK (keyboard/blanket): a key lock and a blanket all-keys lock both register on HEALTH's
+            // lock_on, and RESET clears them. The physical block needs a hand on the keyboard (run
+            // `medius.py` and type); here we confirm the box accepts and reflects the generic classes.
+            let dev = device.as_ref().unwrap();
+            let has_kbd = dev.query_health().map(|h| h.kbd_attached).unwrap_or(false);
+            if has_kbd {
+                let _ = dev.lock_key(Key::A, LockDirection::Both);
+                let on1 = dev.query_health().map(|h| h.lock_on).unwrap_or(false);
+                let _ = dev.unlock_key(Key::A, LockDirection::Both);
+                let _ = dev.lock_all(Blanket::Keys);
+                let on2 = dev.query_health().map(|h| h.lock_on).unwrap_or(false);
+                let _ = dev.reset();
+                let off = dev.query_health().map(|h| !h.lock_on).unwrap_or(false);
+                check(
+                    "lock: keyboard + blanket",
+                    on1 && on2 && off,
+                    format!("key-lock lock_on={on1}, all-keys lock_on={on2}, reset-cleared={off}"),
+                );
+            } else {
+                check(
+                    "lock: keyboard + blanket",
+                    true,
+                    "skipped (no keyboard attached)".into(),
+                );
+            }
+        }
+
+        {
             // CATCH: subscribe and confirm the box reports it (CATCH_ON + the mask via query_catch),
             // no events while the mouse is idle, and that a RESET clears catch like injection AND
             // disconnects the host stream (recv -> Err, not a silent hang). Live physical-input delivery
@@ -424,7 +469,7 @@ mod linux {
         }
 
         {
-            // KEYBOARD + MEDIA (v1.7.0): query KBD_CAPS; if a keyboard is bound, inject KEY_A and verify it
+            // KEYBOARD + MEDIA (v2.0.0): query CAPS; if a keyboard is bound, inject KEY_A and verify it
             // is REALLY delivered to the grabbed evdev (key_a goes 1 then 0), not just that injection_active
             // toggled. This catches a key injected onto the wrong interface: the game reads typing from the
             // active keyboard interface, so an injected key landing elsewhere never reaches it. For this
@@ -432,7 +477,7 @@ mod linux {
             // the OS types on). Media injection verifies injection_active only (its Consumer reports land on
             // a different evdev node than the grabbed one).
             let dev = device.as_ref().unwrap();
-            let caps = dev.query_kbd_caps();
+            let caps = dev.caps().map(|c| c.keyboard);
             let attached = dev.query_health().map(|h| h.kbd_attached).unwrap_or(false);
             let mut inject_ok = true;
             let mut detail = format!("kbd_caps={caps:?} attached={attached}");
@@ -454,8 +499,9 @@ mod linux {
                     .map(|h| !h.injection_active)
                     .unwrap_or(false);
                 inject_ok = key_on && key_off && evdev_down && evdev_up;
-                detail =
-                    format!("{detail} key[on={key_on} off={key_off} evdev_down={evdev_down} evdev_up={evdev_up}]");
+                detail = format!(
+                    "{detail} key[on={key_on} off={key_off} evdev_down={evdev_down} evdev_up={evdev_up}]"
+                );
                 if caps.as_ref().map(|c| c.has_consumer).unwrap_or(false) {
                     let _ = dev.media_down(MediaKey::VOLUME_UP);
                     let med_on = dev

@@ -1,10 +1,10 @@
 //! Typed response/event decoders (box → PC).
 
 use super::opcode::{
-    Q_CAPS, Q_CATCH, Q_HEALTH, Q_KBD_CAPS, Q_LOCKS, Q_MOUSE_INFO, Q_RATE, Q_STATS, Q_VERSION,
+    Q_CAPS, Q_CATCH, Q_HEALTH, Q_IMPERFECT, Q_LOCKS, Q_MOUSE_INFO, Q_RATE, Q_STATS, Q_VERSION,
 };
 use crate::types::{
-    CatchState, Health, KbdCaps, Locks, LogLevel, LogLine, MouseCaps, MouseInfo, Rate, Stats,
+    Caps, CatchState, Health, ImperfectStatus, Locks, LogLevel, LogLine, MouseInfo, Rate, Stats,
     Version,
 };
 
@@ -14,12 +14,12 @@ pub enum Resp {
     Version(Version),
     Health(Health),
     MouseInfo(MouseInfo),
-    MouseCaps(MouseCaps),
+    Caps(Caps),
     Rate(Rate),
     Stats(Stats),
     Locks(Locks),
     Catch(CatchState),
-    KbdCaps(KbdCaps),
+    Imperfect(ImperfectStatus),
 }
 
 /// Parse a `RESP` payload (§4.1): `[what u8][data..]`.
@@ -44,12 +44,12 @@ pub fn parse_resp(payload: &[u8]) -> Option<Resp> {
             Some(Resp::Health(Health::from_flags(payload[1])))
         }
         Q_MOUSE_INFO => MouseInfo::from_payload(payload).map(Resp::MouseInfo),
-        Q_CAPS => MouseCaps::from_payload(payload).map(Resp::MouseCaps),
+        Q_CAPS => Caps::from_payload(payload).map(Resp::Caps),
         Q_RATE => Rate::from_payload(payload).map(Resp::Rate),
         Q_STATS => Stats::from_payload(payload).map(Resp::Stats),
         Q_LOCKS => Locks::from_payload(payload).map(Resp::Locks),
         Q_CATCH => CatchState::from_payload(payload).map(Resp::Catch),
-        Q_KBD_CAPS => KbdCaps::from_payload(payload).map(Resp::KbdCaps),
+        Q_IMPERFECT => ImperfectStatus::from_payload(payload).map(Resp::Imperfect),
         _ => None,
     }
 }

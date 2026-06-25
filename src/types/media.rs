@@ -1,6 +1,6 @@
 //! Media-key command vocabulary: a media key by 16-bit Consumer usage, and the media catch snapshot.
 
-/// A media key, addressed by 16-bit HID Consumer Usage (§3.11, v1.7.0).
+/// A media key, addressed by 16-bit HID Consumer Usage (§3.11, v2.0.0).
 ///
 /// Construct from a raw usage with [`MediaKey::new`], or use a constant. Present-gated: a key the
 /// cloned board does not declare is a silent no-op, so check [`KbdCaps::has_consumer`](crate::KbdCaps).
@@ -29,7 +29,7 @@ impl MediaKey {
     pub const PAUSE: MediaKey = MediaKey(0xB1);
 }
 
-/// A media catch snapshot — a `CONS_EVENT` frame (§4.13, v1.7.0).
+/// A media catch snapshot — a `CONS_EVENT` frame (§4.13, v2.0.0).
 ///
 /// Carries the active Consumer usages (one at a time on a typical board). Self-correcting like the
 /// keyboard snapshot: diff successive snapshots for press/release edges.

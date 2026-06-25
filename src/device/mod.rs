@@ -4,6 +4,8 @@ pub(crate) mod asyncv;
 pub(crate) mod buttons;
 pub(crate) mod catch;
 pub(crate) mod connect;
+pub(crate) mod imperfect;
+pub(crate) mod inject;
 pub(crate) mod keyboard;
 pub(crate) mod led;
 pub(crate) mod lock;
