@@ -1,4 +1,4 @@
-//! `INJECT` key/media (§3.2), `KBD_CAPS` (§4.11), and keyboard/media catch events.
+//! `INJECT` key/media (§3.2), `CAPS` (§4.4), and keyboard/media catch events.
 //! Bytes are pinned to the firmware wire format in `ctrl_proto.h`.
 
 use crate::protocol::command::inject_payload;

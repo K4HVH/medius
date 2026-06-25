@@ -44,7 +44,7 @@ impl CatchReg {
 /// Decode a box→PC catch frame into a [`CatchEvent`] by its frame type.
 fn decode_event(ty: FrameType, payload: &[u8]) -> Option<CatchEvent> {
     match ty {
-        FrameType::Event => MouseEvent::from_payload(payload).map(CatchEvent::Mouse),
+        FrameType::MouseEvent => MouseEvent::from_payload(payload).map(CatchEvent::Mouse),
         FrameType::KbEvent => KeyboardEvent::from_payload(payload).map(CatchEvent::Keyboard),
         FrameType::ConsEvent => MediaEvent::from_payload(payload).map(CatchEvent::Media),
         _ => None,
