@@ -22,7 +22,7 @@ pub struct Health {
     pub lock_on: bool,
     /// A catch subscription is active — physical-input events are streaming.
     pub catch_on: bool,
-    /// A keyboard is attached on the host chip — cloned and injectable (v1.7.0).
+    /// A keyboard is attached on the host chip — cloned and injectable (v2.0.0).
     pub kbd_attached: bool,
 }
 

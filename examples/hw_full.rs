@@ -469,7 +469,7 @@ mod linux {
         }
 
         {
-            // KEYBOARD + MEDIA (v1.7.0): query KBD_CAPS; if a keyboard is bound, inject KEY_A and verify it
+            // KEYBOARD + MEDIA (v2.0.0): query KBD_CAPS; if a keyboard is bound, inject KEY_A and verify it
             // is REALLY delivered to the grabbed evdev (key_a goes 1 then 0), not just that injection_active
             // toggled. This catches a key injected onto the wrong interface: the game reads typing from the
             // active keyboard interface, so an injected key landing elsewhere never reaches it. For this
