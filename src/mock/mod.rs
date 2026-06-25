@@ -224,8 +224,9 @@ impl MockBox {
                             .expect("resp fits"),
                         Some(2) => encode(FrameType::Resp, seq, &mouse_info_payload(st.mouse_info))
                             .expect("resp fits"),
-                        Some(3) => encode(FrameType::Resp, seq, &caps_payload(st.caps))
-                            .expect("resp fits"),
+                        Some(3) => {
+                            encode(FrameType::Resp, seq, &caps_payload(st.caps)).expect("resp fits")
+                        }
                         Some(4) => {
                             encode(FrameType::Resp, seq, &rate_payload(st.rate)).expect("resp fits")
                         }
