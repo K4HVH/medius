@@ -66,7 +66,7 @@ pub const H_RATE_CONFIDENT: u8 = 0x10;
 pub const H_LOCK_ON: u8 = 0x20;
 /// A catch subscription is active — physical-input events are streaming (§4.2, v1.6.0).
 pub const H_CATCH_ON: u8 = 0x40;
-/// A keyboard is attached on the host chip — cloned and injectable (§4.2, v1.7.0).
+/// A keyboard is attached on the host chip — cloned and injectable (§4.2, v2.0.0).
 pub const H_KBD_ATT: u8 = 0x80;
 
 /// `CATCH` mask: stream reports whose X or Y delta is non-zero (§3.9).
@@ -75,7 +75,7 @@ pub const CATCH_MOTION: u8 = 0x01;
 pub const CATCH_WHEEL: u8 = 0x02;
 /// `CATCH` mask: stream reports with a button edge (§3.9).
 pub const CATCH_BUTTONS: u8 = 0x04;
-/// `CATCH` mask: stream keyboard + media changes (`KB_EVENT` / `CONS_EVENT`, v1.7.0).
+/// `CATCH` mask: stream keyboard + media changes (`KB_EVENT` / `CONS_EVENT`, v2.0.0).
 pub const CATCH_KEYS: u8 = 0x08;
 /// `CATCH` mask: every class (§3.9).
 pub const CATCH_ALL: u8 = 0x0F;
@@ -147,9 +147,9 @@ pub enum FrameType {
     Catch = 0x0B,
     /// `EVENT` — one unsolicited physical-input snapshot; `SEQ` is a rolling counter (box→PC).
     Event = 0x0C,
-    /// `KB_EVENT` — one unsolicited keyboard snapshot (modifiers + pressed keys); box→PC (v1.7.0).
+    /// `KB_EVENT` — one unsolicited keyboard snapshot (modifiers + pressed keys); box→PC (v2.0.0).
     KbEvent = 0x0F,
-    /// `CONS_EVENT` — one unsolicited media snapshot (active Consumer usages); box→PC (v1.7.0).
+    /// `CONS_EVENT` — one unsolicited media snapshot (active Consumer usages); box→PC (v2.0.0).
     ConsEvent = 0x10,
     /// `IMPERFECT` — opt into cloning an over-capacity device imperfectly (PC→box).
     Imperfect = 0x11,
