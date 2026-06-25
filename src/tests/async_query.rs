@@ -7,7 +7,7 @@ use crate::{Device, Error, MockBox, Version};
 #[test]
 fn async_query_returns_the_configured_version() {
     let mock = MockBox::new().with_version(Version {
-        proto_ver: 1,
+        proto_ver: 2,
         fw_major: 1,
         fw_minor: 2,
         fw_patch: 3,
