@@ -11,7 +11,7 @@ the infrastructure to run the link, and nothing that automates, paces, or compos
 
 | In | Out (deliberately) |
 |---|---|
-| 1:1 frame commands (MOVE / WHEEL / BUTTON / KEY / CONSUMER / RESET / QUERY / REBOOT_DL / LOG / LED / LOCK / CATCH; EVENT box→PC) | click, drag, double-click, any composed gesture |
+| 1:1 frame commands (MOVE / INJECT / RESET / QUERY / REBOOT_DL / LOG / LED / LOCK / CATCH; MOUSE_EVENT / KB_EVENT / CONS_EVENT box→PC) | click, drag, double-click, any composed gesture |
 | connect/handshake, keepalive, reconnect+reapply, the reader, SEQ correlation | `set_velocity` / generated motion; a host-side pacer or frame clock |
 | Linux + Windows serial, async wrapper, mock, tracing | smoothing / humanization / trajectory synthesis |
 
@@ -29,8 +29,8 @@ protocol/   pure wire codec, no I/O: crc16, frame codec, opcodes, command/respon
 transport/  byte pipe: Transport trait, serial (serialport crate), mock, VID/PID scan
 link/       connection engine: Link handle + state, TX path, reader, correlation,
             keepalive, reconnect, plus the counters/reconcile/log-push link state
-device/     thin typed API over a Link: Device/AsyncDevice, connect, movement,
-            buttons, keyboard, media, admin, query, led, lock, catch, logs
+device/     thin typed API over a Link: Device/AsyncDevice, connect, inject
+            (button/key/media), move (cursor/wheel), lock, catch, led, admin, query, logs
 ```
 
 `device/` is a skin; each command is one `self.link.send(...)`. The engine lives in `link/`, one

@@ -8,6 +8,25 @@ use crate::protocol::{Resp, parse_resp};
 use crate::types::Health;
 
 #[test]
+fn rate_decodes_continuous_vs_change_driven() {
+    // [what=4][native u16][poll u16][flags]. Continuous mouse: 1000us, confident, not change-driven.
+    let Some(Resp::Rate(r)) = parse_resp(&[4, 0xE8, 0x03, 0xE8, 0x03, 0x01]) else {
+        panic!("expected Rate");
+    };
+    assert_eq!(r.native_period_us, 1000);
+    assert!(r.confident && !r.change_driven);
+    assert_eq!(r.native_hz(), Some(1000.0));
+    // Change-driven keyboard: native N/A (0), poll floor 1000us, CHANGE_DRIVEN set.
+    let Some(Resp::Rate(k)) = parse_resp(&[4, 0x00, 0x00, 0xE8, 0x03, 0x02]) else {
+        panic!("expected Rate");
+    };
+    assert_eq!(k.native_period_us, 0);
+    assert!(k.change_driven && !k.confident);
+    assert_eq!(k.native_hz(), None);
+    assert_eq!(k.poll_period_us, 1000);
+}
+
+#[test]
 fn decode_mouse_info_exact_bytes() {
     // vid 0x046D, pid 0xC08B, bcdDevice 0x0110, bcdUSB 0x0200, flags HAS_SERIAL|HAS_BOS
     let p = [2u8, 0x6D, 0x04, 0x8B, 0xC0, 0x10, 0x01, 0x00, 0x02, 0x03];
@@ -24,16 +43,18 @@ fn decode_mouse_info_exact_bytes() {
 
 #[test]
 fn decode_caps_exact_bytes() {
-    // 5 buttons, X|Y|WHEEL (0x07), 2 HID interfaces
-    let p = [3u8, 5, 0x07, 2];
-    let Some(Resp::MouseCaps(c)) = parse_resp(&p) else {
-        panic!("expected MouseCaps");
+    // unified CAPS: 5 buttons, X|Y|WHEEL (0x07), 2 HID interfaces; no keyboard; not change-driven
+    let p = [3u8, 5, 0x07, 2, 0, 0, 0];
+    let Some(Resp::Caps(c)) = parse_resp(&p) else {
+        panic!("expected Caps");
     };
-    assert_eq!(c.n_buttons, 5);
-    assert!(c.has_x && c.has_y && c.has_wheel);
-    assert!(!c.has_report_id);
-    assert_eq!(c.n_hid, 2);
+    assert_eq!(c.mouse.n_buttons, 5);
+    assert!(c.mouse.has_x && c.mouse.has_y && c.mouse.has_wheel);
+    assert!(!c.mouse.has_report_id);
+    assert_eq!(c.mouse.n_hid, 2);
     assert!(c.is_composite());
+    assert!(c.has_mouse() && !c.has_keyboard());
+    assert!(!c.mouse_change_driven && !c.kbd_change_driven);
 }
 
 #[test]
@@ -124,6 +145,7 @@ fn device_queries_roundtrip_through_mock() {
         native_period_us: 1000,
         poll_period_us: 1000,
         confident: true,
+        change_driven: false,
     };
     let stats = Stats {
         inject_emits: 1234,
@@ -144,7 +166,7 @@ fn device_queries_roundtrip_through_mock() {
     let device = Device::with_mock(mock);
 
     assert_eq!(device.query_mouse_info().unwrap(), mouse);
-    assert_eq!(device.query_mouse_caps().unwrap(), caps);
+    assert_eq!(device.caps().unwrap().mouse, caps);
     assert_eq!(device.query_rate().unwrap(), rate);
     assert_eq!(device.query_stats().unwrap(), stats);
 }

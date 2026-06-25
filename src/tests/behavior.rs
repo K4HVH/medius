@@ -8,7 +8,7 @@ use crate::{Button, Device, Error, FrameType, Health, LogLevel, MockBox, RebootT
 fn query_returns_configured_values_and_records_commands() {
     let mock = MockBox::new()
         .with_version(Version {
-            proto_ver: 1,
+            proto_ver: 2,
             fw_major: 5,
             fw_minor: 6,
             fw_patch: 7,
@@ -25,10 +25,10 @@ fn query_returns_configured_values_and_records_commands() {
     let frames = mock.recorded_frames();
     let button = frames
         .iter()
-        .find(|f| f.ty == FrameType::Button)
+        .find(|f| f.ty == FrameType::Inject)
         .expect("press recorded");
-    assert_eq!(button.payload, vec![0, 1]);
-    assert!(mock.saw(FrameType::Button));
+    assert_eq!(button.payload, vec![0, 0, 0, 1]); // INJECT: class=btn id=Left action=press
+    assert!(mock.saw(FrameType::Inject));
 }
 
 #[test]
@@ -58,7 +58,7 @@ fn set_health_updates_subsequent_queries() {
 #[test]
 fn handshake_accepts_matching_proto_ver() {
     let device = Device::open_mock(MockBox::new()).expect("default proto_ver matches");
-    assert_eq!(device.query_version().unwrap().proto_ver, 1);
+    assert_eq!(device.query_version().unwrap().proto_ver, 2);
 }
 
 #[test]
@@ -113,6 +113,28 @@ fn device_is_send_and_sync() {
 }
 
 #[test]
+fn inject_and_move_verbs_dispatch_to_the_right_class() {
+    use crate::{Input, Key, Motion};
+    let mock = MockBox::new();
+    let device = Device::with_mock(mock.clone());
+    device.inject(Key::A, crate::Action::Press).unwrap(); // via From<Key>
+    device
+        .inject(Input::Button(Button::Left), crate::Action::Press)
+        .unwrap();
+    device.move_axis(Motion::Wheel(-2)).unwrap();
+    let payloads: Vec<(FrameType, Vec<u8>)> = mock
+        .recorded_frames()
+        .into_iter()
+        .filter(|f| f.ty == FrameType::Inject || f.ty == FrameType::Move)
+        .map(|f| (f.ty, f.payload))
+        .collect();
+    assert_eq!(payloads[0], (FrameType::Inject, vec![1, 0x04, 0x00, 1])); // key A press
+    assert_eq!(payloads[1], (FrameType::Inject, vec![0, 0, 0, 1])); // button Left press
+    assert_eq!(payloads[2], (FrameType::Move, vec![1, 0xFE, 0xFF])); // wheel -2
+    drop(device);
+}
+
+#[test]
 fn reapply_re_emits_only_held_overrides() {
     let mock = MockBox::new();
     let device = Device::with_mock(mock.clone());
@@ -126,10 +148,34 @@ fn reapply_re_emits_only_held_overrides() {
     let buttons: Vec<Vec<u8>> = mock
         .recorded_frames()
         .iter()
-        .filter(|f| f.ty == FrameType::Button)
+        .filter(|f| f.ty == FrameType::Inject)
         .map(|f| f.payload.clone())
         .collect();
-    assert_eq!(buttons, vec![vec![0, 1], vec![3, 2]]);
+    // INJECT [class=btn][id u16][action]: Left press, Side1 force-release.
+    assert_eq!(buttons, vec![vec![0, 0, 0, 1], vec![0, 3, 0, 2]]);
+    drop(device);
+}
+
+#[test]
+fn reapply_re_emits_held_locks_but_not_released_ones() {
+    use crate::{Blanket, Key, LockDirection, LockTarget};
+    let mock = MockBox::new();
+    let device = Device::with_mock(mock.clone());
+    device.lock(LockTarget::X, LockDirection::Positive).unwrap();
+    device.lock_key(Key::A, LockDirection::Both).unwrap();
+    device.lock_all(Blanket::Keys).unwrap();
+    device.unlock_key(Key::A, LockDirection::Both).unwrap(); // released -> must not reappear
+    mock.clear_recorded();
+
+    device.reapply().unwrap();
+    let locks: Vec<Vec<u8>> = mock
+        .recorded_frames()
+        .iter()
+        .filter(|f| f.ty == FrameType::Lock)
+        .map(|f| f.payload.clone())
+        .collect();
+    // Only the two still-held locks, each re-asserted with state=1; key A is gone.
+    assert_eq!(locks, vec![vec![0, 0, 0, 1, 1], vec![3, 0, 0, 0, 1]]);
     drop(device);
 }
 
