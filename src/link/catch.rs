@@ -1,7 +1,8 @@
-//! `CATCH` event stream — the subscriber registry the reader broadcasts decoded `EVENT` frames to,
-//! plus the Link subscribe/unsubscribe plumbing. The box streams the UNION of every open
-//! subscription's mask, so a new subscriber only ever widens the stream and each open stream receives
-//! every event in that union.
+//! `CATCH` event stream — the subscriber registry the reader broadcasts decoded events to, plus the
+//! Link subscribe/unsubscribe plumbing. One device-class-generic stream: the box sends mouse `EVENT`,
+//! keyboard `KB_EVENT`, and media `CONS_EVENT` frames under one subscription, and each is decoded into
+//! a [`CatchEvent`] variant. The box streams the UNION of every open subscription's mask, so a new
+//! subscriber only ever widens the stream and each open stream receives every event in that union.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -11,7 +12,7 @@ use parking_lot::Mutex;
 use crate::error::Result;
 use crate::protocol::FrameType;
 use crate::protocol::command::catch_payload;
-use crate::types::{CatchMask, InputReport};
+use crate::types::{CatchEvent, CatchMask, KeyboardEvent, MediaEvent, MouseEvent};
 
 use super::Link;
 
@@ -22,10 +23,10 @@ pub(crate) const CATCH_CAPACITY: usize = 256;
 pub(crate) struct CatchSub {
     id: u64,
     mask: CatchMask,
-    tx: flume::Sender<InputReport>,
+    tx: flume::Sender<CatchEvent>,
     // A receiver clone the reader evicts from when the buffer is full (drop-oldest, like logs::push).
     // The consumer's own receiver lives in the EventStream; both share the one MPMC channel.
-    evict_rx: flume::Receiver<InputReport>,
+    evict_rx: flume::Receiver<CatchEvent>,
     dropped: Arc<AtomicU64>,
 }
 
@@ -40,20 +41,30 @@ impl CatchReg {
     }
 }
 
-/// Broadcast one decoded `EVENT` to every subscriber. A full buffer drops the OLDEST event (evict then
-/// resend, like [`logs::push`](super::logs)) so a slow consumer keeps the freshest input, not the
+/// Decode a box→PC catch frame into a [`CatchEvent`] by its frame type.
+fn decode_event(ty: FrameType, payload: &[u8]) -> Option<CatchEvent> {
+    match ty {
+        FrameType::Event => MouseEvent::from_payload(payload).map(CatchEvent::Mouse),
+        FrameType::KbEvent => KeyboardEvent::from_payload(payload).map(CatchEvent::Keyboard),
+        FrameType::ConsEvent => MediaEvent::from_payload(payload).map(CatchEvent::Media),
+        _ => None,
+    }
+}
+
+/// Broadcast one decoded catch frame to every subscriber. A full buffer drops the OLDEST event (evict
+/// then resend, like [`logs::push`](super::logs)) so a slow consumer keeps the freshest input, not the
 /// stalest; the drop is counted. A disconnected sub is skipped (its guard deregisters it).
-pub(crate) fn deliver_event(reg: &Mutex<CatchReg>, payload: &[u8]) {
-    let Some(report) = InputReport::from_payload(payload) else {
+pub(crate) fn deliver_event(reg: &Mutex<CatchReg>, ty: FrameType, payload: &[u8]) {
+    let Some(event) = decode_event(ty, payload) else {
         return;
     };
     let reg = reg.lock();
     for sub in &reg.subs {
-        match sub.tx.try_send(report) {
+        match sub.tx.try_send(event.clone()) {
             Ok(()) => {}
-            Err(flume::TrySendError::Full(r)) => {
-                let _ = sub.evict_rx.try_recv(); // drop the oldest queued report
-                let _ = sub.tx.try_send(r); // room freed; re-send the newest
+            Err(flume::TrySendError::Full(e)) => {
+                let _ = sub.evict_rx.try_recv(); // drop the oldest queued event
+                let _ = sub.tx.try_send(e); // room freed; re-send the newest
                 sub.dropped.fetch_add(1, Ordering::Relaxed);
             }
             Err(flume::TrySendError::Disconnected(_)) => {}
@@ -67,12 +78,12 @@ impl Link {
     pub(crate) fn catch_subscribe(
         &self,
         mask: CatchMask,
-    ) -> Result<(u64, flume::Receiver<InputReport>, Arc<AtomicU64>)> {
+    ) -> Result<(u64, flume::Receiver<CatchEvent>, Arc<AtomicU64>)> {
         // Serialize against other subscribe/unsubscribe so the registry mutate, union recompute,
         // desired update, and CATCH send all commit in one order — never interleaved with another
         // caller's, which could leave the box streaming a mask the registry no longer matches.
         let _serial = self.inner.catch_lock.lock();
-        let (tx, rx) = flume::bounded::<InputReport>(CATCH_CAPACITY);
+        let (tx, rx) = flume::bounded::<CatchEvent>(CATCH_CAPACITY);
         let evict_rx = rx.clone();
         let dropped = Arc::new(AtomicU64::new(0));
         let id = self.inner.catch_gen.fetch_add(1, Ordering::Relaxed);

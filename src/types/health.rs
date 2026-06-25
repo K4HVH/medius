@@ -1,7 +1,8 @@
 //! Decoded `RESP(HEALTH)` flags.
 
 use crate::protocol::opcode::{
-    H_CATCH_ON, H_CLONE_CFG, H_INJECT_ON, H_LINK_UP, H_LOCK_ON, H_MOUSE_ATT, H_RATE_CONFIDENT,
+    H_CATCH_ON, H_CLONE_CFG, H_INJECT_ON, H_KBD_ATT, H_LINK_UP, H_LOCK_ON, H_MOUSE_ATT,
+    H_RATE_CONFIDENT,
 };
 
 /// The decoded `RESP(HEALTH)` flags byte.
@@ -21,6 +22,8 @@ pub struct Health {
     pub lock_on: bool,
     /// A catch subscription is active — physical-input events are streaming.
     pub catch_on: bool,
+    /// A keyboard is attached on the host chip — cloned and injectable (v1.7.0).
+    pub kbd_attached: bool,
 }
 
 impl Health {
@@ -34,6 +37,7 @@ impl Health {
             rate_confident: flags & H_RATE_CONFIDENT != 0,
             lock_on: flags & H_LOCK_ON != 0,
             catch_on: flags & H_CATCH_ON != 0,
+            kbd_attached: flags & H_KBD_ATT != 0,
         }
     }
 
@@ -60,6 +64,9 @@ impl Health {
         }
         if self.catch_on {
             flags |= H_CATCH_ON;
+        }
+        if self.kbd_attached {
+            flags |= H_KBD_ATT;
         }
         flags
     }

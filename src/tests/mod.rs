@@ -4,6 +4,7 @@ mod catch;
 mod concurrency;
 mod device_info;
 mod keepalive;
+mod keyboard;
 mod led;
 mod lock;
 mod robustness;
