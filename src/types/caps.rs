@@ -2,7 +2,7 @@
 
 use super::{KbdCaps, MouseCaps};
 use crate::protocol::opcode::{
-    CAPS_CD_KBD, CAPS_CD_MOUSE, CAP_REPORT_ID, CAP_WHEEL, CAP_X, CAP_Y, KBC_CONSUMER, KBC_NKRO,
+    CAP_REPORT_ID, CAP_WHEEL, CAP_X, CAP_Y, CAPS_CD_KBD, CAPS_CD_MOUSE, KBC_CONSUMER, KBC_NKRO,
     KBC_REPORT_ID, KBC_SYSTEM,
 };
 
