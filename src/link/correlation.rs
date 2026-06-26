@@ -107,6 +107,7 @@ impl Link {
         self.recv_query(seq, gen_id, &rx, Q_OPTIONS, timeout)
     }
 
+    #[cfg_attr(not(feature = "tracing"), allow(unused_variables))] // `what` is only read by trace_event!
     fn recv_query(
         &self,
         seq: u8,
