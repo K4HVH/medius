@@ -1,4 +1,4 @@
-use super::opcode::{INJ_MOTION_CURSOR, INJ_MOTION_WHEEL};
+use super::opcode::{INJ_MOTION_CURSOR, INJ_MOTION_WHEEL, OPT_IMPERFECT, OPT_MOVE_RIDE};
 
 /// `MOVE` cursor (§3.1): `[motion=0][dx i16 LE][dy i16 LE]`, no clamp (firmware clamps with carry).
 pub fn move_cursor_payload(dx: i16, dy: i16) -> [u8; 5] {
@@ -41,7 +41,13 @@ pub fn catch_payload(mask: u8) -> [u8; 1] {
     [mask]
 }
 
-/// `IMPERFECT` (§3.10): `[allow u8]` — 1 = opt into cloning over-capacity devices, 0 = faithful-only.
-pub fn imperfect_payload(allow: bool) -> [u8; 1] {
-    [allow as u8]
+/// `OPTION(IMPERFECT)` (§3.10): `[id=0][allow u8]` — 1 = opt into cloning over-capacity devices, 0 = faithful-only.
+pub fn imperfect_payload(allow: bool) -> [u8; 2] {
+    [OPT_IMPERFECT, allow as u8]
+}
+
+/// `OPTION(MOVE_RIDE)` (§3.10): `[id=1][timeout u16 LE ms]` — 0 = off, N = ride window in milliseconds.
+pub fn move_ride_payload(timeout_ms: u16) -> [u8; 3] {
+    let t = timeout_ms.to_le_bytes();
+    [OPT_MOVE_RIDE, t[0], t[1]]
 }

@@ -299,6 +299,27 @@ mod linux {
         }
 
         {
+            // MOVE_RIDE option: set a 5ms ride window, read it back, then turn it off again — a
+            // round-trip + NVS-persistence-path check. The riding behaviour itself (inject only on
+            // native motion, stale-drop) needs the rig; this leaves the box back at the default (off).
+            let dev = device.as_ref().unwrap();
+            let want = Duration::from_millis(5);
+            let set_ok = dev.set_movement_riding(Some(want)).is_ok();
+            std::thread::sleep(Duration::from_millis(60));
+            let read = dev.query_movement_riding();
+            let matched = read.as_ref().map(|w| *w == Some(want)).unwrap_or(false);
+            let off_ok = dev.set_movement_riding(None).is_ok();
+            std::thread::sleep(Duration::from_millis(60));
+            let read_off = dev.query_movement_riding();
+            let off_matched = read_off.as_ref().map(|w| w.is_none()).unwrap_or(false);
+            check(
+                "movement riding",
+                set_ok && matched && off_ok && off_matched,
+                format!("set 5ms -> {read:?}, off -> {read_off:?}"),
+            );
+        }
+
+        {
             // LED override is not visible on the clone, so this is a smoke check: every mode is
             // accepted, the box stays healthy, and the LED is handed back to its status display.
             let dev = device.as_ref().unwrap();

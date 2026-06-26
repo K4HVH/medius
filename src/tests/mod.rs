@@ -3,11 +3,11 @@ mod behavior;
 mod catch;
 mod concurrency;
 mod device_info;
-mod imperfect;
 mod keepalive;
 mod keyboard;
 mod led;
 mod lock;
+mod options;
 mod robustness;
 
 mod correlation;
