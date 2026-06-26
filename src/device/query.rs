@@ -1,6 +1,9 @@
+use std::time::Duration;
+
 use crate::error::{Error, Result};
 use crate::protocol::opcode::{
-    Q_CAPS, Q_CATCH, Q_HEALTH, Q_IMPERFECT, Q_LOCKS, Q_MOUSE_INFO, Q_RATE, Q_STATS, Q_VERSION,
+    OPT_IMPERFECT, OPT_MOVE_RIDE, Q_CAPS, Q_CATCH, Q_HEALTH, Q_LOCKS, Q_MOUSE_INFO, Q_RATE,
+    Q_STATS, Q_VERSION,
 };
 use crate::protocol::{Resp, parse_resp};
 use crate::types::{
@@ -85,9 +88,18 @@ impl Device {
 
     /// Query the imperfect-clone opt-in and over-capacity status (§4.14).
     pub fn query_imperfect(&self) -> Result<ImperfectStatus> {
-        let payload = self.link.query(Q_IMPERFECT)?;
+        let payload = self.link.query_option(OPT_IMPERFECT)?;
         match parse_resp(&payload) {
             Some(Resp::Imperfect(i)) => Ok(i),
+            _ => Err(Error::NoReply),
+        }
+    }
+
+    /// Query the movement-riding window (§4.14); `None` = off.
+    pub fn query_movement_riding(&self) -> Result<Option<Duration>> {
+        let payload = self.link.query_option(OPT_MOVE_RIDE)?;
+        match parse_resp(&payload) {
+            Some(Resp::MovementRiding(w)) => Ok(w),
             _ => Err(Error::NoReply),
         }
     }

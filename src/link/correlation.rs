@@ -7,6 +7,7 @@ use parking_lot::Mutex;
 use crate::error::{Error, Result};
 use crate::protocol::FrameType;
 use crate::protocol::command::query_payload;
+use crate::protocol::opcode::Q_OPTIONS;
 
 use super::{Link, LinkInner};
 
@@ -71,8 +72,19 @@ impl Link {
     }
 
     pub(crate) fn register_query(&self, what: u8) -> Result<(u8, u64, flume::Receiver<Vec<u8>>)> {
-        let (seq, gen_id, rx) = self.register_pending(what);
-        if let Err(e) = self.send_with_seq(seq, FrameType::Query, &query_payload(what)) {
+        self.register_query_with(what, &query_payload(what))
+    }
+
+    // Register a pending reply keyed on `expected_what` and send a custom QUERY request body. The option
+    // query needs this: its request is `[Q_OPTIONS][id]`, while the reply still leads with the Q_OPTIONS
+    // selector (so correlation matches on that, and the SEQ disambiguates concurrent option reads).
+    pub(crate) fn register_query_with(
+        &self,
+        expected_what: u8,
+        request: &[u8],
+    ) -> Result<(u8, u64, flume::Receiver<Vec<u8>>)> {
+        let (seq, gen_id, rx) = self.register_pending(expected_what);
+        if let Err(e) = self.send_with_seq(seq, FrameType::Query, request) {
             self.cancel_query(seq, gen_id);
             return Err(e);
         }
@@ -85,6 +97,24 @@ impl Link {
 
     pub(crate) fn query_timeout(&self, what: u8, timeout: Duration) -> Result<Vec<u8>> {
         let (seq, gen_id, rx) = self.register_query(what)?;
+        self.recv_query(seq, gen_id, &rx, what, timeout)
+    }
+
+    /// `QUERY(OPTIONS, id)` — read one persistent box option, correlated on the `Q_OPTIONS` selector.
+    pub(crate) fn query_option(&self, id: u8) -> Result<Vec<u8>> {
+        let timeout = self.query_timeout_default();
+        let (seq, gen_id, rx) = self.register_query_with(Q_OPTIONS, &[Q_OPTIONS, id])?;
+        self.recv_query(seq, gen_id, &rx, Q_OPTIONS, timeout)
+    }
+
+    fn recv_query(
+        &self,
+        seq: u8,
+        gen_id: u64,
+        rx: &flume::Receiver<Vec<u8>>,
+        what: u8,
+        timeout: Duration,
+    ) -> Result<Vec<u8>> {
         match rx.recv_timeout(timeout) {
             Ok(payload) => {
                 trace_event!(
@@ -114,6 +144,23 @@ impl Link {
     #[cfg(feature = "async")]
     pub(crate) async fn query_async(&self, what: u8, timeout: Duration) -> Result<Vec<u8>> {
         let (seq, gen_id, rx) = self.register_query(what)?;
+        self.recv_query_async(seq, gen_id, rx, timeout).await
+    }
+
+    #[cfg(feature = "async")]
+    pub(crate) async fn query_option_async(&self, id: u8, timeout: Duration) -> Result<Vec<u8>> {
+        let (seq, gen_id, rx) = self.register_query_with(Q_OPTIONS, &[Q_OPTIONS, id])?;
+        self.recv_query_async(seq, gen_id, rx, timeout).await
+    }
+
+    #[cfg(feature = "async")]
+    async fn recv_query_async(
+        &self,
+        seq: u8,
+        gen_id: u64,
+        rx: flume::Receiver<Vec<u8>>,
+        timeout: Duration,
+    ) -> Result<Vec<u8>> {
         let (cancel_tx, cancel_rx) = flume::bounded::<()>(1);
         let weak = self.weak();
         std::thread::Builder::new()

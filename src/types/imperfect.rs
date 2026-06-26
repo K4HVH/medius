@@ -13,15 +13,15 @@ pub struct ImperfectStatus {
 }
 
 impl ImperfectStatus {
-    /// Decode a `RESP(IMPERFECT)` payload (§4.14): `[what][allowed][over_capacity][clone_imperfect]`.
+    /// Decode a `RESP(OPTIONS, IMPERFECT)` payload (§4.14): `[what][id][allowed][over_capacity][clone_imperfect]`.
     pub(crate) fn from_payload(p: &[u8]) -> Option<ImperfectStatus> {
-        if p.len() < 4 {
+        if p.len() < 5 {
             return None;
         }
         Some(ImperfectStatus {
-            allowed: p[1] != 0,
-            over_capacity: p[2] != 0,
-            clone_imperfect: p[3] != 0,
+            allowed: p[2] != 0,
+            over_capacity: p[3] != 0,
+            clone_imperfect: p[4] != 0,
         })
     }
 }
