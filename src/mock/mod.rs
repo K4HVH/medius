@@ -357,8 +357,7 @@ impl MockBox {
     /// Set the movement-riding window answered to `QUERY(OPTIONS, MOVE_RIDE)` (builder style); `None` = off.
     #[must_use]
     pub fn with_movement_riding(self, window: Option<std::time::Duration>) -> Self {
-        self.state.lock().move_ride_ms =
-            window.map_or(0, |d| d.as_millis().min(u16::MAX as u128) as u16);
+        self.state.lock().move_ride_ms = crate::device::options::ride_window_ms(window);
         self
     }
 
@@ -379,8 +378,7 @@ impl MockBox {
 
     /// Update the configured movement-riding window in place; `None` = off.
     pub fn set_movement_riding(&self, window: Option<std::time::Duration>) {
-        self.state.lock().move_ride_ms =
-            window.map_or(0, |d| d.as_millis().min(u16::MAX as u128) as u16);
+        self.state.lock().move_ride_ms = crate::device::options::ride_window_ms(window);
     }
 
     /// Make the box unresponsive (builder style): it records commands but never answers a `QUERY`.

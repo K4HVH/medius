@@ -116,6 +116,24 @@ fn set_movement_riding_rounds_sub_ms_up_to_on() {
 
 #[cfg(feature = "mock")]
 #[test]
+fn set_movement_riding_saturates_at_u16_max() {
+    use crate::{Device, MockBox};
+    let mock = MockBox::new();
+    let device = Device::with_mock(mock.clone());
+    // a window past u16::MAX ms must saturate, not wrap
+    device
+        .set_movement_riding(Some(Duration::from_millis(100_000)))
+        .unwrap();
+    let frame = mock
+        .recorded_frames()
+        .into_iter()
+        .find(|f| f.ty == FrameType::Option)
+        .unwrap();
+    assert_eq!(frame.payload, vec![1, 0xFF, 0xFF]); // [id=move_ride][u16::MAX LE]
+}
+
+#[cfg(feature = "mock")]
+#[test]
 fn imperfect_query_roundtrips_the_status() {
     use crate::{Device, MockBox};
     let status = ImperfectStatus {
