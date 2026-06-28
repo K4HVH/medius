@@ -1,7 +1,10 @@
 //! Typed response/event decoders (box → PC).
 
+use std::time::Duration;
+
 use super::opcode::{
-    Q_CAPS, Q_CATCH, Q_HEALTH, Q_IMPERFECT, Q_LOCKS, Q_MOUSE_INFO, Q_RATE, Q_STATS, Q_VERSION,
+    OPT_IMPERFECT, OPT_MOVE_RIDE, Q_CAPS, Q_CATCH, Q_HEALTH, Q_LOCKS, Q_MOUSE_INFO, Q_OPTIONS,
+    Q_RATE, Q_STATS, Q_VERSION,
 };
 use crate::types::{
     Caps, CatchState, Health, ImperfectStatus, Locks, LogLevel, LogLine, MouseInfo, Rate, Stats,
@@ -20,6 +23,8 @@ pub enum Resp {
     Locks(Locks),
     Catch(CatchState),
     Imperfect(ImperfectStatus),
+    /// `RESP(OPTIONS, MOVE_RIDE)` — the movement-riding window (`None` = off).
+    MovementRiding(Option<Duration>),
 }
 
 /// Parse a `RESP` payload (§4.1): `[what u8][data..]`.
@@ -49,7 +54,21 @@ pub fn parse_resp(payload: &[u8]) -> Option<Resp> {
         Q_STATS => Stats::from_payload(payload).map(Resp::Stats),
         Q_LOCKS => Locks::from_payload(payload).map(Resp::Locks),
         Q_CATCH => CatchState::from_payload(payload).map(Resp::Catch),
-        Q_IMPERFECT => ImperfectStatus::from_payload(payload).map(Resp::Imperfect),
+        Q_OPTIONS => {
+            let id = *payload.get(1)?;
+            match id {
+                OPT_IMPERFECT => ImperfectStatus::from_payload(payload).map(Resp::Imperfect),
+                OPT_MOVE_RIDE => {
+                    if payload.len() < 4 {
+                        return None;
+                    }
+                    let ms = u16::from_le_bytes([payload[2], payload[3]]);
+                    let dur = (ms != 0).then(|| Duration::from_millis(ms as u64));
+                    Some(Resp::MovementRiding(dur))
+                }
+                _ => None,
+            }
+        }
         _ => None,
     }
 }

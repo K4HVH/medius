@@ -1,7 +1,10 @@
+use std::time::Duration;
+
 use crate::error::{Error, Result};
 use crate::link::Link;
 use crate::protocol::opcode::{
-    Q_CAPS, Q_CATCH, Q_HEALTH, Q_IMPERFECT, Q_LOCKS, Q_MOUSE_INFO, Q_RATE, Q_STATS, Q_VERSION,
+    OPT_IMPERFECT, OPT_MOVE_RIDE, Q_CAPS, Q_CATCH, Q_HEALTH, Q_LOCKS, Q_MOUSE_INFO, Q_RATE,
+    Q_STATS, Q_VERSION,
 };
 use crate::protocol::{Resp, parse_resp};
 use crate::types::{
@@ -144,9 +147,14 @@ impl AsyncDevice {
         self.dev().catch_events(mask)
     }
 
-    /// `IMPERFECT` — opt into cloning an over-capacity device. Instant; see [`Device::allow_imperfect_clones`].
+    /// `OPTION(IMPERFECT)` — opt into cloning an over-capacity device. Instant; see [`Device::allow_imperfect_clones`].
     pub fn allow_imperfect_clones(&self, allow: bool) -> Result<()> {
         self.dev().allow_imperfect_clones(allow)
+    }
+
+    /// `OPTION(MOVE_RIDE)` — movement riding. Instant; see [`Device::set_movement_riding`].
+    pub fn set_movement_riding(&self, window: Option<Duration>) -> Result<()> {
+        self.dev().set_movement_riding(window)
     }
 
     /// Query the box version, awaiting the correlated `RESP` with the default timeout.
@@ -249,10 +257,22 @@ impl AsyncDevice {
     pub async fn query_imperfect(&self) -> Result<ImperfectStatus> {
         let payload = self
             .link
-            .query_async(Q_IMPERFECT, self.link.query_timeout_default())
+            .query_option_async(OPT_IMPERFECT, self.link.query_timeout_default())
             .await?;
         match parse_resp(&payload) {
             Some(Resp::Imperfect(i)) => Ok(i),
+            _ => Err(Error::NoReply),
+        }
+    }
+
+    /// Query the movement-riding window (§4.14), awaiting the correlated `RESP`; `None` = off.
+    pub async fn query_movement_riding(&self) -> Result<Option<Duration>> {
+        let payload = self
+            .link
+            .query_option_async(OPT_MOVE_RIDE, self.link.query_timeout_default())
+            .await?;
+        match parse_resp(&payload) {
+            Some(Resp::MovementRiding(w)) => Ok(w),
             _ => Err(Error::NoReply),
         }
     }
