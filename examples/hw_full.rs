@@ -898,11 +898,17 @@ mod linux {
             std::thread::sleep(Duration::from_millis(200));
             let amoved = acc.rel_x.load(Ordering::Relaxed);
             let _ = adev.reset();
+            // async parity: observers + reconnect mirror the sync Device over the shared link. Run
+            // LAST — reconnect() swaps the serial transport, so a reopen blip can't pollute the
+            // version/health/move checks above.
+            let alog_n = adev.logs().try_iter().count();
+            let arecon_base = adev.counters().reconnects;
+            let arecon_ok = adev.reconnect().is_ok() && adev.counters().reconnects > arecon_base;
             check(
                 "async",
-                av_ok && ah_ok && aopt_ok && amoved == 12,
+                av_ok && ah_ok && aopt_ok && amoved == 12 && arecon_ok,
                 format!(
-                    "AsyncDevice: version_ok={av_ok}, health_ok={ah_ok}, option_queries_ok={aopt_ok}, async move REL_X={amoved}"
+                    "AsyncDevice: version_ok={av_ok}, health_ok={ah_ok}, option_queries_ok={aopt_ok}, reconnect_ok={arecon_ok}, async_logs_drained={alog_n}, async move REL_X={amoved}"
                 ),
             );
         }

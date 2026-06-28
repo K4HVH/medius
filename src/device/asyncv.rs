@@ -8,12 +8,14 @@ use crate::protocol::opcode::{
 };
 use crate::protocol::{Resp, parse_resp};
 use crate::types::{
-    Action, Button, Caps, CatchMask, CatchState, Health, ImperfectStatus, Key, LedMode, LedTarget,
-    LockDirection, LockTarget, Locks, MediaKey, MouseInfo, Rate, RebootTarget, Stats, Version,
+    Action, Blanket, Button, Caps, CatchMask, CatchState, CountersSnapshot, Health,
+    ImperfectStatus, Input, Key, LedMode, LedTarget, LockDirection, LockTarget, Locks, MediaKey,
+    Motion, MouseInfo, Rate, RebootTarget, Stats, Version,
 };
 
 use super::Device;
 use super::catch::EventStream;
+use super::logs::LogStream;
 
 /// An async view over a [`Device`] — the same `Link` core, with `async` queries.
 #[derive(Clone, Debug)]
@@ -54,6 +56,16 @@ impl AsyncDevice {
     /// `WHEEL` — vertical scroll. Instant; see [`Device::wheel`].
     pub fn wheel(&self, delta: i16) -> Result<()> {
         self.dev().wheel(delta)
+    }
+
+    /// `MOVE` — field-generic relative axis (cursor or wheel). Instant; see [`Device::move_axis`].
+    pub fn move_axis(&self, motion: Motion) -> Result<()> {
+        self.dev().move_axis(motion)
+    }
+
+    /// `INJECT` — field-generic momentary override (button, key, or media). Instant; see [`Device::inject`].
+    pub fn inject(&self, input: impl Into<Input>, action: Action) -> Result<()> {
+        self.dev().inject(input, action)
     }
 
     /// `BUTTON` — set an injection override. Instant; see [`Device::button`].
@@ -126,6 +138,26 @@ impl AsyncDevice {
         self.dev().reboot(target)
     }
 
+    /// Re-assert every currently held override. Instant; see [`Device::reapply`].
+    pub fn reapply(&self) -> Result<()> {
+        self.dev().reapply()
+    }
+
+    /// Best-effort reconnect over the shared core; blocks the calling thread (serial rescan + reopen). See [`Device::reconnect`].
+    pub fn reconnect(&self) -> Result<()> {
+        self.dev().reconnect()
+    }
+
+    /// A snapshot of the always-on counters. See [`Device::counters`].
+    pub fn counters(&self) -> CountersSnapshot {
+        self.dev().counters()
+    }
+
+    /// A [`LogStream`] over the device `LOG` stream; it offers `recv_async`. See [`Device::logs`].
+    pub fn logs(&self) -> LogStream {
+        self.dev().logs()
+    }
+
     /// `LED` — override a status LED. Instant; see [`Device::led`].
     pub fn led(&self, target: LedTarget, mode: LedMode, level: u8) -> Result<()> {
         self.dev().led(target, mode, level)
@@ -139,6 +171,36 @@ impl AsyncDevice {
     /// `LOCK` — release a locked axis or button edge. Instant; see [`Device::unlock`].
     pub fn unlock(&self, target: LockTarget, direction: LockDirection) -> Result<()> {
         self.dev().unlock(target, direction)
+    }
+
+    /// `LOCK` — block a keyboard key or modifier. Instant; see [`Device::lock_key`].
+    pub fn lock_key(&self, key: Key, direction: LockDirection) -> Result<()> {
+        self.dev().lock_key(key, direction)
+    }
+
+    /// `LOCK` — release a locked keyboard key or modifier. Instant; see [`Device::unlock_key`].
+    pub fn unlock_key(&self, key: Key, direction: LockDirection) -> Result<()> {
+        self.dev().unlock_key(key, direction)
+    }
+
+    /// `LOCK` — block a media usage. Instant; see [`Device::lock_media`].
+    pub fn lock_media(&self, key: MediaKey) -> Result<()> {
+        self.dev().lock_media(key)
+    }
+
+    /// `LOCK` — release a locked media usage. Instant; see [`Device::unlock_media`].
+    pub fn unlock_media(&self, key: MediaKey) -> Result<()> {
+        self.dev().unlock_media(key)
+    }
+
+    /// `LOCK` — blanket-block a whole input class. Instant; see [`Device::lock_all`].
+    pub fn lock_all(&self, what: Blanket) -> Result<()> {
+        self.dev().lock_all(what)
+    }
+
+    /// `LOCK` — release a blanket whole-class lock. Instant; see [`Device::unlock_all`].
+    pub fn unlock_all(&self, what: Blanket) -> Result<()> {
+        self.dev().unlock_all(what)
     }
 
     /// Subscribe to the physical-input event stream. Instant; the returned [`EventStream`] offers
@@ -280,5 +342,10 @@ impl AsyncDevice {
     /// Open a device at `path` and wrap it as an [`AsyncDevice`].
     pub fn open(path: impl AsRef<std::path::Path>) -> Result<AsyncDevice> {
         Ok(Device::open(path)?.into_async())
+    }
+
+    /// Discover the first medius box, open it, and wrap as an [`AsyncDevice`]; blocks (scan + handshake). See [`Device::find`].
+    pub fn find() -> Result<AsyncDevice> {
+        Ok(Device::find()?.into_async())
     }
 }
