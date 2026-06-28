@@ -6,7 +6,8 @@ use parking_lot::Mutex;
 
 use crate::protocol::opcode::{
     CAP_REPORT_ID, CAP_WHEEL, CAP_X, CAP_Y, CAPS_CD_KBD, CAPS_CD_MOUSE, KBC_CONSUMER, KBC_NKRO,
-    KBC_REPORT_ID, KBC_SYSTEM, MI_HAS_BOS, MI_HAS_SERIAL, RATE_CONFIDENT,
+    KBC_REPORT_ID, KBC_SYSTEM, MI_HAS_BOS, MI_HAS_SERIAL, OPT_IMPERFECT, OPT_MOVE_RIDE,
+    RATE_CONFIDENT,
 };
 use crate::protocol::{DecodedFrame, FrameType, encode};
 use crate::transport::mock::MockTransport;
@@ -26,6 +27,7 @@ struct State {
     locks: Locks,
     catch: CatchState,
     imperfect: ImperfectStatus,
+    move_ride_ms: u16,
     recorded: Vec<DecodedFrame>,
     respond: bool,
 }
@@ -48,6 +50,7 @@ impl Default for State {
             locks: Locks::from_payload(&[6, 0, 0]).unwrap(),
             catch: CatchState::from_payload(&[7, 0, 0, 0, 0, 0]).unwrap(),
             imperfect: ImperfectStatus::default(),
+            move_ride_ms: 0,
             recorded: Vec::new(),
             respond: true,
         }
@@ -150,13 +153,22 @@ fn catch_resp_payload(c: CatchState) -> Vec<u8> {
     p
 }
 
-fn imperfect_payload(i: ImperfectStatus) -> Vec<u8> {
+fn options_imperfect_payload(i: ImperfectStatus) -> Vec<u8> {
+    // RESP(OPTIONS, IMPERFECT): [what=9][id=0][allowed][over_capacity][clone_imperfect]
     vec![
         9u8,
+        OPT_IMPERFECT,
         i.allowed as u8,
         i.over_capacity as u8,
         i.clone_imperfect as u8,
     ]
+}
+
+fn options_move_ride_payload(ms: u16) -> Vec<u8> {
+    // RESP(OPTIONS, MOVE_RIDE): [what=9][id=1][timeout u16 LE ms]
+    let mut p = vec![9u8, OPT_MOVE_RIDE];
+    p.extend_from_slice(&ms.to_le_bytes());
+    p
 }
 
 fn kb_event_payload(e: &KeyboardEvent) -> Vec<u8> {
@@ -236,8 +248,21 @@ impl MockBox {
                             .expect("resp fits"),
                         Some(7) => encode(FrameType::Resp, seq, &catch_resp_payload(st.catch))
                             .expect("resp fits"),
-                        Some(9) => encode(FrameType::Resp, seq, &imperfect_payload(st.imperfect))
+                        Some(9) => match payload.get(1).copied() {
+                            Some(OPT_IMPERFECT) => encode(
+                                FrameType::Resp,
+                                seq,
+                                &options_imperfect_payload(st.imperfect),
+                            )
                             .expect("resp fits"),
+                            Some(OPT_MOVE_RIDE) => encode(
+                                FrameType::Resp,
+                                seq,
+                                &options_move_ride_payload(st.move_ride_ms),
+                            )
+                            .expect("resp fits"),
+                            _ => Vec::new(),
+                        },
                         _ => Vec::new(),
                     }
                 } else {
@@ -322,10 +347,17 @@ impl MockBox {
         self
     }
 
-    /// Set the [`ImperfectStatus`] answered to `QUERY(IMPERFECT)` (builder style).
+    /// Set the [`ImperfectStatus`] answered to `QUERY(OPTIONS, IMPERFECT)` (builder style).
     #[must_use]
     pub fn with_imperfect_status(self, imperfect: ImperfectStatus) -> Self {
         self.state.lock().imperfect = imperfect;
+        self
+    }
+
+    /// Set the movement-riding window answered to `QUERY(OPTIONS, MOVE_RIDE)` (builder style); `None` = off.
+    #[must_use]
+    pub fn with_movement_riding(self, window: Option<std::time::Duration>) -> Self {
+        self.state.lock().move_ride_ms = crate::device::options::ride_window_ms(window);
         self
     }
 
@@ -342,6 +374,11 @@ impl MockBox {
     /// Update the configured [`ImperfectStatus`] in place (e.g. to simulate an over-capacity device).
     pub fn set_imperfect_status(&self, imperfect: ImperfectStatus) {
         self.state.lock().imperfect = imperfect;
+    }
+
+    /// Update the configured movement-riding window in place; `None` = off.
+    pub fn set_movement_riding(&self, window: Option<std::time::Duration>) {
+        self.state.lock().move_ride_ms = crate::device::options::ride_window_ms(window);
     }
 
     /// Make the box unresponsive (builder style): it records commands but never answers a `QUERY`.

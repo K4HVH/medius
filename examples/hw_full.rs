@@ -299,6 +299,27 @@ mod linux {
         }
 
         {
+            // MOVE_RIDE option: set a 5ms ride window, read it back, then turn it off again — a
+            // round-trip + NVS-persistence-path check. The riding behaviour itself (inject only on
+            // native motion, stale-drop) needs the rig; this leaves the box back at the default (off).
+            let dev = device.as_ref().unwrap();
+            let want = Duration::from_millis(5);
+            let set_ok = dev.set_movement_riding(Some(want)).is_ok();
+            std::thread::sleep(Duration::from_millis(60));
+            let read = dev.query_movement_riding();
+            let matched = read.as_ref().map(|w| *w == Some(want)).unwrap_or(false);
+            let off_ok = dev.set_movement_riding(None).is_ok();
+            std::thread::sleep(Duration::from_millis(60));
+            let read_off = dev.query_movement_riding();
+            let off_matched = read_off.as_ref().map(|w| w.is_none()).unwrap_or(false);
+            check(
+                "movement riding",
+                set_ok && matched && off_ok && off_matched,
+                format!("set 5ms -> {read:?}, off -> {read_off:?}"),
+            );
+        }
+
+        {
             // LED override is not visible on the clone, so this is a smoke check: every mode is
             // accepted, the box stays healthy, and the LED is handed back to its status display.
             let dev = device.as_ref().unwrap();
@@ -827,14 +848,14 @@ mod linux {
             let dev = device.as_ref().unwrap();
             let _ = dev.reboot(RebootTarget::HostRun);
             std::thread::sleep(Duration::from_secs(2));
-            let mut recovered = matches!(dev.query_version(), Ok(v) if v.proto_ver == 1);
+            let mut recovered = matches!(dev.query_version(), Ok(v) if v.proto_ver == 2);
             for _ in 0..10 {
                 if recovered {
                     break;
                 }
                 let _ = dev.reconnect();
                 std::thread::sleep(Duration::from_millis(500));
-                recovered = matches!(dev.query_version(), Ok(v) if v.proto_ver == 1);
+                recovered = matches!(dev.query_version(), Ok(v) if v.proto_ver == 2);
             }
             reset_motion(&acc);
             let _ = dev.move_rel(10, 0);
@@ -864,11 +885,14 @@ mod linux {
             use futures::executor::block_on;
             let adev = device.as_ref().unwrap().clone().into_async();
             let av_ok = block_on(adev.query_version())
-                .map(|v| v.proto_ver == 1)
+                .map(|v| v.proto_ver == 2)
                 .unwrap_or(false);
             let ah_ok = block_on(adev.query_health())
                 .map(|h| h.link_up)
                 .unwrap_or(false);
+            // exercise the async option-query paths against real hardware (the sync ones run above)
+            let aopt_ok = block_on(adev.query_movement_riding()).is_ok()
+                && block_on(adev.query_imperfect()).is_ok();
             reset_motion(&acc);
             let _ = adev.move_rel(12, 0);
             std::thread::sleep(Duration::from_millis(200));
@@ -876,9 +900,9 @@ mod linux {
             let _ = adev.reset();
             check(
                 "async",
-                av_ok && ah_ok && amoved == 12,
+                av_ok && ah_ok && aopt_ok && amoved == 12,
                 format!(
-                    "AsyncDevice: version_ok={av_ok}, health_ok={ah_ok}, async move REL_X={amoved}"
+                    "AsyncDevice: version_ok={av_ok}, health_ok={ah_ok}, option_queries_ok={aopt_ok}, async move REL_X={amoved}"
                 ),
             );
         }
@@ -912,7 +936,7 @@ mod linux {
             match reopened {
                 Ok(dev) => {
                     let base = dev.counters().reconnects;
-                    let up0 = matches!(dev.query_version(), Ok(v) if v.proto_ver == 1);
+                    let up0 = matches!(dev.query_version(), Ok(v) if v.proto_ver == 2);
                     println!(
                         "\n>>> AUTO-RECONNECT: physically UNPLUG the box's control USB, wait ~2s, then \
                          replug.\n    Waiting up to 60s for the reader to self-heal — NO reconnect() is \
@@ -923,7 +947,7 @@ mod linux {
                     while Instant::now() < deadline {
                         std::thread::sleep(Duration::from_millis(500));
                         if dev.counters().reconnects > base
-                            && matches!(dev.query_version(), Ok(v) if v.proto_ver == 1)
+                            && matches!(dev.query_version(), Ok(v) if v.proto_ver == 2)
                         {
                             healed = true;
                             break;
