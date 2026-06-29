@@ -1,0 +1,74 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "medius"
+version = "2.2.0"
+description = "Python bindings for the medius transparent mouse passthrough box"
+requires-python = ">=3.8"
+license = { text = "MIT" }
+authors = [{ name = "medius" }]
+keywords = ["medius", "mouse", "hid", "serial", "makcu"]
+classifiers = [
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Rust",
+    "Topic :: System :: Hardware",
+]
+
+[project.urls]
+Homepage = "https://github.com/K4HVH/medius"
+
+[project.optional-dependencies]
+test = ["pytest"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["medius"]
+# The bundled cdylib makes this platform-specific, but ctypes doesn't link the
+# CPython ABI; the build hook tags the wheel py3-none-<platform>.
+pure-python = false
+# The cdylib is produced and copied in by the build hook below.
+artifacts = [
+    "medius/libmedius_capi.so",
+    "medius/libmedius_capi.dylib",
+    "medius/medius_capi.dll",
+]
+
+[tool.hatch.build.targets.wheel.hooks.custom]
+path = "hatch_build.py"
+
+[tool.hatch.build.targets.sdist]
+# The Rust sources live above this directory; the sdist carries only the
+# Python package and the build hook (the wheel build runs cargo).
+include = ["medius", "hatch_build.py", "pyproject.toml"]
+
+# --- cibuildwheel: draft config; the CI workflow is finalized by the parent ---
+# Each wheel bundles its own cdylib, so `pip install medius` needs no Rust
+# toolchain. The build hook runs `cargo build --release -p medius-capi`, so the
+# before-build step installs Rust into the build environment.
+[tool.cibuildwheel]
+# The wheel is tagged py3-none-<platform>, so one interpreter per platform
+# produces a wheel that installs on every supported Python 3.x.
+build = "cp310-*"
+build-frontend = "build"
+# The bundled wheel has no mock feature, so only smoke-test the import here; the
+# mock-backed pytest suite runs against a debug build in the python CI job.
+test-command = "python -c \"import medius; print(medius.abi_version(), medius.version_string())\""
+
+[tool.cibuildwheel.linux]
+# manylinux/musllinux containers: install rustup, then build (aarch64 runs under
+# QEMU and gets its native toolchain inside the emulated container).
+before-all = "curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --profile minimal"
+environment = { PATH = "$HOME/.cargo/bin:$PATH" }
+archs = ["x86_64", "aarch64"]
+
+[tool.cibuildwheel.macos]
+before-all = "rustup toolchain install stable --profile minimal || curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --profile minimal"
+# Building both arches needs both Rust targets; the hook builds for the host
+# triple, so the CI matrix should run one job per arch (x86_64 + arm64).
+archs = ["x86_64", "arm64"]
+
+[tool.cibuildwheel.windows]
+before-all = "rustup toolchain install stable --profile minimal"
+archs = ["AMD64"]
