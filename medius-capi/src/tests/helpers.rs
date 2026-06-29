@@ -193,6 +193,22 @@ fn caps_predicates() {
 }
 
 #[test]
+fn keyboard_event_count_caps_at_u8_max_without_wrapping() {
+    // A snapshot larger than the u8 count must cap at 255, never wrap to 0.
+    let kb = medius::KeyboardEvent {
+        modifiers: 0,
+        keys: (0..300u16).map(|i| medius::Key::new(i as u8)).collect(),
+    };
+    let c = MediusKeyboardEvent::from(&kb);
+    assert_eq!(c.n_keys, 255);
+    let md = medius::MediaEvent {
+        keys: (0..300u16).map(medius::MediaKey::new).collect(),
+    };
+    let c = MediusMediaEvent::from(&md);
+    assert_eq!(c.n_keys, 255);
+}
+
+#[test]
 fn last_error_message_truncates_and_reports_full_length() {
     // No call has failed on this thread yet, but a short buffer must still NUL-terminate safely.
     let mut buf = [0i8; 8];
