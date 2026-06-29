@@ -43,6 +43,22 @@ pub unsafe extern "C" fn medius_device_catch_events(
     })
 }
 
+/// Clone an event-stream handle: another handle to the SAME subscription (shared queue, like
+/// `EventStream::clone` in Rust). The subscription ends when the last clone is freed. Null in -> null out.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn medius_event_stream_clone(
+    stream: *const MediusEventStream,
+) -> *mut MediusEventStream {
+    guard(std::ptr::null_mut(), || {
+        if stream.is_null() {
+            return std::ptr::null_mut();
+        }
+        Box::into_raw(Box::new(MediusEventStream {
+            inner: unsafe { (*stream).inner.clone() },
+        }))
+    })
+}
+
 /// Free an event-stream handle. Null is a no-op.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_event_stream_free(stream: *mut MediusEventStream) {
@@ -145,6 +161,21 @@ pub unsafe extern "C" fn medius_device_logs(
         unsafe { *out = Box::into_raw(Box::new(MediusLogStream { inner: stream })) };
         clear_error();
         MediusStatus::Ok
+    })
+}
+
+/// Clone a log-stream handle: another handle to the same LOG channel. Null in -> null out.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn medius_log_stream_clone(
+    stream: *const MediusLogStream,
+) -> *mut MediusLogStream {
+    guard(std::ptr::null_mut(), || {
+        if stream.is_null() {
+            return std::ptr::null_mut();
+        }
+        Box::into_raw(Box::new(MediusLogStream {
+            inner: unsafe { (*stream).inner.clone() },
+        }))
     })
 }
 

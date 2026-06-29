@@ -559,6 +559,70 @@ fn recorded_frame_payload_is_readable() {
 }
 
 #[test]
+fn device_and_mock_clone_share_state() {
+    let mock = medius_mock_new();
+    let mut dev: *mut MediusDevice = ptr::null_mut();
+    assert_eq!(
+        unsafe { medius_device_with_mock(mock, &mut dev) },
+        MediusStatus::Ok
+    );
+    // A cloned device drives the same box.
+    let dev2 = unsafe { medius_device_clone(dev) };
+    assert!(!dev2.is_null());
+    unsafe {
+        assert_eq!(medius_device_move_rel(dev, 1, 0), MediusStatus::Ok);
+        assert_eq!(medius_device_move_rel(dev2, 2, 0), MediusStatus::Ok);
+    }
+    // A cloned mock observes the same recorded state.
+    let mock2 = unsafe { medius_mock_clone(mock) };
+    assert_eq!(unsafe { medius_mock_recorded(mock2) }, 2);
+    unsafe {
+        medius_device_free(dev);
+        medius_device_free(dev2);
+        medius_mock_free(mock);
+        medius_mock_free(mock2);
+    }
+}
+
+#[test]
+fn event_stream_clone_shares_the_subscription() {
+    let mock = medius_mock_new();
+    let mut dev: *mut MediusDevice = ptr::null_mut();
+    assert_eq!(
+        unsafe { medius_device_with_mock(mock, &mut dev) },
+        MediusStatus::Ok
+    );
+    let mut stream: *mut MediusEventStream = ptr::null_mut();
+    assert_eq!(
+        unsafe { medius_device_catch_events(dev, MEDIUS_CATCH_MASK_ALL, &mut stream) },
+        MediusStatus::Ok
+    );
+    let stream2 = unsafe { medius_event_stream_clone(stream) };
+    assert!(!stream2.is_null());
+    unsafe {
+        (*mock).inner.push_event(
+            1,
+            medius::MouseEvent {
+                buttons: 0,
+                dx: 5,
+                dy: 0,
+                wheel: 0,
+            },
+        );
+    }
+    // Either handle can receive from the shared queue.
+    let mut event = zeroed_event();
+    assert!(unsafe { medius_event_stream_recv_timeout(stream2, 2000, &mut event) });
+    assert_eq!(event.kind, MediusCatchEventKind::Mouse);
+    unsafe {
+        medius_event_stream_free(stream);
+        medius_event_stream_free(stream2);
+        medius_device_free(dev);
+        medius_mock_free(mock);
+    }
+}
+
+#[test]
 fn free_null_handles_is_a_noop() {
     unsafe {
         medius_device_free(ptr::null_mut());

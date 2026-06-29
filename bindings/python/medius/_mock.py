@@ -63,6 +63,15 @@ class MockBox:
         """Open a `Device` over this mock without a handshake."""
         return Device.with_mock(self)
 
+    def clone(self) -> "MockBox":
+        """Another handle sharing the same recorded state (like MockBox.clone in Rust)."""
+        handle = _native.lib.medius_mock_clone(self._handle)
+        if not handle:
+            raise RuntimeError("medius_mock_clone failed")
+        other = MockBox.__new__(MockBox)
+        other._handle = handle
+        return other
+
     # --- query answers ---
 
     def set_version(self, version: Version):

@@ -103,7 +103,20 @@ pub unsafe extern "C" fn medius_device_find(out: *mut *mut MediusDevice) -> Medi
     })
 }
 
-/// Free a device handle (joins the background reader/keepalive threads). Null is a no-op.
+/// Clone a device handle: another owner of the same underlying connection (the link is shared and
+/// reference-counted, like `Device::clone` in Rust). Each clone must be freed. Null in -> null out.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn medius_device_clone(dev: *const MediusDevice) -> *mut MediusDevice {
+    guard(std::ptr::null_mut(), || {
+        if dev.is_null() {
+            return std::ptr::null_mut();
+        }
+        MediusDevice::boxed(unsafe { (*dev).inner.clone() })
+    })
+}
+
+/// Free a device handle (joins the background reader/keepalive threads when the last clone drops).
+/// Null is a no-op.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_device_free(dev: *mut MediusDevice) {
     guard((), || {

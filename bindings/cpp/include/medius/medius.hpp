@@ -305,6 +305,15 @@ public:
     EventStream& operator=(const EventStream&) = delete;
     ~EventStream() { reset(); }
 
+    /// Another handle to the same subscription (shared queue, like EventStream::clone in Rust).
+    EventStream clone() const {
+        MediusEventStream *s = medius_event_stream_clone(h_);
+        if (!s) {
+            throw std::runtime_error("medius_event_stream_clone failed");
+        }
+        return EventStream(s);
+    }
+
     /// Block for the next event. Throws Error(ErrDisconnected) when the stream closes.
     CatchEvent recv() {
         MediusCatchEvent c{};
@@ -405,6 +414,15 @@ public:
     LogStream(const LogStream&) = delete;
     LogStream& operator=(const LogStream&) = delete;
     ~LogStream() { reset(); }
+
+    /// Another handle to the same LOG channel.
+    LogStream clone() const {
+        MediusLogStream *s = medius_log_stream_clone(h_);
+        if (!s) {
+            throw std::runtime_error("medius_log_stream_clone failed");
+        }
+        return LogStream(s);
+    }
 
     /// Block for the next line. Throws Error(ErrDisconnected) on close.
     LogLine recv() {
@@ -507,6 +525,15 @@ public:
     MockBox& operator=(const MockBox&) = delete;
     ~MockBox() { reset(); }
 
+    /// Another handle sharing the same recorded state (like MockBox::clone in Rust).
+    MockBox clone() const {
+        MediusMockBox *h = medius_mock_clone(h_);
+        if (!h) {
+            throw std::runtime_error("medius_mock_clone failed");
+        }
+        return MockBox(h);
+    }
+
     void set_version(Version v) { medius_mock_set_version(h_, v); }
     void set_health(Health v) { medius_mock_set_health(h_, v); }
     void set_mouse_info(MouseInfo v) { medius_mock_set_mouse_info(h_, v); }
@@ -551,6 +578,7 @@ public:
     const MediusMockBox* raw() const noexcept { return h_; }
 
 private:
+    explicit MockBox(MediusMockBox* h) : h_(h) {}
     void reset() noexcept {
         if (h_) {
             medius_mock_free(h_);
@@ -601,6 +629,15 @@ public:
     Device(const Device&) = delete;
     Device& operator=(const Device&) = delete;
     ~Device() { free_handle(); }
+
+    /// Another owner of the same connection (the link is shared, like Device::clone in Rust).
+    Device clone() const {
+        MediusDevice *h = medius_device_clone(h_);
+        if (!h) {
+            throw std::runtime_error("medius_device_clone failed");
+        }
+        return Device(h);
+    }
 
     void move_rel(int16_t dx, int16_t dy) { check(medius_device_move_rel(h_, dx, dy)); }
     void wheel(int16_t delta) { check(medius_device_wheel(h_, delta)); }
