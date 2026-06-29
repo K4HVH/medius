@@ -107,9 +107,11 @@ Publishing is wired in `.github/workflows/release.yml`, which runs when a GitHub
 Release is published:
 
 - **Python → PyPI.** The release workflow builds the wheel matrix + sdist and
-  uploads via PyPI trusted publishing (OIDC, no token). One-time setup: add the
-  trusted publisher at `pypi.org/manage/project/medius/settings/publishing/`
-  (workflow `release.yml`, environment `pypi`). Then `pip install medius`.
+  uploads via PyPI trusted publishing (OIDC, no token). One-time setup, before
+  the first publish (the project doesn't exist on PyPI yet): register a *pending
+  publisher* at `pypi.org/manage/account/publishing/` with project `medius`,
+  owner `K4HVH`, repo `medius`, workflow `release.yml`, environment `pypi`. Then
+  publishing a GitHub Release creates the project and `pip install medius` works.
 - **C / C++ → GitHub Release assets.** The workflow attaches a
   `medius-capi-<target>.tar.gz` per platform, each with `include/medius.h` and
   the prebuilt `libmedius_capi` (shared + static). Download, include the header,

@@ -2,8 +2,10 @@ name: release bindings
 
 # Publishes the Python wheels to PyPI and attaches the C/C++ header + prebuilt
 # libraries to the GitHub Release. Runs when a Release is published, or manually.
-# PyPI upload uses trusted publishing (OIDC) — configure the publisher once at
-# https://pypi.org/manage/project/medius/settings/publishing/ (no token needed).
+# PyPI upload uses trusted publishing (OIDC, no token). Before the first run,
+# register a PENDING publisher at https://pypi.org/manage/account/publishing/
+# (the project doesn't exist yet): project=medius, owner=K4HVH, repo=medius,
+# workflow=release.yml, environment=pypi.
 
 on:
   release:
