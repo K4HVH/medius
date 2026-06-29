@@ -181,7 +181,7 @@ jobs:
       run: sudo apt-get update && sudo apt-get install -y libudev-dev
 
     - name: Check if publishable
-      run: cargo publish --dry-run --allow-dirty
+      run: cargo publish -p medius --dry-run --allow-dirty
 
   publish:
     name: Publish to crates.io
@@ -198,7 +198,7 @@ jobs:
     - name: Check if version already published
       id: check_version
       run: |
-        CRATE_VERSION=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[0].version')
+        CRATE_VERSION=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name=="medius") | .version')
         echo "version=$CRATE_VERSION" >> $GITHUB_OUTPUT
 
         if curl -s "https://crates.io/api/v1/crates/medius" | jq -e ".versions[] | select(.num == \"$CRATE_VERSION\")" > /dev/null 2>&1; then
@@ -215,7 +215,7 @@ jobs:
 
     - name: Publish to crates.io
       if: steps.check_version.outputs.should_publish == 'true'
-      run: cargo publish
+      run: cargo publish -p medius
 
     - name: Create GitHub Release
       if: steps.check_version.outputs.should_publish == 'true'
