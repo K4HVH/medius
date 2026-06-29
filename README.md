@@ -215,6 +215,12 @@ Four layers, `protocol → transport → link → device`, each depending only o
 
 See [`docs/architecture.md`](docs/architecture.md) for the deeper design notes.
 
+## Other languages
+
+A C ABI (the `medius-capi` crate) exports the whole API for other languages, with
+a header-only C++ wrapper and a ctypes Python package on top. See
+[`bindings/`](bindings/).
+
 ## License
 
 MIT, see [LICENSE](LICENSE).
