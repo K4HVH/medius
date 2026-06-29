@@ -314,7 +314,8 @@ impl From<MouseEvent> for MediusMouseEvent {
 impl From<&KeyboardEvent> for MediusKeyboardEvent {
     fn from(e: &KeyboardEvent) -> Self {
         let mut keys = [0u8; MEDIUS_MAX_KEYS];
-        let n = e.keys.len().min(MEDIUS_MAX_KEYS);
+        // The count is a u8; cap at 255 so it can never wrap (the wire list is u8-prefixed anyway).
+        let n = e.keys.len().min(u8::MAX as usize);
         for (slot, k) in keys.iter_mut().zip(e.keys.iter()).take(n) {
             *slot = k.usage();
         }
@@ -329,7 +330,8 @@ impl From<&KeyboardEvent> for MediusKeyboardEvent {
 impl From<&MediaEvent> for MediusMediaEvent {
     fn from(e: &MediaEvent) -> Self {
         let mut keys = [0u16; MEDIUS_MAX_MEDIA_KEYS];
-        let n = e.keys.len().min(MEDIUS_MAX_MEDIA_KEYS);
+        // The count is a u8; cap at 255 so it can never wrap (the wire list is u8-prefixed anyway).
+        let n = e.keys.len().min(u8::MAX as usize);
         for (slot, k) in keys.iter_mut().zip(e.keys.iter()).take(n) {
             *slot = k.usage();
         }
