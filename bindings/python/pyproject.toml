@@ -35,18 +35,23 @@ artifacts = [
     "medius/medius_capi.dll",
 ]
 
-[tool.hatch.build.targets.wheel.hooks.custom]
+# Global hook so it runs for both the wheel build (cargo + bundle + tag) and the
+# sdist build (vendor the Rust sources under _rust/ for a self-contained build).
+[tool.hatch.build.hooks.custom]
 path = "hatch_build.py"
 
 [tool.hatch.build.targets.sdist]
-# The Rust sources live above this directory; the sdist carries only the
-# Python package and the build hook (the wheel build runs cargo).
+# The build hook vendors the Rust workspace into the sdist under _rust/, so the
+# sdist builds with no access to the rest of the repo (and cibuildwheel builds
+# from it). These entries are the Python package itself.
 include = ["medius", "hatch_build.py", "pyproject.toml"]
 
-# --- cibuildwheel: draft config; the CI workflow is finalized by the parent ---
-# Each wheel bundles its own cdylib, so `pip install medius` needs no Rust
-# toolchain. The build hook runs `cargo build --release -p medius-capi`, so the
-# before-build step installs Rust into the build environment.
+# --- cibuildwheel ---
+# Build from the self-contained sdist. Each wheel bundles its own cdylib, so
+# `pip install medius` needs no Rust toolchain. The build hook runs
+# `cargo build --release -p medius-capi` from the vendored sources, so the
+# before-all step installs Rust into the build environment. Arch is whatever the
+# runner is (the CI matrix runs one runner per arch).
 [tool.cibuildwheel]
 # The wheel is tagged py3-none-<platform>, so one interpreter per platform
 # produces a wheel that installs on every supported Python 3.x.
@@ -57,18 +62,11 @@ build-frontend = "build"
 test-command = "python -c \"import medius; print(medius.abi_version(), medius.version_string())\""
 
 [tool.cibuildwheel.linux]
-# manylinux/musllinux containers: install rustup, then build (aarch64 runs under
-# QEMU and gets its native toolchain inside the emulated container).
 before-all = "curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --profile minimal"
 environment = { PATH = "$HOME/.cargo/bin:$PATH" }
-archs = ["x86_64", "aarch64"]
 
 [tool.cibuildwheel.macos]
 before-all = "rustup toolchain install stable --profile minimal || curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --profile minimal"
-# Building both arches needs both Rust targets; the hook builds for the host
-# triple, so the CI matrix should run one job per arch (x86_64 + arm64).
-archs = ["x86_64", "arm64"]
 
 [tool.cibuildwheel.windows]
 before-all = "rustup toolchain install stable --profile minimal"
-archs = ["AMD64"]
