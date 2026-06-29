@@ -1,0 +1,112 @@
+name: release bindings
+
+# Publishes the Python wheels to PyPI and attaches the C/C++ header + prebuilt
+# libraries to the GitHub Release. Runs when a Release is published, or manually.
+# PyPI upload uses trusted publishing (OIDC) — configure the publisher once at
+# https://pypi.org/manage/project/medius/settings/publishing/ (no token needed).
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+jobs:
+
+  sdist:
+    name: Build sdist
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - uses: actions/setup-python@v5
+      with:
+        python-version: '3.x'
+    - name: Build the self-contained sdist
+      run: |
+        python -m pip install build
+        python -m build --sdist -o dist bindings/python
+    - uses: actions/upload-artifact@v4
+      with:
+        name: dist-sdist
+        path: dist/*.tar.gz
+
+  wheels:
+    name: Build wheels (${{ matrix.os }})
+    needs: sdist
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-13, macos-14, windows-latest]
+    steps:
+    - uses: actions/checkout@v4
+    - uses: actions/download-artifact@v4
+      with:
+        name: dist-sdist
+        path: dist
+    - uses: actions/setup-python@v5
+      with:
+        python-version: '3.x'
+    - name: Build wheels from the sdist
+      shell: bash
+      run: |
+        python -m pip install 'cibuildwheel~=2.21'
+        python -m cibuildwheel --output-dir wheelhouse dist/medius-*.tar.gz
+    - uses: actions/upload-artifact@v4
+      with:
+        name: dist-wheels-${{ matrix.os }}
+        path: wheelhouse/*.whl
+
+  publish-pypi:
+    name: Publish to PyPI
+    needs: [sdist, wheels]
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+    - uses: actions/download-artifact@v4
+      with:
+        pattern: dist-*
+        path: dist
+        merge-multiple: true
+    - uses: pypa/gh-action-pypi-publish@release/v1
+      with:
+        packages-dir: dist
+
+  capi-libs:
+    name: C ABI library (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+    - uses: actions/checkout@v4
+    - uses: dtolnay/rust-toolchain@stable
+    - name: Install libudev (Linux)
+      if: runner.os == 'Linux'
+      run: sudo apt-get update && sudo apt-get install -y libudev-dev
+    - name: Build the C ABI library
+      run: cargo build -p medius-capi --release
+    - name: Package header + libraries
+      shell: bash
+      run: |
+        triple=$(rustc -vV | sed -n 's/host: //p')
+        out="medius-capi-${triple}"
+        mkdir -p "$out/include" "$out/lib"
+        cp medius-capi/include/medius.h "$out/include/"
+        cp target/release/*medius_capi.{so,dylib,a} "$out/lib/" 2>/dev/null || true
+        cp target/release/medius_capi.dll target/release/medius_capi.dll.lib "$out/lib/" 2>/dev/null || true
+        tar -czf "${out}.tar.gz" "$out"
+        ls -la "${out}.tar.gz"
+    - uses: actions/upload-artifact@v4
+      with:
+        name: capi-${{ matrix.os }}
+        path: medius-capi-*.tar.gz
+    - name: Attach to the release
+      if: github.event_name == 'release'
+      uses: softprops/action-gh-release@v1
+      with:
+        files: medius-capi-*.tar.gz
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

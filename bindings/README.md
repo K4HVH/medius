@@ -5,6 +5,9 @@ language through a C ABI. The Rust crate `medius-capi` exports a flat C API over
 the safe core; the C++ and Python bindings here ride on top of it. Every command,
 query, and event stream the Rust crate exposes is reachable from all three.
 
+[DIFFERENCES.md](DIFFERENCES.md) lists exactly how the bindings deviate from the
+native Rust API (mostly ergonomic; no capability is lost).
+
 ```
 medius (safe Rust crate)
   └── medius-capi   extern "C" + cbindgen → include/medius.h, libmedius_capi.{so,a}
@@ -97,3 +100,25 @@ The wheel bundles its own `libmedius_capi`, so `pip install` needs no Rust
 toolchain. For development, point `MEDIUS_LIB` at a locally built library
 (e.g. `target/debug/libmedius_capi.so`, built with `--features mock` for the
 test suite).
+
+## Packages
+
+Publishing is wired in `.github/workflows/release.yml`, which runs when a GitHub
+Release is published:
+
+- **Python → PyPI.** The release workflow builds the wheel matrix + sdist and
+  uploads via PyPI trusted publishing (OIDC, no token). One-time setup: add the
+  trusted publisher at `pypi.org/manage/project/medius/settings/publishing/`
+  (workflow `release.yml`, environment `pypi`). Then `pip install medius`.
+- **C / C++ → GitHub Release assets.** The workflow attaches a
+  `medius-capi-<target>.tar.gz` per platform, each with `include/medius.h` and
+  the prebuilt `libmedius_capi` (shared + static). Download, include the header,
+  link the library. The CMake project (`bindings/cpp`) consumes either a
+  prebuilt library or builds one with `-DMEDIUS_CARGO_BUILD=ON`.
+- **C++ → Conan.** `bindings/cpp/conanfile.py` builds the library from the
+  tagged release source and packages both headers; ready for ConanCenter or a
+  private remote. A vcpkg overlay port can wrap the same release assets.
+
+The `medius-capi` crate itself is `publish = false`: it's the substrate for
+other languages, not a Rust dependency (Rust users use the `medius` crate), so
+it isn't published to crates.io.
