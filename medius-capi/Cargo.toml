@@ -1,0 +1,19 @@
+[package]
+name = "medius-capi"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+description = "C ABI for the medius host control library"
+license = "MIT"
+publish = false
+
+[lib]
+crate-type = ["lib", "cdylib", "staticlib"]
+
+[features]
+default = []
+mock = ["medius/mock"]
+flash = ["medius/flash"]
+
+[dependencies]
+medius = { path = ".." }

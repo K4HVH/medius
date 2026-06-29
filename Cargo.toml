@@ -1,3 +1,7 @@
+[workspace]
+members = ["medius-capi"]
+resolver = "3"
+
 [package]
 name = "medius"
 version = "2.2.0"
