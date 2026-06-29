@@ -230,6 +230,7 @@ def _decl(name, restype, argtypes, optional=False):
 # --- lifecycle ---
 _decl("medius_device_open", i32, [ctypes.c_char_p, PHANDLE])
 _decl("medius_device_find", i32, [PHANDLE])
+_decl("medius_device_clone", HANDLE, [HANDLE])
 _decl("medius_device_free", None, [HANDLE])
 _decl("medius_find_ports", usize, [ctypes.POINTER(MediusPortInfo), usize, ctypes.POINTER(usize)])
 
@@ -308,12 +309,14 @@ _decl("medius_caps_is_composite", c_bool, [MediusCaps])
 
 # --- streams ---
 _decl("medius_device_catch_events", i32, [HANDLE, u8, PHANDLE])
+_decl("medius_event_stream_clone", HANDLE, [HANDLE])
 _decl("medius_event_stream_free", None, [HANDLE])
 _decl("medius_event_stream_recv", i32, [HANDLE, ctypes.POINTER(MediusCatchEvent)])
 _decl("medius_event_stream_try_recv", c_bool, [HANDLE, ctypes.POINTER(MediusCatchEvent)])
 _decl("medius_event_stream_recv_timeout", c_bool, [HANDLE, u64, ctypes.POINTER(MediusCatchEvent)])
 _decl("medius_event_stream_dropped", u64, [HANDLE])
 _decl("medius_device_logs", i32, [HANDLE, PHANDLE])
+_decl("medius_log_stream_clone", HANDLE, [HANDLE])
 _decl("medius_log_stream_free", None, [HANDLE])
 _decl("medius_log_stream_recv", i32, [HANDLE, ctypes.POINTER(MediusLogLine)])
 _decl("medius_log_stream_try_recv", c_bool, [HANDLE, ctypes.POINTER(MediusLogLine)])
@@ -325,6 +328,7 @@ HAS_FLASH = _decl("medius_flash", i32, [ctypes.c_char_p, ctypes.c_char_p, c_bool
 # --- mock (feature-gated, optional) ---
 HAS_MOCK = _decl("medius_mock_new", HANDLE, [], optional=True) is not None
 if HAS_MOCK:
+    _decl("medius_mock_clone", HANDLE, [HANDLE])
     _decl("medius_mock_free", None, [HANDLE])
     _decl("medius_mock_set_version", None, [HANDLE, MediusVersion])
     _decl("medius_mock_set_health", None, [HANDLE, MediusHealth])

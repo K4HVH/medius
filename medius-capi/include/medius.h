@@ -685,7 +685,12 @@ MediusStatus medius_device_open(const char *path, struct MediusDevice **out);
 // Discover the first medius box by USB id, open it, handshake, and write the handle to `*out`.
 MediusStatus medius_device_find(struct MediusDevice **out);
 
-// Free a device handle (joins the background reader/keepalive threads). Null is a no-op.
+// Clone a device handle: another owner of the same underlying connection (the link is shared and
+// reference-counted, like `Device::clone` in Rust). Each clone must be freed. Null in -> null out.
+struct MediusDevice *medius_device_clone(const struct MediusDevice *dev);
+
+// Free a device handle (joins the background reader/keepalive threads when the last clone drops).
+// Null is a no-op.
 void medius_device_free(struct MediusDevice *dev);
 
 // Enumerate medius serial ports into `out` (up to `cap`). Writes the total found to `*out_total`
@@ -873,6 +878,10 @@ MediusStatus medius_device_catch_events(struct MediusDevice *dev,
                                         MediusCatchMask mask,
                                         struct MediusEventStream **out);
 
+// Clone an event-stream handle: another handle to the SAME subscription (shared queue, like
+// `EventStream::clone` in Rust). The subscription ends when the last clone is freed. Null in -> null out.
+struct MediusEventStream *medius_event_stream_clone(const struct MediusEventStream *stream);
+
 // Free an event-stream handle. Null is a no-op.
 void medius_event_stream_free(struct MediusEventStream *stream);
 
@@ -894,6 +903,9 @@ uint64_t medius_event_stream_dropped(struct MediusEventStream *stream);
 
 // Open the device LOG stream, writing the handle to `*out`.
 MediusStatus medius_device_logs(struct MediusDevice *dev, struct MediusLogStream **out);
+
+// Clone a log-stream handle: another handle to the same LOG channel. Null in -> null out.
+struct MediusLogStream *medius_log_stream_clone(const struct MediusLogStream *stream);
 
 // Free a log-stream handle. Null is a no-op.
 void medius_log_stream_free(struct MediusLogStream *stream);
@@ -921,6 +933,12 @@ MediusStatus medius_flash(const char *port,
 #if defined(MEDIUS_FEATURE_MOCK)
 // Create a fresh mock that records commands and auto-answers queries with defaults.
 struct MediusMockBox *medius_mock_new(void);
+#endif
+
+#if defined(MEDIUS_FEATURE_MOCK)
+// Clone a mock handle: another handle sharing the same recorded state (like `MockBox::clone`).
+// Null in -> null out.
+struct MediusMockBox *medius_mock_clone(const struct MediusMockBox *mock);
 #endif
 
 #if defined(MEDIUS_FEATURE_MOCK)

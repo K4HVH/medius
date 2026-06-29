@@ -242,6 +242,23 @@ static void test_recorded_frame() {
     CHECK(len > 0);
 }
 
+static void test_clone_shares_state() {
+    MockBox mock;
+    Device dev = Device::with_mock(mock);
+    Device dev2 = dev.clone();   // second owner of the same connection
+    dev.move_rel(1, 0);
+    dev2.move_rel(2, 0);
+    MockBox mock2 = mock.clone();
+    CHECK(mock2.recorded() == 2);
+
+    EventStream s = dev.catch_events(CatchMask::All);
+    EventStream s2 = s.clone();
+    mock.push_event(1, MediusMouseEvent{0, 7, 0, 0});
+    auto ev = s2.recv_timeout(std::chrono::milliseconds(2000));
+    CHECK(ev.has_value());
+    if (ev) CHECK(ev->mouse().has_value() && ev->mouse()->dx == 7);
+}
+
 static void test_meta() {
     CHECK(abi_version() >= 1);
     CHECK(version_string().size() > 0);
@@ -261,6 +278,7 @@ int main() {
     test_query_helpers();
     test_raii_and_move();
     test_recorded_frame();
+    test_clone_shares_state();
     test_meta();
 
     CHECK(odr_probe() == 1);

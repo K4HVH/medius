@@ -6,8 +6,8 @@ import ctypes
 from typing import Optional
 
 from . import _native
-from ._enums import Action, Blanket, Button, CatchMask, LedMode, LedTarget, LockDirection, RebootTarget
-from ._errors import check
+from ._enums import Action, Blanket, Button, CatchMask, LedMode, LedTarget, LockDirection, RebootTarget, Status
+from ._errors import MediusError, check
 from ._streams import EventStream, LogStream
 from ._types import (
     Caps,
@@ -77,6 +77,13 @@ class Device:
         out = ctypes.c_void_p()
         check(_native.lib.medius_device_with_mock(mock._handle, ctypes.byref(out)))
         return cls(out.value)
+
+    def clone(self) -> "Device":
+        """Another handle to the same connection (the link is shared, like Device.clone in Rust)."""
+        handle = _native.lib.medius_device_clone(self._handle)
+        if not handle:
+            raise MediusError(Status.ERR_UNKNOWN, "device clone failed")
+        return Device(handle)
 
     # --- movement ---
 

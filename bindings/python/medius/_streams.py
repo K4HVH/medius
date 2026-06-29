@@ -40,6 +40,13 @@ class EventStream:
     def dropped(self) -> int:
         return int(_native.lib.medius_event_stream_dropped(self._handle))
 
+    def clone(self) -> "EventStream":
+        """Another handle to the same subscription (shared queue, like EventStream.clone in Rust)."""
+        handle = _native.lib.medius_event_stream_clone(self._handle)
+        if not handle:
+            raise MediusError(Status.ERR_UNKNOWN, "event stream clone failed")
+        return EventStream(handle, self._device)
+
     def __iter__(self):
         while True:
             try:
@@ -91,6 +98,13 @@ class LogStream:
         if _native.lib.medius_log_stream_recv_timeout(self._handle, int(ms), ctypes.byref(line)):
             return decode_log_line(line)
         return None
+
+    def clone(self) -> "LogStream":
+        """Another handle to the same LOG channel."""
+        handle = _native.lib.medius_log_stream_clone(self._handle)
+        if not handle:
+            raise MediusError(Status.ERR_UNKNOWN, "log stream clone failed")
+        return LogStream(handle, self._device)
 
     def __iter__(self):
         while True:

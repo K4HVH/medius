@@ -342,6 +342,29 @@ def test_log_stream_delivers_line():
 # --- lifecycle / safety ---
 
 
+def test_clone_shares_state():
+    with MockBox() as mock:
+        d = Device.with_mock(mock)
+        d2 = d.clone()  # second owner of the same connection
+        d.move_rel(1, 0)
+        d2.move_rel(2, 0)
+        mock2 = mock.clone()  # shares the recorded state
+        assert mock2.recorded() == 2
+        d.close()
+        d2.close()
+        mock2.close()
+
+
+def test_event_stream_clone_shares_subscription():
+    with MockBox() as mock, Device.with_mock(mock) as d:
+        with d.catch_events(CatchMask.ALL) as stream:
+            stream2 = stream.clone()
+            mock.push_event(1, MouseEvent(buttons=0, dx=9, dy=0, wheel=0))
+            ev = stream2.recv_timeout(2000)
+            assert ev is not None and ev.kind == CatchEventKind.MOUSE and ev.mouse.dx == 9
+            stream2.close()
+
+
 def test_double_close_is_safe():
     mock = MockBox()
     d = Device.with_mock(mock)

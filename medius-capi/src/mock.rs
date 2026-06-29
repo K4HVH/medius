@@ -27,6 +27,20 @@ pub extern "C" fn medius_mock_new() -> *mut MediusMockBox {
     })
 }
 
+/// Clone a mock handle: another handle sharing the same recorded state (like `MockBox::clone`).
+/// Null in -> null out.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn medius_mock_clone(mock: *const MediusMockBox) -> *mut MediusMockBox {
+    guard(std::ptr::null_mut(), || {
+        if mock.is_null() {
+            return std::ptr::null_mut();
+        }
+        Box::into_raw(Box::new(MediusMockBox {
+            inner: unsafe { (*mock).inner.clone() },
+        }))
+    })
+}
+
 /// Free a mock handle. Null is a no-op.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_mock_free(mock: *mut MediusMockBox) {
