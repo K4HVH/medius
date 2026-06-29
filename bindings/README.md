@@ -103,23 +103,24 @@ test suite).
 
 ## Packages
 
-Publishing is wired in `.github/workflows/release.yml`, which runs when a GitHub
-Release is published:
+Publishing rides the crate's existing release flow in `.github/workflows/ci.yml`:
+bump the version (`tools/bump_version.sh`) and push to master, and the `publish`
+job publishes the crate and creates the GitHub Release, then the bindings jobs
+build and ship the wheels and C/C++ assets for that same version.
 
-- **Python → PyPI.** The release workflow builds the wheel matrix + sdist and
-  uploads via PyPI trusted publishing (OIDC, no token). One-time setup, before
-  the first publish (the project doesn't exist on PyPI yet): register a *pending
-  publisher* at `pypi.org/manage/account/publishing/` with project `medius`,
-  owner `K4HVH`, repo `medius`, workflow `release.yml`, environment `pypi`. Then
-  publishing a GitHub Release creates the project and `pip install medius` works.
-- **C / C++ → GitHub Release assets.** The workflow attaches a
-  `medius-capi-<target>.tar.gz` per platform, each with `include/medius.h` and
-  the prebuilt `libmedius_capi` (shared + static). Download, include the header,
-  link the library. The CMake project (`bindings/cpp`) consumes either a
-  prebuilt library or builds one with `-DMEDIUS_CARGO_BUILD=ON`.
-- **C++ → Conan.** `bindings/cpp/conanfile.py` builds the library from the
-  tagged release source and packages both headers; ready for ConanCenter or a
-  private remote. A vcpkg overlay port can wrap the same release assets.
+- **Python → PyPI.** Builds the wheel matrix + sdist and uploads via PyPI trusted
+  publishing (OIDC, no token). One-time setup, before the first publish (the
+  project doesn't exist on PyPI yet): register a *pending publisher* at
+  `pypi.org/manage/account/publishing/` with project `medius`, owner `K4HVH`,
+  repo `medius`, **workflow `ci.yml`**, environment `pypi`. Then `pip install medius`.
+- **C / C++ → GitHub Release assets.** Attaches a `medius-capi-<target>.tar.gz`
+  per platform to the release, each with `include/medius.h` and the prebuilt
+  `libmedius_capi` (shared + static). Download, include the header, link the
+  library. The CMake project (`bindings/cpp`) consumes either a prebuilt library
+  or builds one with `-DMEDIUS_CARGO_BUILD=ON`.
+- **C++ → Conan.** `bindings/cpp/conanfile.py` builds the library from the tagged
+  release source and packages both headers; ready for ConanCenter or a private
+  remote. A vcpkg overlay port can wrap the same release assets.
 
 The `medius-capi` crate itself is `publish = false`: it's the substrate for
 other languages, not a Rust dependency (Rust users use the `medius` crate), so

@@ -188,6 +188,9 @@ jobs:
     runs-on: ubuntu-latest
     needs: [check, build, test, fmt, clippy, security_audit, docs, publish_check]
     if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    outputs:
+      should_publish: ${{ steps.check_version.outputs.should_publish }}
+      version: ${{ steps.check_version.outputs.version }}
     steps:
     - uses: actions/checkout@v4
     - uses: dtolnay/rust-toolchain@stable
@@ -237,5 +240,114 @@ jobs:
         draft: false
         prerelease: false
         generate_release_notes: true
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # --- bindings release: only on a new version (gated by the publish job) ---
+
+  bindings_sdist:
+    name: Build sdist
+    needs: publish
+    if: needs.publish.outputs.should_publish == 'true'
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - uses: actions/setup-python@v5
+      with:
+        python-version: '3.x'
+    - name: Build the self-contained sdist
+      run: |
+        python -m pip install build
+        python -m build --sdist -o dist bindings/python
+    - uses: actions/upload-artifact@v4
+      with:
+        name: dist-sdist
+        path: dist/*.tar.gz
+
+  bindings_wheels:
+    name: Wheels (${{ matrix.os }})
+    needs: [publish, bindings_sdist]
+    if: needs.publish.outputs.should_publish == 'true'
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-13, macos-14, windows-latest]
+    steps:
+    - uses: actions/checkout@v4
+    - uses: actions/download-artifact@v4
+      with:
+        name: dist-sdist
+        path: dist
+    - uses: actions/setup-python@v5
+      with:
+        python-version: '3.x'
+    - name: Build wheels from the sdist
+      shell: bash
+      run: |
+        python -m pip install 'cibuildwheel~=2.21'
+        python -m cibuildwheel --output-dir wheelhouse dist/medius-*.tar.gz
+    - uses: actions/upload-artifact@v4
+      with:
+        name: dist-wheels-${{ matrix.os }}
+        path: wheelhouse/*.whl
+
+  publish_pypi:
+    name: Publish wheels to PyPI
+    needs: [publish, bindings_sdist, bindings_wheels]
+    if: needs.publish.outputs.should_publish == 'true'
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+    - uses: actions/download-artifact@v4
+      with:
+        pattern: dist-*
+        path: dist
+        merge-multiple: true
+    - uses: pypa/gh-action-pypi-publish@release/v1
+      with:
+        packages-dir: dist
+
+  capi_libs:
+    name: C ABI library (${{ matrix.os }})
+    needs: publish
+    if: needs.publish.outputs.should_publish == 'true'
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+    - uses: actions/checkout@v4
+    - uses: dtolnay/rust-toolchain@stable
+    - name: Install libudev (Linux)
+      if: runner.os == 'Linux'
+      run: sudo apt-get update && sudo apt-get install -y libudev-dev
+    - name: Build the C ABI library
+      run: cargo build -p medius-capi --release
+    - name: Package header + libraries
+      shell: bash
+      run: |
+        triple=$(rustc -vV | sed -n 's/host: //p')
+        out="medius-capi-${triple}"
+        mkdir -p "$out/include" "$out/lib"
+        cp medius-capi/include/medius.h "$out/include/"
+        cp target/release/*medius_capi.{so,dylib,a} "$out/lib/" 2>/dev/null || true
+        cp target/release/medius_capi.dll target/release/medius_capi.dll.lib target/release/medius_capi.lib "$out/lib/" 2>/dev/null || true
+        tar -czf "${out}.tar.gz" "$out"
+        ls -la "${out}.tar.gz"
+    - uses: actions/upload-artifact@v4
+      with:
+        name: capi-${{ matrix.os }}
+        path: medius-capi-*.tar.gz
+    - name: Attach to the release
+      uses: softprops/action-gh-release@v1
+      with:
+        tag_name: v${{ needs.publish.outputs.version }}
+        files: medius-capi-*.tar.gz
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
