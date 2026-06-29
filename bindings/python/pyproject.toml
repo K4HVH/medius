@@ -54,15 +54,19 @@ include = ["medius", "hatch_build.py", "pyproject.toml"]
 # runner is (the CI matrix runs one runner per arch).
 [tool.cibuildwheel]
 # The wheel is tagged py3-none-<platform>, so one interpreter per platform
-# produces a wheel that installs on every supported Python 3.x.
-build = "cp310-*"
+# produces a wheel that installs on every supported Python 3.x. Build only the
+# variants whose toolchain we provide: glibc Linux (manylinux), macOS, and
+# 64-bit Windows. musllinux and win32 are skipped (no musl/i686 Rust target set
+# up); musl/32-bit users build from the sdist.
+build = "cp310-manylinux_* cp310-macosx_* cp310-win_amd64"
 build-frontend = "build"
 # The bundled wheel has no mock feature, so only smoke-test the import here; the
 # mock-backed pytest suite runs against a debug build in the python CI job.
 test-command = "python -c \"import medius; print(medius.abi_version(), medius.version_string())\""
 
 [tool.cibuildwheel.linux]
-before-all = "curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --profile minimal"
+# The cdylib links libudev (via serialport); the manylinux container lacks it.
+before-all = "(yum install -y systemd-devel pkgconfig || dnf install -y systemd-devel pkgconfig) && curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --profile minimal"
 environment = { PATH = "$HOME/.cargo/bin:$PATH" }
 
 [tool.cibuildwheel.macos]
