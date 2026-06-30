@@ -1,0 +1,14 @@
+# Bundled cdylib copied in by the build hook
+medius/libmedius_capi.*
+medius/medius_capi.*
+medius/*.so
+medius/*.dll
+medius/*.dylib
+
+# Build + test artifacts
+build/
+dist/
+wheelhouse/
+*.egg-info/
+__pycache__/
+.pytest_cache/

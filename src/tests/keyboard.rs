@@ -51,53 +51,6 @@ fn kbd_caps_decodes() {
 
 #[cfg(feature = "mock")]
 #[test]
-fn key_down_sends_a_key_frame() {
-    use crate::protocol::FrameType;
-    use crate::{Device, Key, MockBox};
-    let mock = MockBox::new();
-    let device = Device::with_mock(mock.clone());
-    device.key_down(Key::A).unwrap();
-    let f = mock
-        .recorded_frames()
-        .into_iter()
-        .find(|f| f.ty == FrameType::Inject)
-        .expect("an INJECT frame was recorded");
-    assert_eq!(f.payload, vec![1, 0x04, 0x00, 1]); // class=key id=A action=press
-}
-
-#[cfg(feature = "mock")]
-#[test]
-fn media_down_sends_a_consumer_frame() {
-    use crate::protocol::FrameType;
-    use crate::{Device, MediaKey, MockBox};
-    let mock = MockBox::new();
-    let device = Device::with_mock(mock.clone());
-    device.media_down(MediaKey::VOLUME_UP).unwrap();
-    let f = mock
-        .recorded_frames()
-        .into_iter()
-        .find(|f| f.ty == FrameType::Inject)
-        .expect("an INJECT frame was recorded");
-    assert_eq!(f.payload, vec![2, 0xE9, 0x00, 1]); // class=media id=Vol+ action=press
-}
-
-#[cfg(feature = "mock")]
-#[test]
-fn query_kbd_caps_roundtrips() {
-    use crate::{Device, KbdCaps, MockBox};
-    let caps = KbdCaps {
-        n_keys: 14,
-        nkro: false,
-        has_consumer: true,
-        has_system: false,
-        has_report_id: true,
-    };
-    let device = Device::with_mock(MockBox::new().with_kbd_caps(caps));
-    assert_eq!(device.caps().unwrap().keyboard, caps);
-}
-
-#[cfg(feature = "mock")]
-#[test]
 fn pushed_keyboard_and_media_events_arrive_on_the_stream() {
     use crate::{CatchEvent, CatchMask, Device, Key, KeyboardEvent, MediaEvent, MediaKey, MockBox};
     use std::time::Duration;

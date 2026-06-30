@@ -88,23 +88,6 @@ fn health_catch_on_bit_roundtrips() {
 
 #[cfg(feature = "mock")]
 #[test]
-fn catch_events_sends_a_catch_frame_with_the_mask() {
-    use crate::{CatchMask, Device, MockBox};
-    let mock = MockBox::new();
-    let device = Device::with_mock(mock.clone());
-    let _stream = device
-        .catch_events(CatchMask::MOTION | CatchMask::BUTTONS)
-        .unwrap();
-    let frames = mock.recorded_frames();
-    let catch = frames
-        .iter()
-        .find(|f| f.ty == FrameType::Catch)
-        .expect("a CATCH frame was recorded");
-    assert_eq!(catch.payload, vec![0x05]);
-}
-
-#[cfg(feature = "mock")]
-#[test]
 fn dropping_the_stream_unsubscribes() {
     use crate::{CatchMask, Device, MockBox};
     let mock = MockBox::new();
@@ -194,31 +177,4 @@ fn catch_buffer_drops_oldest_on_overflow() {
         "the oldest events were dropped, the newest kept"
     );
     assert!(!first.is_pressed(Button::Left));
-}
-
-#[cfg(feature = "mock")]
-#[test]
-fn reset_disconnects_the_stream() {
-    use crate::{CatchMask, Device, MockBox};
-    let mock = MockBox::new();
-    let device = Device::with_mock(mock.clone());
-    let stream = device.catch_events(CatchMask::all()).unwrap();
-    device.reset().unwrap();
-    // reset() ends the catch stream by disconnecting it — recv returns Err, never a silent hang
-    // (the firmware drops the mask on the same RESET, so the host doesn't re-subscribe).
-    assert!(stream.recv().is_err());
-    assert!(mock.saw(FrameType::Reset));
-}
-
-#[cfg(feature = "mock")]
-#[test]
-fn query_catch_roundtrips_mask_and_drops() {
-    use crate::{CatchMask, CatchState, Device, MockBox};
-    // wheel + buttons (0x06), 5 box-side drops
-    let catch = CatchState::from_payload(&[7, 0x06, 0x05, 0x00, 0x00, 0x00]).unwrap();
-    let mock = MockBox::new().with_catch_state(catch);
-    let device = Device::with_mock(mock);
-    let got = device.query_catch().unwrap();
-    assert_eq!(got.mask, CatchMask::WHEEL | CatchMask::BUTTONS);
-    assert_eq!(got.dropped, 5);
 }

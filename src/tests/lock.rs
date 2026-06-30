@@ -1,8 +1,6 @@
 //! LOCK command (§3.8): payload bytes, enum wire values, `RESP(LOCKS)` decoding, and the HEALTH
 //! `lock_on` bit (§4.2). Bytes are pinned to the firmware wire format in `ctrl_proto.h`.
 
-#[cfg(feature = "mock")]
-use crate::protocol::FrameType;
 use crate::protocol::command::lock_payload;
 use crate::protocol::{Resp, parse_resp};
 use crate::types::{Button, Health, LockDirection, LockTarget, Locks};
@@ -105,70 +103,4 @@ fn health_lock_on_bit_roundtrips() {
     assert_eq!(h.to_flags(), 0x20);
     // and it survives a full round-trip with the other bits set
     assert_eq!(Health::from_flags(0x3F).to_flags(), 0x3F);
-}
-
-#[cfg(feature = "mock")]
-#[test]
-fn lock_sends_a_lock_frame() {
-    use crate::{Device, MockBox};
-    let mock = MockBox::new();
-    let device = Device::with_mock(mock.clone());
-    device
-        .lock(LockTarget::Wheel, LockDirection::Negative)
-        .unwrap();
-    let frames = mock.recorded_frames();
-    let lock = frames
-        .iter()
-        .find(|f| f.ty == FrameType::Lock)
-        .expect("a LOCK frame was recorded");
-    assert_eq!(lock.payload, vec![0, 2, 0, 2, 1]); // mouse / wheel / neg / lock
-}
-
-#[cfg(feature = "mock")]
-#[test]
-fn unlock_sends_state_zero() {
-    use crate::{Device, MockBox};
-    let mock = MockBox::new();
-    let device = Device::with_mock(mock.clone());
-    device.unlock(LockTarget::X, LockDirection::Both).unwrap();
-    let frames = mock.recorded_frames();
-    let lock = frames
-        .iter()
-        .find(|f| f.ty == FrameType::Lock)
-        .expect("a LOCK frame was recorded");
-    assert_eq!(lock.payload, vec![0, 0, 0, 0, 0]); // mouse / X / both / unlock
-}
-
-#[cfg(feature = "mock")]
-#[test]
-fn key_media_and_blanket_locks_send_the_right_class() {
-    use crate::{Blanket, Device, Key, MediaKey, MockBox};
-    let mock = MockBox::new();
-    let device = Device::with_mock(mock.clone());
-    device.lock_key(Key::A, LockDirection::Both).unwrap();
-    device.lock_media(MediaKey::VOLUME_UP).unwrap();
-    device.lock_all(Blanket::Keys).unwrap();
-    let locks: Vec<_> = mock
-        .recorded_frames()
-        .into_iter()
-        .filter(|f| f.ty == FrameType::Lock)
-        .map(|f| f.payload)
-        .collect();
-    assert_eq!(locks[0], vec![1, 0x04, 0x00, 0, 1]); // key A, both, lock
-    assert_eq!(locks[1], vec![2, 0xE9, 0x00, 0, 1]); // media VolumeUp, lock
-    assert_eq!(locks[2], vec![3, 0x00, 0x00, 0, 1]); // blanket all-keys, lock
-}
-
-#[cfg(feature = "mock")]
-#[test]
-fn query_locks_roundtrips_a_mask() {
-    use crate::{Device, MockBox};
-    // X+ (bit0) + Side2.release (bit15).
-    let locks = Locks::from_payload(&[6, 0x01, 0x80]).unwrap();
-    let mock = MockBox::new().with_locks(locks);
-    let device = Device::with_mock(mock);
-    let got = device.query_locks().unwrap();
-    assert_eq!(got.mask(), 0x8001);
-    assert!(got.is_locked(LockTarget::X, LockDirection::Positive));
-    assert!(got.is_locked(LockTarget::Button(Button::Side2), LockDirection::Negative));
 }

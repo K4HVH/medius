@@ -115,6 +115,12 @@ impl Locks {
         })
     }
 
+    /// Build a [`Locks`] from a raw bitmask (the inverse of [`mask`](Self::mask)); useful for tests and
+    /// for configuring a [`MockBox`](crate::MockBox).
+    pub const fn from_mask(mask: u16) -> Locks {
+        Locks { mask }
+    }
+
     /// The raw lock bitmask: bit `target*2` is positive/press, bit `target*2+1` is negative/release.
     pub fn mask(&self) -> u16 {
         self.mask

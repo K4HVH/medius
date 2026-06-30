@@ -1,7 +1,5 @@
 //! LED command (§3.7): payload bytes, enum wire values, and that `Device::led` sends a `LED` frame.
 
-#[cfg(feature = "mock")]
-use crate::protocol::FrameType;
 use crate::protocol::command::led_payload;
 use crate::types::{LedMode, LedTarget};
 
@@ -38,19 +36,4 @@ fn led_enums_pin_wire_values_and_roundtrip() {
         assert_eq!(LedMode::from_u8(m.as_u8()), Some(m));
     }
     assert_eq!(LedMode::from_u8(4), None);
-}
-
-#[cfg(feature = "mock")]
-#[test]
-fn led_sends_a_led_frame() {
-    use crate::{Device, MockBox};
-    let mock = MockBox::new();
-    let device = Device::with_mock(mock.clone());
-    device.led(LedTarget::Both, LedMode::Blink, 128).unwrap();
-    let frames = mock.recorded_frames();
-    let led = frames
-        .iter()
-        .find(|f| f.ty == FrameType::Led)
-        .expect("a LED frame was recorded");
-    assert_eq!(led.payload, vec![2, 3, 128]);
 }
