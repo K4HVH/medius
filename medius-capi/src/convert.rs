@@ -7,10 +7,10 @@
 use std::os::raw::c_char;
 
 use medius::{
-    Action, Blanket, Button, Caps, CatchEvent, CatchMask, CatchState, CountersSnapshot, Health,
-    ImperfectStatus, Input, KbdCaps, Key, KeyboardEvent, LedMode, LedTarget, LockDirection,
-    LockTarget, Locks, LogLevel, LogLine, MediaEvent, MediaKey, Motion, MouseCaps, MouseEvent,
-    MouseInfo, PortInfo, Rate, RebootTarget, Stats, Version,
+    Action, Blanket, Button, Caps, CatchEvent, CatchMask, CatchState, CountersSnapshot, EmitPace,
+    EmitPaceStatus, Health, ImperfectStatus, Input, KbdCaps, Key, KeyboardEvent, LedMode, LedTarget,
+    LockDirection, LockTarget, Locks, LogLevel, LogLine, MediaEvent, MediaKey, Motion, MouseCaps,
+    MouseEvent, MouseInfo, PortInfo, Rate, RebootTarget, Stats, Version,
 };
 
 use crate::ctypes::*;
@@ -147,6 +147,15 @@ pub(crate) fn input_to_medius(v: MediusInput) -> Option<Input> {
     })
 }
 
+/// `(MediusEmitMode, hz)` -> `EmitPace`. `hz` matters only for `Fixed`.
+pub(crate) fn emit_pace_to_medius(mode: MediusEmitMode, hz: u16) -> EmitPace {
+    match mode {
+        MediusEmitMode::Learned => EmitPace::Learned,
+        MediusEmitMode::Interval => EmitPace::Interval,
+        MediusEmitMode::Fixed => EmitPace::Fixed(hz),
+    }
+}
+
 // --- query results: medius -> Medius ---
 
 impl From<Version> for MediusVersion {
@@ -271,6 +280,21 @@ impl From<ImperfectStatus> for MediusImperfectStatus {
             allowed: b(s.allowed),
             over_capacity: b(s.over_capacity),
             clone_imperfect: b(s.clone_imperfect),
+        }
+    }
+}
+
+impl From<EmitPaceStatus> for MediusEmitPaceStatus {
+    fn from(s: EmitPaceStatus) -> Self {
+        let (mode, fixed_hz) = match s.mode {
+            EmitPace::Learned => (MediusEmitMode::Learned, 0),
+            EmitPace::Interval => (MediusEmitMode::Interval, 0),
+            EmitPace::Fixed(hz) => (MediusEmitMode::Fixed, hz),
+        };
+        MediusEmitPaceStatus {
+            mode,
+            fixed_hz,
+            resolved_hz: s.resolved_hz,
         }
     }
 }

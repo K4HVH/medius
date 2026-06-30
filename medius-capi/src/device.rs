@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use medius::{Device, Key, MediaKey};
 
-use crate::convert::input_to_medius;
+use crate::convert::{emit_pace_to_medius, input_to_medius};
 use crate::ctypes::*;
 use crate::error::{MediusStatus, clear_error, fail, guard, guard_status, record, status_of};
 
@@ -430,6 +430,17 @@ pub unsafe extern "C" fn medius_device_set_movement_riding(
     with_device(dev, |d| d.set_movement_riding(window))
 }
 
+/// Set what paces injected motion. `hz` is the target rate for `Fixed` (snapped to `1000/n`, capped
+/// 1 kHz); it is ignored for `Learned` and `Interval`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn medius_device_set_emit_pace(
+    dev: *mut MediusDevice,
+    mode: MediusEmitMode,
+    hz: u16,
+) -> MediusStatus {
+    with_device(dev, |d| d.set_emit_pace(emit_pace_to_medius(mode, hz)))
+}
+
 // --- queries ---
 
 #[unsafe(no_mangle)]
@@ -533,6 +544,14 @@ pub unsafe extern "C" fn medius_device_query_movement_riding(
             Err(e) => record(&e),
         }
     })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn medius_device_query_emit_pace(
+    dev: *mut MediusDevice,
+    out: *mut MediusEmitPaceStatus,
+) -> MediusStatus {
+    query(dev, out, |d| d.query_emit_pace())
 }
 
 #[unsafe(no_mangle)]

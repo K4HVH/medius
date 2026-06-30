@@ -10,6 +10,7 @@ from . import _native
 from ._enums import (
     Button,
     CatchEventKind,
+    EmitMode,
     LockTargetKind,
     LogLevel,
 )
@@ -138,6 +139,32 @@ class ImperfectStatus:
     allowed: bool
     over_capacity: bool
     clone_imperfect: bool
+
+
+@dataclass(frozen=True)
+class EmitPace:
+    """What paces injected motion. Build with `EmitPace.learned/interval/fixed`."""
+
+    mode: EmitMode
+    hz: int = 0
+
+    @classmethod
+    def learned(cls) -> "EmitPace":
+        return cls(EmitMode.LEARNED)
+
+    @classmethod
+    def interval(cls) -> "EmitPace":
+        return cls(EmitMode.INTERVAL)
+
+    @classmethod
+    def fixed(cls, hz: int) -> "EmitPace":
+        return cls(EmitMode.FIXED, int(hz))
+
+
+@dataclass
+class EmitPaceStatus:
+    mode: EmitPace
+    resolved_hz: int
 
 
 @dataclass
@@ -426,6 +453,11 @@ def imperfect_to_c(i) -> "_native.MediusImperfectStatus":
     return _native.MediusImperfectStatus(
         int(i.allowed), int(i.over_capacity), int(i.clone_imperfect)
     )
+
+
+def emit_pace_status_from_c(c) -> EmitPaceStatus:
+    mode = EmitMode(c.mode)
+    return EmitPaceStatus(EmitPace(mode, c.fixed_hz), c.resolved_hz)
 
 
 def counters_from_c(c) -> Counters:

@@ -13,6 +13,8 @@ from ._types import (
     Caps,
     CatchState,
     Counters,
+    EmitPace,
+    EmitPaceStatus,
     Health,
     ImperfectStatus,
     Input,
@@ -26,6 +28,7 @@ from ._types import (
     caps_from_c,
     catch_state_from_c,
     counters_from_c,
+    emit_pace_status_from_c,
     health_from_c,
     imperfect_from_c,
     mouse_info_from_c,
@@ -191,6 +194,10 @@ class Device:
             )
         )
 
+    def set_emit_pace(self, pace: EmitPace):
+        """Set what paces injected motion (`hz` matters only for `EmitPace.fixed`)."""
+        check(_native.lib.medius_device_set_emit_pace(self._handle, int(pace.mode), int(pace.hz)))
+
     # --- queries ---
 
     def query_version(self) -> Version:
@@ -248,6 +255,11 @@ class Device:
             )
         )
         return int(window.value) if enabled.value else None
+
+    def query_emit_pace(self) -> EmitPaceStatus:
+        out = _native.MediusEmitPaceStatus()
+        check(_native.lib.medius_device_query_emit_pace(self._handle, ctypes.byref(out)))
+        return emit_pace_status_from_c(out)
 
     def counters(self) -> Counters:
         out = _native.MediusCountersSnapshot()

@@ -246,6 +246,24 @@ typedef uint8_t MediusRebootTarget;
 #endif // __STDC_VERSION__ >= 202311L
 #endif // __cplusplus
 
+// What paces injected motion.
+enum MediusEmitMode
+#if defined(__cplusplus) || __STDC_VERSION__ >= 202311L
+  : uint8_t
+#endif // defined(__cplusplus) || __STDC_VERSION__ >= 202311L
+ {
+    MEDIUS_EMIT_MODE_LEARNED = 0,
+    MEDIUS_EMIT_MODE_INTERVAL = 1,
+    MEDIUS_EMIT_MODE_FIXED = 2,
+};
+#ifndef __cplusplus
+#if __STDC_VERSION__ >= 202311L
+typedef enum MediusEmitMode MediusEmitMode;
+#else
+typedef uint8_t MediusEmitMode;
+#endif // __STDC_VERSION__ >= 202311L
+#endif // __cplusplus
+
 // Which arm of a [`MediusCatchEvent`] is populated.
 enum MediusCatchEventKind
 #if defined(__cplusplus) || __STDC_VERSION__ >= 202311L
@@ -459,6 +477,14 @@ typedef struct MediusImperfectStatus {
     uint8_t over_capacity;
     uint8_t clone_imperfect;
 } MediusImperfectStatus;
+
+// Emit-rate pacing mode plus the rate in effect. `fixed_hz` is the rate requested for `Fixed` (0
+// otherwise); `resolved_hz` is the ceiling actually in effect (0 = learnt/adaptive).
+typedef struct MediusEmitPaceStatus {
+    MediusEmitMode mode;
+    uint16_t fixed_hz;
+    uint16_t resolved_hz;
+} MediusEmitPaceStatus;
 
 // Host-side always-on counters.
 typedef struct MediusCountersSnapshot {
@@ -782,6 +808,12 @@ MediusStatus medius_device_set_movement_riding(struct MediusDevice *dev,
                                                bool enabled,
                                                uint32_t window_ms);
 
+// Set what paces injected motion. `hz` is the target rate for `Fixed` (snapped to `1000/n`, capped
+// 1 kHz); it is ignored for `Learned` and `Interval`.
+MediusStatus medius_device_set_emit_pace(struct MediusDevice *dev,
+                                         MediusEmitMode mode,
+                                         uint16_t hz);
+
 MediusStatus medius_device_query_version(struct MediusDevice *dev, struct MediusVersion *out);
 
 MediusStatus medius_device_query_health(struct MediusDevice *dev, struct MediusHealth *out);
@@ -806,6 +838,9 @@ MediusStatus medius_device_query_imperfect(struct MediusDevice *dev,
 MediusStatus medius_device_query_movement_riding(struct MediusDevice *dev,
                                                  bool *out_enabled,
                                                  uint32_t *out_window_ms);
+
+MediusStatus medius_device_query_emit_pace(struct MediusDevice *dev,
+                                           struct MediusEmitPaceStatus *out);
 
 MediusStatus medius_device_counters(struct MediusDevice *dev, struct MediusCountersSnapshot *out);
 
@@ -1005,6 +1040,12 @@ void medius_mock_set_imperfect_status(struct MediusMockBox *mock,
 #if defined(MEDIUS_FEATURE_MOCK)
 // Set the movement-riding window the mock answers to a query; `enabled == false` means off.
 void medius_mock_set_movement_riding(struct MediusMockBox *mock, bool enabled, uint32_t window_ms);
+#endif
+
+#if defined(MEDIUS_FEATURE_MOCK)
+// Set the emit-rate pacing mode the mock answers to an OPTION(EMIT) query; `hz` matters only for
+// `Fixed`.
+void medius_mock_set_emit_pace(struct MediusMockBox *mock, MediusEmitMode mode, uint16_t hz);
 #endif
 
 #if defined(MEDIUS_FEATURE_MOCK)
