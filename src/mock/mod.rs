@@ -174,14 +174,20 @@ fn options_move_ride_payload(ms: u16) -> Vec<u8> {
 }
 
 fn options_emit_payload(pace: EmitPace) -> Vec<u8> {
-    // RESP(OPTIONS, EMIT): [what=9][id=2][mode][fixed_hz u16 LE][resolved_hz u16 LE]
-    let (mode, hz) = crate::device::options::emit_pace_wire(pace);
-    let resolved = match pace {
-        EmitPace::Fixed(h) => h.clamp(1, 1000),
-        _ => 0,
+    // RESP(OPTIONS, EMIT): [what=9][id=2][mode][fixed_hz u16 LE][resolved_hz u16 LE]. Mirror the
+    // firmware exactly: Fixed clamps the echoed rate to 1..=1000 (0 -> 1000) and snaps resolved to the
+    // 1 ms frame clock (1000/n); Learned/Interval echo 0 (the mock has no real device to resolve).
+    let (mode, fixed_hz, resolved) = match pace {
+        EmitPace::Learned => (0u8, 0u16, 0u16),
+        EmitPace::Interval => (1, 0, 0),
+        EmitPace::Fixed(h) => {
+            let hz = if h == 0 { 1000 } else { h.min(1000) };
+            let n = (((1_000_000u32 / hz as u32) + 500) / 1000).max(1);
+            (2, hz, (1000 / n) as u16)
+        }
     };
     let mut p = vec![9u8, OPT_EMIT, mode];
-    p.extend_from_slice(&hz.to_le_bytes());
+    p.extend_from_slice(&fixed_hz.to_le_bytes());
     p.extend_from_slice(&resolved.to_le_bytes());
     p
 }
