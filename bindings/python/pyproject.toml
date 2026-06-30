@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "medius"
-version = "2.2.0"
+version = "2.2.1"
 description = "Python bindings for the medius transparent mouse passthrough box"
 requires-python = ">=3.8"
 license = { text = "MIT" }
