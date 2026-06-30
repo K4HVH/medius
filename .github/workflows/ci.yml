@@ -318,6 +318,7 @@ jobs:
     - uses: pypa/gh-action-pypi-publish@release/v1
       with:
         packages-dir: dist
+        skip-existing: true   # a re-dispatch for an existing version is a no-op, not an error
     - name: Resolve the release version
       id: ver
       shell: bash
