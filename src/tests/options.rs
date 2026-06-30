@@ -81,6 +81,40 @@ fn decode_emit_pace_through_parse_resp() {
     assert!(parse_resp(&[9, 2, 3, 0, 0, 0, 0]).is_none()); // unknown mode byte
 }
 
+#[cfg(feature = "mock")]
+#[test]
+fn mock_emit_pace_matches_firmware_snap() {
+    use crate::{Device, EmitPace, EmitPaceStatus, MockBox};
+    // The mock must model the firmware's pacing exactly: Fixed(400) snaps to 1000/3 = 333 Hz on the
+    // 1 ms frame clock (NOT the raw 400), and Fixed(2000) clamps to 1 kHz. A naive echo would diverge
+    // from real hardware for any rate that is not a 1000/n divisor.
+    let mock = MockBox::new().with_emit_pace(EmitPace::Fixed(400));
+    let device = Device::with_mock(mock.clone());
+    assert_eq!(
+        device.query_emit_pace().unwrap(),
+        EmitPaceStatus {
+            mode: EmitPace::Fixed(400),
+            resolved_hz: 333
+        }
+    );
+    mock.set_emit_pace(EmitPace::Fixed(2000));
+    assert_eq!(
+        device.query_emit_pace().unwrap(),
+        EmitPaceStatus {
+            mode: EmitPace::Fixed(1000),
+            resolved_hz: 1000
+        }
+    );
+    mock.set_emit_pace(EmitPace::Learned);
+    assert_eq!(
+        device.query_emit_pace().unwrap(),
+        EmitPaceStatus {
+            mode: EmitPace::Learned,
+            resolved_hz: 0
+        }
+    );
+}
+
 #[test]
 fn unknown_option_id_and_missing_id_are_none() {
     assert!(parse_resp(&[9, 0xFF, 0, 0]).is_none()); // unknown option id
