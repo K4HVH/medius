@@ -23,7 +23,7 @@ static int g_failures = 0;
         }                                                                        \
     } while (0)
 
-int odr_probe(); // test_odr.cpp
+int odr_probe();
 
 static Version make_version() {
     Version v{};
@@ -245,7 +245,7 @@ static void test_recorded_frame() {
 static void test_clone_shares_state() {
     MockBox mock;
     Device dev = Device::with_mock(mock);
-    Device dev2 = dev.clone();   // second owner of the same connection
+    Device dev2 = dev.clone();
     dev.move_rel(1, 0);
     dev2.move_rel(2, 0);
     MockBox mock2 = mock.clone();

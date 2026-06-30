@@ -10,7 +10,6 @@ from . import _native
 from ._enums import (
     Button,
     CatchEventKind,
-    LockDirection,
     LockTargetKind,
     LogLevel,
 )
@@ -411,10 +410,6 @@ def stats_to_c(s) -> "_native.MediusStats":
     )
 
 
-def locks_to_c(locks) -> "_native.MediusLocks":
-    return _native.MediusLocks(mask=locks.mask)
-
-
 def catch_state_from_c(c) -> CatchState:
     return CatchState(c.mask, c.dropped)
 
@@ -453,7 +448,7 @@ def keyboard_event_to_c(e) -> "_native.MediusKeyboardEvent":
 
 def media_event_to_c(e) -> "_native.MediusMediaEvent":
     c = _native.MediusMediaEvent()
-    n = min(len(e.keys), 0xFF)  # the count is a u8, so cap at 255
+    n = min(len(e.keys), 0xFF)
     c.n_keys = n
     for idx in range(n):
         c.keys[idx] = int(e.keys[idx]) & 0xFFFF

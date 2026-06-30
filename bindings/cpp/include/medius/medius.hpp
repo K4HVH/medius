@@ -305,7 +305,7 @@ public:
     EventStream& operator=(const EventStream&) = delete;
     ~EventStream() { reset(); }
 
-    /// Another handle to the same subscription (shared queue, like EventStream::clone in Rust).
+    /// Another handle to the same subscription; the queue is shared.
     EventStream clone() const {
         MediusEventStream *s = medius_event_stream_clone(h_);
         if (!s) {
@@ -525,7 +525,7 @@ public:
     MockBox& operator=(const MockBox&) = delete;
     ~MockBox() { reset(); }
 
-    /// Another handle sharing the same recorded state (like MockBox::clone in Rust).
+    /// Another handle sharing the same recorded state.
     MockBox clone() const {
         MediusMockBox *h = medius_mock_clone(h_);
         if (!h) {
@@ -630,7 +630,7 @@ public:
     Device& operator=(const Device&) = delete;
     ~Device() { free_handle(); }
 
-    /// Another owner of the same connection (the link is shared, like Device::clone in Rust).
+    /// Another owner of the same connection; the link is shared.
     Device clone() const {
         MediusDevice *h = medius_device_clone(h_);
         if (!h) {

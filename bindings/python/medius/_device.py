@@ -28,7 +28,6 @@ from ._types import (
     counters_from_c,
     health_from_c,
     imperfect_from_c,
-    locks_to_c,
     mouse_info_from_c,
     rate_from_c,
     stats_from_c,
@@ -79,7 +78,7 @@ class Device:
         return cls(out.value)
 
     def clone(self) -> "Device":
-        """Another handle to the same connection (the link is shared, like Device.clone in Rust)."""
+        """Another handle to the same connection; the link is shared."""
         handle = _native.lib.medius_device_clone(self._handle)
         if not handle:
             raise MediusError(Status.ERR_UNKNOWN, "device clone failed")

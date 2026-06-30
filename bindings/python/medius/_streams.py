@@ -41,7 +41,7 @@ class EventStream:
         return int(_native.lib.medius_event_stream_dropped(self._handle))
 
     def clone(self) -> "EventStream":
-        """Another handle to the same subscription (shared queue, like EventStream.clone in Rust)."""
+        """Another handle to the same subscription; the queue is shared."""
         handle = _native.lib.medius_event_stream_clone(self._handle)
         if not handle:
             raise MediusError(Status.ERR_UNKNOWN, "event stream clone failed")
