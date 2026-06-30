@@ -213,8 +213,6 @@ Four layers, `protocol → transport → link → device`, each depending only o
 
 `Device` takes `&self`, is `Send + Sync`, and clones cheaply. The link runs at a fixed 4 Mbaud in framed binary (no baud dance, no ASCII REPL), and queries correlate by SEQ rather than arrival order. If the host goes quiet for ~1 s the firmware clears all injection, so a crash never leaves a button stuck; a keepalive thread keeps an intentionally-held button alive. Tested on Linux and Windows.
 
-See [`docs/architecture.md`](docs/architecture.md) for the deeper design notes.
-
 ## Other languages
 
 A C ABI (the `medius-capi` crate) exports the whole API for other languages, with
