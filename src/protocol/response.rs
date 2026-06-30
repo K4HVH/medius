@@ -3,12 +3,12 @@
 use std::time::Duration;
 
 use super::opcode::{
-    OPT_IMPERFECT, OPT_MOVE_RIDE, Q_CAPS, Q_CATCH, Q_HEALTH, Q_LOCKS, Q_MOUSE_INFO, Q_OPTIONS,
-    Q_RATE, Q_STATS, Q_VERSION,
+    OPT_EMIT, OPT_IMPERFECT, OPT_MOVE_RIDE, Q_CAPS, Q_CATCH, Q_HEALTH, Q_LOCKS, Q_MOUSE_INFO,
+    Q_OPTIONS, Q_RATE, Q_STATS, Q_VERSION,
 };
 use crate::types::{
-    Caps, CatchState, Health, ImperfectStatus, Locks, LogLevel, LogLine, MouseInfo, Rate, Stats,
-    Version,
+    Caps, CatchState, EmitPaceStatus, Health, ImperfectStatus, Locks, LogLevel, LogLine, MouseInfo,
+    Rate, Stats, Version,
 };
 
 /// A decoded `RESP` (§4.1), keyed by the `what` selector at `payload[0]`.
@@ -25,6 +25,8 @@ pub enum Resp {
     Imperfect(ImperfectStatus),
     /// `RESP(OPTIONS, MOVE_RIDE)` — the movement-riding window (`None` = off).
     MovementRiding(Option<Duration>),
+    /// `RESP(OPTIONS, EMIT)` — the emit-rate pacing mode and the rate in effect.
+    EmitPace(EmitPaceStatus),
 }
 
 /// Parse a `RESP` payload (§4.1): `[what u8][data..]`.
@@ -66,6 +68,7 @@ pub fn parse_resp(payload: &[u8]) -> Option<Resp> {
                     let dur = (ms != 0).then(|| Duration::from_millis(ms as u64));
                     Some(Resp::MovementRiding(dur))
                 }
+                OPT_EMIT => EmitPaceStatus::from_payload(payload).map(Resp::EmitPace),
                 _ => None,
             }
         }

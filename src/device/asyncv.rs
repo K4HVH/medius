@@ -3,14 +3,14 @@ use std::time::Duration;
 use crate::error::{Error, Result};
 use crate::link::Link;
 use crate::protocol::opcode::{
-    OPT_IMPERFECT, OPT_MOVE_RIDE, Q_CAPS, Q_CATCH, Q_HEALTH, Q_LOCKS, Q_MOUSE_INFO, Q_RATE,
-    Q_STATS, Q_VERSION,
+    OPT_EMIT, OPT_IMPERFECT, OPT_MOVE_RIDE, Q_CAPS, Q_CATCH, Q_HEALTH, Q_LOCKS, Q_MOUSE_INFO,
+    Q_RATE, Q_STATS, Q_VERSION,
 };
 use crate::protocol::{Resp, parse_resp};
 use crate::types::{
-    Action, Blanket, Button, Caps, CatchMask, CatchState, CountersSnapshot, Health,
-    ImperfectStatus, Input, Key, LedMode, LedTarget, LockDirection, LockTarget, Locks, MediaKey,
-    Motion, MouseInfo, Rate, RebootTarget, Stats, Version,
+    Action, Blanket, Button, Caps, CatchMask, CatchState, CountersSnapshot, EmitPace,
+    EmitPaceStatus, Health, ImperfectStatus, Input, Key, LedMode, LedTarget, LockDirection,
+    LockTarget, Locks, MediaKey, Motion, MouseInfo, Rate, RebootTarget, Stats, Version,
 };
 
 use super::Device;
@@ -219,6 +219,11 @@ impl AsyncDevice {
         self.dev().set_movement_riding(window)
     }
 
+    /// `OPTION(EMIT)` — emit-rate pacing. Instant; see [`Device::set_emit_pace`].
+    pub fn set_emit_pace(&self, pace: EmitPace) -> Result<()> {
+        self.dev().set_emit_pace(pace)
+    }
+
     /// Query the box version, awaiting the correlated `RESP` with the default timeout.
     pub async fn query_version(&self) -> Result<Version> {
         let payload = self
@@ -335,6 +340,18 @@ impl AsyncDevice {
             .await?;
         match parse_resp(&payload) {
             Some(Resp::MovementRiding(w)) => Ok(w),
+            _ => Err(Error::NoReply),
+        }
+    }
+
+    /// Query the emit-rate pacing mode + the rate in effect (§4.14), awaiting the correlated `RESP`.
+    pub async fn query_emit_pace(&self) -> Result<EmitPaceStatus> {
+        let payload = self
+            .link
+            .query_option_async(OPT_EMIT, self.link.query_timeout_default())
+            .await?;
+        match parse_resp(&payload) {
+            Some(Resp::EmitPace(s)) => Ok(s),
             _ => Err(Error::NoReply),
         }
     }
