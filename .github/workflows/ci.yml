@@ -5,6 +5,7 @@ on:
     branches: [ master ]
   pull_request:
     branches: [ master ]
+  workflow_dispatch:   # manual run: rebuild + re-upload wheels/tarballs for the current version
 
 permissions:
   contents: write
@@ -294,7 +295,13 @@ jobs:
   publish_pypi:
     name: Publish wheels to PyPI
     needs: [publish, bindings_sdist, bindings_wheels]
-    if: needs.publish.outputs.should_publish == 'true'
+    # Fires on a real release, or on a manual dispatch (to backfill a version
+    # whose wheels never uploaded). Never on a PR.
+    if: >-
+      always()
+      && needs.bindings_sdist.result == 'success'
+      && needs.bindings_wheels.result == 'success'
+      && (needs.publish.outputs.should_publish == 'true' || github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-latest
     environment: pypi
     permissions:
@@ -312,33 +319,56 @@ jobs:
   capi_libs:
     name: C ABI library (${{ matrix.os }})
     needs: publish
-    if: needs.publish.outputs.should_publish == 'true'
+    # Real release, or a manual dispatch (to backfill a version's tarballs).
+    if: always() && (needs.publish.outputs.should_publish == 'true' || github.event_name == 'workflow_dispatch')
     runs-on: ${{ matrix.os }}
     permissions:
       contents: write
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        # Native runners give linux x86_64/arm64, macOS arm64, windows amd64;
+        # the macOS runner also cross-builds the x86_64 (Intel) library below.
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, windows-latest]
     steps:
     - uses: actions/checkout@v4
     - uses: dtolnay/rust-toolchain@stable
     - name: Install libudev (Linux)
       if: runner.os == 'Linux'
       run: sudo apt-get update && sudo apt-get install -y libudev-dev
+    - name: Resolve the release version
+      id: ver
+      shell: bash
+      run: |
+        v="${{ needs.publish.outputs.version }}"
+        if [ -z "$v" ]; then
+          v=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name=="medius") | .version')
+        fi
+        echo "version=$v" >> "$GITHUB_OUTPUT"
     - name: Build the C ABI library
       run: cargo build -p medius-capi --release
+    - name: Build the macOS Intel library (cross)
+      if: runner.os == 'macOS'
+      run: |
+        rustup target add x86_64-apple-darwin
+        cargo build -p medius-capi --release --target x86_64-apple-darwin
     - name: Package header + libraries
       shell: bash
       run: |
-        triple=$(rustc -vV | sed -n 's/host: //p')
-        out="medius-capi-${triple}"
-        mkdir -p "$out/include" "$out/lib"
-        cp medius-capi/include/medius.h "$out/include/"
-        cp target/release/*medius_capi.{so,dylib,a} "$out/lib/" 2>/dev/null || true
-        cp target/release/medius_capi.dll target/release/medius_capi.dll.lib target/release/medius_capi.lib "$out/lib/" 2>/dev/null || true
-        tar -czf "${out}.tar.gz" "$out"
-        ls -la "${out}.tar.gz"
+        pkg() {
+          triple="$1"; libdir="$2"
+          out="medius-capi-${triple}"
+          mkdir -p "$out/include" "$out/lib"
+          cp medius-capi/include/medius.h "$out/include/"
+          cp "$libdir"/*medius_capi.{so,dylib,a} "$out/lib/" 2>/dev/null || true
+          cp "$libdir"/medius_capi.dll "$libdir"/medius_capi.dll.lib "$libdir"/medius_capi.lib "$out/lib/" 2>/dev/null || true
+          tar -czf "${out}.tar.gz" "$out"
+        }
+        pkg "$(rustc -vV | sed -n 's/host: //p')" "target/release"
+        if [ "${{ runner.os }}" = "macOS" ]; then
+          pkg "x86_64-apple-darwin" "target/x86_64-apple-darwin/release"
+        fi
+        ls -la medius-capi-*.tar.gz
     - uses: actions/upload-artifact@v4
       with:
         name: capi-${{ matrix.os }}
@@ -346,7 +376,7 @@ jobs:
     - name: Attach to the release
       uses: softprops/action-gh-release@v1
       with:
-        tag_name: v${{ needs.publish.outputs.version }}
+        tag_name: v${{ steps.ver.outputs.version }}
         files: medius-capi-*.tar.gz
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
