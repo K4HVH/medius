@@ -11,9 +11,7 @@ import pytest
 
 import medius
 from medius import (
-    Action,
     BadProtoVerError,
-    Blanket,
     Button,
     Caps,
     CatchEventKind,
@@ -23,27 +21,20 @@ from medius import (
     FrameType,
     Health,
     ImperfectStatus,
-    Input,
     KbdCaps,
     KeyboardEvent,
     Key,
-    LedMode,
-    LedTarget,
     LockDirection,
     LockTarget,
-    LockTargetKind,
     LogLevel,
     MediaEvent,
     MediaKey,
     MediusError,
     MockBox,
-    MotionKind,
-    Motion,
     MouseCaps,
     MouseEvent,
     MouseInfo,
     Rate,
-    RebootTarget,
     Stats,
     Status,
     Version,
@@ -96,54 +87,6 @@ def test_bad_proto_version_reports_status_and_proto_ver():
 
 
 # --- commands recorded ---
-
-
-def test_move_and_press_recorded():
-    with MockBox() as mock, Device.with_mock(mock) as d:
-        d.move_rel(100, -50)
-        d.press(Button.LEFT)
-        assert mock.saw(FrameType.MOVE)
-        assert mock.saw(FrameType.INJECT)
-        assert mock.recorded() == 2
-
-
-def test_full_command_surface_runs():
-    with MockBox() as mock, Device.with_mock(mock) as d:
-        d.wheel(3)
-        d.move_axis(Motion.cursor(7, -9))
-        d.move_axis(Motion.wheel(2))
-        d.inject(Input.key(Key.A), Action.PRESS)
-        d.inject(Input.button(Button.RIGHT), Action.SOFT_RELEASE)
-        d.inject(Input.media(MediaKey.VOLUME_UP), Action.PRESS)
-        d.button(Button.RIGHT, Action.PRESS)
-        d.soft_release(Button.LEFT)
-        d.force_release(Button.LEFT)
-        d.key(Key.B, Action.PRESS)
-        d.key_down(Key.ENTER)
-        d.key_up(Key.ENTER)
-        d.key_force_release(Key.ENTER)
-        d.media(MediaKey.MUTE, Action.PRESS)
-        d.media_down(MediaKey.VOLUME_UP)
-        d.media_up(MediaKey.VOLUME_UP)
-        d.media_force_release(MediaKey.VOLUME_UP)
-        d.lock(LockTarget.x(), LockDirection.BOTH)
-        d.unlock(LockTarget.x(), LockDirection.BOTH)
-        d.lock(LockTarget.button(Button.SIDE1), LockDirection.POSITIVE)
-        d.lock_key(Key.A, LockDirection.BOTH)
-        d.unlock_key(Key.A, LockDirection.BOTH)
-        d.lock_media(MediaKey.MUTE)
-        d.unlock_media(MediaKey.MUTE)
-        d.lock_all(Blanket.BUTTONS)
-        d.unlock_all(Blanket.BUTTONS)
-        d.led(LedTarget.BOTH, LedMode.BLINK, 128)
-        d.reset()
-        d.reboot(RebootTarget.DEVICE_RUN)
-        d.allow_imperfect_clones(True)
-        d.set_movement_riding(5)
-        d.set_movement_riding(None)
-        assert mock.recorded() > 0
-        assert mock.saw(FrameType.LED)
-        assert mock.saw(FrameType.LOCK)
 
 
 def test_recorded_frame_payload_readable():

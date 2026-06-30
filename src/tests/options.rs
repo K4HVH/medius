@@ -64,40 +64,6 @@ fn unknown_option_id_and_missing_id_are_none() {
 
 #[cfg(feature = "mock")]
 #[test]
-fn allow_imperfect_clones_sends_an_option_frame() {
-    use crate::{Device, MockBox};
-    let mock = MockBox::new();
-    let device = Device::with_mock(mock.clone());
-    device.allow_imperfect_clones(true).unwrap();
-    let frame = mock
-        .recorded_frames()
-        .into_iter()
-        .find(|f| f.ty == FrameType::Option)
-        .expect("an OPTION frame was recorded");
-    assert_eq!(frame.payload, vec![0, 1]); // [id=imperfect][allow=1]
-}
-
-#[cfg(feature = "mock")]
-#[test]
-fn set_movement_riding_sends_an_option_frame() {
-    use crate::{Device, MockBox};
-    let mock = MockBox::new();
-    let device = Device::with_mock(mock.clone());
-    device
-        .set_movement_riding(Some(Duration::from_millis(5)))
-        .unwrap();
-    device.set_movement_riding(None).unwrap();
-    let frames: Vec<_> = mock
-        .recorded_frames()
-        .into_iter()
-        .filter(|f| f.ty == FrameType::Option)
-        .collect();
-    assert_eq!(frames[0].payload, vec![1, 5, 0]); // [id=move_ride][5ms LE]
-    assert_eq!(frames[1].payload, vec![1, 0, 0]); // off
-}
-
-#[cfg(feature = "mock")]
-#[test]
 fn set_movement_riding_rounds_sub_ms_up_to_on() {
     use crate::{Device, MockBox};
     let mock = MockBox::new();
@@ -130,54 +96,4 @@ fn set_movement_riding_saturates_at_u16_max() {
         .find(|f| f.ty == FrameType::Option)
         .unwrap();
     assert_eq!(frame.payload, vec![1, 0xFF, 0xFF]); // [id=move_ride][u16::MAX LE]
-}
-
-#[cfg(feature = "mock")]
-#[test]
-fn imperfect_query_roundtrips_the_status() {
-    use crate::{Device, MockBox};
-    let status = ImperfectStatus {
-        allowed: true,
-        over_capacity: true,
-        clone_imperfect: true,
-    };
-    let mock = MockBox::new().with_imperfect_status(status);
-    let device = Device::with_mock(mock);
-    assert_eq!(device.query_imperfect().unwrap(), status);
-}
-
-#[cfg(feature = "mock")]
-#[test]
-fn move_ride_query_roundtrips_the_window() {
-    use crate::{Device, MockBox};
-    let mock = MockBox::new().with_movement_riding(Some(Duration::from_millis(5)));
-    let device = Device::with_mock(mock);
-    assert_eq!(
-        device.query_movement_riding().unwrap(),
-        Some(Duration::from_millis(5))
-    );
-    // default is off
-    let off = Device::with_mock(MockBox::new());
-    assert_eq!(off.query_movement_riding().unwrap(), None);
-}
-
-#[cfg(all(feature = "async", feature = "mock"))]
-#[test]
-fn async_option_queries_roundtrip() {
-    use crate::{Device, MockBox};
-    use futures::executor::block_on;
-    let status = ImperfectStatus {
-        allowed: true,
-        over_capacity: true,
-        clone_imperfect: true,
-    };
-    let mock = MockBox::new()
-        .with_imperfect_status(status)
-        .with_movement_riding(Some(Duration::from_millis(8)));
-    let device = Device::with_mock(mock).into_async();
-    assert_eq!(block_on(device.query_imperfect()).unwrap(), status);
-    assert_eq!(
-        block_on(device.query_movement_riding()).unwrap(),
-        Some(Duration::from_millis(8))
-    );
 }

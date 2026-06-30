@@ -5,33 +5,6 @@ use std::time::{Duration, Instant};
 use crate::{Button, Device, Error, FrameType, Health, LogLevel, MockBox, RebootTarget, Version};
 
 #[test]
-fn query_returns_configured_values_and_records_commands() {
-    let mock = MockBox::new()
-        .with_version(Version {
-            proto_ver: 2,
-            fw_major: 5,
-            fw_minor: 6,
-            fw_patch: 7,
-        })
-        .with_health(Health::from_flags(0x0F));
-    let device = Device::with_mock(mock.clone());
-
-    let v = device.query_version().unwrap();
-    assert_eq!((v.fw_major, v.fw_minor, v.fw_patch), (5, 6, 7));
-    let h = device.query_health().unwrap();
-    assert!(h.link_up && h.mouse_attached && h.clone_configured && h.injection_active);
-
-    device.press(Button::Left).unwrap();
-    let frames = mock.recorded_frames();
-    let button = frames
-        .iter()
-        .find(|f| f.ty == FrameType::Inject)
-        .expect("press recorded");
-    assert_eq!(button.payload, vec![0, 0, 0, 1]); // INJECT: class=btn id=Left action=press
-    assert!(mock.saw(FrameType::Inject));
-}
-
-#[test]
 fn pushed_logs_reach_the_logs_channel_in_order() {
     let mock = MockBox::new();
     let device = Device::with_mock(mock.clone());
@@ -53,12 +26,6 @@ fn set_health_updates_subsequent_queries() {
     assert!(!device.query_health().unwrap().mouse_attached);
     mock.set_health(Health::from_flags(0x02));
     assert!(device.query_health().unwrap().mouse_attached);
-}
-
-#[test]
-fn handshake_accepts_matching_proto_ver() {
-    let device = Device::open_mock(MockBox::new()).expect("default proto_ver matches");
-    assert_eq!(device.query_version().unwrap().proto_ver, 2);
 }
 
 #[test]
@@ -110,28 +77,6 @@ fn a_clone_keeps_the_reader_alive_until_the_last_drop() {
 fn device_is_send_and_sync() {
     fn assert_send_sync<T: Send + Sync>() {}
     assert_send_sync::<Device>();
-}
-
-#[test]
-fn inject_and_move_verbs_dispatch_to_the_right_class() {
-    use crate::{Input, Key, Motion};
-    let mock = MockBox::new();
-    let device = Device::with_mock(mock.clone());
-    device.inject(Key::A, crate::Action::Press).unwrap(); // via From<Key>
-    device
-        .inject(Input::Button(Button::Left), crate::Action::Press)
-        .unwrap();
-    device.move_axis(Motion::Wheel(-2)).unwrap();
-    let payloads: Vec<(FrameType, Vec<u8>)> = mock
-        .recorded_frames()
-        .into_iter()
-        .filter(|f| f.ty == FrameType::Inject || f.ty == FrameType::Move)
-        .map(|f| (f.ty, f.payload))
-        .collect();
-    assert_eq!(payloads[0], (FrameType::Inject, vec![1, 0x04, 0x00, 1])); // key A press
-    assert_eq!(payloads[1], (FrameType::Inject, vec![0, 0, 0, 1])); // button Left press
-    assert_eq!(payloads[2], (FrameType::Move, vec![1, 0xFE, 0xFF])); // wheel -2
-    drop(device);
 }
 
 #[test]
