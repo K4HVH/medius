@@ -260,11 +260,6 @@ jobs:
     - uses: actions/setup-python@v5
       with:
         python-version: '3.x'
-    # Caches the Rust compile across runs (host for mac/win; tokens forwarded into
-    # the manylinux container, which installs its own sccache in before-all).
-    - uses: mozilla-actions/sccache-action@v0.0.9
-      with:
-        version: v0.10.0
     - name: Build wheels from the sdist
       shell: bash
       run: |

@@ -67,12 +67,10 @@ test-command = "python -c \"import medius; print(medius.abi_version(), medius.ve
 [tool.cibuildwheel.linux]
 # 64-bit only: cibuildwheel's default Linux archs include i686, which we don't ship.
 archs = "auto64"
-# Install libudev (serialport needs it; manylinux lacks it), rust, and the sccache
-# binary (static musl, runs on manylinux) used to cache the Rust build.
-before-all = "(yum install -y systemd-devel pkgconfig || dnf install -y systemd-devel pkgconfig) && curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --profile minimal && curl -L https://github.com/mozilla/sccache/releases/download/v0.10.0/sccache-v0.10.0-$(uname -m)-unknown-linux-musl.tar.gz | tar -xz -C /tmp && install -m 0755 /tmp/sccache-v0.10.0-$(uname -m)-unknown-linux-musl/sccache /usr/local/bin/sccache"
-environment = { PATH = "$HOME/.cargo/bin:$PATH", RUSTC_WRAPPER = "sccache", SCCACHE_GHA_ENABLED = "true", CARGO_INCREMENTAL = "0" }
-# Forward the GHA cache tokens (set on the host by sccache-action) into the container.
-environment-pass = ["ACTIONS_RESULTS_URL", "ACTIONS_CACHE_URL", "ACTIONS_RUNTIME_TOKEN", "ACTIONS_CACHE_SERVICE_V2"]
+# The cdylib links libudev (via serialport); the manylinux container lacks it and
+# has no rust (the mac/windows runners already ship rust, so they skip this).
+before-all = "(yum install -y systemd-devel pkgconfig || dnf install -y systemd-devel pkgconfig) && curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --profile minimal"
+environment = { PATH = "$HOME/.cargo/bin:$PATH" }
 
 [tool.cibuildwheel.macos]
 # Both arches: the arm64 runner cross-builds the x86_64 wheel (see hatch_build.py).
@@ -81,9 +79,7 @@ archs = "x86_64 arm64"
 # x86_64 to 10.9, so the cross-built dylib (>=10.12) and the wheel disagree and
 # delocate (which reads this env) rejects it. 11.0 satisfies both arches. This
 # MUST be set here, not just in the build hook, so the repair step sees it too.
-environment = { MACOSX_DEPLOYMENT_TARGET = "11.0", RUSTC_WRAPPER = "sccache", SCCACHE_GHA_ENABLED = "true", CARGO_INCREMENTAL = "0" }
-before-all = "(rustup toolchain install stable --profile minimal || curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --profile minimal) && rustup target add x86_64-apple-darwin aarch64-apple-darwin"
-
-[tool.cibuildwheel.windows]
-environment = { RUSTC_WRAPPER = "sccache", SCCACHE_GHA_ENABLED = "true", CARGO_INCREMENTAL = "0" }
-before-all = "rustup toolchain install stable --profile minimal"
+environment = { MACOSX_DEPLOYMENT_TARGET = "11.0" }
+# The runner already ships rust; just add the cross target so the arm64 runner
+# can also build the x86_64 wheel.
+before-all = "rustup target add x86_64-apple-darwin aarch64-apple-darwin"
