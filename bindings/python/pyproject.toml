@@ -6,6 +6,7 @@ build-backend = "hatchling.build"
 name = "medius"
 version = "2.2.1"
 description = "Python bindings for the medius transparent mouse passthrough box"
+readme = "README.md"
 requires-python = ">=3.8"
 license = { text = "MIT" }
 authors = [{ name = "medius" }]
