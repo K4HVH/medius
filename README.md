@@ -215,9 +215,9 @@ Four layers, `protocol → transport → link → device`, each depending only o
 
 ## Other languages
 
-A C ABI (the `medius-capi` crate) exports the whole API for other languages, with
-a header-only C++ wrapper and a ctypes Python package on top. See
-[`bindings/`](bindings/).
+A C ABI (the `medius-capi` crate) exports the whole API for other languages. The
+generated header compiles as C and C++, and a ctypes Python package rides on top.
+See [`bindings/`](bindings/).
 
 ## License
 
