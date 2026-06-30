@@ -12,6 +12,7 @@ from ._enums import FrameType, LogLevel
 from ._types import (
     Caps,
     CatchState,
+    EmitPace,
     Health,
     ImperfectStatus,
     KbdCaps,
@@ -112,6 +113,9 @@ class MockBox:
         _native.lib.medius_mock_set_movement_riding(
             self._handle, enabled, int(window_ms) if enabled else 0
         )
+
+    def set_emit_pace(self, pace: EmitPace):
+        _native.lib.medius_mock_set_emit_pace(self._handle, int(pace.mode), int(pace.hz))
 
     def silent(self):
         """Make the mock stop answering queries (one-way, for timeout tests)."""

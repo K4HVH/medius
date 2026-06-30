@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use medius::{Device, MockBox};
 
-use crate::convert::frame_type_to_native;
+use crate::convert::{emit_pace_to_medius, frame_type_to_native};
 use crate::ctypes::*;
 use crate::device::MediusDevice;
 use crate::error::{MediusStatus, clear_error, fail, guard, guard_status, record};
@@ -170,6 +170,19 @@ pub unsafe extern "C" fn medius_mock_set_movement_riding(
     with_mock(mock, |m| {
         let window = enabled.then(|| Duration::from_millis(window_ms as u64));
         let _ = m.clone().with_movement_riding(window);
+    });
+}
+
+/// Set the emit-rate pacing mode the mock answers to an OPTION(EMIT) query; `hz` matters only for
+/// `Fixed`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn medius_mock_set_emit_pace(
+    mock: *mut MediusMockBox,
+    mode: MediusEmitMode,
+    hz: u16,
+) {
+    with_mock(mock, |m| {
+        let _ = m.clone().with_emit_pace(emit_pace_to_medius(mode, hz));
     });
 }
 

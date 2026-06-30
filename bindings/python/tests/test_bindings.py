@@ -18,6 +18,7 @@ from medius import (
     CatchMask,
     CatchState,
     Device,
+    EmitPace,
     FrameType,
     Health,
     ImperfectStatus,
@@ -217,6 +218,20 @@ def test_movement_riding_roundtrip():
         mock.set_movement_riding(None)
         with Device.with_mock(mock) as d:
             assert d.query_movement_riding() is None
+
+
+def test_emit_pace_roundtrip():
+    with MockBox() as mock:
+        mock.set_emit_pace(EmitPace.fixed(500))
+        with Device.with_mock(mock) as d:
+            status = d.query_emit_pace()
+        assert status.mode == EmitPace.fixed(500)
+        assert status.resolved_hz == 500  # Fixed clamps to its hz
+        mock.set_emit_pace(EmitPace.learned())
+        with Device.with_mock(mock) as d:
+            status = d.query_emit_pace()
+        assert status.mode == EmitPace.learned()
+        assert status.resolved_hz == 0  # learnt/adaptive
 
 
 def test_counters_readable():

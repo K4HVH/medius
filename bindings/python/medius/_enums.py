@@ -41,6 +41,12 @@ class RebootTarget(IntEnum):
     HOST_RUN = 3
 
 
+class EmitMode(IntEnum):
+    LEARNED = 0
+    INTERVAL = 1
+    FIXED = 2
+
+
 class LedTarget(IntEnum):
     DEVICE = 0
     HOST = 1

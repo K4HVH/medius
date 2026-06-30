@@ -142,6 +142,10 @@ class MediusImperfectStatus(ctypes.Structure):
     _fields_ = [("allowed", u8), ("over_capacity", u8), ("clone_imperfect", u8)]
 
 
+class MediusEmitPaceStatus(ctypes.Structure):
+    _fields_ = [("mode", u8), ("fixed_hz", u16), ("resolved_hz", u16)]
+
+
 class MediusCountersSnapshot(ctypes.Structure):
     _fields_ = [("frames_tx", u64), ("frames_rx", u64), ("crc_drops", u64), ("reconnects", u64)]
 
@@ -266,6 +270,7 @@ _decl("medius_device_reconnect", i32, [HANDLE])
 _decl("medius_device_reboot", i32, [HANDLE, u8])
 _decl("medius_device_allow_imperfect_clones", i32, [HANDLE, c_bool])
 _decl("medius_device_set_movement_riding", i32, [HANDLE, c_bool, u32])
+_decl("medius_device_set_emit_pace", i32, [HANDLE, u8, u16])
 
 # --- queries ---
 _decl("medius_device_query_version", i32, [HANDLE, ctypes.POINTER(MediusVersion)])
@@ -282,6 +287,7 @@ _decl(
     i32,
     [HANDLE, ctypes.POINTER(c_bool), ctypes.POINTER(u32)],
 )
+_decl("medius_device_query_emit_pace", i32, [HANDLE, ctypes.POINTER(MediusEmitPaceStatus)])
 _decl("medius_device_counters", i32, [HANDLE, ctypes.POINTER(MediusCountersSnapshot)])
 
 # --- meta ---
@@ -342,6 +348,7 @@ if HAS_MOCK:
     _decl("medius_mock_set_catch_state", None, [HANDLE, MediusCatchState])
     _decl("medius_mock_set_imperfect_status", None, [HANDLE, MediusImperfectStatus])
     _decl("medius_mock_set_movement_riding", None, [HANDLE, c_bool, u32])
+    _decl("medius_mock_set_emit_pace", None, [HANDLE, u8, u16])
     _decl("medius_mock_silent", None, [HANDLE])
     _decl("medius_mock_push_raw", None, [HANDLE, ctypes.POINTER(u8), usize])
     _decl("medius_mock_push_log", None, [HANDLE, u8, ctypes.c_char_p])

@@ -58,6 +58,15 @@ pub enum MediusRebootTarget {
     HostRun = 3,
 }
 
+/// What paces injected motion.
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MediusEmitMode {
+    Learned = 0,
+    Interval = 1,
+    Fixed = 2,
+}
+
 /// Which status LED a command addresses.
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -309,6 +318,16 @@ pub struct MediusImperfectStatus {
     pub allowed: u8,
     pub over_capacity: u8,
     pub clone_imperfect: u8,
+}
+
+/// Emit-rate pacing mode plus the rate in effect. `fixed_hz` is the rate requested for `Fixed` (0
+/// otherwise); `resolved_hz` is the ceiling actually in effect (0 = learnt/adaptive).
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MediusEmitPaceStatus {
+    pub mode: MediusEmitMode,
+    pub fixed_hz: u16,
+    pub resolved_hz: u16,
 }
 
 /// Host-side always-on counters.
