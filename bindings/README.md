@@ -1,12 +1,9 @@
 # medius bindings
 
 The [`medius`](../README.md) library is Rust, but the box can be driven from any
-language through a C ABI. The Rust crate `medius-capi` exports a flat C API over
-the safe core; the C++ and Python bindings here ride on top of it. Every command,
-query, and event stream the Rust crate exposes is reachable from all three.
-
-[DIFFERENCES.md](DIFFERENCES.md) lists exactly how the bindings deviate from the
-native Rust API (mostly ergonomic; no capability is lost).
+language through a C ABI. The `medius-capi` crate exports a flat C API over the
+safe core; the C++ and Python bindings ride on it. The whole surface is reachable
+from all three — see [Differences from the Rust API](#differences-from-the-rust-api).
 
 ```
 medius (safe Rust crate)
@@ -101,6 +98,19 @@ toolchain. For development, point `MEDIUS_LIB` at a locally built library
 (e.g. `target/debug/libmedius_capi.so`, built with `--features mock` for the
 test suite).
 
+## Differences from the Rust API
+
+The bindings cover everything; only the shape changes at the boundary.
+
+- **Errors.** Rust returns `Result`. C returns a `MediusStatus` and stashes the
+  detail in `medius_last_error_message()`; C++ throws `medius::Error`; Python
+  raises `MediusError`.
+- **`inject`.** Rust's `inject(Button::Left, ...)` is generic; the bindings take a
+  built value (`medius_input_button(...)`, `Input.button(...)`). The direct verbs
+  (`press`, `key_down`, `media_down`, …) are unchanged.
+- **No async.** The bindings are synchronous; use a thread or the stream's
+  `try_recv` / `recv_timeout` (Python: `asyncio.to_thread`).
+
 ## Packages
 
 Publishing rides the crate's existing release flow in `.github/workflows/ci.yml`:
@@ -123,6 +133,5 @@ There's no vcpkg or Conan port: those registries build C/C++ from source in
 hermetic CI with no Rust toolchain, so a Rust-backed library doesn't fit. C/C++
 consumers use the release tarballs or the CMake project above.
 
-The `medius-capi` crate itself is `publish = false`: it's the substrate for
-other languages, not a Rust dependency (Rust users use the `medius` crate), so
-it isn't published to crates.io.
+`medius-capi` is `publish = false` (a substrate for other languages, not a Rust
+dependency), so it isn't on crates.io — Rust users use the `medius` crate.
