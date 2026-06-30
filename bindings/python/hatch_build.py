@@ -55,28 +55,43 @@ class CustomBuildHook(BuildHookInterface):
         # The bundled cdylib is platform-specific, but ctypes doesn't link the
         # CPython ABI, so one py3-none-<platform> wheel serves every Python 3.x.
         build_data["pure_python"] = False
-        try:
-            from packaging.tags import sys_tags
 
-            build_data["tag"] = "py3-none-{}".format(next(iter(sys_tags())).platform)
-        except Exception:
-            build_data["infer_tag"] = True
+        # On macOS, cibuildwheel sets _PYTHON_HOST_PLATFORM per target arch so it
+        # can build separate x86_64 and arm64 wheels (the arm64 runner cross-builds
+        # x86_64). Honor it for both the cdylib's cargo target and the wheel tag so
+        # the two always agree; elsewhere fall back to the host's native tag.
+        cargo_target = None
+        host_platform = os.environ.get("_PYTHON_HOST_PLATFORM")
+        if sys.platform == "darwin" and host_platform:
+            build_data["tag"] = "py3-none-{}".format(host_platform.replace("-", "_").replace(".", "_"))
+            if host_platform.endswith("x86_64"):
+                cargo_target = "x86_64-apple-darwin"
+            elif host_platform.endswith("arm64"):
+                cargo_target = "aarch64-apple-darwin"
+        else:
+            try:
+                from packaging.tags import sys_tags
+
+                build_data["tag"] = "py3-none-{}".format(next(iter(sys_tags())).platform)
+            except Exception:
+                build_data["infer_tag"] = True
 
         root = Path(self.root)
         workspace = _locate_workspace(root)
         pkg = root / "medius"
         name = _lib_name()
 
+        build_cmd = ["cargo", "build", "--release", "-p", "medius-capi"]
+        if cargo_target:
+            build_cmd += ["--target", cargo_target]
         if not os.environ.get("MEDIUS_SKIP_CARGO"):
-            subprocess.run(
-                ["cargo", "build", "--release", "-p", "medius-capi"],
-                cwd=str(workspace),
-                check=True,
-            )
+            subprocess.run(build_cmd, cwd=str(workspace), check=True)
 
-        src = workspace / "target" / "release" / name
+        reldir = "{}/release".format(cargo_target) if cargo_target else "release"
+        src = workspace / "target" / reldir / name
         if not src.exists():
-            debug = workspace / "target" / "debug" / name
+            dbgdir = "{}/debug".format(cargo_target) if cargo_target else "debug"
+            debug = workspace / "target" / dbgdir / name
             if debug.exists():
                 src = debug
         if not src.exists():
