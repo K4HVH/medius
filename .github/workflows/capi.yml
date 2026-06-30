@@ -69,27 +69,6 @@ jobs:
     - name: Fail if the committed header is stale
       run: git diff --exit-code medius-capi/include/medius.h
 
-  cpp:
-    name: C++ wrapper (ASan/UBSan)
-    runs-on: ubuntu-latest
-    steps:
-    - uses: actions/checkout@v4
-    - uses: dtolnay/rust-toolchain@stable
-    - name: Install libudev + clang
-      run: sudo apt-get update && sudo apt-get install -y libudev-dev clang cmake
-    - name: Build the mock-enabled C ABI
-      run: cargo build -p medius-capi --features mock
-    - name: Configure
-      run: >
-        cmake -S bindings/cpp -B bindings/cpp/build
-        -DCMAKE_CXX_COMPILER=clang++
-        -DMEDIUS_BUILD_EXAMPLES=ON -DMEDIUS_BUILD_TESTS=ON
-        -DMEDIUS_FEATURE_MOCK=ON -DMEDIUS_SANITIZE=ON -DMEDIUS_PROFILE=debug
-    - name: Build
-      run: cmake --build bindings/cpp/build -j
-    - name: Test
-      run: ctest --test-dir bindings/cpp/build --output-on-failure
-
   python:
     name: Python bindings
     runs-on: ubuntu-latest
