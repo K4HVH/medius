@@ -205,7 +205,9 @@ jobs:
         CRATE_VERSION=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name=="medius") | .version')
         echo "version=$CRATE_VERSION" >> $GITHUB_OUTPUT
 
-        if curl -s "https://crates.io/api/v1/crates/medius" | jq -e ".versions[] | select(.num == \"$CRATE_VERSION\")" > /dev/null 2>&1; then
+        # crates.io rejects requests without a User-Agent, so this MUST send one
+        # or the check never matches and the job tries to re-publish every push.
+        if curl -s -H "User-Agent: medius-ci (github.com/K4HVH/medius)" "https://crates.io/api/v1/crates/medius" | jq -e ".versions[] | select(.num == \"$CRATE_VERSION\")" > /dev/null 2>&1; then
           echo "Version $CRATE_VERSION already exists on crates.io"
           echo "should_publish=false" >> $GITHUB_OUTPUT
         else
@@ -306,6 +308,7 @@ jobs:
     environment: pypi
     permissions:
       id-token: write
+      contents: write   # attach the same wheels + sdist to the GitHub Release
     steps:
     - uses: actions/download-artifact@v4
       with:
@@ -315,6 +318,24 @@ jobs:
     - uses: pypa/gh-action-pypi-publish@release/v1
       with:
         packages-dir: dist
+    - name: Resolve the release version
+      id: ver
+      shell: bash
+      run: |
+        v="${{ needs.publish.outputs.version }}"
+        if [ -z "$v" ]; then
+          v=$(ls dist/medius-*.whl | head -1 | sed -E 's#.*/medius-([^-]+)-.*#\1#')
+        fi
+        echo "version=$v" >> "$GITHUB_OUTPUT"
+    - name: Attach wheels + sdist to the release
+      uses: softprops/action-gh-release@v1
+      with:
+        tag_name: v${{ steps.ver.outputs.version }}
+        files: |
+          dist/*.whl
+          dist/*.tar.gz
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   capi_libs:
     name: C ABI library (${{ matrix.os }})
