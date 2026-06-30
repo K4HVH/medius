@@ -51,7 +51,6 @@ pub unsafe extern "C" fn medius_mock_free(mock: *mut MediusMockBox) {
     });
 }
 
-/// Borrow the mock and run `f`. Null is a no-op.
 fn with_mock(mock: *mut MediusMockBox, f: impl FnOnce(&MockBox)) {
     guard((), || {
         if mock.is_null() {

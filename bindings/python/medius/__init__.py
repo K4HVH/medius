@@ -8,7 +8,7 @@ state with the `query_*` methods, and consume physical input with
 
 from __future__ import annotations
 
-from typing import List, Optional
+from typing import List
 
 from . import _native
 from ._enums import (

@@ -64,7 +64,7 @@ class MockBox:
         return Device.with_mock(self)
 
     def clone(self) -> "MockBox":
-        """Another handle sharing the same recorded state (like MockBox.clone in Rust)."""
+        """Another handle sharing the same recorded state."""
         handle = _native.lib.medius_mock_clone(self._handle)
         if not handle:
             raise RuntimeError("medius_mock_clone failed")

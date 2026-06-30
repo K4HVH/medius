@@ -65,7 +65,6 @@ fn status_for(err: &Error) -> MediusStatus {
     }
 }
 
-/// Record a crate error into the thread-local and return its status code.
 pub(crate) fn record(err: &Error) -> MediusStatus {
     let proto_ver = match err {
         Error::BadProtoVer { got } => *got,
@@ -75,7 +74,6 @@ pub(crate) fn record(err: &Error) -> MediusStatus {
     status_for(err)
 }
 
-/// Set a shim-side error (bad argument, panic) with a message and return its code.
 pub(crate) fn fail(status: MediusStatus, message: &str) -> MediusStatus {
     store_error(message.to_string(), 0);
     status

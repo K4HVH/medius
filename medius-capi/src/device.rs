@@ -520,7 +520,7 @@ pub unsafe extern "C" fn medius_device_query_movement_riding(
         match d.query_movement_riding() {
             Ok(window) => {
                 let (enabled, ms) = match window {
-                    Some(dur) => (true, dur.as_millis().min(u32::MAX as u128) as u32),
+                    Some(dur) => (true, dur_ms(dur)),
                     None => (false, 0),
                 };
                 unsafe {
@@ -553,20 +553,20 @@ pub unsafe extern "C" fn medius_device_counters(
 
 // --- meta ---
 
+fn dur_ms(d: Duration) -> u32 {
+    d.as_millis().min(u32::MAX as u128) as u32
+}
+
 /// Default RESP wait before a query times out, in milliseconds.
 #[unsafe(no_mangle)]
 pub extern "C" fn medius_default_query_timeout_ms() -> u32 {
-    medius::DEFAULT_QUERY_TIMEOUT
-        .as_millis()
-        .min(u32::MAX as u128) as u32
+    dur_ms(medius::DEFAULT_QUERY_TIMEOUT)
 }
 
 /// Default keepalive cadence for held overrides, in milliseconds.
 #[unsafe(no_mangle)]
 pub extern "C" fn medius_default_keepalive_cadence_ms() -> u32 {
-    medius::DEFAULT_KEEPALIVE_CADENCE
-        .as_millis()
-        .min(u32::MAX as u128) as u32
+    dur_ms(medius::DEFAULT_KEEPALIVE_CADENCE)
 }
 
 /// The C ABI version. Bumped on any breaking change to this header.
