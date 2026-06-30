@@ -1,1 +1,16 @@
 /target
+
+# C++ binding build trees
+bindings/cpp/build/
+
+# Python binding artifacts
+__pycache__/
+*.py[cod]
+bindings/python/build/
+bindings/python/dist/
+bindings/python/wheelhouse/
+*.egg-info/
+# bundled cdylib copied in for local runs / wheels (built, not source)
+bindings/python/medius/**/*.so
+bindings/python/medius/**/*.dylib
+bindings/python/medius/**/*.dll
