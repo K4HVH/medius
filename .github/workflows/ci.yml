@@ -308,7 +308,7 @@ jobs:
     environment: pypi
     permissions:
       id-token: write
-      contents: write   # attach the same wheels + sdist to the GitHub Release
+      contents: write   # attach the wheels to the GitHub Release
     steps:
     - uses: actions/download-artifact@v4
       with:
@@ -328,13 +328,12 @@ jobs:
           v=$(ls dist/medius-*.whl | head -1 | sed -E 's#.*/medius-([^-]+)-.*#\1#')
         fi
         echo "version=$v" >> "$GITHUB_OUTPUT"
-    - name: Attach wheels + sdist to the release
+    - name: Attach the wheels to the release
       uses: softprops/action-gh-release@v1
       with:
         tag_name: v${{ steps.ver.outputs.version }}
-        files: |
-          dist/*.whl
-          dist/*.tar.gz
+        # Wheels only: the sdist is a PyPI-fallback artifact, not a release binary.
+        files: dist/*.whl
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
