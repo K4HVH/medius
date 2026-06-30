@@ -118,9 +118,10 @@ build and ship the wheels and C/C++ assets for that same version.
   `libmedius_capi` (shared + static). Download, include the header, link the
   library. The CMake project (`bindings/cpp`) consumes either a prebuilt library
   or builds one with `-DMEDIUS_CARGO_BUILD=ON`.
-- **C++ → Conan.** `bindings/cpp/conanfile.py` builds the library from the tagged
-  release source and packages both headers; ready for ConanCenter or a private
-  remote. A vcpkg overlay port can wrap the same release assets.
+
+There's no vcpkg or Conan port: those registries build C/C++ from source in
+hermetic CI with no Rust toolchain, so a Rust-backed library doesn't fit. C/C++
+consumers use the release tarballs or the CMake project above.
 
 The `medius-capi` crate itself is `publish = false`: it's the substrate for
 other languages, not a Rust dependency (Rust users use the `medius` crate), so
