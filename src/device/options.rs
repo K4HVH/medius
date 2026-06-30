@@ -2,7 +2,8 @@ use std::time::Duration;
 
 use crate::error::Result;
 use crate::protocol::FrameType;
-use crate::protocol::command::{imperfect_payload, move_ride_payload};
+use crate::protocol::command::{emit_pace_payload, imperfect_payload, move_ride_payload};
+use crate::types::EmitPace;
 
 use super::Device;
 
@@ -13,6 +14,16 @@ pub(crate) fn ride_window_ms(window: Option<Duration>) -> u16 {
     match window {
         None => 0,
         Some(d) => (d.as_millis().min(u16::MAX as u128) as u16).max(1),
+    }
+}
+
+/// Encode an [`EmitPace`] to the wire `(mode, rate_hz)`: `Fixed(hz)` carries its rate, the other modes
+/// send 0. Shared by the device setter and the `mock` box so the two can't drift.
+pub(crate) fn emit_pace_wire(pace: EmitPace) -> (u8, u16) {
+    match pace {
+        EmitPace::Learned => (0, 0),
+        EmitPace::Interval => (1, 0),
+        EmitPace::Fixed(hz) => (2, hz),
     }
 }
 
@@ -35,5 +46,16 @@ impl Device {
             FrameType::Option,
             &move_ride_payload(ride_window_ms(window)),
         )
+    }
+
+    /// `OPTION(EMIT)` — pick what paces injected motion: [`EmitPace::Learned`] (default — the box paces
+    /// to the mouse's learnt report rate), [`EmitPace::Interval`] (follow the cloned mouse's `bInterval`
+    /// poll rate), or [`EmitPace::Fixed`] at a rate in Hz (snapped to `1000/n`, capped 1 kHz). This raises
+    /// the emit-rate ceiling only — idle stays emit-when-pending — so a host that models report density
+    /// itself stops the box re-pacing its stream. Persisted in NVS; no reboot. Fire-and-forget.
+    pub fn set_emit_pace(&self, pace: EmitPace) -> Result<()> {
+        let (mode, hz) = emit_pace_wire(pace);
+        self.link
+            .send(FrameType::Option, &emit_pace_payload(mode, hz))
     }
 }

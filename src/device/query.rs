@@ -2,12 +2,13 @@ use std::time::Duration;
 
 use crate::error::{Error, Result};
 use crate::protocol::opcode::{
-    OPT_IMPERFECT, OPT_MOVE_RIDE, Q_CAPS, Q_CATCH, Q_HEALTH, Q_LOCKS, Q_MOUSE_INFO, Q_RATE,
-    Q_STATS, Q_VERSION,
+    OPT_EMIT, OPT_IMPERFECT, OPT_MOVE_RIDE, Q_CAPS, Q_CATCH, Q_HEALTH, Q_LOCKS, Q_MOUSE_INFO,
+    Q_RATE, Q_STATS, Q_VERSION,
 };
 use crate::protocol::{Resp, parse_resp};
 use crate::types::{
-    Caps, CatchState, Health, ImperfectStatus, Locks, MouseInfo, Rate, Stats, Version,
+    Caps, CatchState, EmitPaceStatus, Health, ImperfectStatus, Locks, MouseInfo, Rate, Stats,
+    Version,
 };
 
 use super::Device;
@@ -100,6 +101,15 @@ impl Device {
         let payload = self.link.query_option(OPT_MOVE_RIDE)?;
         match parse_resp(&payload) {
             Some(Resp::MovementRiding(w)) => Ok(w),
+            _ => Err(Error::NoReply),
+        }
+    }
+
+    /// Query the emit-rate pacing mode and the rate in effect (§4.14).
+    pub fn query_emit_pace(&self) -> Result<EmitPaceStatus> {
+        let payload = self.link.query_option(OPT_EMIT)?;
+        match parse_resp(&payload) {
+            Some(Resp::EmitPace(s)) => Ok(s),
             _ => Err(Error::NoReply),
         }
     }

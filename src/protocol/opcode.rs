@@ -42,6 +42,8 @@ pub const Q_OPTIONS: u8 = 9;
 pub const OPT_IMPERFECT: u8 = 0;
 /// `OPTION` id: movement riding. Value `[timeout u16 LE ms]` — 0 = off, N = ride window in milliseconds.
 pub const OPT_MOVE_RIDE: u8 = 1;
+/// `OPTION` id: emit-rate pacing. Value `[mode u8][rate_hz u16 LE]` — 0 learnt / 1 bInterval / 2 fixed.
+pub const OPT_EMIT: u8 = 2;
 
 pub const BTN_LEFT: u8 = 0;
 pub const BTN_RIGHT: u8 = 1;

@@ -6,14 +6,14 @@ use parking_lot::Mutex;
 
 use crate::protocol::opcode::{
     CAP_REPORT_ID, CAP_WHEEL, CAP_X, CAP_Y, CAPS_CD_KBD, CAPS_CD_MOUSE, KBC_CONSUMER, KBC_NKRO,
-    KBC_REPORT_ID, KBC_SYSTEM, MI_HAS_BOS, MI_HAS_SERIAL, OPT_IMPERFECT, OPT_MOVE_RIDE,
+    KBC_REPORT_ID, KBC_SYSTEM, MI_HAS_BOS, MI_HAS_SERIAL, OPT_EMIT, OPT_IMPERFECT, OPT_MOVE_RIDE,
     RATE_CONFIDENT,
 };
 use crate::protocol::{DecodedFrame, FrameType, encode};
 use crate::transport::mock::MockTransport;
 use crate::types::{
-    Caps, CatchState, Health, ImperfectStatus, KbdCaps, KeyboardEvent, Locks, LogLevel, MediaEvent,
-    MouseCaps, MouseEvent, MouseInfo, Rate, Stats, Version,
+    Caps, CatchState, EmitPace, Health, ImperfectStatus, KbdCaps, KeyboardEvent, Locks, LogLevel,
+    MediaEvent, MouseCaps, MouseEvent, MouseInfo, Rate, Stats, Version,
 };
 
 #[derive(Debug)]
@@ -28,6 +28,7 @@ struct State {
     catch: CatchState,
     imperfect: ImperfectStatus,
     move_ride_ms: u16,
+    emit_pace: EmitPace,
     recorded: Vec<DecodedFrame>,
     respond: bool,
 }
@@ -51,6 +52,7 @@ impl Default for State {
             catch: CatchState::from_payload(&[7, 0, 0, 0, 0, 0]).unwrap(),
             imperfect: ImperfectStatus::default(),
             move_ride_ms: 0,
+            emit_pace: EmitPace::Learned,
             recorded: Vec::new(),
             respond: true,
         }
@@ -171,6 +173,19 @@ fn options_move_ride_payload(ms: u16) -> Vec<u8> {
     p
 }
 
+fn options_emit_payload(pace: EmitPace) -> Vec<u8> {
+    // RESP(OPTIONS, EMIT): [what=9][id=2][mode][fixed_hz u16 LE][resolved_hz u16 LE]
+    let (mode, hz) = crate::device::options::emit_pace_wire(pace);
+    let resolved = match pace {
+        EmitPace::Fixed(h) => h.clamp(1, 1000),
+        _ => 0,
+    };
+    let mut p = vec![9u8, OPT_EMIT, mode];
+    p.extend_from_slice(&hz.to_le_bytes());
+    p.extend_from_slice(&resolved.to_le_bytes());
+    p
+}
+
 fn kb_event_payload(e: &KeyboardEvent) -> Vec<u8> {
     let mut p = vec![e.modifiers, e.keys.len() as u8];
     p.extend(e.keys.iter().map(|k| k.usage()));
@@ -259,6 +274,12 @@ impl MockBox {
                                 FrameType::Resp,
                                 seq,
                                 &options_move_ride_payload(st.move_ride_ms),
+                            )
+                            .expect("resp fits"),
+                            Some(OPT_EMIT) => encode(
+                                FrameType::Resp,
+                                seq,
+                                &options_emit_payload(st.emit_pace),
                             )
                             .expect("resp fits"),
                             _ => Vec::new(),
@@ -379,6 +400,18 @@ impl MockBox {
     /// Update the configured movement-riding window in place; `None` = off.
     pub fn set_movement_riding(&self, window: Option<std::time::Duration>) {
         self.state.lock().move_ride_ms = crate::device::options::ride_window_ms(window);
+    }
+
+    /// Set the [`EmitPace`] answered to `QUERY(OPTIONS, EMIT)` (builder style).
+    #[must_use]
+    pub fn with_emit_pace(self, pace: EmitPace) -> Self {
+        self.state.lock().emit_pace = pace;
+        self
+    }
+
+    /// Update the configured [`EmitPace`] answered to `QUERY(OPTIONS, EMIT)` in place.
+    pub fn set_emit_pace(&self, pace: EmitPace) {
+        self.state.lock().emit_pace = pace;
     }
 
     /// Make the box unresponsive (builder style): it records commands but never answers a `QUERY`.

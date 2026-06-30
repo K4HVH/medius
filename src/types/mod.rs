@@ -1,6 +1,7 @@
 mod button;
 mod caps;
 mod counters;
+mod emit_pace;
 mod health;
 mod imperfect;
 mod inject;
@@ -22,6 +23,7 @@ mod version;
 pub use button::{Action, Button};
 pub use caps::Caps;
 pub use counters::CountersSnapshot;
+pub use emit_pace::{EmitPace, EmitPaceStatus};
 pub use health::Health;
 pub use imperfect::ImperfectStatus;
 pub use inject::{Input, Motion};
