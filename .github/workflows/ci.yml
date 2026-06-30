@@ -40,14 +40,9 @@ jobs:
     - name: Install libudev
       run: sudo apt-get update && sudo apt-get install -y libudev-dev
 
-    - name: Cache dependencies
-      uses: actions/cache@v4
+    - uses: Swatinem/rust-cache@v2
       with:
-        path: |
-          ~/.cargo/registry
-          ~/.cargo/git
-          target
-        key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.toml') }}
+        key: ${{ matrix.features }}
 
     - name: Check
       run: cargo check --all-targets --features "${{ matrix.features }}" --verbose
@@ -66,14 +61,7 @@ jobs:
       if: runner.os == 'Linux'
       run: sudo apt-get update && sudo apt-get install -y libudev-dev
 
-    - name: Cache dependencies
-      uses: actions/cache@v4
-      with:
-        path: |
-          ~/.cargo/registry
-          ~/.cargo/git
-          target
-        key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.toml') }}
+    - uses: Swatinem/rust-cache@v2
 
     - name: Build
       run: cargo build --all-features --verbose
@@ -91,14 +79,7 @@ jobs:
     - name: Install libudev
       run: sudo apt-get update && sudo apt-get install -y libudev-dev
 
-    - name: Cache dependencies
-      uses: actions/cache@v4
-      with:
-        path: |
-          ~/.cargo/registry
-          ~/.cargo/git
-          target
-        key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.toml') }}
+    - uses: Swatinem/rust-cache@v2
 
     - name: Test
       run: cargo test --all-features --verbose
@@ -126,6 +107,8 @@ jobs:
     - name: Install libudev
       run: sudo apt-get update && sudo apt-get install -y libudev-dev
 
+    - uses: Swatinem/rust-cache@v2
+
     - name: Run clippy
       run: cargo clippy --all-targets --all-features -- -D warnings
 
@@ -136,22 +119,9 @@ jobs:
     - uses: actions/checkout@v4
     - uses: dtolnay/rust-toolchain@stable
 
-    - name: Cache cargo-audit
-      uses: actions/cache@v4
+    - uses: taiki-e/install-action@v2
       with:
-        path: |
-          ~/.cargo/bin/cargo-audit
-          ~/.cargo/.crates.toml
-          ~/.cargo/.crates2.json
-        key: ${{ runner.os }}-cargo-audit
-        restore-keys: |
-          ${{ runner.os }}-cargo-audit-
-
-    - name: Install cargo-audit
-      run: |
-        if ! command -v cargo-audit &> /dev/null; then
-          cargo install cargo-audit
-        fi
+        tool: cargo-audit
 
     - name: Run security audit
       run: cargo audit
@@ -165,6 +135,8 @@ jobs:
 
     - name: Install libudev
       run: sudo apt-get update && sudo apt-get install -y libudev-dev
+
+    - uses: Swatinem/rust-cache@v2
 
     - name: Check documentation
       run: cargo doc --no-deps --all-features
@@ -180,6 +152,8 @@ jobs:
 
     - name: Install libudev
       run: sudo apt-get update && sudo apt-get install -y libudev-dev
+
+    - uses: Swatinem/rust-cache@v2
 
     - name: Check if publishable
       run: cargo publish -p medius --dry-run --allow-dirty
@@ -198,6 +172,8 @@ jobs:
 
     - name: Install libudev
       run: sudo apt-get update && sudo apt-get install -y libudev-dev
+
+    - uses: Swatinem/rust-cache@v2
 
     - name: Check if version already published
       id: check_version
@@ -357,6 +333,7 @@ jobs:
     - name: Install libudev (Linux)
       if: runner.os == 'Linux'
       run: sudo apt-get update && sudo apt-get install -y libudev-dev
+    - uses: Swatinem/rust-cache@v2
     - name: Resolve the release version
       id: ver
       shell: bash
@@ -416,13 +393,7 @@ jobs:
     - name: Install libudev (Linux)
       if: runner.os == 'Linux'
       run: sudo apt-get update && sudo apt-get install -y libudev-dev
-    - uses: actions/cache@v4
-      with:
-        path: |
-          ~/.cargo/registry
-          ~/.cargo/git
-          target
-        key: ${{ runner.os }}-capi-${{ hashFiles('**/Cargo.toml') }}
+    - uses: Swatinem/rust-cache@v2
     - name: Build (default features)
       run: cargo build -p medius-capi --verbose
     - name: Build (mock + flash)
@@ -440,6 +411,7 @@ jobs:
         components: clippy, rustfmt
     - name: Install libudev
       run: sudo apt-get update && sudo apt-get install -y libudev-dev
+    - uses: Swatinem/rust-cache@v2
     - name: Format
       run: cargo fmt -p medius-capi -- --check
     - name: Clippy
@@ -451,8 +423,9 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     - uses: dtolnay/rust-toolchain@stable
-    - name: Install cbindgen (pinned)
-      run: cargo install cbindgen --version 0.29.4 --locked
+    - uses: taiki-e/install-action@v2
+      with:
+        tool: cbindgen@0.29.4
     - name: Regenerate the header
       run: bash tools/gen-header.sh
     - name: Fail if the committed header is stale
@@ -469,6 +442,7 @@ jobs:
         python-version: '3.x'
     - name: Install libudev
       run: sudo apt-get update && sudo apt-get install -y libudev-dev
+    - uses: Swatinem/rust-cache@v2
     - name: Install pytest
       run: python -m pip install --upgrade pip pytest
     - name: Run the mock-backed suite
