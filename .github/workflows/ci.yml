@@ -272,7 +272,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, ubuntu-24.04-arm, macos-13, macos-14, windows-latest]
+        # macOS is arm64 only: the Intel (macos-13) hosted runner no longer
+        # picks up jobs, so Intel Macs build from the sdist instead.
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-14, windows-latest]
     steps:
     - uses: actions/checkout@v4
     - uses: actions/download-artifact@v4

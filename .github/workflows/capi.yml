@@ -92,9 +92,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # One native-arch runner each: linux x86_64 + arm64, macOS x86_64 +
-        # arm64, windows amd64. The wheel is py3-none, so one per platform.
-        os: [ubuntu-latest, ubuntu-24.04-arm, macos-13, macos-14, windows-latest]
+        # One native-arch runner each: linux x86_64 + arm64, macOS arm64,
+        # windows amd64. The wheel is py3-none, so one per platform. The Intel
+        # (macos-13) hosted runner no longer picks up jobs; Intel Macs build
+        # from the sdist.
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-14, windows-latest]
     steps:
     - uses: actions/checkout@v4
     - uses: actions/setup-python@v5
