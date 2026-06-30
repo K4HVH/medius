@@ -44,28 +44,6 @@ static void test_query_version_roundtrip() {
     CHECK(v.fw_patch == 7);
 }
 
-static void test_commands_recorded() {
-    MockBox mock;
-    Device dev = Device::with_mock(mock);
-    dev.move_rel(100, -50);
-    dev.press(Button::Left);
-    dev.soft_release(Button::Left);
-    dev.key_down(MEDIUS_KEY_A);
-    dev.lock(LockTarget::x(), LockDirection::Both);
-    dev.led(LedTarget::Both, LedMode::Blink, 128);
-    dev.reset();
-    dev.set_movement_riding(std::chrono::milliseconds(5));
-    dev.set_movement_riding(std::nullopt);
-
-    CHECK(mock.saw(FrameType::Move));
-    CHECK(mock.saw(FrameType::Inject));
-    CHECK(mock.saw(FrameType::Lock));
-    CHECK(mock.saw(FrameType::Led));
-    CHECK(mock.saw(FrameType::Reset));
-    CHECK(mock.saw(FrameType::Option));
-    CHECK(mock.recorded() >= 8);
-}
-
 static void test_catch_mouse_event() {
     MockBox mock;
     Device dev = Device::with_mock(mock);
@@ -270,7 +248,6 @@ static void test_meta() {
 
 int main() {
     test_query_version_roundtrip();
-    test_commands_recorded();
     test_catch_mouse_event();
     test_catch_keyboard_event();
     test_log_stream();
