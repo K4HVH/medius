@@ -56,26 +56,18 @@ class CustomBuildHook(BuildHookInterface):
         # CPython ABI, so one py3-none-<platform> wheel serves every Python 3.x.
         build_data["pure_python"] = False
 
-        # On macOS, cibuildwheel sets _PYTHON_HOST_PLATFORM per target arch so it
-        # can build separate x86_64 and arm64 wheels (the arm64 runner cross-builds
-        # x86_64). Honor it for both the cdylib's cargo target and the wheel tag so
-        # the two always agree; elsewhere fall back to the host's native tag.
+        # On macOS, cibuildwheel builds one wheel per arch (the arm64 runner
+        # cross-builds x86_64) and exports _PYTHON_HOST_PLATFORM + the pinned
+        # MACOSX_DEPLOYMENT_TARGET (see pyproject). Pick the cargo target from the
+        # arch and tag the wheel at that deployment target, so the dylib's min and
+        # the tag agree — delocate checks the dylib against MACOSX_DEPLOYMENT_TARGET.
         cargo_target = None
         host_platform = os.environ.get("_PYTHON_HOST_PLATFORM")
         if sys.platform == "darwin" and host_platform:
-            # cibuildwheel builds a separate wheel per arch (the arm64 runner
-            # cross-builds x86_64). cibuildwheel defaults x86_64 to 10.9, but
-            # rustc's floors are 10.12 (x86_64) / 11.0 (arm64), so pin the
-            # deployment target to those — the dylib's min and the wheel tag must
-            # agree or delocate rejects the wheel.
             arch = host_platform.rsplit("-", 1)[-1]
-            deploy = {"x86_64": "10.12", "arm64": "11.0"}.get(arch)
             cargo_target = {"x86_64": "x86_64-apple-darwin", "arm64": "aarch64-apple-darwin"}.get(arch)
-            if deploy:
-                os.environ["MACOSX_DEPLOYMENT_TARGET"] = deploy
-                build_data["tag"] = "py3-none-macosx_{}_{}".format(deploy.replace(".", "_"), arch)
-            else:
-                build_data["tag"] = "py3-none-{}".format(host_platform.replace("-", "_").replace(".", "_"))
+            deploy = os.environ.get("MACOSX_DEPLOYMENT_TARGET", "11.0")
+            build_data["tag"] = "py3-none-macosx_{}_{}".format(deploy.replace(".", "_"), arch)
         else:
             try:
                 from packaging.tags import sys_tags
