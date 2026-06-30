@@ -74,6 +74,11 @@ environment = { PATH = "$HOME/.cargo/bin:$PATH" }
 [tool.cibuildwheel.macos]
 # Both arches: the arm64 runner cross-builds the x86_64 wheel (see hatch_build.py).
 archs = "x86_64 arm64"
+# rustc's macOS floor is 10.12 (x86_64) / 11.0 (arm64); cibuildwheel defaults
+# x86_64 to 10.9, so the cross-built dylib (>=10.12) and the wheel disagree and
+# delocate (which reads this env) rejects it. 11.0 satisfies both arches. This
+# MUST be set here, not just in the build hook, so the repair step sees it too.
+environment = { MACOSX_DEPLOYMENT_TARGET = "11.0" }
 before-all = "(rustup toolchain install stable --profile minimal || curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable --profile minimal) && rustup target add x86_64-apple-darwin aarch64-apple-darwin"
 
 [tool.cibuildwheel.windows]
