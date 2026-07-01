@@ -234,7 +234,7 @@ mod linux {
                 .map(|h| h.mouse_attached)
                 .unwrap_or(false);
             let caps = dev.caps();
-            let info = dev.query_mouse_info();
+            let info = dev.device_info();
             let rate = dev.query_rate();
             let stats = dev.query_stats();
 

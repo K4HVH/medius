@@ -25,6 +25,7 @@ use catch::CatchReg;
 use correlation::PendingEntry;
 use counters::Counters;
 use reconcile::DesiredState;
+use reconnect::BoxIdentity;
 use slot::TransportSlot;
 
 /// Default `RESP` wait before [`Error::QueryTimeout`](crate::Error::QueryTimeout).
@@ -50,6 +51,9 @@ pub(crate) struct LinkInner {
     counters: Arc<Counters>,
     stop: Arc<AtomicBool>,
     reconnect_lock: Arc<Mutex<()>>,
+    // The opened box's stable identity (CH343 serial + device MAC), set once the handshake succeeds.
+    // Reconnect anchors to it so a rescan never adopts a different box that happens to be present.
+    identity: Arc<Mutex<Option<BoxIdentity>>>,
     query_timeout: Duration,
     reader: Option<JoinHandle<()>>,
     keepalive: Option<JoinHandle<()>>,
@@ -107,6 +111,7 @@ impl Link {
         let query_gen = Arc::new(AtomicU64::new(0));
         let transport = Arc::new(TransportSlot::new(transport));
         let reconnect_lock = Arc::new(Mutex::new(()));
+        let identity: Arc<Mutex<Option<BoxIdentity>>> = Arc::new(Mutex::new(None));
 
         let reader = reader::spawn_reader(
             Arc::clone(&transport),
@@ -123,6 +128,7 @@ impl Link {
                 counters: Arc::clone(&counters),
                 desired: Arc::clone(&desired),
                 reconnect_lock: Arc::clone(&reconnect_lock),
+                identity: Arc::clone(&identity),
             },
         );
 
@@ -151,6 +157,7 @@ impl Link {
                 counters,
                 stop,
                 reconnect_lock,
+                identity,
                 query_timeout,
                 reader: Some(reader),
                 keepalive: Some(keepalive),

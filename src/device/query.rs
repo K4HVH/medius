@@ -2,12 +2,12 @@ use std::time::Duration;
 
 use crate::error::{Error, Result};
 use crate::protocol::opcode::{
-    OPT_EMIT, OPT_IMPERFECT, OPT_MOVE_RIDE, Q_CAPS, Q_CATCH, Q_HEALTH, Q_LOCKS, Q_MOUSE_INFO,
+    OPT_EMIT, OPT_IMPERFECT, OPT_MOVE_RIDE, Q_CAPS, Q_CATCH, Q_DEVICE_INFO, Q_HEALTH, Q_LOCKS,
     Q_RATE, Q_STATS, Q_VERSION,
 };
 use crate::protocol::{Resp, parse_resp};
 use crate::types::{
-    Caps, CatchState, EmitPaceStatus, Health, ImperfectStatus, Locks, MouseInfo, Rate, Stats,
+    Caps, CatchState, DeviceInfo, EmitPaceStatus, Health, ImperfectStatus, Locks, Rate, Stats,
     Version,
 };
 
@@ -32,11 +32,12 @@ impl Device {
         }
     }
 
-    /// Query the cloned mouse's USB identity (vid/pid/bcd + serial/BOS flags, §4.3).
-    pub fn query_mouse_info(&self) -> Result<MouseInfo> {
-        let payload = self.link.query(Q_MOUSE_INFO)?;
+    /// Query the cloned device's USB identity: vid/pid/bcd, serial/BOS flags, primary kind, and
+    /// product string (§4.3).
+    pub fn device_info(&self) -> Result<DeviceInfo> {
+        let payload = self.link.query(Q_DEVICE_INFO)?;
         match parse_resp(&payload) {
-            Some(Resp::MouseInfo(m)) => Ok(m),
+            Some(Resp::DeviceInfo(m)) => Ok(m),
             _ => Err(Error::NoReply),
         }
     }

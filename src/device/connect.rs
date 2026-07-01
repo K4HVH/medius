@@ -1,10 +1,13 @@
+use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
 use crate::error::{Error, Result};
+use crate::link::reconnect::BoxIdentity;
 use crate::protocol::opcode::Q_VERSION;
 use crate::protocol::{PROTO_VER, Resp, parse_resp};
 use crate::transport::Transport;
+use crate::types::Version;
 
 use super::Device;
 
@@ -13,10 +16,23 @@ const HANDSHAKE_ATTEMPTS: usize = 5;
 const HANDSHAKE_ATTEMPT_TIMEOUT: Duration = Duration::from_millis(250);
 
 impl Device {
-    /// Open the box at serial `path`, run the version handshake, and return a ready [`Device`].
-    pub fn open(path: impl AsRef<std::path::Path>) -> Result<Device> {
-        let serial = crate::transport::serial::SerialTransport::open(path.as_ref())?;
-        Self::open_transport(Arc::new(serial))
+    /// Open the box at serial `path`, run the version handshake, and return a ready [`Device`]. The
+    /// box's identity (CH343 serial + device MAC) is recorded so a later auto-reconnect re-finds this
+    /// same box even if ports renumber.
+    pub fn open(path: impl AsRef<Path>) -> Result<Device> {
+        let path = path.as_ref();
+        let serial = crate::transport::serial::SerialTransport::open(path)?;
+        let device = Device::from_transport(Arc::new(serial));
+        let version = device.handshake()?;
+        let port_serial = crate::transport::scan::find_medius()
+            .into_iter()
+            .find(|p| Path::new(&p.path) == path)
+            .and_then(|p| p.serial);
+        device.link.set_identity(BoxIdentity {
+            serial: port_serial,
+            mac: version.mac,
+        });
+        Ok(device)
     }
 
     pub(crate) fn open_transport(transport: Arc<dyn Transport>) -> Result<Device> {
@@ -25,7 +41,7 @@ impl Device {
         Ok(device)
     }
 
-    fn handshake(&self) -> Result<()> {
+    fn handshake(&self) -> Result<Version> {
         let _span =
             trace_span!(target: "medius::device", tracing::Level::INFO, "connect").entered();
 
@@ -76,7 +92,7 @@ impl Device {
             fw_patch = version.fw_patch,
             "connected",
         );
-        Ok(())
+        Ok(version)
     }
 
     /// Discover the first medius box by VID/PID, open it, and handshake.

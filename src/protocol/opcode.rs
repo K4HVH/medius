@@ -21,8 +21,8 @@ pub const INJ_MOTION_WHEEL: u8 = 1;
 
 pub const Q_VERSION: u8 = 0;
 pub const Q_HEALTH: u8 = 1;
-/// Cloned mouse identity: vid/pid/bcd + serial/bos flags (§4.3).
-pub const Q_MOUSE_INFO: u8 = 2;
+/// Cloned device identity: vid/pid/bcd + serial/bos flags + primary kind + product (§4.3).
+pub const Q_DEVICE_INFO: u8 = 2;
 /// Unified device capabilities: mouse (buttons/axes/ifaces) + keyboard (keys/NKRO/media/system) +
 /// per-class change_driven. One query describes the whole cloned device (§4.4).
 pub const Q_CAPS: u8 = 3;
@@ -103,10 +103,10 @@ pub const CAPS_CD_MOUSE: u8 = 0x01;
 /// `CAPS` change_driven flag: the keyboard/media class is change-driven (set when a keyboard is bound).
 pub const CAPS_CD_KBD: u8 = 0x02;
 
-/// `MOUSE_INFO` flag: the clone serves a serial string (§4.3).
-pub const MI_HAS_SERIAL: u8 = 0x01;
-/// `MOUSE_INFO` flag: the clone serves a BOS descriptor (§4.3).
-pub const MI_HAS_BOS: u8 = 0x02;
+/// `DEVICE_INFO` flag: the clone serves a serial string (§4.3).
+pub const DI_HAS_SERIAL: u8 = 0x01;
+/// `DEVICE_INFO` flag: the clone serves a BOS descriptor (§4.3).
+pub const DI_HAS_BOS: u8 = 0x02;
 
 /// `CAPS` axis flag: relative X present (§4.4).
 pub const CAP_X: u8 = 0x01;
