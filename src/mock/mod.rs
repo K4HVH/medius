@@ -5,22 +5,22 @@ use std::sync::Arc;
 use parking_lot::Mutex;
 
 use crate::protocol::opcode::{
-    CAP_REPORT_ID, CAP_WHEEL, CAP_X, CAP_Y, CAPS_CD_KBD, CAPS_CD_MOUSE, KBC_CONSUMER, KBC_NKRO,
-    KBC_REPORT_ID, KBC_SYSTEM, MI_HAS_BOS, MI_HAS_SERIAL, OPT_IMPERFECT, OPT_MOVE_RIDE,
+    CAP_REPORT_ID, CAP_WHEEL, CAP_X, CAP_Y, CAPS_CD_KBD, CAPS_CD_MOUSE, DI_HAS_BOS, DI_HAS_SERIAL,
+    KBC_CONSUMER, KBC_NKRO, KBC_REPORT_ID, KBC_SYSTEM, OPT_EMIT, OPT_IMPERFECT, OPT_MOVE_RIDE,
     RATE_CONFIDENT,
 };
 use crate::protocol::{DecodedFrame, FrameType, encode};
 use crate::transport::mock::MockTransport;
 use crate::types::{
-    Caps, CatchState, Health, ImperfectStatus, KbdCaps, KeyboardEvent, Locks, LogLevel, MediaEvent,
-    MouseCaps, MouseEvent, MouseInfo, Rate, Stats, Version,
+    Caps, CatchState, DeviceInfo, DeviceKind, EmitPace, Health, ImperfectStatus, KbdCaps,
+    KeyboardEvent, Locks, LogLevel, MediaEvent, MouseCaps, MouseEvent, Rate, Stats, Version,
 };
 
 #[derive(Debug)]
 struct State {
     version: Version,
     health: Health,
-    mouse_info: MouseInfo,
+    device_info: DeviceInfo,
     caps: Caps,
     rate: Rate,
     stats: Stats,
@@ -28,6 +28,7 @@ struct State {
     catch: CatchState,
     imperfect: ImperfectStatus,
     move_ride_ms: u16,
+    emit_pace: EmitPace,
     recorded: Vec<DecodedFrame>,
     respond: bool,
 }
@@ -40,9 +41,10 @@ impl Default for State {
                 fw_major: 0,
                 fw_minor: 0,
                 fw_patch: 0,
+                mac: [0; 6],
             },
             health: Health::from_flags(0),
-            mouse_info: MouseInfo::from_payload(&[2, 0, 0, 0, 0, 0, 0, 0, 0, 0]).unwrap(),
+            device_info: DeviceInfo::default(),
             caps: Caps::default(),
             rate: Rate::from_payload(&[4, 0, 0, 0, 0, 0]).unwrap(),
             stats: Stats::from_payload(&[5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
@@ -51,26 +53,34 @@ impl Default for State {
             catch: CatchState::from_payload(&[7, 0, 0, 0, 0, 0]).unwrap(),
             imperfect: ImperfectStatus::default(),
             move_ride_ms: 0,
+            emit_pace: EmitPace::Learned,
             recorded: Vec::new(),
             respond: true,
         }
     }
 }
 
-fn mouse_info_payload(m: MouseInfo) -> Vec<u8> {
+fn device_info_payload(m: &DeviceInfo) -> Vec<u8> {
     let mut flags = 0u8;
     if m.has_serial {
-        flags |= MI_HAS_SERIAL;
+        flags |= DI_HAS_SERIAL;
     }
     if m.has_bos {
-        flags |= MI_HAS_BOS;
+        flags |= DI_HAS_BOS;
     }
+    let kind = match m.kind {
+        DeviceKind::Unknown => 0,
+        DeviceKind::Keyboard => 1,
+        DeviceKind::Mouse => 2,
+    };
     let mut p = vec![2u8];
     p.extend_from_slice(&m.vid.to_le_bytes());
     p.extend_from_slice(&m.pid.to_le_bytes());
     p.extend_from_slice(&m.bcd_device.to_le_bytes());
     p.extend_from_slice(&m.bcd_usb.to_le_bytes());
     p.push(flags);
+    p.push(kind);
+    p.extend_from_slice(m.product.as_bytes());
     p
 }
 
@@ -171,6 +181,25 @@ fn options_move_ride_payload(ms: u16) -> Vec<u8> {
     p
 }
 
+fn options_emit_payload(pace: EmitPace) -> Vec<u8> {
+    // RESP(OPTIONS, EMIT): [what=9][id=2][mode][fixed_hz u16 LE][resolved_hz u16 LE]. Mirror the
+    // firmware exactly: Fixed clamps the echoed rate to 1..=1000 (0 -> 1000) and snaps resolved to the
+    // 1 ms frame clock (1000/n); Learned/Interval echo 0 (the mock has no real device to resolve).
+    let (mode, fixed_hz, resolved) = match pace {
+        EmitPace::Learned => (0u8, 0u16, 0u16),
+        EmitPace::Interval => (1, 0, 0),
+        EmitPace::Fixed(h) => {
+            let hz = if h == 0 { 1000 } else { h.min(1000) };
+            let n = (((1_000_000u32 / hz as u32) + 500) / 1000).max(1);
+            (2, hz, (1000 / n) as u16)
+        }
+    };
+    let mut p = vec![9u8, OPT_EMIT, mode];
+    p.extend_from_slice(&fixed_hz.to_le_bytes());
+    p.extend_from_slice(&resolved.to_le_bytes());
+    p
+}
+
 fn kb_event_payload(e: &KeyboardEvent) -> Vec<u8> {
     let mut p = vec![e.modifiers, e.keys.len() as u8];
     p.extend(e.keys.iter().map(|k| k.usage()));
@@ -213,62 +242,65 @@ impl MockBox {
         let state = Arc::new(Mutex::new(State::default()));
         let responder_state = Arc::clone(&state);
 
-        let transport =
-            Arc::new(MockTransport::with_responder(move |ty, seq, payload| {
-                let mut st = responder_state.lock();
-                st.recorded.push(DecodedFrame {
-                    ty,
-                    seq,
-                    payload: payload.to_vec(),
-                });
-                if ty == FrameType::Query && st.respond {
-                    match payload.first().copied() {
-                        Some(0) => {
-                            let v = st.version;
-                            encode(
-                                FrameType::Resp,
-                                seq,
-                                &[0, v.proto_ver, v.fw_major, v.fw_minor, v.fw_patch],
-                            )
-                            .expect("resp fits")
-                        }
-                        Some(1) => encode(FrameType::Resp, seq, &[1, st.health.to_flags()])
-                            .expect("resp fits"),
-                        Some(2) => encode(FrameType::Resp, seq, &mouse_info_payload(st.mouse_info))
-                            .expect("resp fits"),
-                        Some(3) => {
-                            encode(FrameType::Resp, seq, &caps_payload(st.caps)).expect("resp fits")
-                        }
-                        Some(4) => {
-                            encode(FrameType::Resp, seq, &rate_payload(st.rate)).expect("resp fits")
-                        }
-                        Some(5) => encode(FrameType::Resp, seq, &stats_payload(st.stats))
-                            .expect("resp fits"),
-                        Some(6) => encode(FrameType::Resp, seq, &locks_payload(st.locks))
-                            .expect("resp fits"),
-                        Some(7) => encode(FrameType::Resp, seq, &catch_resp_payload(st.catch))
-                            .expect("resp fits"),
-                        Some(9) => match payload.get(1).copied() {
-                            Some(OPT_IMPERFECT) => encode(
-                                FrameType::Resp,
-                                seq,
-                                &options_imperfect_payload(st.imperfect),
-                            )
-                            .expect("resp fits"),
-                            Some(OPT_MOVE_RIDE) => encode(
-                                FrameType::Resp,
-                                seq,
-                                &options_move_ride_payload(st.move_ride_ms),
-                            )
-                            .expect("resp fits"),
-                            _ => Vec::new(),
-                        },
-                        _ => Vec::new(),
+        let transport = Arc::new(MockTransport::with_responder(move |ty, seq, payload| {
+            let mut st = responder_state.lock();
+            st.recorded.push(DecodedFrame {
+                ty,
+                seq,
+                payload: payload.to_vec(),
+            });
+            if ty == FrameType::Query && st.respond {
+                match payload.first().copied() {
+                    Some(0) => {
+                        let v = st.version;
+                        let mut p = vec![0, v.proto_ver, v.fw_major, v.fw_minor, v.fw_patch];
+                        p.extend_from_slice(&v.mac);
+                        encode(FrameType::Resp, seq, &p).expect("resp fits")
                     }
-                } else {
-                    Vec::new()
+                    Some(1) => {
+                        encode(FrameType::Resp, seq, &[1, st.health.to_flags()]).expect("resp fits")
+                    }
+                    Some(2) => encode(FrameType::Resp, seq, &device_info_payload(&st.device_info))
+                        .expect("resp fits"),
+                    Some(3) => {
+                        encode(FrameType::Resp, seq, &caps_payload(st.caps)).expect("resp fits")
+                    }
+                    Some(4) => {
+                        encode(FrameType::Resp, seq, &rate_payload(st.rate)).expect("resp fits")
+                    }
+                    Some(5) => {
+                        encode(FrameType::Resp, seq, &stats_payload(st.stats)).expect("resp fits")
+                    }
+                    Some(6) => {
+                        encode(FrameType::Resp, seq, &locks_payload(st.locks)).expect("resp fits")
+                    }
+                    Some(7) => encode(FrameType::Resp, seq, &catch_resp_payload(st.catch))
+                        .expect("resp fits"),
+                    Some(9) => match payload.get(1).copied() {
+                        Some(OPT_IMPERFECT) => encode(
+                            FrameType::Resp,
+                            seq,
+                            &options_imperfect_payload(st.imperfect),
+                        )
+                        .expect("resp fits"),
+                        Some(OPT_MOVE_RIDE) => encode(
+                            FrameType::Resp,
+                            seq,
+                            &options_move_ride_payload(st.move_ride_ms),
+                        )
+                        .expect("resp fits"),
+                        Some(OPT_EMIT) => {
+                            encode(FrameType::Resp, seq, &options_emit_payload(st.emit_pace))
+                                .expect("resp fits")
+                        }
+                        _ => Vec::new(),
+                    },
+                    _ => Vec::new(),
                 }
-            }));
+            } else {
+                Vec::new()
+            }
+        }));
 
         MockBox { state, transport }
     }
@@ -287,10 +319,10 @@ impl MockBox {
         self
     }
 
-    /// Set the [`MouseInfo`] answered to `QUERY(MOUSE_INFO)` (builder style).
+    /// Set the [`DeviceInfo`] answered to `QUERY(DEVICE_INFO)` (builder style).
     #[must_use]
-    pub fn with_mouse_info(self, mouse_info: MouseInfo) -> Self {
-        self.state.lock().mouse_info = mouse_info;
+    pub fn with_device_info(self, device_info: DeviceInfo) -> Self {
+        self.state.lock().device_info = device_info;
         self
     }
 
@@ -379,6 +411,18 @@ impl MockBox {
     /// Update the configured movement-riding window in place; `None` = off.
     pub fn set_movement_riding(&self, window: Option<std::time::Duration>) {
         self.state.lock().move_ride_ms = crate::device::options::ride_window_ms(window);
+    }
+
+    /// Set the [`EmitPace`] answered to `QUERY(OPTIONS, EMIT)` (builder style).
+    #[must_use]
+    pub fn with_emit_pace(self, pace: EmitPace) -> Self {
+        self.state.lock().emit_pace = pace;
+        self
+    }
+
+    /// Update the configured [`EmitPace`] answered to `QUERY(OPTIONS, EMIT)` in place.
+    pub fn set_emit_pace(&self, pace: EmitPace) {
+        self.state.lock().emit_pace = pace;
     }
 
     /// Make the box unresponsive (builder style): it records commands but never answers a `QUERY`.

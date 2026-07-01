@@ -3,18 +3,19 @@ use std::time::Duration;
 use crate::error::{Error, Result};
 use crate::link::Link;
 use crate::protocol::opcode::{
-    OPT_IMPERFECT, OPT_MOVE_RIDE, Q_CAPS, Q_CATCH, Q_HEALTH, Q_LOCKS, Q_MOUSE_INFO, Q_RATE,
-    Q_STATS, Q_VERSION,
+    OPT_EMIT, OPT_IMPERFECT, OPT_MOVE_RIDE, Q_CAPS, Q_CATCH, Q_DEVICE_INFO, Q_HEALTH, Q_LOCKS,
+    Q_RATE, Q_STATS, Q_VERSION,
 };
 use crate::protocol::{Resp, parse_resp};
 use crate::types::{
-    Action, Blanket, Button, Caps, CatchMask, CatchState, CountersSnapshot, Health,
-    ImperfectStatus, Input, Key, LedMode, LedTarget, LockDirection, LockTarget, Locks, MediaKey,
-    Motion, MouseInfo, Rate, RebootTarget, Stats, Version,
+    Action, Blanket, Button, Caps, CatchMask, CatchState, CountersSnapshot, DeviceInfo, EmitPace,
+    EmitPaceStatus, Health, ImperfectStatus, Input, Key, LedMode, LedTarget, LockDirection,
+    LockTarget, Locks, MediaKey, Motion, Rate, RebootTarget, Stats, Version,
 };
 
 use super::Device;
 use super::catch::EventStream;
+use super::discover::BoxInfo;
 use super::logs::LogStream;
 
 /// An async view over a [`Device`] — the same `Link` core, with `async` queries.
@@ -219,6 +220,11 @@ impl AsyncDevice {
         self.dev().set_movement_riding(window)
     }
 
+    /// `OPTION(EMIT)` — emit-rate pacing. Instant; see [`Device::set_emit_pace`].
+    pub fn set_emit_pace(&self, pace: EmitPace) -> Result<()> {
+        self.dev().set_emit_pace(pace)
+    }
+
     /// Query the box version, awaiting the correlated `RESP` with the default timeout.
     pub async fn query_version(&self) -> Result<Version> {
         let payload = self
@@ -243,14 +249,14 @@ impl AsyncDevice {
         }
     }
 
-    /// Query the cloned mouse's USB identity (§4.3), awaiting the correlated `RESP`.
-    pub async fn query_mouse_info(&self) -> Result<MouseInfo> {
+    /// Query the cloned device's USB identity, kind, and product (§4.3), awaiting the correlated `RESP`.
+    pub async fn device_info(&self) -> Result<DeviceInfo> {
         let payload = self
             .link
-            .query_async(Q_MOUSE_INFO, self.link.query_timeout_default())
+            .query_async(Q_DEVICE_INFO, self.link.query_timeout_default())
             .await?;
         match parse_resp(&payload) {
-            Some(Resp::MouseInfo(m)) => Ok(m),
+            Some(Resp::DeviceInfo(m)) => Ok(m),
             _ => Err(Error::NoReply),
         }
     }
@@ -339,6 +345,18 @@ impl AsyncDevice {
         }
     }
 
+    /// Query the emit-rate pacing mode + the rate in effect (§4.14), awaiting the correlated `RESP`.
+    pub async fn query_emit_pace(&self) -> Result<EmitPaceStatus> {
+        let payload = self
+            .link
+            .query_option_async(OPT_EMIT, self.link.query_timeout_default())
+            .await?;
+        match parse_resp(&payload) {
+            Some(Resp::EmitPace(s)) => Ok(s),
+            _ => Err(Error::NoReply),
+        }
+    }
+
     /// Open a device at `path` and wrap it as an [`AsyncDevice`].
     pub fn open(path: impl AsRef<std::path::Path>) -> Result<AsyncDevice> {
         Ok(Device::open(path)?.into_async())
@@ -347,5 +365,25 @@ impl AsyncDevice {
     /// Discover the first medius box, open it, and wrap as an [`AsyncDevice`]; blocks (scan + handshake). See [`Device::find`].
     pub fn find() -> Result<AsyncDevice> {
         Ok(Device::find()?.into_async())
+    }
+
+    /// Enumerate every connected box; blocks (scan + per-box handshake). See [`Device::list`].
+    pub fn list() -> Vec<BoxInfo> {
+        Device::list()
+    }
+
+    /// Open the box whose identity matches `id` (device MAC or CH343 serial). See [`Device::open_by_id`].
+    pub fn open_by_id(id: &str) -> Result<AsyncDevice> {
+        Ok(Device::open_by_id(id)?.into_async())
+    }
+
+    /// Open the first box whose clone is a mouse. See [`Device::find_mouse_box`].
+    pub fn find_mouse_box() -> Result<AsyncDevice> {
+        Ok(Device::find_mouse_box()?.into_async())
+    }
+
+    /// Open the first box whose clone is a keyboard. See [`Device::find_keyboard_box`].
+    pub fn find_keyboard_box() -> Result<AsyncDevice> {
+        Ok(Device::find_keyboard_box()?.into_async())
     }
 }

@@ -5,7 +5,24 @@
 //! firmware wire format, not merely to our own encoder.
 
 use crate::protocol::{Resp, parse_resp};
-use crate::types::Health;
+use crate::types::{DeviceKind, Health};
+
+#[test]
+fn decode_version_with_mac() {
+    // [what=0][proto=2][maj=2][min=3][patch=0][mac 6B]
+    let p = [0u8, 2, 2, 3, 0, 0x5A, 0x4E, 0x11, 0x22, 0x1e, 0x28];
+    let Some(Resp::Version(v)) = parse_resp(&p) else {
+        panic!("expected Version");
+    };
+    assert_eq!(
+        (v.proto_ver, v.fw_major, v.fw_minor, v.fw_patch),
+        (2, 2, 3, 0)
+    );
+    assert_eq!(v.mac, [0x5A, 0x4E, 0x11, 0x22, 0x1e, 0x28]);
+    assert_eq!(v.mac_hex(), "5a4e11221e28");
+    // A pre-mac (5-byte) VERSION no longer parses.
+    assert!(parse_resp(&[0u8, 2, 2, 3, 0]).is_none());
+}
 
 #[test]
 fn rate_decodes_continuous_vs_change_driven() {
@@ -27,18 +44,31 @@ fn rate_decodes_continuous_vs_change_driven() {
 }
 
 #[test]
-fn decode_mouse_info_exact_bytes() {
-    // vid 0x046D, pid 0xC08B, bcdDevice 0x0110, bcdUSB 0x0200, flags HAS_SERIAL|HAS_BOS
-    let p = [2u8, 0x6D, 0x04, 0x8B, 0xC0, 0x10, 0x01, 0x00, 0x02, 0x03];
-    let Some(Resp::MouseInfo(m)) = parse_resp(&p) else {
-        panic!("expected MouseInfo");
+fn decode_device_info_exact_bytes() {
+    // vid 0x046D, pid 0xC08B, bcdDevice 0x0110, bcdUSB 0x0200, flags HAS_SERIAL|HAS_BOS,
+    // primary_kind MOUSE(2), product "Mamba".
+    let mut p = vec![
+        2u8, 0x6D, 0x04, 0x8B, 0xC0, 0x10, 0x01, 0x00, 0x02, 0x03, 0x02,
+    ];
+    p.extend_from_slice(b"Mamba");
+    let Some(Resp::DeviceInfo(m)) = parse_resp(&p) else {
+        panic!("expected DeviceInfo");
     };
     assert_eq!(m.vid, 0x046D);
     assert_eq!(m.pid, 0xC08B);
     assert_eq!(m.bcd_device, 0x0110);
     assert_eq!(m.bcd_usb, 0x0200);
     assert!(m.has_serial && m.has_bos);
-    assert_eq!(format!("{m}"), "046D:C08B");
+    assert_eq!(m.kind, DeviceKind::Mouse);
+    assert_eq!(m.product, "Mamba");
+    assert_eq!(format!("{m}"), "046D:C08B Mamba");
+    // Header-only (no product tail) still decodes; product is empty and Display omits it.
+    let Some(Resp::DeviceInfo(h)) = parse_resp(&p[..11]) else {
+        panic!("expected DeviceInfo");
+    };
+    assert_eq!(h.kind, DeviceKind::Mouse);
+    assert!(h.product.is_empty());
+    assert_eq!(format!("{h}"), "046D:C08B");
 }
 
 #[test]
@@ -113,7 +143,7 @@ fn health_rate_confident_bit_roundtrips() {
 
 #[test]
 fn truncated_payloads_decode_to_none() {
-    assert!(parse_resp(&[2, 0, 0]).is_none()); // MOUSE_INFO needs 10
+    assert!(parse_resp(&[2, 0, 0]).is_none()); // DEVICE_INFO needs 11
     assert!(parse_resp(&[3, 5]).is_none()); // CAPS needs 4
     assert!(parse_resp(&[4, 0xE8, 0x03]).is_none()); // RATE needs 6
     assert!(parse_resp(&[5, 0, 0, 0]).is_none()); // STATS needs 17

@@ -12,20 +12,22 @@ from ._enums import FrameType, LogLevel
 from ._types import (
     Caps,
     CatchState,
+    EmitPace,
     Health,
     ImperfectStatus,
+    DeviceInfo,
     KbdCaps,
     KeyboardEvent,
     MediaEvent,
     MouseCaps,
     MouseEvent,
-    MouseInfo,
     Rate,
     RecordedFrame,
     Stats,
     Version,
     caps_to_c,
     catch_state_to_c,
+    device_info_to_c,
     health_to_c,
     imperfect_to_c,
     kbd_caps_to_c,
@@ -33,7 +35,6 @@ from ._types import (
     media_event_to_c,
     mouse_caps_to_c,
     mouse_event_to_c,
-    mouse_info_to_c,
     rate_to_c,
     stats_to_c,
     version_to_c,
@@ -80,8 +81,8 @@ class MockBox:
     def set_health(self, health: Health):
         _native.lib.medius_mock_set_health(self._handle, health_to_c(health))
 
-    def set_mouse_info(self, info: MouseInfo):
-        _native.lib.medius_mock_set_mouse_info(self._handle, mouse_info_to_c(info))
+    def set_device_info(self, info: DeviceInfo):
+        _native.lib.medius_mock_set_device_info(self._handle, device_info_to_c(info))
 
     def set_caps(self, caps: Caps):
         _native.lib.medius_mock_set_caps(self._handle, caps_to_c(caps))
@@ -112,6 +113,9 @@ class MockBox:
         _native.lib.medius_mock_set_movement_riding(
             self._handle, enabled, int(window_ms) if enabled else 0
         )
+
+    def set_emit_pace(self, pace: EmitPace):
+        _native.lib.medius_mock_set_emit_pace(self._handle, int(pace.mode), int(pace.hz))
 
     def silent(self):
         """Make the mock stop answering queries (one-way, for timeout tests)."""

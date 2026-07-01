@@ -13,22 +13,25 @@ from ._types import (
     Caps,
     CatchState,
     Counters,
+    EmitPace,
+    EmitPaceStatus,
     Health,
     ImperfectStatus,
     Input,
     Locks,
     LockTarget,
+    DeviceInfo,
     Motion,
-    MouseInfo,
     Rate,
     Stats,
     Version,
     caps_from_c,
     catch_state_from_c,
     counters_from_c,
+    device_info_from_c,
+    emit_pace_status_from_c,
     health_from_c,
     imperfect_from_c,
-    mouse_info_from_c,
     rate_from_c,
     stats_from_c,
     version_from_c,
@@ -59,6 +62,27 @@ class Device:
     def find(cls) -> "Device":
         out = ctypes.c_void_p()
         check(_native.lib.medius_device_find(ctypes.byref(out)))
+        return cls(out.value)
+
+    @classmethod
+    def open_by_id(cls, box_id: str) -> "Device":
+        """Open the box whose identity matches `box_id` (device MAC hex or CH343 serial)."""
+        out = ctypes.c_void_p()
+        check(_native.lib.medius_device_open_by_id(box_id.encode("utf-8"), ctypes.byref(out)))
+        return cls(out.value)
+
+    @classmethod
+    def find_mouse_box(cls) -> "Device":
+        """Open the first box whose clone is a mouse."""
+        out = ctypes.c_void_p()
+        check(_native.lib.medius_device_find_mouse_box(ctypes.byref(out)))
+        return cls(out.value)
+
+    @classmethod
+    def find_keyboard_box(cls) -> "Device":
+        """Open the first box whose clone is a keyboard."""
+        out = ctypes.c_void_p()
+        check(_native.lib.medius_device_find_keyboard_box(ctypes.byref(out)))
         return cls(out.value)
 
     @classmethod
@@ -191,6 +215,10 @@ class Device:
             )
         )
 
+    def set_emit_pace(self, pace: EmitPace):
+        """Set what paces injected motion (`hz` matters only for `EmitPace.fixed`)."""
+        check(_native.lib.medius_device_set_emit_pace(self._handle, int(pace.mode), int(pace.hz)))
+
     # --- queries ---
 
     def query_version(self) -> Version:
@@ -203,10 +231,10 @@ class Device:
         check(_native.lib.medius_device_query_health(self._handle, ctypes.byref(out)))
         return health_from_c(out)
 
-    def query_mouse_info(self) -> MouseInfo:
-        out = _native.MediusMouseInfo()
-        check(_native.lib.medius_device_query_mouse_info(self._handle, ctypes.byref(out)))
-        return mouse_info_from_c(out)
+    def device_info(self) -> DeviceInfo:
+        out = _native.MediusDeviceInfo()
+        check(_native.lib.medius_device_device_info(self._handle, ctypes.byref(out)))
+        return device_info_from_c(out)
 
     def caps(self) -> Caps:
         out = _native.MediusCaps()
@@ -248,6 +276,11 @@ class Device:
             )
         )
         return int(window.value) if enabled.value else None
+
+    def query_emit_pace(self) -> EmitPaceStatus:
+        out = _native.MediusEmitPaceStatus()
+        check(_native.lib.medius_device_query_emit_pace(self._handle, ctypes.byref(out)))
+        return emit_pace_status_from_c(out)
 
     def counters(self) -> Counters:
         out = _native.MediusCountersSnapshot()
