@@ -2,12 +2,13 @@ use std::time::Duration;
 
 use crate::error::{Error, Result};
 use crate::protocol::opcode::{
-    OPT_IMPERFECT, OPT_MOVE_RIDE, Q_CAPS, Q_CATCH, Q_HEALTH, Q_LOCKS, Q_MOUSE_INFO, Q_RATE,
-    Q_STATS, Q_VERSION,
+    OPT_EMIT, OPT_IMPERFECT, OPT_MOVE_RIDE, Q_CAPS, Q_CATCH, Q_DEVICE_INFO, Q_HEALTH, Q_LOCKS,
+    Q_RATE, Q_STATS, Q_VERSION,
 };
 use crate::protocol::{Resp, parse_resp};
 use crate::types::{
-    Caps, CatchState, Health, ImperfectStatus, Locks, MouseInfo, Rate, Stats, Version,
+    Caps, CatchState, DeviceInfo, EmitPaceStatus, Health, ImperfectStatus, Locks, Rate, Stats,
+    Version,
 };
 
 use super::Device;
@@ -31,11 +32,12 @@ impl Device {
         }
     }
 
-    /// Query the cloned mouse's USB identity (vid/pid/bcd + serial/BOS flags, §4.3).
-    pub fn query_mouse_info(&self) -> Result<MouseInfo> {
-        let payload = self.link.query(Q_MOUSE_INFO)?;
+    /// Query the cloned device's USB identity: vid/pid/bcd, serial/BOS flags, primary kind, and
+    /// product string (§4.3).
+    pub fn device_info(&self) -> Result<DeviceInfo> {
+        let payload = self.link.query(Q_DEVICE_INFO)?;
         match parse_resp(&payload) {
-            Some(Resp::MouseInfo(m)) => Ok(m),
+            Some(Resp::DeviceInfo(m)) => Ok(m),
             _ => Err(Error::NoReply),
         }
     }
@@ -100,6 +102,15 @@ impl Device {
         let payload = self.link.query_option(OPT_MOVE_RIDE)?;
         match parse_resp(&payload) {
             Some(Resp::MovementRiding(w)) => Ok(w),
+            _ => Err(Error::NoReply),
+        }
+    }
+
+    /// Query the emit-rate pacing mode and the rate in effect (§4.14).
+    pub fn query_emit_pace(&self) -> Result<EmitPaceStatus> {
+        let payload = self.link.query_option(OPT_EMIT)?;
+        match parse_resp(&payload) {
+            Some(Resp::EmitPace(s)) => Ok(s),
             _ => Err(Error::NoReply),
         }
     }

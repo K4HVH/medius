@@ -2,7 +2,42 @@
 
 use std::time::{Duration, Instant};
 
-use crate::{Button, Device, Error, FrameType, Health, LogLevel, MockBox, RebootTarget, Version};
+use crate::{
+    Button, Device, DeviceInfo, DeviceKind, Error, FrameType, Health, LogLevel, MockBox,
+    RebootTarget, Version,
+};
+
+#[test]
+fn device_info_and_version_mac_round_trip_through_the_mock() {
+    let mock = MockBox::new()
+        .with_version(Version {
+            proto_ver: 2,
+            fw_major: 2,
+            fw_minor: 3,
+            fw_patch: 0,
+            mac: [0x5A, 0x4E, 0x00, 0x11, 0x1e, 0x28],
+        })
+        .with_device_info(DeviceInfo {
+            vid: 0x1532,
+            pid: 0x0072,
+            bcd_device: 0x0200,
+            bcd_usb: 0x0200,
+            has_serial: true,
+            has_bos: false,
+            kind: DeviceKind::Mouse,
+            product: "Razer Mamba Elite".to_string(),
+        });
+    let device = Device::with_mock(mock);
+
+    let v = device.query_version().unwrap();
+    assert_eq!(v.mac_hex(), "5a4e00111e28");
+
+    let info = device.device_info().unwrap();
+    assert_eq!((info.vid, info.pid), (0x1532, 0x0072));
+    assert_eq!(info.kind, DeviceKind::Mouse);
+    assert_eq!(info.product, "Razer Mamba Elite");
+    assert!(info.has_serial && !info.has_bos);
+}
 
 #[test]
 fn pushed_logs_reach_the_logs_channel_in_order() {
@@ -35,6 +70,7 @@ fn handshake_rejects_wrong_proto_ver() {
         fw_major: 0,
         fw_minor: 0,
         fw_patch: 0,
+        mac: [0; 6],
     });
     let err = Device::open_mock(mock).unwrap_err();
     assert!(matches!(err, Error::BadProtoVer { got: 9 }), "got {err:?}");

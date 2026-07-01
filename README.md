@@ -72,6 +72,19 @@ let device = Device::open("/dev/ttyACM0")?;   // a specific port
 
 `open`/`find` run a version handshake and reject a mismatched protocol.
 
+### Multiple boxes
+
+```rust
+for b in Device::list() {                     // every connected box
+    println!("{} {} {}", b.id(), b.device.kind, b.device);  // MAC, kind, vid:pid + product
+}
+let m = Device::find_mouse_box()?;            // the box cloning a mouse
+let k = Device::find_keyboard_box()?;         // the box cloning a keyboard
+let d = Device::open_by_id("5a4e00111e28")?;  // by device MAC (or CH343 serial)
+```
+
+Each box's identity is its device-chip MAC; a reopened box reconnects to the same physical unit even after ports renumber.
+
 ### Mouse control
 
 ```rust
@@ -121,7 +134,7 @@ for _ in 0..1000 {
 let v = device.query_version()?;  // proto_ver + fw_major / fw_minor / fw_patch
 let h = device.query_health()?;   // link_up, mouse_attached, clone_configured, injection_active, rate_confident, lock_on, catch_on, kbd_attached
 
-let info = device.query_mouse_info()?;  // cloned mouse identity (vid:pid, bcd, serial/BOS flags)
+let info = device.device_info()?;       // cloned device identity: vid:pid, bcd, flags, kind, product
 let caps = device.query_mouse_caps()?;  // mouse caps; caps.is_composite(), caps.n_buttons
 let kcaps = device.query_kbd_caps()?;   // keyboard caps; kcaps.nkro, kcaps.has_consumer, kcaps.n_keys
 let rate = device.query_rate()?;        // live native report rate; rate.native_hz()

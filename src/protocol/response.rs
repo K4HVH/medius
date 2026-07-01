@@ -3,20 +3,20 @@
 use std::time::Duration;
 
 use super::opcode::{
-    OPT_IMPERFECT, OPT_MOVE_RIDE, Q_CAPS, Q_CATCH, Q_HEALTH, Q_LOCKS, Q_MOUSE_INFO, Q_OPTIONS,
-    Q_RATE, Q_STATS, Q_VERSION,
+    OPT_EMIT, OPT_IMPERFECT, OPT_MOVE_RIDE, Q_CAPS, Q_CATCH, Q_DEVICE_INFO, Q_HEALTH, Q_LOCKS,
+    Q_OPTIONS, Q_RATE, Q_STATS, Q_VERSION,
 };
 use crate::types::{
-    Caps, CatchState, Health, ImperfectStatus, Locks, LogLevel, LogLine, MouseInfo, Rate, Stats,
-    Version,
+    Caps, CatchState, DeviceInfo, EmitPaceStatus, Health, ImperfectStatus, Locks, LogLevel,
+    LogLine, Rate, Stats, Version,
 };
 
 /// A decoded `RESP` (§4.1), keyed by the `what` selector at `payload[0]`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Resp {
     Version(Version),
     Health(Health),
-    MouseInfo(MouseInfo),
+    DeviceInfo(DeviceInfo),
     Caps(Caps),
     Rate(Rate),
     Stats(Stats),
@@ -25,6 +25,8 @@ pub enum Resp {
     Imperfect(ImperfectStatus),
     /// `RESP(OPTIONS, MOVE_RIDE)` — the movement-riding window (`None` = off).
     MovementRiding(Option<Duration>),
+    /// `RESP(OPTIONS, EMIT)` — the emit-rate pacing mode and the rate in effect.
+    EmitPace(EmitPaceStatus),
 }
 
 /// Parse a `RESP` payload (§4.1): `[what u8][data..]`.
@@ -32,14 +34,17 @@ pub fn parse_resp(payload: &[u8]) -> Option<Resp> {
     let what = *payload.first()?;
     match what {
         Q_VERSION => {
-            if payload.len() < 5 {
+            if payload.len() < 11 {
                 return None;
             }
+            let mut mac = [0u8; 6];
+            mac.copy_from_slice(&payload[5..11]);
             Some(Resp::Version(Version {
                 proto_ver: payload[1],
                 fw_major: payload[2],
                 fw_minor: payload[3],
                 fw_patch: payload[4],
+                mac,
             }))
         }
         Q_HEALTH => {
@@ -48,7 +53,7 @@ pub fn parse_resp(payload: &[u8]) -> Option<Resp> {
             }
             Some(Resp::Health(Health::from_flags(payload[1])))
         }
-        Q_MOUSE_INFO => MouseInfo::from_payload(payload).map(Resp::MouseInfo),
+        Q_DEVICE_INFO => DeviceInfo::from_payload(payload).map(Resp::DeviceInfo),
         Q_CAPS => Caps::from_payload(payload).map(Resp::Caps),
         Q_RATE => Rate::from_payload(payload).map(Resp::Rate),
         Q_STATS => Stats::from_payload(payload).map(Resp::Stats),
@@ -66,6 +71,7 @@ pub fn parse_resp(payload: &[u8]) -> Option<Resp> {
                     let dur = (ms != 0).then(|| Duration::from_millis(ms as u64));
                     Some(Resp::MovementRiding(dur))
                 }
+                OPT_EMIT => EmitPaceStatus::from_payload(payload).map(Resp::EmitPace),
                 _ => None,
             }
         }

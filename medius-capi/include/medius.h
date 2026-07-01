@@ -24,6 +24,12 @@
 // Capacity for a discovered serial-port path.
 #define MEDIUS_MAX_PATH 512
 
+// Capacity for a cloned device's product string (the wire caps it at 127 bytes).
+#define MEDIUS_MAX_PRODUCT 128
+
+// Capacity for a control adapter's serial string.
+#define MEDIUS_MAX_SERIAL 128
+
 // CATCH subscription class bits, OR them together (see `medius_device_catch_events`).
 #define MEDIUS_CATCH_MASK_MOTION 1
 
@@ -59,6 +65,24 @@ enum MediusStatus
 typedef enum MediusStatus MediusStatus;
 #else
 typedef int32_t MediusStatus;
+#endif // __STDC_VERSION__ >= 202311L
+#endif // __cplusplus
+
+// The cloned device's primary kind, from its Boot-interface protocol.
+enum MediusDeviceKind
+#if defined(__cplusplus) || __STDC_VERSION__ >= 202311L
+  : uint8_t
+#endif // defined(__cplusplus) || __STDC_VERSION__ >= 202311L
+ {
+    MEDIUS_DEVICE_KIND_UNKNOWN = 0,
+    MEDIUS_DEVICE_KIND_KEYBOARD = 1,
+    MEDIUS_DEVICE_KIND_MOUSE = 2,
+};
+#ifndef __cplusplus
+#if __STDC_VERSION__ >= 202311L
+typedef enum MediusDeviceKind MediusDeviceKind;
+#else
+typedef uint8_t MediusDeviceKind;
 #endif // __STDC_VERSION__ >= 202311L
 #endif // __cplusplus
 
@@ -246,6 +270,24 @@ typedef uint8_t MediusRebootTarget;
 #endif // __STDC_VERSION__ >= 202311L
 #endif // __cplusplus
 
+// What paces injected motion.
+enum MediusEmitMode
+#if defined(__cplusplus) || __STDC_VERSION__ >= 202311L
+  : uint8_t
+#endif // defined(__cplusplus) || __STDC_VERSION__ >= 202311L
+ {
+    MEDIUS_EMIT_MODE_LEARNED = 0,
+    MEDIUS_EMIT_MODE_INTERVAL = 1,
+    MEDIUS_EMIT_MODE_FIXED = 2,
+};
+#ifndef __cplusplus
+#if __STDC_VERSION__ >= 202311L
+typedef enum MediusEmitMode MediusEmitMode;
+#else
+typedef uint8_t MediusEmitMode;
+#endif // __STDC_VERSION__ >= 202311L
+#endif // __cplusplus
+
 // Which arm of a [`MediusCatchEvent`] is populated.
 enum MediusCatchEventKind
 #if defined(__cplusplus) || __STDC_VERSION__ >= 202311L
@@ -335,7 +377,39 @@ typedef struct MediusPortInfo {
     char path[MEDIUS_MAX_PATH];
     uint16_t vid;
     uint16_t pid;
+    // The control adapter's serial (NUL-terminated); empty and `has_serial == 0` when it serves none.
+    char serial[MEDIUS_MAX_SERIAL];
+    uint8_t has_serial;
 } MediusPortInfo;
+
+// Decoded firmware version. `mac` is the device chip's base MAC — a stable per-box identity.
+typedef struct MediusVersion {
+    uint8_t proto_ver;
+    uint8_t fw_major;
+    uint8_t fw_minor;
+    uint8_t fw_patch;
+    uint8_t mac[6];
+} MediusVersion;
+
+// The cloned device's USB identity, primary kind, and product string. `product` is a NUL-terminated
+// UTF-8 C string (empty when the device serves none).
+typedef struct MediusDeviceInfo {
+    uint16_t vid;
+    uint16_t pid;
+    uint16_t bcd_device;
+    uint16_t bcd_usb;
+    uint8_t has_serial;
+    uint8_t has_bos;
+    MediusDeviceKind kind;
+    char product[MEDIUS_MAX_PRODUCT];
+} MediusDeviceInfo;
+
+// One discovered box: its control port, firmware version (with the box MAC), and the device it clones.
+typedef struct MediusBoxInfo {
+    struct MediusPortInfo port;
+    struct MediusVersion version;
+    struct MediusDeviceInfo device;
+} MediusBoxInfo;
 
 // A relative-axis drive for `medius_device_move_axis`. For `Cursor`, `dx`/`dy` apply; for `Wheel`,
 // `wheel` applies. Build with the `medius_motion_*` helpers.
@@ -365,14 +439,6 @@ typedef struct MediusLockTarget {
     MediusButton button;
 } MediusLockTarget;
 
-// Decoded firmware version.
-typedef struct MediusVersion {
-    uint8_t proto_ver;
-    uint8_t fw_major;
-    uint8_t fw_minor;
-    uint8_t fw_patch;
-} MediusVersion;
-
 // Box health flags (each field is 0 or 1).
 typedef struct MediusHealth {
     uint8_t link_up;
@@ -384,16 +450,6 @@ typedef struct MediusHealth {
     uint8_t catch_on;
     uint8_t kbd_attached;
 } MediusHealth;
-
-// The cloned mouse's USB identity.
-typedef struct MediusMouseInfo {
-    uint16_t vid;
-    uint16_t pid;
-    uint16_t bcd_device;
-    uint16_t bcd_usb;
-    uint8_t has_serial;
-    uint8_t has_bos;
-} MediusMouseInfo;
 
 // Mouse half of the cloned device's capabilities.
 typedef struct MediusMouseCaps {
@@ -459,6 +515,14 @@ typedef struct MediusImperfectStatus {
     uint8_t over_capacity;
     uint8_t clone_imperfect;
 } MediusImperfectStatus;
+
+// Emit-rate pacing mode plus the rate in effect. `fixed_hz` is the rate requested for `Fixed` (0
+// otherwise); `resolved_hz` is the ceiling actually in effect (0 = learnt/adaptive).
+typedef struct MediusEmitPaceStatus {
+    MediusEmitMode mode;
+    uint16_t fixed_hz;
+    uint16_t resolved_hz;
+} MediusEmitPaceStatus;
 
 // Host-side always-on counters.
 typedef struct MediusCountersSnapshot {
@@ -699,6 +763,24 @@ uintptr_t medius_find_ports(struct MediusPortInfo *out,
                             uintptr_t cap,
                             uintptr_t *out_total);
 
+// Enumerate every connected box into `out` (up to `cap`): each opens, handshakes, and reads its
+// version + cloned-device info. Writes the total found to `*out_total` (may exceed `cap`) and returns
+// the number written. This opens and closes each box in turn.
+uintptr_t medius_list(struct MediusBoxInfo *out,
+                      uintptr_t cap,
+                      uintptr_t *out_total);
+
+// Open the box whose identity matches `id` (device MAC hex or CH343 serial), handshake, and write the
+// handle to `*out`.
+MediusStatus medius_device_open_by_id(const char *id,
+                                      struct MediusDevice **out);
+
+// Open the first box whose clone is a mouse, handshake, and write the handle to `*out`.
+MediusStatus medius_device_find_mouse_box(struct MediusDevice **out);
+
+// Open the first box whose clone is a keyboard, handshake, and write the handle to `*out`.
+MediusStatus medius_device_find_keyboard_box(struct MediusDevice **out);
+
 MediusStatus medius_device_move_rel(struct MediusDevice *dev, int16_t dx, int16_t dy);
 
 MediusStatus medius_device_wheel(struct MediusDevice *dev, int16_t delta);
@@ -782,11 +864,17 @@ MediusStatus medius_device_set_movement_riding(struct MediusDevice *dev,
                                                bool enabled,
                                                uint32_t window_ms);
 
+// Set what paces injected motion. `hz` is the target rate for `Fixed` (snapped to `1000/n`, capped
+// 1 kHz); it is ignored for `Learned` and `Interval`.
+MediusStatus medius_device_set_emit_pace(struct MediusDevice *dev,
+                                         MediusEmitMode mode,
+                                         uint16_t hz);
+
 MediusStatus medius_device_query_version(struct MediusDevice *dev, struct MediusVersion *out);
 
 MediusStatus medius_device_query_health(struct MediusDevice *dev, struct MediusHealth *out);
 
-MediusStatus medius_device_query_mouse_info(struct MediusDevice *dev, struct MediusMouseInfo *out);
+MediusStatus medius_device_device_info(struct MediusDevice *dev, struct MediusDeviceInfo *out);
 
 MediusStatus medius_device_caps(struct MediusDevice *dev, struct MediusCaps *out);
 
@@ -806,6 +894,9 @@ MediusStatus medius_device_query_imperfect(struct MediusDevice *dev,
 MediusStatus medius_device_query_movement_riding(struct MediusDevice *dev,
                                                  bool *out_enabled,
                                                  uint32_t *out_window_ms);
+
+MediusStatus medius_device_query_emit_pace(struct MediusDevice *dev,
+                                           struct MediusEmitPaceStatus *out);
 
 MediusStatus medius_device_counters(struct MediusDevice *dev, struct MediusCountersSnapshot *out);
 
@@ -957,8 +1048,8 @@ void medius_mock_set_health(struct MediusMockBox *mock, struct MediusHealth valu
 #endif
 
 #if defined(MEDIUS_FEATURE_MOCK)
-// Set the mouse identity the mock answers to a MOUSE_INFO query.
-void medius_mock_set_mouse_info(struct MediusMockBox *mock, struct MediusMouseInfo value);
+// Set the device identity the mock answers to a DEVICE_INFO query.
+void medius_mock_set_device_info(struct MediusMockBox *mock, struct MediusDeviceInfo value);
 #endif
 
 #if defined(MEDIUS_FEATURE_MOCK)
@@ -1005,6 +1096,12 @@ void medius_mock_set_imperfect_status(struct MediusMockBox *mock,
 #if defined(MEDIUS_FEATURE_MOCK)
 // Set the movement-riding window the mock answers to a query; `enabled == false` means off.
 void medius_mock_set_movement_riding(struct MediusMockBox *mock, bool enabled, uint32_t window_ms);
+#endif
+
+#if defined(MEDIUS_FEATURE_MOCK)
+// Set the emit-rate pacing mode the mock answers to an OPTION(EMIT) query; `hz` matters only for
+// `Fixed`.
+void medius_mock_set_emit_pace(struct MediusMockBox *mock, MediusEmitMode mode, uint16_t hz);
 #endif
 
 #if defined(MEDIUS_FEATURE_MOCK)

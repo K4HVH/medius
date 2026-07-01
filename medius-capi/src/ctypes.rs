@@ -11,6 +11,10 @@ pub const MEDIUS_MAX_MEDIA_KEYS: usize = 256;
 pub const MEDIUS_MAX_LOG_TEXT: usize = 512;
 /// Capacity for a discovered serial-port path.
 pub const MEDIUS_MAX_PATH: usize = 512;
+/// Capacity for a cloned device's product string (the wire caps it at 127 bytes).
+pub const MEDIUS_MAX_PRODUCT: usize = 128;
+/// Capacity for a control adapter's serial string.
+pub const MEDIUS_MAX_SERIAL: usize = 128;
 
 /// CATCH subscription class bits, OR them together (see `medius_device_catch_events`).
 pub const MEDIUS_CATCH_MASK_MOTION: u8 = 0x01;
@@ -56,6 +60,15 @@ pub enum MediusRebootTarget {
     HostDownload = 1,
     DeviceRun = 2,
     HostRun = 3,
+}
+
+/// What paces injected motion.
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MediusEmitMode {
+    Learned = 0,
+    Interval = 1,
+    Fixed = 2,
 }
 
 /// Which status LED a command addresses.
@@ -194,7 +207,16 @@ pub struct MediusLockTarget {
 
 // --- value (query result) structs ---
 
-/// Decoded firmware version.
+/// The cloned device's primary kind, from its Boot-interface protocol.
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MediusDeviceKind {
+    Unknown = 0,
+    Keyboard = 1,
+    Mouse = 2,
+}
+
+/// Decoded firmware version. `mac` is the device chip's base MAC — a stable per-box identity.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MediusVersion {
@@ -202,6 +224,7 @@ pub struct MediusVersion {
     pub fw_major: u8,
     pub fw_minor: u8,
     pub fw_patch: u8,
+    pub mac: [u8; 6],
 }
 
 /// Box health flags (each field is 0 or 1).
@@ -251,16 +274,19 @@ pub struct MediusCaps {
     pub kbd_change_driven: u8,
 }
 
-/// The cloned mouse's USB identity.
+/// The cloned device's USB identity, primary kind, and product string. `product` is a NUL-terminated
+/// UTF-8 C string (empty when the device serves none).
 #[repr(C)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct MediusMouseInfo {
+#[derive(Clone, Copy)]
+pub struct MediusDeviceInfo {
     pub vid: u16,
     pub pid: u16,
     pub bcd_device: u16,
     pub bcd_usb: u16,
     pub has_serial: u8,
     pub has_bos: u8,
+    pub kind: MediusDeviceKind,
+    pub product: [c_char; MEDIUS_MAX_PRODUCT],
 }
 
 /// The live native report rate and clone poll period.
@@ -311,6 +337,16 @@ pub struct MediusImperfectStatus {
     pub clone_imperfect: u8,
 }
 
+/// Emit-rate pacing mode plus the rate in effect. `fixed_hz` is the rate requested for `Fixed` (0
+/// otherwise); `resolved_hz` is the ceiling actually in effect (0 = learnt/adaptive).
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MediusEmitPaceStatus {
+    pub mode: MediusEmitMode,
+    pub fixed_hz: u16,
+    pub resolved_hz: u16,
+}
+
 /// Host-side always-on counters.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -328,6 +364,18 @@ pub struct MediusPortInfo {
     pub path: [c_char; MEDIUS_MAX_PATH],
     pub vid: u16,
     pub pid: u16,
+    /// The control adapter's serial (NUL-terminated); empty and `has_serial == 0` when it serves none.
+    pub serial: [c_char; MEDIUS_MAX_SERIAL],
+    pub has_serial: u8,
+}
+
+/// One discovered box: its control port, firmware version (with the box MAC), and the device it clones.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct MediusBoxInfo {
+    pub port: MediusPortInfo,
+    pub version: MediusVersion,
+    pub device: MediusDeviceInfo,
 }
 
 // --- catch-stream snapshots ---

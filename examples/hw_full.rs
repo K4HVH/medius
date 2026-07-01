@@ -19,8 +19,8 @@ mod linux {
     use std::time::{Duration, Instant};
 
     use medius::{
-        Action, Blanket, Button, CatchMask, Device, Key, LedMode, LedTarget, LockDirection,
-        LockTarget, MediaKey, RebootTarget,
+        Action, Blanket, Button, CatchMask, Device, EmitPace, Key, LedMode, LedTarget,
+        LockDirection, LockTarget, MediaKey, RebootTarget,
     };
 
     const EVIOCGRAB: libc::c_ulong = 0x4004_4590;
@@ -234,7 +234,7 @@ mod linux {
                 .map(|h| h.mouse_attached)
                 .unwrap_or(false);
             let caps = dev.caps();
-            let info = dev.query_mouse_info();
+            let info = dev.device_info();
             let rate = dev.query_rate();
             let stats = dev.query_stats();
 
@@ -316,6 +316,32 @@ mod linux {
                 "movement riding",
                 set_ok && matched && off_ok && off_matched,
                 format!("set 5ms -> {read:?}, off -> {read_off:?}"),
+            );
+        }
+
+        {
+            // EMIT option: a round-trip + NVS-persistence-path check. Set FIXED 500 Hz, read back the
+            // mode + the resolved ceiling, then restore LEARNED (the default). The pacing behaviour
+            // itself (the box emitting at the chosen rate) needs the rig; this exercises the wire only.
+            let dev = device.as_ref().unwrap();
+            let set_ok = dev.set_emit_pace(EmitPace::Fixed(500)).is_ok();
+            std::thread::sleep(Duration::from_millis(60));
+            let read = dev.query_emit_pace();
+            let matched = read
+                .as_ref()
+                .map(|s| s.mode == EmitPace::Fixed(500) && s.resolved_hz == 500)
+                .unwrap_or(false);
+            let off_ok = dev.set_emit_pace(EmitPace::Learned).is_ok();
+            std::thread::sleep(Duration::from_millis(60));
+            let read_off = dev.query_emit_pace();
+            let off_matched = read_off
+                .as_ref()
+                .map(|s| s.mode == EmitPace::Learned)
+                .unwrap_or(false);
+            check(
+                "emit pace",
+                set_ok && matched && off_ok && off_matched,
+                format!("set Fixed(500) -> {read:?}, off -> {read_off:?}"),
             );
         }
 
@@ -892,7 +918,8 @@ mod linux {
                 .unwrap_or(false);
             // exercise the async option-query paths against real hardware (the sync ones run above)
             let aopt_ok = block_on(adev.query_movement_riding()).is_ok()
-                && block_on(adev.query_imperfect()).is_ok();
+                && block_on(adev.query_imperfect()).is_ok()
+                && block_on(adev.query_emit_pace()).is_ok();
             reset_motion(&acc);
             let _ = adev.move_rel(12, 0);
             std::thread::sleep(Duration::from_millis(200));

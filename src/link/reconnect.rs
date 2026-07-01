@@ -1,13 +1,15 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use parking_lot::Mutex;
 
 use crate::error::{Error, Result};
-use crate::protocol::FrameType;
 use crate::protocol::command::{catch_payload, inject_payload, lock_payload};
-use crate::protocol::opcode::{INJ_BTN, INJ_KEY, INJ_MEDIA};
+use crate::protocol::opcode::{INJ_BTN, INJ_KEY, INJ_MEDIA, Q_VERSION};
+use crate::protocol::{FrameDecoder, FrameType, Resp, encode, parse_resp};
+use crate::transport::Transport;
+use crate::types::Version;
 
 use super::counters::Counters;
 use super::reconcile::DesiredState;
@@ -17,6 +19,20 @@ use super::{Link, write_frame};
 const AUTO_RECONNECT_MIN: Duration = Duration::from_millis(100);
 const AUTO_RECONNECT_MAX: Duration = Duration::from_secs(2);
 
+/// How long to wait for a `RESP(VERSION)` when confirming a rescanned port is our box.
+const PROBE_DEADLINE: Duration = Duration::from_millis(1200);
+/// Re-send the version probe this often within the deadline (the box drops PC-owned state on a fresh
+/// control-link open and can miss the first query while it settles).
+const PROBE_QUERY_GAP: Duration = Duration::from_millis(300);
+
+/// The opened box's stable identity: the CH343 serial (scan-time, may be absent) plus the device
+/// chip's base MAC (authoritative, from `RESP(VERSION)`).
+#[derive(Clone, Debug)]
+pub(crate) struct BoxIdentity {
+    pub(crate) serial: Option<String>,
+    pub(crate) mac: [u8; 6],
+}
+
 pub(crate) struct ReconnectCtx {
     pub(crate) transport: Arc<TransportSlot>,
     pub(crate) write_lock: Arc<Mutex<()>>,
@@ -24,27 +40,93 @@ pub(crate) struct ReconnectCtx {
     pub(crate) counters: Arc<Counters>,
     pub(crate) desired: Arc<Mutex<DesiredState>>,
     pub(crate) reconnect_lock: Arc<Mutex<()>>,
+    pub(crate) identity: Arc<Mutex<Option<BoxIdentity>>>,
+}
+
+/// Probe a freshly-opened, not-yet-adopted transport for its `RESP(VERSION)` so a rescan can confirm
+/// the MAC before committing. Runs a self-contained query loop off the reader thread.
+fn probe_version(transport: &dyn Transport) -> Option<Version> {
+    let frame = encode(FrameType::Query, 0, &[Q_VERSION]).ok()?;
+    let mut decoder = FrameDecoder::new();
+    let start = Instant::now();
+    let mut last_query: Option<Instant> = None;
+    let mut found = None;
+    let mut rx = [0u8; 256];
+    while found.is_none() && start.elapsed() < PROBE_DEADLINE {
+        if last_query.is_none_or(|t| t.elapsed() >= PROBE_QUERY_GAP) {
+            if transport.write_all(&frame).is_err() {
+                return None;
+            }
+            last_query = Some(Instant::now());
+        }
+        match transport.read(&mut rx) {
+            Ok(0) => {}
+            Ok(n) => decoder.feed(&rx[..n], |f| {
+                if f.ty == FrameType::Resp {
+                    if let Some(Resp::Version(v)) = parse_resp(&f.payload) {
+                        found = Some(v);
+                    }
+                }
+            }),
+            Err(_) => return None,
+        }
+    }
+    found
 }
 
 fn reconnect(ctx: &ReconnectCtx) -> Result<()> {
     let _guard = ctx.reconnect_lock.lock();
-    let port = crate::transport::scan::find_medius()
-        .into_iter()
-        .next()
-        .ok_or(Error::NotFound)?;
+    let identity = ctx.identity.lock().clone();
+    let ports = crate::transport::scan::find_medius();
+
+    // Candidate order: with a known serial, try the port(s) that match it first — fast and
+    // unambiguous. If none match (the adapter serves no serial, or it changed), fall back to every
+    // port and let the MAC confirm which one is ours.
+    let candidates: Vec<_> = match &identity {
+        Some(id) if id.serial.is_some() => {
+            let matched: Vec<_> = ports
+                .iter()
+                .filter(|p| p.serial == id.serial)
+                .cloned()
+                .collect();
+            if matched.is_empty() { ports } else { matched }
+        }
+        _ => ports,
+    };
+    if candidates.is_empty() {
+        return Err(Error::NotFound);
+    }
+
     ctx.transport.swap(Arc::new(crate::transport::Disconnected));
     std::thread::sleep(Duration::from_millis(200));
-    let serial = crate::transport::serial::SerialTransport::open(std::path::Path::new(&port.path))?;
-    ctx.transport.swap(Arc::new(serial));
-    ctx.counters.inc_reconnects();
-    trace_event!(
-        target: "medius::device",
-        tracing::Level::INFO,
-        port = %port.path,
-        reason = "rescan",
-        "reconnected",
-    );
-    reapply_held(ctx)
+
+    for port in candidates {
+        let serial =
+            match crate::transport::serial::SerialTransport::open(std::path::Path::new(&port.path))
+            {
+                Ok(s) => s,
+                Err(_) => continue,
+            };
+        // With an identity on record, confirm the MAC before committing so a rescan never adopts the
+        // wrong box. Without one (a transport opened bare, e.g. a mock), accept the first that opens.
+        if let Some(id) = &identity {
+            match probe_version(&serial) {
+                Some(v) if v.mac == id.mac => {}
+                _ => continue,
+            }
+        }
+        ctx.transport.swap(Arc::new(serial));
+        ctx.counters.inc_reconnects();
+        trace_event!(
+            target: "medius::device",
+            tracing::Level::INFO,
+            port = %port.path,
+            reason = "rescan",
+            "reconnected",
+        );
+        return reapply_held(ctx);
+    }
+    Err(Error::NotFound)
 }
 
 fn reapply_held(ctx: &ReconnectCtx) -> Result<()> {
@@ -141,7 +223,14 @@ impl Link {
             counters: Arc::clone(&self.inner.counters),
             desired: Arc::clone(&self.inner.desired),
             reconnect_lock: Arc::clone(&self.inner.reconnect_lock),
+            identity: Arc::clone(&self.inner.identity),
         }
+    }
+
+    /// Record the box's stable identity so a later rescan reconnects to this same box, not whichever
+    /// one happens to be plugged in.
+    pub(crate) fn set_identity(&self, id: BoxIdentity) {
+        *self.inner.identity.lock() = Some(id);
     }
 
     pub(crate) fn reconnect(&self) -> Result<()> {

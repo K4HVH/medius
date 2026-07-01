@@ -278,6 +278,7 @@ fn query_version_returns_configured_value() {
                 fw_major: 9,
                 fw_minor: 8,
                 fw_patch: 7,
+                mac: [0x5A, 0x4E, 0x00, 0x11, 0x1e, 0x28],
             },
         );
     }
@@ -291,6 +292,7 @@ fn query_version_returns_configured_value() {
         fw_major: 0,
         fw_minor: 0,
         fw_patch: 0,
+        mac: [0; 6],
     };
     assert_eq!(
         unsafe { medius_device_query_version(dev, &mut version) },
@@ -299,6 +301,65 @@ fn query_version_returns_configured_value() {
     assert_eq!(version.fw_major, 9);
     assert_eq!(version.fw_minor, 8);
     assert_eq!(version.fw_patch, 7);
+    assert_eq!(version.mac, [0x5A, 0x4E, 0x00, 0x11, 0x1e, 0x28]);
+    unsafe {
+        medius_device_free(dev);
+        medius_mock_free(mock);
+    }
+}
+
+#[test]
+fn device_info_roundtrips_kind_and_product() {
+    let mock = medius_mock_new();
+    let mut product = [0 as std::os::raw::c_char; MEDIUS_MAX_PRODUCT];
+    for (slot, &byte) in product.iter_mut().zip(b"Razer Mamba Elite".iter()) {
+        *slot = byte as std::os::raw::c_char;
+    }
+    unsafe {
+        medius_mock_set_device_info(
+            mock,
+            MediusDeviceInfo {
+                vid: 0x1532,
+                pid: 0x0072,
+                bcd_device: 0x0200,
+                bcd_usb: 0x0200,
+                has_serial: 1,
+                has_bos: 0,
+                kind: MediusDeviceKind::Mouse,
+                product,
+            },
+        );
+    }
+    let mut dev: *mut MediusDevice = ptr::null_mut();
+    assert_eq!(
+        unsafe { medius_device_with_mock(mock, &mut dev) },
+        MediusStatus::Ok
+    );
+    let mut info = MediusDeviceInfo {
+        vid: 0,
+        pid: 0,
+        bcd_device: 0,
+        bcd_usb: 0,
+        has_serial: 0,
+        has_bos: 0,
+        kind: MediusDeviceKind::Unknown,
+        product: [0; MEDIUS_MAX_PRODUCT],
+    };
+    assert_eq!(
+        unsafe { medius_device_device_info(dev, &mut info) },
+        MediusStatus::Ok
+    );
+    assert_eq!(info.vid, 0x1532);
+    assert_eq!(info.pid, 0x0072);
+    assert_eq!(info.kind, MediusDeviceKind::Mouse);
+    assert_eq!(info.has_serial, 1);
+    let got: Vec<u8> = info
+        .product
+        .iter()
+        .take_while(|&&c| c != 0)
+        .map(|&c| c as u8)
+        .collect();
+    assert_eq!(&got, b"Razer Mamba Elite");
     unsafe {
         medius_device_free(dev);
         medius_mock_free(mock);
@@ -494,6 +555,7 @@ fn bad_proto_version_is_reported() {
                 fw_major: 1,
                 fw_minor: 0,
                 fw_patch: 0,
+                mac: [0; 6],
             },
         );
     }
