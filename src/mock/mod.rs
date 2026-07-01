@@ -5,22 +5,22 @@ use std::sync::Arc;
 use parking_lot::Mutex;
 
 use crate::protocol::opcode::{
-    CAP_REPORT_ID, CAP_WHEEL, CAP_X, CAP_Y, CAPS_CD_KBD, CAPS_CD_MOUSE, KBC_CONSUMER, KBC_NKRO,
-    KBC_REPORT_ID, KBC_SYSTEM, MI_HAS_BOS, MI_HAS_SERIAL, OPT_EMIT, OPT_IMPERFECT, OPT_MOVE_RIDE,
+    CAP_REPORT_ID, CAP_WHEEL, CAP_X, CAP_Y, CAPS_CD_KBD, CAPS_CD_MOUSE, DI_HAS_BOS, DI_HAS_SERIAL,
+    KBC_CONSUMER, KBC_NKRO, KBC_REPORT_ID, KBC_SYSTEM, OPT_EMIT, OPT_IMPERFECT, OPT_MOVE_RIDE,
     RATE_CONFIDENT,
 };
 use crate::protocol::{DecodedFrame, FrameType, encode};
 use crate::transport::mock::MockTransport;
 use crate::types::{
-    Caps, CatchState, EmitPace, Health, ImperfectStatus, KbdCaps, KeyboardEvent, Locks, LogLevel,
-    MediaEvent, MouseCaps, MouseEvent, MouseInfo, Rate, Stats, Version,
+    Caps, CatchState, DeviceInfo, DeviceKind, EmitPace, Health, ImperfectStatus, KbdCaps,
+    KeyboardEvent, Locks, LogLevel, MediaEvent, MouseCaps, MouseEvent, Rate, Stats, Version,
 };
 
 #[derive(Debug)]
 struct State {
     version: Version,
     health: Health,
-    mouse_info: MouseInfo,
+    device_info: DeviceInfo,
     caps: Caps,
     rate: Rate,
     stats: Stats,
@@ -41,9 +41,10 @@ impl Default for State {
                 fw_major: 0,
                 fw_minor: 0,
                 fw_patch: 0,
+                mac: [0; 6],
             },
             health: Health::from_flags(0),
-            mouse_info: MouseInfo::from_payload(&[2, 0, 0, 0, 0, 0, 0, 0, 0, 0]).unwrap(),
+            device_info: DeviceInfo::default(),
             caps: Caps::default(),
             rate: Rate::from_payload(&[4, 0, 0, 0, 0, 0]).unwrap(),
             stats: Stats::from_payload(&[5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
@@ -59,20 +60,27 @@ impl Default for State {
     }
 }
 
-fn mouse_info_payload(m: MouseInfo) -> Vec<u8> {
+fn device_info_payload(m: &DeviceInfo) -> Vec<u8> {
     let mut flags = 0u8;
     if m.has_serial {
-        flags |= MI_HAS_SERIAL;
+        flags |= DI_HAS_SERIAL;
     }
     if m.has_bos {
-        flags |= MI_HAS_BOS;
+        flags |= DI_HAS_BOS;
     }
+    let kind = match m.kind {
+        DeviceKind::Unknown => 0,
+        DeviceKind::Keyboard => 1,
+        DeviceKind::Mouse => 2,
+    };
     let mut p = vec![2u8];
     p.extend_from_slice(&m.vid.to_le_bytes());
     p.extend_from_slice(&m.pid.to_le_bytes());
     p.extend_from_slice(&m.bcd_device.to_le_bytes());
     p.extend_from_slice(&m.bcd_usb.to_le_bytes());
     p.push(flags);
+    p.push(kind);
+    p.extend_from_slice(m.product.as_bytes());
     p
 }
 
@@ -246,17 +254,17 @@ impl MockBox {
                     match payload.first().copied() {
                         Some(0) => {
                             let v = st.version;
-                            encode(
-                                FrameType::Resp,
-                                seq,
-                                &[0, v.proto_ver, v.fw_major, v.fw_minor, v.fw_patch],
-                            )
-                            .expect("resp fits")
+                            let mut p =
+                                vec![0, v.proto_ver, v.fw_major, v.fw_minor, v.fw_patch];
+                            p.extend_from_slice(&v.mac);
+                            encode(FrameType::Resp, seq, &p).expect("resp fits")
                         }
                         Some(1) => encode(FrameType::Resp, seq, &[1, st.health.to_flags()])
                             .expect("resp fits"),
-                        Some(2) => encode(FrameType::Resp, seq, &mouse_info_payload(st.mouse_info))
-                            .expect("resp fits"),
+                        Some(2) => {
+                            encode(FrameType::Resp, seq, &device_info_payload(&st.device_info))
+                                .expect("resp fits")
+                        }
                         Some(3) => {
                             encode(FrameType::Resp, seq, &caps_payload(st.caps)).expect("resp fits")
                         }
@@ -314,10 +322,10 @@ impl MockBox {
         self
     }
 
-    /// Set the [`MouseInfo`] answered to `QUERY(MOUSE_INFO)` (builder style).
+    /// Set the [`DeviceInfo`] answered to `QUERY(DEVICE_INFO)` (builder style).
     #[must_use]
-    pub fn with_mouse_info(self, mouse_info: MouseInfo) -> Self {
-        self.state.lock().mouse_info = mouse_info;
+    pub fn with_device_info(self, device_info: DeviceInfo) -> Self {
+        self.state.lock().device_info = device_info;
         self
     }
 

@@ -15,6 +15,7 @@ pub(crate) fn find_ports() -> Vec<PortInfo> {
                 path: p.port_name,
                 vid: usb.vid,
                 pid: usb.pid,
+                serial: usb.serial_number,
             }),
             _ => None,
         })
