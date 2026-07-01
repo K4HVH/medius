@@ -17,6 +17,7 @@ from ._enums import (
     Button,
     CatchEventKind,
     CatchMask,
+    DeviceKind,
     EmitMode,
     FrameType,
     InputKind,
@@ -48,10 +49,12 @@ from ._device import Device
 from ._streams import EventStream, LogStream
 from ._mock import MockBox
 from ._types import (
+    BoxInfo,
     Caps,
     CatchEvent,
     CatchState,
     Counters,
+    DeviceInfo,
     EmitPace,
     EmitPaceStatus,
     Health,
@@ -66,12 +69,12 @@ from ._types import (
     Motion,
     MouseCaps,
     MouseEvent,
-    MouseInfo,
     PortInfo,
     Rate,
     RecordedFrame,
     Stats,
     Version,
+    box_from_c,
 )
 
 HAS_MOCK = _native.HAS_MOCK
@@ -82,14 +85,22 @@ def find_ports(cap: int = 16) -> List[PortInfo]:
     """Enumerate the medius serial ports currently present."""
     import ctypes
 
+    from ._types import port_from_c
+
     arr = (_native.MediusPortInfo * cap)()
     total = _native.usize(0)
     n = _native.lib.medius_find_ports(arr, cap, ctypes.byref(total))
-    out = []
-    for i in range(min(int(n), cap)):
-        pi = arr[i]
-        out.append(PortInfo(pi.path.split(b"\x00", 1)[0].decode("utf-8", "replace"), pi.vid, pi.pid))
-    return out
+    return [port_from_c(arr[i]) for i in range(min(int(n), cap))]
+
+
+def list_boxes(cap: int = 16) -> List[BoxInfo]:
+    """Enumerate every connected box: opens each, handshakes, and reads its version + device info."""
+    import ctypes
+
+    arr = (_native.MediusBoxInfo * cap)()
+    total = _native.usize(0)
+    n = _native.lib.medius_list(arr, cap, ctypes.byref(total))
+    return [box_from_c(arr[i]) for i in range(min(int(n), cap))]
 
 
 def default_query_timeout_ms() -> int:
@@ -127,6 +138,7 @@ __all__ = [
     "Button",
     "CatchEventKind",
     "CatchMask",
+    "DeviceKind",
     "EmitMode",
     "FrameType",
     "InputKind",
@@ -155,10 +167,12 @@ __all__ = [
     "EventStream",
     "LogStream",
     "MockBox",
+    "BoxInfo",
     "Caps",
     "CatchEvent",
     "CatchState",
     "Counters",
+    "DeviceInfo",
     "EmitPace",
     "EmitPaceStatus",
     "Health",
@@ -173,13 +187,13 @@ __all__ = [
     "Motion",
     "MouseCaps",
     "MouseEvent",
-    "MouseInfo",
     "PortInfo",
     "Rate",
     "RecordedFrame",
     "Stats",
     "Version",
     "find_ports",
+    "list_boxes",
     "default_query_timeout_ms",
     "default_keepalive_cadence_ms",
     "abi_version",

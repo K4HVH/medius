@@ -154,6 +154,100 @@ pub unsafe extern "C" fn medius_find_ports(
     })
 }
 
+/// Enumerate every connected box into `out` (up to `cap`): each opens, handshakes, and reads its
+/// version + cloned-device info. Writes the total found to `*out_total` (may exceed `cap`) and returns
+/// the number written. This opens and closes each box in turn.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn medius_list(
+    out: *mut MediusBoxInfo,
+    cap: usize,
+    out_total: *mut usize,
+) -> usize {
+    guard(0, || {
+        let boxes: Vec<MediusBoxInfo> = Device::list()
+            .iter()
+            .filter_map(crate::convert::box_to_medius)
+            .collect();
+        let total = boxes.len();
+        if !out_total.is_null() {
+            unsafe { *out_total = total };
+        }
+        if out.is_null() {
+            return 0;
+        }
+        let n = total.min(cap);
+        for (i, bx) in boxes.iter().take(n).enumerate() {
+            unsafe { *out.add(i) = *bx };
+        }
+        n
+    })
+}
+
+/// Open the box whose identity matches `id` (device MAC hex or CH343 serial), handshake, and write the
+/// handle to `*out`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn medius_device_open_by_id(
+    id: *const c_char,
+    out: *mut *mut MediusDevice,
+) -> MediusStatus {
+    guard_status(|| {
+        if id.is_null() || out.is_null() {
+            return fail(MediusStatus::ErrInvalidArg, "null pointer");
+        }
+        let Ok(s) = (unsafe { CStr::from_ptr(id) }).to_str() else {
+            return fail(MediusStatus::ErrInvalidArg, "id is not valid UTF-8");
+        };
+        match Device::open_by_id(s) {
+            Ok(dev) => {
+                unsafe { *out = MediusDevice::boxed(dev) };
+                clear_error();
+                MediusStatus::Ok
+            }
+            Err(e) => record(&e),
+        }
+    })
+}
+
+/// Open the first box whose clone is a mouse, handshake, and write the handle to `*out`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn medius_device_find_mouse_box(
+    out: *mut *mut MediusDevice,
+) -> MediusStatus {
+    guard_status(|| {
+        if out.is_null() {
+            return fail(MediusStatus::ErrInvalidArg, "null pointer");
+        }
+        match Device::find_mouse_box() {
+            Ok(dev) => {
+                unsafe { *out = MediusDevice::boxed(dev) };
+                clear_error();
+                MediusStatus::Ok
+            }
+            Err(e) => record(&e),
+        }
+    })
+}
+
+/// Open the first box whose clone is a keyboard, handshake, and write the handle to `*out`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn medius_device_find_keyboard_box(
+    out: *mut *mut MediusDevice,
+) -> MediusStatus {
+    guard_status(|| {
+        if out.is_null() {
+            return fail(MediusStatus::ErrInvalidArg, "null pointer");
+        }
+        match Device::find_keyboard_box() {
+            Ok(dev) => {
+                unsafe { *out = MediusDevice::boxed(dev) };
+                clear_error();
+                MediusStatus::Ok
+            }
+            Err(e) => record(&e),
+        }
+    })
+}
+
 // --- movement ---
 
 #[unsafe(no_mangle)]
@@ -460,11 +554,11 @@ pub unsafe extern "C" fn medius_device_query_health(
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn medius_device_query_mouse_info(
+pub unsafe extern "C" fn medius_device_device_info(
     dev: *mut MediusDevice,
-    out: *mut MediusMouseInfo,
+    out: *mut MediusDeviceInfo,
 ) -> MediusStatus {
-    query(dev, out, |d| d.query_mouse_info())
+    query(dev, out, |d| d.device_info())
 }
 
 #[unsafe(no_mangle)]

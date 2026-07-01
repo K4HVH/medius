@@ -7,10 +7,10 @@
 use std::os::raw::c_char;
 
 use medius::{
-    Action, Blanket, Button, Caps, CatchEvent, CatchMask, CatchState, CountersSnapshot, EmitPace,
-    EmitPaceStatus, Health, ImperfectStatus, Input, KbdCaps, Key, KeyboardEvent, LedMode, LedTarget,
-    LockDirection, LockTarget, Locks, LogLevel, LogLine, MediaEvent, MediaKey, Motion, MouseCaps,
-    MouseEvent, MouseInfo, PortInfo, Rate, RebootTarget, Stats, Version,
+    Action, Blanket, BoxInfo, Button, Caps, CatchEvent, CatchMask, CatchState, CountersSnapshot,
+    DeviceInfo, DeviceKind, EmitPace, EmitPaceStatus, Health, ImperfectStatus, Input, KbdCaps, Key,
+    KeyboardEvent, LedMode, LedTarget, LockDirection, LockTarget, Locks, LogLevel, LogLine,
+    MediaEvent, MediaKey, Motion, MouseCaps, MouseEvent, PortInfo, Rate, RebootTarget, Stats, Version,
 };
 
 use crate::ctypes::*;
@@ -28,6 +28,32 @@ fn fill_cstr(dst: &mut [c_char], s: &str) {
         *slot = byte as c_char;
     }
     dst[n] = 0;
+}
+
+/// Read a NUL-terminated fixed C buffer back into a `String` (lossy).
+fn read_cstr(src: &[c_char]) -> String {
+    let bytes: Vec<u8> = src
+        .iter()
+        .take_while(|&&c| c != 0)
+        .map(|&c| c as u8)
+        .collect();
+    String::from_utf8_lossy(&bytes).into_owned()
+}
+
+fn kind_to_medius(k: DeviceKind) -> MediusDeviceKind {
+    match k {
+        DeviceKind::Unknown => MediusDeviceKind::Unknown,
+        DeviceKind::Keyboard => MediusDeviceKind::Keyboard,
+        DeviceKind::Mouse => MediusDeviceKind::Mouse,
+    }
+}
+
+fn kind_from_medius(k: MediusDeviceKind) -> DeviceKind {
+    match k {
+        MediusDeviceKind::Unknown => DeviceKind::Unknown,
+        MediusDeviceKind::Keyboard => DeviceKind::Keyboard,
+        MediusDeviceKind::Mouse => DeviceKind::Mouse,
+    }
 }
 
 // --- command parameters: Medius -> medius ---
@@ -165,6 +191,7 @@ impl From<Version> for MediusVersion {
             fw_major: v.fw_major,
             fw_minor: v.fw_minor,
             fw_patch: v.fw_patch,
+            mac: v.mac,
         }
     }
 }
@@ -220,15 +247,19 @@ impl From<Caps> for MediusCaps {
     }
 }
 
-impl From<MouseInfo> for MediusMouseInfo {
-    fn from(m: MouseInfo) -> Self {
-        MediusMouseInfo {
+impl From<DeviceInfo> for MediusDeviceInfo {
+    fn from(m: DeviceInfo) -> Self {
+        let mut product = [0 as c_char; MEDIUS_MAX_PRODUCT];
+        fill_cstr(&mut product, &m.product);
+        MediusDeviceInfo {
             vid: m.vid,
             pid: m.pid,
             bcd_device: m.bcd_device,
             bcd_usb: m.bcd_usb,
             has_serial: b(m.has_serial),
             has_bos: b(m.has_bos),
+            kind: kind_to_medius(m.kind),
+            product,
         }
     }
 }
@@ -413,6 +444,7 @@ impl From<MediusVersion> for Version {
             fw_major: v.fw_major,
             fw_minor: v.fw_minor,
             fw_patch: v.fw_patch,
+            mac: v.mac,
         }
     }
 }
@@ -468,15 +500,17 @@ impl From<MediusCaps> for Caps {
     }
 }
 
-impl From<MediusMouseInfo> for MouseInfo {
-    fn from(m: MediusMouseInfo) -> Self {
-        MouseInfo {
+impl From<MediusDeviceInfo> for DeviceInfo {
+    fn from(m: MediusDeviceInfo) -> Self {
+        DeviceInfo {
             vid: m.vid,
             pid: m.pid,
             bcd_device: m.bcd_device,
             bcd_usb: m.bcd_usb,
             has_serial: nz(m.has_serial),
             has_bos: nz(m.has_bos),
+            kind: kind_from_medius(m.kind),
+            product: read_cstr(&m.product),
         }
     }
 }
@@ -600,9 +634,24 @@ pub(crate) fn port_to_medius(p: &PortInfo) -> Option<MediusPortInfo> {
     }
     let mut path = [0 as c_char; MEDIUS_MAX_PATH];
     fill_cstr(&mut path, &p.path);
+    let mut serial = [0 as c_char; MEDIUS_MAX_SERIAL];
+    if let Some(s) = &p.serial {
+        fill_cstr(&mut serial, s);
+    }
     Some(MediusPortInfo {
         path,
         vid: p.vid,
         pid: p.pid,
+        serial,
+        has_serial: b(p.serial.is_some()),
+    })
+}
+
+/// `BoxInfo` -> `MediusBoxInfo`. `None` if the port path would not fit.
+pub(crate) fn box_to_medius(b: &BoxInfo) -> Option<MediusBoxInfo> {
+    Some(MediusBoxInfo {
+        port: port_to_medius(&b.port)?,
+        version: b.version.into(),
+        device: b.device.clone().into(),
     })
 }

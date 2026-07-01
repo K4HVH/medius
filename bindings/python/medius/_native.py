@@ -18,6 +18,8 @@ MEDIUS_MAX_KEYS = 256
 MEDIUS_MAX_MEDIA_KEYS = 256
 MEDIUS_MAX_LOG_TEXT = 512
 MEDIUS_MAX_PATH = 512
+MEDIUS_MAX_PRODUCT = 128
+MEDIUS_MAX_SERIAL = 128
 
 u8 = ctypes.c_uint8
 u16 = ctypes.c_uint16
@@ -35,7 +37,13 @@ PHANDLE = ctypes.POINTER(ctypes.c_void_p)
 
 
 class MediusPortInfo(ctypes.Structure):
-    _fields_ = [("path", ctypes.c_char * MEDIUS_MAX_PATH), ("vid", u16), ("pid", u16)]
+    _fields_ = [
+        ("path", ctypes.c_char * MEDIUS_MAX_PATH),
+        ("vid", u16),
+        ("pid", u16),
+        ("serial", ctypes.c_char * MEDIUS_MAX_SERIAL),
+        ("has_serial", u8),
+    ]
 
 
 class MediusMotion(ctypes.Structure):
@@ -51,7 +59,13 @@ class MediusLockTarget(ctypes.Structure):
 
 
 class MediusVersion(ctypes.Structure):
-    _fields_ = [("proto_ver", u8), ("fw_major", u8), ("fw_minor", u8), ("fw_patch", u8)]
+    _fields_ = [
+        ("proto_ver", u8),
+        ("fw_major", u8),
+        ("fw_minor", u8),
+        ("fw_patch", u8),
+        ("mac", u8 * 6),
+    ]
 
 
 class MediusHealth(ctypes.Structure):
@@ -67,7 +81,7 @@ class MediusHealth(ctypes.Structure):
     ]
 
 
-class MediusMouseInfo(ctypes.Structure):
+class MediusDeviceInfo(ctypes.Structure):
     _fields_ = [
         ("vid", u16),
         ("pid", u16),
@@ -75,6 +89,16 @@ class MediusMouseInfo(ctypes.Structure):
         ("bcd_usb", u16),
         ("has_serial", u8),
         ("has_bos", u8),
+        ("kind", u8),
+        ("product", ctypes.c_char * MEDIUS_MAX_PRODUCT),
+    ]
+
+
+class MediusBoxInfo(ctypes.Structure):
+    _fields_ = [
+        ("port", MediusPortInfo),
+        ("version", MediusVersion),
+        ("device", MediusDeviceInfo),
     ]
 
 
@@ -234,9 +258,13 @@ def _decl(name, restype, argtypes, optional=False):
 # --- lifecycle ---
 _decl("medius_device_open", i32, [ctypes.c_char_p, PHANDLE])
 _decl("medius_device_find", i32, [PHANDLE])
+_decl("medius_device_open_by_id", i32, [ctypes.c_char_p, PHANDLE])
+_decl("medius_device_find_mouse_box", i32, [PHANDLE])
+_decl("medius_device_find_keyboard_box", i32, [PHANDLE])
 _decl("medius_device_clone", HANDLE, [HANDLE])
 _decl("medius_device_free", None, [HANDLE])
 _decl("medius_find_ports", usize, [ctypes.POINTER(MediusPortInfo), usize, ctypes.POINTER(usize)])
+_decl("medius_list", usize, [ctypes.POINTER(MediusBoxInfo), usize, ctypes.POINTER(usize)])
 
 # --- commands ---
 _decl("medius_device_move_rel", i32, [HANDLE, i16, i16])
@@ -275,7 +303,7 @@ _decl("medius_device_set_emit_pace", i32, [HANDLE, u8, u16])
 # --- queries ---
 _decl("medius_device_query_version", i32, [HANDLE, ctypes.POINTER(MediusVersion)])
 _decl("medius_device_query_health", i32, [HANDLE, ctypes.POINTER(MediusHealth)])
-_decl("medius_device_query_mouse_info", i32, [HANDLE, ctypes.POINTER(MediusMouseInfo)])
+_decl("medius_device_device_info", i32, [HANDLE, ctypes.POINTER(MediusDeviceInfo)])
 _decl("medius_device_caps", i32, [HANDLE, ctypes.POINTER(MediusCaps)])
 _decl("medius_device_query_rate", i32, [HANDLE, ctypes.POINTER(MediusRate)])
 _decl("medius_device_query_stats", i32, [HANDLE, ctypes.POINTER(MediusStats)])
@@ -338,7 +366,7 @@ if HAS_MOCK:
     _decl("medius_mock_free", None, [HANDLE])
     _decl("medius_mock_set_version", None, [HANDLE, MediusVersion])
     _decl("medius_mock_set_health", None, [HANDLE, MediusHealth])
-    _decl("medius_mock_set_mouse_info", None, [HANDLE, MediusMouseInfo])
+    _decl("medius_mock_set_device_info", None, [HANDLE, MediusDeviceInfo])
     _decl("medius_mock_set_caps", None, [HANDLE, MediusCaps])
     _decl("medius_mock_set_mouse_caps", None, [HANDLE, MediusMouseCaps])
     _decl("medius_mock_set_kbd_caps", None, [HANDLE, MediusKbdCaps])
