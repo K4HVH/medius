@@ -35,6 +35,7 @@ impl Device {
         Ok(device)
     }
 
+    #[cfg_attr(not(feature = "mock"), allow(dead_code))]
     pub(crate) fn open_transport(transport: Arc<dyn Transport>) -> Result<Device> {
         let device = Device::from_transport(transport);
         device.handshake()?;
