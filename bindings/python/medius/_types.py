@@ -10,6 +10,7 @@ from . import _native
 from ._enums import (
     Button,
     CatchEventKind,
+    DeviceKind,
     EmitMode,
     LockTargetKind,
     LogLevel,
@@ -30,6 +31,12 @@ class Version:
     fw_major: int
     fw_minor: int
     fw_patch: int
+    mac: bytes = b"\x00" * 6
+
+    @property
+    def mac_hex(self) -> str:
+        """The base MAC as 12 lowercase hex digits — the canonical box id."""
+        return self.mac.hex()
 
 
 @dataclass
@@ -45,13 +52,15 @@ class Health:
 
 
 @dataclass
-class MouseInfo:
+class DeviceInfo:
     vid: int
     pid: int
     bcd_device: int
     bcd_usb: int
     has_serial: bool
     has_bos: bool
+    kind: DeviceKind
+    product: str
 
 
 @dataclass
@@ -180,6 +189,23 @@ class PortInfo:
     path: str
     vid: int
     pid: int
+    serial: Optional[str] = None
+
+
+@dataclass
+class BoxInfo:
+    port: PortInfo
+    version: Version
+    device: "DeviceInfo"
+
+    @property
+    def id(self) -> str:
+        """The canonical, stable box id: the device MAC as hex."""
+        return self.version.mac_hex
+
+    @property
+    def serial(self) -> Optional[str]:
+        return self.port.serial
 
 
 # --- catch / log payloads ---
@@ -316,11 +342,14 @@ class LockTarget:
 
 
 def version_from_c(c) -> Version:
-    return Version(c.proto_ver, c.fw_major, c.fw_minor, c.fw_patch)
+    return Version(c.proto_ver, c.fw_major, c.fw_minor, c.fw_patch, bytes(c.mac))
 
 
 def version_to_c(v) -> "_native.MediusVersion":
-    return _native.MediusVersion(v.proto_ver, v.fw_major, v.fw_minor, v.fw_patch)
+    mac = bytes(v.mac).ljust(6, b"\x00")[:6]
+    return _native.MediusVersion(
+        v.proto_ver, v.fw_major, v.fw_minor, v.fw_patch, (_native.u8 * 6)(*mac)
+    )
 
 
 def health_from_c(c) -> Health:
@@ -349,14 +378,46 @@ def health_to_c(h) -> "_native.MediusHealth":
     )
 
 
-def mouse_info_from_c(c) -> MouseInfo:
-    return MouseInfo(c.vid, c.pid, c.bcd_device, c.bcd_usb, bool(c.has_serial), bool(c.has_bos))
+def _device_kind(v: int) -> DeviceKind:
+    try:
+        return DeviceKind(v)
+    except ValueError:
+        return DeviceKind.UNKNOWN
 
 
-def mouse_info_to_c(m) -> "_native.MediusMouseInfo":
-    return _native.MediusMouseInfo(
-        m.vid, m.pid, m.bcd_device, m.bcd_usb, int(m.has_serial), int(m.has_bos)
+def device_info_from_c(c) -> DeviceInfo:
+    return DeviceInfo(
+        c.vid,
+        c.pid,
+        c.bcd_device,
+        c.bcd_usb,
+        bool(c.has_serial),
+        bool(c.has_bos),
+        _device_kind(c.kind),
+        _cstr(c.product),
     )
+
+
+def device_info_to_c(m) -> "_native.MediusDeviceInfo":
+    return _native.MediusDeviceInfo(
+        m.vid,
+        m.pid,
+        m.bcd_device,
+        m.bcd_usb,
+        int(m.has_serial),
+        int(m.has_bos),
+        int(m.kind),
+        m.product.encode("utf-8")[: _native.MEDIUS_MAX_PRODUCT - 1],
+    )
+
+
+def port_from_c(c) -> PortInfo:
+    serial = _cstr(c.serial) if c.has_serial else None
+    return PortInfo(_cstr(c.path), c.vid, c.pid, serial)
+
+
+def box_from_c(c) -> BoxInfo:
+    return BoxInfo(port_from_c(c.port), version_from_c(c.version), device_info_from_c(c.device))
 
 
 def mouse_caps_from_c(c) -> MouseCaps:

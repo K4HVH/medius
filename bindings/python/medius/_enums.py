@@ -20,6 +20,14 @@ class Status(IntEnum):
     ERR_UNKNOWN = 11
 
 
+class DeviceKind(IntEnum):
+    """The cloned device's primary kind (its Boot-interface protocol)."""
+
+    UNKNOWN = 0
+    KEYBOARD = 1
+    MOUSE = 2
+
+
 class Button(IntEnum):
     LEFT = 0
     RIGHT = 1

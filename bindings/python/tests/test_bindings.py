@@ -27,6 +27,8 @@ from medius import (
     Key,
     LockDirection,
     LockTarget,
+    DeviceInfo,
+    DeviceKind,
     LogLevel,
     MediaEvent,
     MediaKey,
@@ -34,7 +36,6 @@ from medius import (
     MockBox,
     MouseCaps,
     MouseEvent,
-    MouseInfo,
     Rate,
     Stats,
     Status,
@@ -62,10 +63,12 @@ def test_configure_version_then_open_mock_matches():
     # the firmware triple.
     with Device.with_mock(mock) as d:
         proto = d.query_version().proto_ver
-    mock.set_version(Version(proto, 9, 8, 7))
+    mac = bytes([0x5A, 0x4E, 0x00, 0x11, 0x1E, 0x28])
+    mock.set_version(Version(proto, 9, 8, 7, mac))
     with mock.open() as d:
         v = d.query_version()
-    assert v == Version(proto, 9, 8, 7)
+    assert v == Version(proto, 9, 8, 7, mac)
+    assert v.mac_hex == "5a4e00111e28"
     mock.close()
 
 
@@ -164,13 +167,24 @@ def test_health_roundtrip():
     assert got == health
 
 
-def test_mouse_info_roundtrip():
-    info = MouseInfo(vid=0x046D, pid=0xC08B, bcd_device=0x0111, bcd_usb=0x0200, has_serial=True, has_bos=False)
+def test_device_info_roundtrip():
+    info = DeviceInfo(
+        vid=0x046D,
+        pid=0xC08B,
+        bcd_device=0x0111,
+        bcd_usb=0x0200,
+        has_serial=True,
+        has_bos=False,
+        kind=DeviceKind.MOUSE,
+        product="Logitech G502",
+    )
     with MockBox() as mock:
-        mock.set_mouse_info(info)
+        mock.set_device_info(info)
         with Device.with_mock(mock) as d:
-            got = d.query_mouse_info()
+            got = d.device_info()
     assert got == info
+    assert got.kind == DeviceKind.MOUSE
+    assert got.product == "Logitech G502"
 
 
 def test_stats_roundtrip():

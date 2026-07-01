@@ -76,14 +76,14 @@ pub unsafe extern "C" fn medius_mock_set_health(mock: *mut MediusMockBox, value:
     });
 }
 
-/// Set the mouse identity the mock answers to a MOUSE_INFO query.
+/// Set the device identity the mock answers to a DEVICE_INFO query.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn medius_mock_set_mouse_info(
+pub unsafe extern "C" fn medius_mock_set_device_info(
     mock: *mut MediusMockBox,
-    value: MediusMouseInfo,
+    value: MediusDeviceInfo,
 ) {
     with_mock(mock, |m| {
-        let _ = m.clone().with_mouse_info(value.into());
+        let _ = m.clone().with_device_info(value.into());
     });
 }
 
