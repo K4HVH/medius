@@ -210,9 +210,7 @@ pub unsafe extern "C" fn medius_device_open_by_id(
 
 /// Open the first box whose clone is a mouse, handshake, and write the handle to `*out`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn medius_device_find_mouse_box(
-    out: *mut *mut MediusDevice,
-) -> MediusStatus {
+pub unsafe extern "C" fn medius_device_find_mouse_box(out: *mut *mut MediusDevice) -> MediusStatus {
     guard_status(|| {
         if out.is_null() {
             return fail(MediusStatus::ErrInvalidArg, "null pointer");

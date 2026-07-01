@@ -28,6 +28,10 @@ impl Version {
 
 impl fmt::Display for Version {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "fw {}.{}.{}", self.fw_major, self.fw_minor, self.fw_patch)
+        write!(
+            f,
+            "fw {}.{}.{}",
+            self.fw_major, self.fw_minor, self.fw_patch
+        )
     }
 }

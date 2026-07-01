@@ -102,7 +102,8 @@ fn reconnect(ctx: &ReconnectCtx) -> Result<()> {
 
     for port in candidates {
         let serial =
-            match crate::transport::serial::SerialTransport::open(std::path::Path::new(&port.path)) {
+            match crate::transport::serial::SerialTransport::open(std::path::Path::new(&port.path))
+            {
                 Ok(s) => s,
                 Err(_) => continue,
             };

@@ -7,8 +7,8 @@ use super::opcode::{
     Q_OPTIONS, Q_RATE, Q_STATS, Q_VERSION,
 };
 use crate::types::{
-    Caps, CatchState, DeviceInfo, EmitPaceStatus, Health, ImperfectStatus, Locks, LogLevel, LogLine,
-    Rate, Stats, Version,
+    Caps, CatchState, DeviceInfo, EmitPaceStatus, Health, ImperfectStatus, Locks, LogLevel,
+    LogLine, Rate, Stats, Version,
 };
 
 /// A decoded `RESP` (§4.1), keyed by the `what` selector at `payload[0]`.

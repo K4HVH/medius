@@ -66,8 +66,9 @@ impl Device {
             .into_iter()
             .find(|b| {
                 b.id() == want
-                    || b.serial()
-                        .is_some_and(|s| s.eq_ignore_ascii_case(id) || s.eq_ignore_ascii_case(&want))
+                    || b.serial().is_some_and(|s| {
+                        s.eq_ignore_ascii_case(id) || s.eq_ignore_ascii_case(&want)
+                    })
             })
             .ok_or(Error::NotFound)?;
         Device::open(&info.port.path)
