@@ -10,7 +10,8 @@ use medius::{
     Action, Blanket, BoxInfo, Button, Caps, CatchEvent, CatchMask, CatchState, CountersSnapshot,
     DeviceInfo, DeviceKind, EmitPace, EmitPaceStatus, Health, ImperfectStatus, Input, KbdCaps, Key,
     KeyboardEvent, LedMode, LedTarget, LockDirection, LockTarget, Locks, LogLevel, LogLine,
-    MediaEvent, MediaKey, Motion, MouseCaps, MouseEvent, PortInfo, Rate, RebootTarget, Stats, Version,
+    MediaEvent, MediaKey, Motion, MouseCaps, MouseEvent, PortInfo, Rate, RebootTarget, Stats,
+    Version,
 };
 
 use crate::ctypes::*;

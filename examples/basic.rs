@@ -25,7 +25,11 @@ fn main() -> medius::Result<()> {
     let info = device.device_info()?;
     let caps = device.caps()?;
     let rate = device.query_rate()?;
-    println!("device: {info} ({}, composite={})", info.kind, caps.is_composite());
+    println!(
+        "device: {info} ({}, composite={})",
+        info.kind,
+        caps.is_composite()
+    );
     println!(
         "caps: {} buttons, x={} y={} wheel={}",
         caps.mouse.n_buttons, caps.mouse.has_x, caps.mouse.has_y, caps.mouse.has_wheel,

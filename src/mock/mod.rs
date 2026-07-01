@@ -242,68 +242,65 @@ impl MockBox {
         let state = Arc::new(Mutex::new(State::default()));
         let responder_state = Arc::clone(&state);
 
-        let transport =
-            Arc::new(MockTransport::with_responder(move |ty, seq, payload| {
-                let mut st = responder_state.lock();
-                st.recorded.push(DecodedFrame {
-                    ty,
-                    seq,
-                    payload: payload.to_vec(),
-                });
-                if ty == FrameType::Query && st.respond {
-                    match payload.first().copied() {
-                        Some(0) => {
-                            let v = st.version;
-                            let mut p =
-                                vec![0, v.proto_ver, v.fw_major, v.fw_minor, v.fw_patch];
-                            p.extend_from_slice(&v.mac);
-                            encode(FrameType::Resp, seq, &p).expect("resp fits")
-                        }
-                        Some(1) => encode(FrameType::Resp, seq, &[1, st.health.to_flags()])
-                            .expect("resp fits"),
-                        Some(2) => {
-                            encode(FrameType::Resp, seq, &device_info_payload(&st.device_info))
+        let transport = Arc::new(MockTransport::with_responder(move |ty, seq, payload| {
+            let mut st = responder_state.lock();
+            st.recorded.push(DecodedFrame {
+                ty,
+                seq,
+                payload: payload.to_vec(),
+            });
+            if ty == FrameType::Query && st.respond {
+                match payload.first().copied() {
+                    Some(0) => {
+                        let v = st.version;
+                        let mut p = vec![0, v.proto_ver, v.fw_major, v.fw_minor, v.fw_patch];
+                        p.extend_from_slice(&v.mac);
+                        encode(FrameType::Resp, seq, &p).expect("resp fits")
+                    }
+                    Some(1) => {
+                        encode(FrameType::Resp, seq, &[1, st.health.to_flags()]).expect("resp fits")
+                    }
+                    Some(2) => encode(FrameType::Resp, seq, &device_info_payload(&st.device_info))
+                        .expect("resp fits"),
+                    Some(3) => {
+                        encode(FrameType::Resp, seq, &caps_payload(st.caps)).expect("resp fits")
+                    }
+                    Some(4) => {
+                        encode(FrameType::Resp, seq, &rate_payload(st.rate)).expect("resp fits")
+                    }
+                    Some(5) => {
+                        encode(FrameType::Resp, seq, &stats_payload(st.stats)).expect("resp fits")
+                    }
+                    Some(6) => {
+                        encode(FrameType::Resp, seq, &locks_payload(st.locks)).expect("resp fits")
+                    }
+                    Some(7) => encode(FrameType::Resp, seq, &catch_resp_payload(st.catch))
+                        .expect("resp fits"),
+                    Some(9) => match payload.get(1).copied() {
+                        Some(OPT_IMPERFECT) => encode(
+                            FrameType::Resp,
+                            seq,
+                            &options_imperfect_payload(st.imperfect),
+                        )
+                        .expect("resp fits"),
+                        Some(OPT_MOVE_RIDE) => encode(
+                            FrameType::Resp,
+                            seq,
+                            &options_move_ride_payload(st.move_ride_ms),
+                        )
+                        .expect("resp fits"),
+                        Some(OPT_EMIT) => {
+                            encode(FrameType::Resp, seq, &options_emit_payload(st.emit_pace))
                                 .expect("resp fits")
                         }
-                        Some(3) => {
-                            encode(FrameType::Resp, seq, &caps_payload(st.caps)).expect("resp fits")
-                        }
-                        Some(4) => {
-                            encode(FrameType::Resp, seq, &rate_payload(st.rate)).expect("resp fits")
-                        }
-                        Some(5) => encode(FrameType::Resp, seq, &stats_payload(st.stats))
-                            .expect("resp fits"),
-                        Some(6) => encode(FrameType::Resp, seq, &locks_payload(st.locks))
-                            .expect("resp fits"),
-                        Some(7) => encode(FrameType::Resp, seq, &catch_resp_payload(st.catch))
-                            .expect("resp fits"),
-                        Some(9) => match payload.get(1).copied() {
-                            Some(OPT_IMPERFECT) => encode(
-                                FrameType::Resp,
-                                seq,
-                                &options_imperfect_payload(st.imperfect),
-                            )
-                            .expect("resp fits"),
-                            Some(OPT_MOVE_RIDE) => encode(
-                                FrameType::Resp,
-                                seq,
-                                &options_move_ride_payload(st.move_ride_ms),
-                            )
-                            .expect("resp fits"),
-                            Some(OPT_EMIT) => encode(
-                                FrameType::Resp,
-                                seq,
-                                &options_emit_payload(st.emit_pace),
-                            )
-                            .expect("resp fits"),
-                            _ => Vec::new(),
-                        },
                         _ => Vec::new(),
-                    }
-                } else {
-                    Vec::new()
+                    },
+                    _ => Vec::new(),
                 }
-            }));
+            } else {
+                Vec::new()
+            }
+        }));
 
         MockBox { state, transport }
     }

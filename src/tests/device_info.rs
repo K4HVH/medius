@@ -14,7 +14,10 @@ fn decode_version_with_mac() {
     let Some(Resp::Version(v)) = parse_resp(&p) else {
         panic!("expected Version");
     };
-    assert_eq!((v.proto_ver, v.fw_major, v.fw_minor, v.fw_patch), (2, 2, 3, 0));
+    assert_eq!(
+        (v.proto_ver, v.fw_major, v.fw_minor, v.fw_patch),
+        (2, 2, 3, 0)
+    );
     assert_eq!(v.mac, [0x5A, 0x4E, 0x11, 0x22, 0x1e, 0x28]);
     assert_eq!(v.mac_hex(), "5a4e11221e28");
     // A pre-mac (5-byte) VERSION no longer parses.
@@ -44,7 +47,9 @@ fn rate_decodes_continuous_vs_change_driven() {
 fn decode_device_info_exact_bytes() {
     // vid 0x046D, pid 0xC08B, bcdDevice 0x0110, bcdUSB 0x0200, flags HAS_SERIAL|HAS_BOS,
     // primary_kind MOUSE(2), product "Mamba".
-    let mut p = vec![2u8, 0x6D, 0x04, 0x8B, 0xC0, 0x10, 0x01, 0x00, 0x02, 0x03, 0x02];
+    let mut p = vec![
+        2u8, 0x6D, 0x04, 0x8B, 0xC0, 0x10, 0x01, 0x00, 0x02, 0x03, 0x02,
+    ];
     p.extend_from_slice(b"Mamba");
     let Some(Resp::DeviceInfo(m)) = parse_resp(&p) else {
         panic!("expected DeviceInfo");
