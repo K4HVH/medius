@@ -52,8 +52,8 @@ pub struct ClipStatus {
     pub overruns: u16,
     /// Append-sequence gaps seen (a dropped `CLIP_APPEND` frame).
     pub seq_gaps: u16,
-    /// Whether a catch-trigger button is currently held.
-    pub held: bool,
+    /// Bitmask of clip-injected mouse buttons the clip is currently holding down (bit `b` = button id `b`).
+    pub held: u8,
 }
 
 impl ClipStatus {
@@ -71,7 +71,7 @@ impl ClipStatus {
             underruns: u16::from_le_bytes([p[14], p[15]]),
             overruns: u16::from_le_bytes([p[16], p[17]]),
             seq_gaps: u16::from_le_bytes([p[18], p[19]]),
-            held: p[20] != 0,
+            held: p[20],
         })
     }
 }
@@ -125,6 +125,11 @@ impl ClipBuilder {
     /// all-zero frame with no edges still emits a report (a zero-motion tick, never a gap). At most
     /// [`CLIP_EDGES_MAX`] edges.
     pub fn frame(&mut self, dx: i16, dy: i16, wheel: i16, edges: &[(Input, Action)]) -> &mut Self {
+        debug_assert!(
+            edges.len() <= CLIP_EDGES_MAX,
+            "clip frame: {} edges exceeds CLIP_EDGES_MAX ({CLIP_EDGES_MAX})",
+            edges.len()
+        );
         let mut flags = 0u8;
         if dx != 0 || dy != 0 {
             flags |= CLIP_F_XY;

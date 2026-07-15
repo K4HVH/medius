@@ -112,7 +112,7 @@ fn decode_clip_status_through_parse_resp() {
             underruns: 3,
             overruns: 1,
             seq_gaps: 2,
-            held: true,
+            held: 1,
         }
     );
     assert!(parse_resp(&p[..20]).is_none()); // 20 bytes < 21
@@ -223,7 +223,7 @@ fn clip_status_roundtrips_through_the_mock() {
         underruns: 1,
         overruns: 2,
         seq_gaps: 1,
-        held: false,
+        held: 0,
     };
     let mock = MockBox::new().with_clip_status(status);
     let device = Device::with_mock(mock.clone());
