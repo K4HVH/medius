@@ -128,6 +128,22 @@ for _ in 0..1000 {
 }
 ```
 
+### Buffered clip playback
+
+For jitter-free playback, preload per-frame input into a device-side ring and let the box drain one entry per native frame — box-clocked, so it carries none of the host's scheduling jitter and none of the per-command send floor. Motion is a per-frame delta, edges (buttons/keys/media) are sticky until changed, and a gap run emits nothing for N frames. Pace top-ups off `status().free`.
+
+```rust
+use medius::{ClipBuilder, Button};
+
+let mut b = ClipBuilder::new();
+for _ in 0..1000 { b.move_by(1, 0); }  // 1000 frames of +1 dx, box-timed
+b.press(Button::Left).gap(20).release(Button::Left);
+
+let clip = device.clip();
+clip.append(&b)?;
+clip.start()?;                          // or clip.arm_catch(None)? to fire on a physical press
+```
+
 ### Queries
 
 ```rust
