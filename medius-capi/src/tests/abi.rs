@@ -722,6 +722,158 @@ fn free_null_handles_is_a_noop() {
         medius_device_free(ptr::null_mut());
         medius_event_stream_free(ptr::null_mut());
         medius_log_stream_free(ptr::null_mut());
+        medius_clip_free(ptr::null_mut());
+        medius_clip_builder_free(ptr::null_mut());
         medius_mock_free(ptr::null_mut());
+    }
+}
+
+#[test]
+fn clip_control_parity() {
+    assert_parity(
+        |d| {
+            let clip = d.clip();
+            clip.start().unwrap();
+            clip.start_autolock(0).unwrap();
+            clip.config(true, 5).unwrap();
+            clip.arm_catch(Some(medius::Button::Right)).unwrap();
+            clip.arm_catch(None).unwrap();
+            clip.disarm().unwrap();
+            clip.stop().unwrap();
+        },
+        |dev| unsafe {
+            let mut clip: *mut MediusClip = ptr::null_mut();
+            assert_eq!(medius_device_clip(dev, &mut clip), MediusStatus::Ok);
+            assert_eq!(medius_clip_start(clip), MediusStatus::Ok);
+            assert_eq!(medius_clip_start_autolock(clip, 0), MediusStatus::Ok);
+            assert_eq!(medius_clip_config(clip, true, 5), MediusStatus::Ok);
+            assert_eq!(
+                medius_clip_arm_catch(clip, MediusButton::Right),
+                MediusStatus::Ok
+            );
+            assert_eq!(medius_clip_arm_catch_any(clip), MediusStatus::Ok);
+            assert_eq!(medius_clip_disarm(clip), MediusStatus::Ok);
+            assert_eq!(medius_clip_stop(clip), MediusStatus::Ok);
+            medius_clip_free(clip);
+        },
+    );
+}
+
+#[test]
+fn clip_append_parity() {
+    // A clip past MAX_PAYLOAD so both paths chunk into the same whole-entry frames with the same seqs.
+    assert_parity(
+        |d| {
+            let mut b = medius::ClipBuilder::new();
+            for _ in 0..150 {
+                b.move_by(3, -2);
+            }
+            b.press(medius::Button::Left);
+            b.gap(4);
+            b.release(medius::Button::Left);
+            d.clip().append(&b).unwrap();
+        },
+        |dev| unsafe {
+            let builder = medius_clip_builder_new();
+            for _ in 0..150 {
+                assert_eq!(medius_clip_builder_move(builder, 3, -2), MediusStatus::Ok);
+            }
+            assert_eq!(
+                medius_clip_builder_press(builder, MediusButton::Left),
+                MediusStatus::Ok
+            );
+            assert_eq!(medius_clip_builder_gap(builder, 4), MediusStatus::Ok);
+            assert_eq!(
+                medius_clip_builder_release(builder, MediusButton::Left),
+                MediusStatus::Ok
+            );
+            let mut clip: *mut MediusClip = ptr::null_mut();
+            assert_eq!(medius_device_clip(dev, &mut clip), MediusStatus::Ok);
+            assert_eq!(medius_clip_append(clip, builder), MediusStatus::Ok);
+            medius_clip_free(clip);
+            medius_clip_builder_free(builder);
+        },
+    );
+}
+
+#[test]
+fn clip_builder_frame_edges_match_native() {
+    // The general multi-edge frame must encode the same bytes through the C edge structs as native.
+    assert_parity(
+        |d| {
+            let mut b = medius::ClipBuilder::new();
+            b.frame(
+                1,
+                2,
+                -1,
+                &[
+                    medius::ClipEdge::button(medius::Button::Left, medius::Action::Press),
+                    medius::ClipEdge::key(medius::Key::new(0x04), medius::Action::Press),
+                ],
+            );
+            d.clip().append(&b).unwrap();
+        },
+        |dev| unsafe {
+            let builder = medius_clip_builder_new();
+            let edges = [
+                medius_clip_edge_button(MediusButton::Left, MediusAction::Press),
+                medius_clip_edge_key(0x04, MediusAction::Press),
+            ];
+            assert_eq!(
+                medius_clip_builder_frame(builder, 1, 2, -1, edges.as_ptr(), edges.len()),
+                MediusStatus::Ok
+            );
+            let mut clip: *mut MediusClip = ptr::null_mut();
+            assert_eq!(medius_device_clip(dev, &mut clip), MediusStatus::Ok);
+            assert_eq!(medius_clip_append(clip, builder), MediusStatus::Ok);
+            medius_clip_free(clip);
+            medius_clip_builder_free(builder);
+        },
+    );
+}
+
+#[test]
+fn clip_status_query_returns_configured_value() {
+    let mock = medius_mock_new();
+    let status = MediusClipStatus {
+        state: MediusClipState::Playing,
+        free: 512,
+        used: 40,
+        ticks: 99,
+        underruns: 2,
+        overruns: 0,
+        seq_gaps: 1,
+        held: true,
+    };
+    unsafe { medius_mock_set_clip_status(mock, status) };
+    let mut dev: *mut MediusDevice = ptr::null_mut();
+    assert_eq!(
+        unsafe { medius_device_with_mock(mock, &mut dev) },
+        MediusStatus::Ok
+    );
+    let mut clip: *mut MediusClip = ptr::null_mut();
+    assert_eq!(
+        unsafe { medius_device_clip(dev, &mut clip) },
+        MediusStatus::Ok
+    );
+    let mut out = MediusClipStatus {
+        state: MediusClipState::Idle,
+        free: 0,
+        used: 0,
+        ticks: 0,
+        underruns: 0,
+        overruns: 0,
+        seq_gaps: 0,
+        held: false,
+    };
+    assert_eq!(
+        unsafe { medius_clip_status(clip, &mut out) },
+        MediusStatus::Ok
+    );
+    assert_eq!(out, status);
+    unsafe {
+        medius_clip_free(clip);
+        medius_device_free(dev);
+        medius_mock_free(mock);
     }
 }

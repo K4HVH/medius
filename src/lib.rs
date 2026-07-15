@@ -23,6 +23,7 @@ mod tests;
 
 pub use device::Device;
 pub use device::catch::EventStream;
+pub use device::clip::ClipHandle;
 pub use device::discover::BoxInfo;
 pub use device::logs::LogStream;
 pub use device::options::{EMIT_MAX_HZ, NAME_MAX};
@@ -31,14 +32,14 @@ pub use link::{DEFAULT_KEEPALIVE_CADENCE, DEFAULT_QUERY_TIMEOUT};
 pub use protocol::{DecodedFrame, FrameType};
 pub use transport::scan::find_medius;
 pub use types::{
-    Action, Blanket, Button, Caps, CatchEvent, CatchMask, CatchState, CountersSnapshot, DeviceInfo,
-    DeviceKind, EmitPace, EmitPaceStatus, Health, ImperfectStatus, Input, KbdCaps, Key,
-    KeyboardEvent, LedMode, LedTarget, LockClass, LockDirection, LockTarget, Locks, LogLevel,
-    LogLine, MediaEvent, MediaKey, Motion, MouseCaps, MouseEvent, PortInfo, Rate, RebootTarget,
-    Stats, Version,
+    Action, Blanket, Button, CLIP_EDGES_MAX, Caps, CatchEvent, CatchMask, CatchState, ClipBuilder,
+    ClipEdge, ClipState, ClipStatus, CountersSnapshot, DeviceInfo, DeviceKind, EmitPace,
+    EmitPaceStatus, Health, ImperfectStatus, Input, KbdCaps, Key, KeyboardEvent, LedMode,
+    LedTarget, LockClass, LockDirection, LockTarget, Locks, LogLevel, LogLine, MediaEvent,
+    MediaKey, Motion, MouseCaps, MouseEvent, PortInfo, Rate, RebootTarget, Stats, Version,
 };
 
 #[cfg(feature = "async")]
-pub use device::asyncv::AsyncDevice;
+pub use device::asyncv::{AsyncClipHandle, AsyncDevice};
 #[cfg(feature = "mock")]
 pub use mock::MockBox;

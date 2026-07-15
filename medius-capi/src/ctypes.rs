@@ -139,6 +139,8 @@ pub enum MediusFrameType {
     KbEvent = 0x0F,
     ConsEvent = 0x10,
     Option = 0x11,
+    ClipAppend = 0x12,
+    ClipCtrl = 0x13,
 }
 
 /// Which arm of a [`MediusCatchEvent`] is populated.
@@ -350,6 +352,45 @@ pub struct MediusEmitPaceStatus {
     pub mode: MediusEmitMode,
     pub fixed_hz: u16,
     pub resolved_hz: u16,
+}
+
+/// The device-side clip lifecycle state (`medius_clip_status`).
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MediusClipState {
+    /// No clip active.
+    Idle = 0,
+    /// A catch-trigger is armed; playback starts on the physical button edge.
+    Armed = 1,
+    /// Draining the ring, one entry per native frame.
+    Playing = 2,
+    /// An append was dropped or the ring overflowed; stop and re-preload.
+    Faulted = 3,
+}
+
+/// A snapshot of the device-side clip ring and playback counters. `free`/`used` pace top-ups;
+/// `state == Faulted` means re-sync (stop + rebuild).
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MediusClipStatus {
+    pub state: MediusClipState,
+    pub free: u32,
+    pub used: u32,
+    pub ticks: u32,
+    pub underruns: u16,
+    pub overruns: u16,
+    pub seq_gaps: u16,
+    pub held: bool,
+}
+
+/// One clip edge: an injection action on a class/id, for `medius_clip_builder_frame`. Build with
+/// `medius_clip_edge_button`/`_key`/`_media`.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MediusClipEdge {
+    pub id: u16,
+    pub class: u8,
+    pub action: u8,
 }
 
 /// Host-side always-on counters.

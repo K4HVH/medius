@@ -6,6 +6,7 @@
 
 #![allow(clippy::missing_safety_doc)]
 
+mod clip;
 mod convert;
 mod ctypes;
 mod device;
@@ -22,6 +23,7 @@ mod mock;
 #[cfg(test)]
 mod tests;
 
+pub use clip::*;
 pub use ctypes::*;
 pub use device::*;
 pub use error::*;

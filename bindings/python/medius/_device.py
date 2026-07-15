@@ -8,6 +8,7 @@ from typing import Optional
 from . import _native
 from ._enums import Action, Blanket, Button, CatchMask, LedMode, LedTarget, LockDirection, RebootTarget, Status
 from ._errors import MediusError, check
+from ._clip import ClipHandle
 from ._streams import EventStream, LogStream
 from ._types import (
     Caps,
@@ -295,6 +296,16 @@ class Device:
         out = _native.MediusCountersSnapshot()
         check(_native.lib.medius_device_counters(self._handle, ctypes.byref(out)))
         return counters_from_c(out)
+
+    # --- clip playback ---
+
+    def clip(self) -> ClipHandle:
+        """A handle to this box's buffered-clip playback (§3.11): preload per-frame input into a
+        device-side ring, then let the box drain it one entry per native frame (box-clocked). Keep one
+        handle per clip session and top it up with `ClipHandle.append`."""
+        out = ctypes.c_void_p()
+        check(_native.lib.medius_device_clip(self._handle, ctypes.byref(out)))
+        return ClipHandle(out.value, self)
 
     # --- streams ---
 

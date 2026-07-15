@@ -1,5 +1,6 @@
 use super::opcode::{
-    INJ_MOTION_CURSOR, INJ_MOTION_WHEEL, OPT_EMIT, OPT_IMPERFECT, OPT_MOVE_RIDE, OPT_NAME,
+    CLIP_CFG_AUTOLOCK, CLIP_OP_ARM_CATCH, INJ_MOTION_CURSOR, INJ_MOTION_WHEEL, OPT_EMIT,
+    OPT_IMPERFECT, OPT_MOVE_RIDE, OPT_NAME,
 };
 
 /// `MOVE` cursor (§3.1): `[motion=0][dx i16 LE][dy i16 LE]`, no clamp (firmware clamps with carry).
@@ -60,6 +61,25 @@ pub fn emit_pace_payload(mode: u8, hz: u16) -> [u8; 4] {
     let h = hz.to_le_bytes();
     [OPT_EMIT, mode, h[0], h[1]]
 }
+/// `CLIP_CTRL(START)` / `CLIP_CTRL(CONFIG)` (§3.11): `[op][cfg u8][lock_mask u16 LE]`. `cfg` bit 0 =
+/// auto-lock the physical mouse while playing; `lock_mask` picks the mouse targets (0 = all axes+buttons).
+pub fn clip_cfg_payload(op: u8, autolock: bool, lock_mask: u16) -> [u8; 4] {
+    let m = lock_mask.to_le_bytes();
+    [op, if autolock { CLIP_CFG_AUTOLOCK } else { 0 }, m[0], m[1]]
+}
+
+/// `CLIP_CTRL(ARM_CATCH)` (§3.11): `[op][cond_class u8][cond_id u16 LE]` — fire START on a physical edge of
+/// the given button class/id (`cond_id` 0xFFFF = any button in the class).
+pub fn clip_arm_payload(cond_class: u8, cond_id: u16) -> [u8; 4] {
+    let id = cond_id.to_le_bytes();
+    [CLIP_OP_ARM_CATCH, cond_class, id[0], id[1]]
+}
+
+/// `CLIP_CTRL` single-byte op (STOP / DISARM) (§3.11): `[op]`.
+pub fn clip_op_payload(op: u8) -> [u8; 1] {
+    [op]
+}
+
 /// `OPTION(NAME)` set value: the id byte followed by the name's ASCII bytes (variable-length, unlike the
 /// fixed-size siblings). An empty `name` sends just the id — the box reads that as "clear to the default".
 /// The caller validates the name; the firmware also keeps only the leading printable run, capped at 32.

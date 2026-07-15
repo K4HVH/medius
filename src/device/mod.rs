@@ -3,6 +3,7 @@ pub(crate) mod admin;
 pub(crate) mod asyncv;
 pub(crate) mod buttons;
 pub(crate) mod catch;
+pub(crate) mod clip;
 pub(crate) mod connect;
 pub(crate) mod discover;
 pub(crate) mod inject;

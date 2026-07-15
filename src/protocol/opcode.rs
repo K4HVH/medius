@@ -48,6 +48,22 @@ pub const OPT_EMIT: u8 = 2;
 /// default. Set-only: read the name off `RESP(VERSION)` ([`Version::name`](crate::Version)), not `QUERY(OPTIONS)`.
 pub const OPT_NAME: u8 = 3;
 
+/// Buffered-clip status selector: `QUERY [Q_CLIP]` → `RESP(CLIP)` (§4.15).
+pub const Q_CLIP: u8 = 10;
+/// `CLIP_CTRL` sub-ops.
+pub const CLIP_OP_START: u8 = 0;
+pub const CLIP_OP_STOP: u8 = 1;
+pub const CLIP_OP_ARM_CATCH: u8 = 2;
+pub const CLIP_OP_DISARM: u8 = 3;
+pub const CLIP_OP_CONFIG: u8 = 4;
+/// `START`/`CONFIG` config byte: auto-lock physical input while playing (clip-owned).
+pub const CLIP_CFG_AUTOLOCK: u8 = 0x01;
+/// Clip entry tags/flags (see [`ClipBuilder`](crate::ClipBuilder)).
+pub const CLIP_TAG_GAP: u8 = 0x00;
+pub const CLIP_F_XY: u8 = 0x01;
+pub const CLIP_F_WHEEL: u8 = 0x02;
+pub const CLIP_F_EDGES: u8 = 0x04;
+
 pub const BTN_LEFT: u8 = 0;
 pub const BTN_RIGHT: u8 = 1;
 pub const BTN_MIDDLE: u8 = 2;
@@ -164,6 +180,10 @@ pub enum FrameType {
     /// `OPTION` — set a persistent box option by id (imperfect-clone, movement riding, emit pacing, box
     /// name) (PC→box).
     Option = 0x11,
+    /// `CLIP_APPEND` — append buffered-clip entries to the device ring; `SEQ` = append seq (PC→box).
+    ClipAppend = 0x12,
+    /// `CLIP_CTRL` — start/stop/arm/config buffered clip playback (PC→box).
+    ClipCtrl = 0x13,
 }
 
 /// Error returned when a byte does not name a known [`FrameType`].
@@ -197,6 +217,8 @@ impl TryFrom<u8> for FrameType {
             0x0F => FrameType::KbEvent,
             0x10 => FrameType::ConsEvent,
             0x11 => FrameType::Option,
+            0x12 => FrameType::ClipAppend,
+            0x13 => FrameType::ClipCtrl,
             other => return Err(UnknownFrameType(other)),
         })
     }

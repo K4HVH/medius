@@ -172,6 +172,23 @@ class MediusEmitPaceStatus(ctypes.Structure):
     _fields_ = [("mode", u8), ("fixed_hz", u16), ("resolved_hz", u16)]
 
 
+class MediusClipStatus(ctypes.Structure):
+    _fields_ = [
+        ("state", u8),
+        ("free", u32),
+        ("used", u32),
+        ("ticks", u32),
+        ("underruns", u16),
+        ("overruns", u16),
+        ("seq_gaps", u16),
+        ("held", c_bool),
+    ]
+
+
+class MediusClipEdge(ctypes.Structure):
+    _fields_ = [("id", u16), ("cls", u8), ("action", u8)]
+
+
 class MediusCountersSnapshot(ctypes.Structure):
     _fields_ = [("frames_tx", u64), ("frames_rx", u64), ("crc_drops", u64), ("reconnects", u64)]
 
@@ -360,6 +377,34 @@ _decl("medius_log_stream_recv", i32, [HANDLE, ctypes.POINTER(MediusLogLine)])
 _decl("medius_log_stream_try_recv", c_bool, [HANDLE, ctypes.POINTER(MediusLogLine)])
 _decl("medius_log_stream_recv_timeout", c_bool, [HANDLE, u64, ctypes.POINTER(MediusLogLine)])
 
+# --- clip: builder + handle ---
+_decl("medius_clip_builder_new", HANDLE, [])
+_decl("medius_clip_builder_free", None, [HANDLE])
+_decl("medius_clip_builder_clear", i32, [HANDLE])
+_decl("medius_clip_builder_gap", i32, [HANDLE, u16])
+_decl("medius_clip_builder_move", i32, [HANDLE, i16, i16])
+_decl("medius_clip_builder_wheel", i32, [HANDLE, i16])
+_decl("medius_clip_builder_press", i32, [HANDLE, u8])
+_decl("medius_clip_builder_release", i32, [HANDLE, u8])
+_decl("medius_clip_builder_force_release", i32, [HANDLE, u8])
+_decl("medius_clip_builder_key", i32, [HANDLE, u8, u8])
+_decl("medius_clip_builder_media", i32, [HANDLE, u16, u8])
+_decl("medius_clip_builder_frame", i32, [HANDLE, i16, i16, i16, ctypes.POINTER(MediusClipEdge), usize])
+_decl("medius_clip_edge_button", MediusClipEdge, [u8, u8])
+_decl("medius_clip_edge_key", MediusClipEdge, [u8, u8])
+_decl("medius_clip_edge_media", MediusClipEdge, [u16, u8])
+_decl("medius_device_clip", i32, [HANDLE, PHANDLE])
+_decl("medius_clip_free", None, [HANDLE])
+_decl("medius_clip_append", i32, [HANDLE, HANDLE])
+_decl("medius_clip_start", i32, [HANDLE])
+_decl("medius_clip_start_autolock", i32, [HANDLE, u16])
+_decl("medius_clip_stop", i32, [HANDLE])
+_decl("medius_clip_config", i32, [HANDLE, c_bool, u16])
+_decl("medius_clip_arm_catch", i32, [HANDLE, u8])
+_decl("medius_clip_arm_catch_any", i32, [HANDLE])
+_decl("medius_clip_disarm", i32, [HANDLE])
+_decl("medius_clip_status", i32, [HANDLE, ctypes.POINTER(MediusClipStatus)])
+
 # --- flash (feature-gated, optional) ---
 HAS_FLASH = _decl("medius_flash", i32, [ctypes.c_char_p, ctypes.c_char_p, c_bool], optional=True) is not None
 
@@ -381,6 +426,7 @@ if HAS_MOCK:
     _decl("medius_mock_set_imperfect_status", None, [HANDLE, MediusImperfectStatus])
     _decl("medius_mock_set_movement_riding", None, [HANDLE, c_bool, u32])
     _decl("medius_mock_set_emit_pace", None, [HANDLE, u8, u16])
+    _decl("medius_mock_set_clip_status", None, [HANDLE, MediusClipStatus])
     _decl("medius_mock_silent", None, [HANDLE])
     _decl("medius_mock_push_raw", None, [HANDLE, ctypes.POINTER(u8), usize])
     _decl("medius_mock_push_log", None, [HANDLE, u8, ctypes.c_char_p])

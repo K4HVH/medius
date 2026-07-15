@@ -19,8 +19,8 @@ mod linux {
     use std::time::{Duration, Instant};
 
     use medius::{
-        Action, Blanket, Button, CatchMask, Device, EmitPace, Key, LedMode, LedTarget,
-        LockDirection, LockTarget, MediaKey, RebootTarget,
+        Action, Blanket, Button, CatchMask, ClipBuilder, ClipState, Device, EmitPace, Key, LedMode,
+        LedTarget, LockDirection, LockTarget, MediaKey, RebootTarget,
     };
 
     const EVIOCGRAB: libc::c_ulong = 0x4004_4590;
@@ -647,6 +647,36 @@ mod linux {
                 "move diagonal",
                 x == 500 && y == 250,
                 format!("expected X=500 Y=250, observed X={x} Y={y}"),
+            );
+        }
+
+        {
+            // Buffered clip playback: preload 200 move(10,0) entries, start, and confirm the box clocks
+            // them out to a frame-exact REL_X=2000 (the same total as live injection, box-timed). Also
+            // exercises the ring depth + tick counters and the stop→idle transition.
+            let dev = device.as_ref().unwrap();
+            let _ = dev.reset();
+            reset_motion(&acc);
+            let clip = dev.clip();
+            let mut b = ClipBuilder::new();
+            for _ in 0..200 {
+                b.move_by(10, 0);
+            }
+            let appended = clip.append(&b).is_ok();
+            let armed = clip.status().map(|s| s.used > 0).unwrap_or(false);
+            let started = clip.start().is_ok();
+            std::thread::sleep(Duration::from_millis(600));
+            let x = acc.rel_x.load(Ordering::Relaxed);
+            let played = clip.status().map(|s| s.ticks >= 200).unwrap_or(false);
+            let stopped = clip.stop().is_ok();
+            std::thread::sleep(Duration::from_millis(60));
+            let idle = matches!(clip.status(), Ok(s) if s.state == ClipState::Idle);
+            check(
+                "clip playback",
+                appended && armed && started && x == 2000 && played && stopped && idle,
+                format!(
+                    "appended={appended} armed={armed} started={started} REL_X={x} (want 2000) played={played} stopped={stopped} idle={idle}"
+                ),
             );
         }
 

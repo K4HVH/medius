@@ -3,12 +3,12 @@
 use std::time::Duration;
 
 use super::opcode::{
-    OPT_EMIT, OPT_IMPERFECT, OPT_MOVE_RIDE, Q_CAPS, Q_CATCH, Q_DEVICE_INFO, Q_HEALTH, Q_LOCKS,
-    Q_OPTIONS, Q_RATE, Q_STATS, Q_VERSION,
+    OPT_EMIT, OPT_IMPERFECT, OPT_MOVE_RIDE, Q_CAPS, Q_CATCH, Q_CLIP, Q_DEVICE_INFO, Q_HEALTH,
+    Q_LOCKS, Q_OPTIONS, Q_RATE, Q_STATS, Q_VERSION,
 };
 use crate::types::{
-    Caps, CatchState, DeviceInfo, EmitPaceStatus, Health, ImperfectStatus, Locks, LogLevel,
-    LogLine, Rate, Stats, Version,
+    Caps, CatchState, ClipStatus, DeviceInfo, EmitPaceStatus, Health, ImperfectStatus, Locks,
+    LogLevel, LogLine, Rate, Stats, Version,
 };
 
 /// A decoded `RESP` (§4.1), keyed by the `what` selector at `payload[0]`.
@@ -27,6 +27,8 @@ pub enum Resp {
     MovementRiding(Option<Duration>),
     /// `RESP(OPTIONS, EMIT)` — the emit-rate pacing mode and the rate in effect.
     EmitPace(EmitPaceStatus),
+    /// `RESP(CLIP)` — the device-side clip ring and playback status.
+    Clip(ClipStatus),
 }
 
 /// Parse a `RESP` payload (§4.1): `[what u8][data..]`.
@@ -62,6 +64,7 @@ pub fn parse_resp(payload: &[u8]) -> Option<Resp> {
         Q_STATS => Stats::from_payload(payload).map(Resp::Stats),
         Q_LOCKS => Locks::from_payload(payload).map(Resp::Locks),
         Q_CATCH => CatchState::from_payload(payload).map(Resp::Catch),
+        Q_CLIP => ClipStatus::from_payload(payload).map(Resp::Clip),
         Q_OPTIONS => {
             let id = *payload.get(1)?;
             match id {

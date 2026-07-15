@@ -12,8 +12,9 @@ use crate::protocol::opcode::{
 use crate::protocol::{DecodedFrame, FrameType, encode};
 use crate::transport::mock::MockTransport;
 use crate::types::{
-    Caps, CatchState, DeviceInfo, DeviceKind, EmitPace, Health, ImperfectStatus, KbdCaps,
-    KeyboardEvent, Locks, LogLevel, MediaEvent, MouseCaps, MouseEvent, Rate, Stats, Version,
+    Caps, CatchState, ClipState, ClipStatus, DeviceInfo, DeviceKind, EmitPace, Health,
+    ImperfectStatus, KbdCaps, KeyboardEvent, Locks, LogLevel, MediaEvent, MouseCaps, MouseEvent,
+    Rate, Stats, Version,
 };
 
 #[derive(Debug)]
@@ -29,6 +30,7 @@ struct State {
     imperfect: ImperfectStatus,
     move_ride_ms: u16,
     emit_pace: EmitPace,
+    clip: ClipStatus,
     recorded: Vec<DecodedFrame>,
     respond: bool,
 }
@@ -55,6 +57,7 @@ impl Default for State {
             imperfect: ImperfectStatus::default(),
             move_ride_ms: 0,
             emit_pace: EmitPace::Learned,
+            clip: ClipStatus::default(),
             recorded: Vec::new(),
             respond: true,
         }
@@ -201,6 +204,26 @@ fn options_emit_payload(pace: EmitPace) -> Vec<u8> {
     p
 }
 
+fn clip_status_payload(c: ClipStatus) -> Vec<u8> {
+    // RESP(CLIP): [what=10][state][free u32][used u32][ticks u32][underruns u16][overruns u16]
+    // [seq_gaps u16][held u8]
+    let state = match c.state {
+        ClipState::Idle => 0u8,
+        ClipState::Armed => 1,
+        ClipState::Playing => 2,
+        ClipState::Faulted => 3,
+    };
+    let mut p = vec![10u8, state];
+    p.extend_from_slice(&c.free.to_le_bytes());
+    p.extend_from_slice(&c.used.to_le_bytes());
+    p.extend_from_slice(&c.ticks.to_le_bytes());
+    p.extend_from_slice(&c.underruns.to_le_bytes());
+    p.extend_from_slice(&c.overruns.to_le_bytes());
+    p.extend_from_slice(&c.seq_gaps.to_le_bytes());
+    p.push(c.held as u8);
+    p
+}
+
 fn kb_event_payload(e: &KeyboardEvent) -> Vec<u8> {
     let mut p = vec![e.modifiers, e.keys.len() as u8];
     p.extend(e.keys.iter().map(|k| k.usage()));
@@ -297,6 +320,8 @@ impl MockBox {
                         }
                         _ => Vec::new(),
                     },
+                    Some(10) => encode(FrameType::Resp, seq, &clip_status_payload(st.clip))
+                        .expect("resp fits"),
                     _ => Vec::new(),
                 }
             } else {
@@ -425,6 +450,18 @@ impl MockBox {
     /// Update the configured [`EmitPace`] answered to `QUERY(OPTIONS, EMIT)` in place.
     pub fn set_emit_pace(&self, pace: EmitPace) {
         self.state.lock().emit_pace = pace;
+    }
+
+    /// Set the [`ClipStatus`] answered to `QUERY(CLIP)` (builder style).
+    #[must_use]
+    pub fn with_clip_status(self, clip: ClipStatus) -> Self {
+        self.state.lock().clip = clip;
+        self
+    }
+
+    /// Update the [`ClipStatus`] answered to `QUERY(CLIP)` in place (e.g. to simulate the ring draining).
+    pub fn set_clip_status(&self, clip: ClipStatus) {
+        self.state.lock().clip = clip;
     }
 
     /// Make the box unresponsive (builder style): it records commands but never answers a `QUERY`.

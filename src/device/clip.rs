@@ -1,0 +1,132 @@
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU8, Ordering};
+
+use crate::error::{Error, Result};
+use crate::link::Link;
+use crate::protocol::command::{clip_arm_payload, clip_cfg_payload, clip_op_payload};
+use crate::protocol::opcode::{
+    CLIP_OP_CONFIG, CLIP_OP_DISARM, CLIP_OP_START, CLIP_OP_STOP, INJ_BTN, MAX_PAYLOAD, Q_CLIP,
+};
+use crate::protocol::{FrameType, Resp, parse_resp};
+use crate::types::{Button, ClipBuilder, ClipStatus};
+
+use super::Device;
+
+impl Device {
+    /// A handle to this box's buffered-clip playback (§3.11): preload per-frame input into a device-side
+    /// ring, then let the box drain one entry per native frame — box-clocked, so it carries none of the
+    /// host's scheduling jitter and none of the per-command send floor. The clip rides the same rate pacing
+    /// and movement riding as live injection; it never overrides them.
+    ///
+    /// The handle owns the append-sequence counter the box uses for drop detection, so keep one handle for a
+    /// clip session and top it up with [`append`](crate::ClipHandle::append). Playback is RAM-backed and
+    /// transient: a box reboot or reconnect drops it, so re-preload after one.
+    pub fn clip(&self) -> ClipHandle {
+        ClipHandle {
+            link: self.link.clone(),
+            seq: Arc::new(AtomicU8::new(0)),
+        }
+    }
+}
+
+/// A handle to one box's buffered-clip playback, from [`Device::clip`]. Cloning shares the same
+/// append-sequence counter.
+#[derive(Clone, Debug)]
+pub struct ClipHandle {
+    link: Link,
+    seq: Arc<AtomicU8>,
+}
+
+impl ClipHandle {
+    #[cfg_attr(not(feature = "async"), allow(dead_code))]
+    pub(crate) fn link(&self) -> &Link {
+        &self.link
+    }
+
+    fn send_chunk(&self, chunk: &[u8]) -> Result<()> {
+        let seq = self.seq.fetch_add(1, Ordering::Relaxed);
+        self.link.send_with_seq(seq, FrameType::ClipAppend, chunk)
+    }
+
+    /// Append the builder's entries to the ring. Large clips split into whole-entry frames (never a partial
+    /// entry), each stamped with the next append-sequence number so the box flags a dropped frame. Empty is
+    /// a no-op. Fire-and-forget: flow-control by keeping [`status`](Self::status)`.free` above what you push.
+    pub fn append(&self, clip: &ClipBuilder) -> Result<()> {
+        if clip.is_empty() {
+            return Ok(());
+        }
+        let bytes = clip.as_bytes();
+        let mut chunk_start = 0usize;
+        let mut last_end = 0usize;
+        for &end in clip.entry_ends() {
+            if end - chunk_start > MAX_PAYLOAD {
+                self.send_chunk(&bytes[chunk_start..last_end])?;
+                chunk_start = last_end;
+            }
+            last_end = end;
+        }
+        if chunk_start < last_end {
+            self.send_chunk(&bytes[chunk_start..last_end])?;
+        }
+        Ok(())
+    }
+
+    /// `CLIP_CTRL(START)` — begin playback from the ring head. Fire-and-forget.
+    pub fn start(&self) -> Result<()> {
+        self.link.send(
+            FrameType::ClipCtrl,
+            &clip_cfg_payload(CLIP_OP_START, false, 0),
+        )
+    }
+
+    /// `CLIP_CTRL(START)` with clip-owned auto-lock — the box locks the physical mouse targets it drives
+    /// (that the host hasn't already locked) for the duration, releasing them on [`stop`](Self::stop). A
+    /// lock the host set itself is untouched. `lock_mask` = 0 locks all mouse axes+buttons. Fire-and-forget.
+    pub fn start_autolock(&self, lock_mask: u16) -> Result<()> {
+        self.link.send(
+            FrameType::ClipCtrl,
+            &clip_cfg_payload(CLIP_OP_START, true, lock_mask),
+        )
+    }
+
+    /// `CLIP_CTRL(STOP)` — stop playback, flush the ring, and release any clip-owned auto-lock.
+    /// Fire-and-forget.
+    pub fn stop(&self) -> Result<()> {
+        self.link
+            .send(FrameType::ClipCtrl, &clip_op_payload(CLIP_OP_STOP))
+    }
+
+    /// `CLIP_CTRL(CONFIG)` — set the auto-lock options a later start (including a catch-triggered one) uses,
+    /// without starting. Fire-and-forget.
+    pub fn config(&self, autolock: bool, lock_mask: u16) -> Result<()> {
+        self.link.send(
+            FrameType::ClipCtrl,
+            &clip_cfg_payload(CLIP_OP_CONFIG, autolock, lock_mask),
+        )
+    }
+
+    /// `CLIP_CTRL(ARM_CATCH)` — arm an on-device trigger: playback starts locally on a physical press of
+    /// `button` (or any mouse button if `None`), so even the first emitted frame has no host round-trip.
+    /// Preload the ring and optionally [`config`](Self::config) the auto-lock first. Fire-and-forget.
+    pub fn arm_catch(&self, button: Option<Button>) -> Result<()> {
+        let id = button.map(|b| b.as_id() as u16).unwrap_or(0xFFFF);
+        self.link
+            .send(FrameType::ClipCtrl, &clip_arm_payload(INJ_BTN, id))
+    }
+
+    /// `CLIP_CTRL(DISARM)` — clear a pending catch-arm. Fire-and-forget.
+    pub fn disarm(&self) -> Result<()> {
+        self.link
+            .send(FrameType::ClipCtrl, &clip_op_payload(CLIP_OP_DISARM))
+    }
+
+    /// `QUERY(CLIP)` — the device-side ring depth (`free`/`used` to pace top-ups) and playback counters
+    /// (§4.15). A [`ClipState::Faulted`](crate::ClipState::Faulted) state means re-sync (stop + rebuild).
+    pub fn status(&self) -> Result<ClipStatus> {
+        let payload = self.link.query(Q_CLIP)?;
+        match parse_resp(&payload) {
+            Some(Resp::Clip(s)) => Ok(s),
+            _ => Err(Error::NoReply),
+        }
+    }
+}

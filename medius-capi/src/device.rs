@@ -708,7 +708,8 @@ pub extern "C" fn medius_default_keepalive_cadence_ms() -> u32 {
 }
 
 /// The C ABI version. Bumped on any breaking change to this header.
-/// 2: `MediusVersion` grew a `name` field and `medius_device_set_name`/`_clear_name` were added (v2.4.0).
+/// 2: `MediusVersion` grew a `name` field and `medius_device_set_name`/`_clear_name` were added, and
+/// buffered clip playback (`medius_device_clip`, the `medius_clip_*` handle/builder calls) landed (v2.4.0).
 #[unsafe(no_mangle)]
 pub extern "C" fn medius_abi_version() -> u32 {
     2
