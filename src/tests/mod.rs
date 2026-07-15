@@ -1,6 +1,7 @@
 mod async_query;
 mod behavior;
 mod catch;
+mod clip;
 mod concurrency;
 mod device_info;
 mod keepalive;

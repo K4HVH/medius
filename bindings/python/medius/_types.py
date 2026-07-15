@@ -8,8 +8,10 @@ from typing import List, Optional, Union
 
 from . import _native
 from ._enums import (
+    Action,
     Button,
     CatchEventKind,
+    ClipState,
     DeviceKind,
     EmitMode,
     LockTargetKind,
@@ -532,6 +534,55 @@ def imperfect_to_c(i) -> "_native.MediusImperfectStatus":
 def emit_pace_status_from_c(c) -> EmitPaceStatus:
     mode = EmitMode(c.mode)
     return EmitPaceStatus(EmitPace(mode, c.fixed_hz), c.resolved_hz)
+
+
+@dataclass(frozen=True)
+class ClipEdge:
+    """One clip edge for `ClipBuilder.frame`. Build with `ClipEdge.button/key/media`."""
+
+    cls: int
+    id: int
+    action: int
+
+    @classmethod
+    def button(cls, button: Button, action: Action = Action.PRESS) -> "ClipEdge":
+        return cls(0, int(button), int(action))
+
+    @classmethod
+    def key(cls, usage, action: Action = Action.PRESS) -> "ClipEdge":
+        return cls(1, int(usage), int(action))
+
+    @classmethod
+    def media(cls, usage, action: Action = Action.PRESS) -> "ClipEdge":
+        return cls(2, int(usage), int(action))
+
+
+@dataclass
+class ClipStatus:
+    """The device-side clip ring and playback status. `free`/`used` pace top-ups; `state == FAULTED`
+    means re-sync (stop + rebuild)."""
+
+    state: ClipState
+    free: int
+    used: int
+    ticks: int
+    underruns: int
+    overruns: int
+    seq_gaps: int
+    held: bool
+
+
+def clip_status_from_c(c) -> ClipStatus:
+    return ClipStatus(
+        ClipState(c.state),
+        c.free,
+        c.used,
+        c.ticks,
+        c.underruns,
+        c.overruns,
+        c.seq_gaps,
+        bool(c.held),
+    )
 
 
 def counters_from_c(c) -> Counters:

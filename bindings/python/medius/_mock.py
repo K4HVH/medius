@@ -12,6 +12,7 @@ from ._enums import FrameType, LogLevel
 from ._types import (
     Caps,
     CatchState,
+    ClipStatus,
     EmitPace,
     Health,
     ImperfectStatus,
@@ -116,6 +117,20 @@ class MockBox:
 
     def set_emit_pace(self, pace: EmitPace):
         _native.lib.medius_mock_set_emit_pace(self._handle, int(pace.mode), int(pace.hz))
+
+    def set_clip_status(self, status: ClipStatus):
+        """Set the `ClipStatus` the mock answers to `ClipHandle.status`."""
+        c = _native.MediusClipStatus(
+            int(status.state),
+            status.free,
+            status.used,
+            status.ticks,
+            status.underruns,
+            status.overruns,
+            status.seq_gaps,
+            bool(status.held),
+        )
+        _native.lib.medius_mock_set_clip_status(self._handle, c)
 
     def silent(self):
         """Make the mock stop answering queries (one-way, for timeout tests)."""

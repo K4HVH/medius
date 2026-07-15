@@ -7,11 +7,11 @@
 use std::os::raw::c_char;
 
 use medius::{
-    Action, Blanket, BoxInfo, Button, Caps, CatchEvent, CatchMask, CatchState, CountersSnapshot,
-    DeviceInfo, DeviceKind, EmitPace, EmitPaceStatus, Health, ImperfectStatus, Input, KbdCaps, Key,
-    KeyboardEvent, LedMode, LedTarget, LockDirection, LockTarget, Locks, LogLevel, LogLine,
-    MediaEvent, MediaKey, Motion, MouseCaps, MouseEvent, PortInfo, Rate, RebootTarget, Stats,
-    Version,
+    Action, Blanket, BoxInfo, Button, Caps, CatchEvent, CatchMask, CatchState, ClipState,
+    ClipStatus, CountersSnapshot, DeviceInfo, DeviceKind, EmitPace, EmitPaceStatus, Health,
+    ImperfectStatus, Input, KbdCaps, Key, KeyboardEvent, LedMode, LedTarget, LockDirection,
+    LockTarget, Locks, LogLevel, LogLine, MediaEvent, MediaKey, Motion, MouseCaps, MouseEvent,
+    PortInfo, Rate, RebootTarget, Stats, Version,
 };
 
 use crate::ctypes::*;
@@ -319,6 +319,58 @@ impl From<ImperfectStatus> for MediusImperfectStatus {
     }
 }
 
+impl From<ClipState> for MediusClipState {
+    fn from(s: ClipState) -> Self {
+        match s {
+            ClipState::Idle => MediusClipState::Idle,
+            ClipState::Armed => MediusClipState::Armed,
+            ClipState::Playing => MediusClipState::Playing,
+            ClipState::Faulted => MediusClipState::Faulted,
+        }
+    }
+}
+
+impl From<ClipStatus> for MediusClipStatus {
+    fn from(s: ClipStatus) -> Self {
+        MediusClipStatus {
+            state: s.state.into(),
+            free: s.free,
+            used: s.used,
+            ticks: s.ticks,
+            underruns: s.underruns,
+            overruns: s.overruns,
+            seq_gaps: s.seq_gaps,
+            held: s.held,
+        }
+    }
+}
+
+impl From<MediusClipState> for ClipState {
+    fn from(s: MediusClipState) -> Self {
+        match s {
+            MediusClipState::Idle => ClipState::Idle,
+            MediusClipState::Armed => ClipState::Armed,
+            MediusClipState::Playing => ClipState::Playing,
+            MediusClipState::Faulted => ClipState::Faulted,
+        }
+    }
+}
+
+impl From<MediusClipStatus> for ClipStatus {
+    fn from(s: MediusClipStatus) -> Self {
+        ClipStatus {
+            state: s.state.into(),
+            free: s.free,
+            used: s.used,
+            ticks: s.ticks,
+            underruns: s.underruns,
+            overruns: s.overruns,
+            seq_gaps: s.seq_gaps,
+            held: s.held,
+        }
+    }
+}
+
 impl From<EmitPaceStatus> for MediusEmitPaceStatus {
     fn from(s: EmitPaceStatus) -> Self {
         let (mode, fixed_hz) = match s.mode {
@@ -622,6 +674,8 @@ impl From<medius::FrameType> for MediusFrameType {
             F::KbEvent => MediusFrameType::KbEvent,
             F::ConsEvent => MediusFrameType::ConsEvent,
             F::Option => MediusFrameType::Option,
+            F::ClipAppend => MediusFrameType::ClipAppend,
+            F::ClipCtrl => MediusFrameType::ClipCtrl,
         }
     }
 }

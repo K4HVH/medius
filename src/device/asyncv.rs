@@ -3,18 +3,20 @@ use std::time::Duration;
 use crate::error::{Error, Result};
 use crate::link::Link;
 use crate::protocol::opcode::{
-    OPT_EMIT, OPT_IMPERFECT, OPT_MOVE_RIDE, Q_CAPS, Q_CATCH, Q_DEVICE_INFO, Q_HEALTH, Q_LOCKS,
-    Q_RATE, Q_STATS, Q_VERSION,
+    OPT_EMIT, OPT_IMPERFECT, OPT_MOVE_RIDE, Q_CAPS, Q_CATCH, Q_CLIP, Q_DEVICE_INFO, Q_HEALTH,
+    Q_LOCKS, Q_RATE, Q_STATS, Q_VERSION,
 };
 use crate::protocol::{Resp, parse_resp};
 use crate::types::{
-    Action, Blanket, Button, Caps, CatchMask, CatchState, CountersSnapshot, DeviceInfo, EmitPace,
-    EmitPaceStatus, Health, ImperfectStatus, Input, Key, LedMode, LedTarget, LockDirection,
-    LockTarget, Locks, MediaKey, Motion, Rate, RebootTarget, Stats, Version,
+    Action, Blanket, Button, Caps, CatchMask, CatchState, ClipBuilder, ClipStatus,
+    CountersSnapshot, DeviceInfo, EmitPace, EmitPaceStatus, Health, ImperfectStatus, Input, Key,
+    LedMode, LedTarget, LockDirection, LockTarget, Locks, MediaKey, Motion, Rate, RebootTarget,
+    Stats, Version,
 };
 
 use super::Device;
 use super::catch::EventStream;
+use super::clip::ClipHandle;
 use super::discover::BoxInfo;
 use super::logs::LogStream;
 
@@ -367,6 +369,14 @@ impl AsyncDevice {
         }
     }
 
+    /// Buffered-clip playback over the async view (§3.11); see [`Device::clip`]. The append/control methods
+    /// are instant (fire-and-forget); [`AsyncClipHandle::status`] is async.
+    pub fn clip(&self) -> AsyncClipHandle {
+        AsyncClipHandle {
+            inner: self.dev().clip(),
+        }
+    }
+
     /// Open a device at `path` and wrap it as an [`AsyncDevice`].
     pub fn open(path: impl AsRef<std::path::Path>) -> Result<AsyncDevice> {
         Ok(Device::open(path)?.into_async())
@@ -395,5 +405,66 @@ impl AsyncDevice {
     /// Open the first box whose clone is a keyboard. See [`Device::find_keyboard_box`].
     pub fn find_keyboard_box() -> Result<AsyncDevice> {
         Ok(Device::find_keyboard_box()?.into_async())
+    }
+}
+
+/// An async view over a [`ClipHandle`](crate::ClipHandle) (§3.11): instant append/control, async
+/// [`status`](Self::status). From [`AsyncDevice::clip`].
+#[derive(Clone, Debug)]
+pub struct AsyncClipHandle {
+    inner: ClipHandle,
+}
+
+impl AsyncClipHandle {
+    /// Append entries to the ring. Instant; see [`ClipHandle::append`](crate::ClipHandle::append).
+    pub fn append(&self, clip: &ClipBuilder) -> Result<()> {
+        self.inner.append(clip)
+    }
+
+    /// Begin playback. Instant; see [`ClipHandle::start`](crate::ClipHandle::start).
+    pub fn start(&self) -> Result<()> {
+        self.inner.start()
+    }
+
+    /// Begin playback with clip-owned auto-lock. Instant; see
+    /// [`ClipHandle::start_autolock`](crate::ClipHandle::start_autolock).
+    pub fn start_autolock(&self, lock_mask: u16) -> Result<()> {
+        self.inner.start_autolock(lock_mask)
+    }
+
+    /// Stop playback, flush the ring, release the auto-lock. Instant; see
+    /// [`ClipHandle::stop`](crate::ClipHandle::stop).
+    pub fn stop(&self) -> Result<()> {
+        self.inner.stop()
+    }
+
+    /// Set the auto-lock options a later start uses. Instant; see
+    /// [`ClipHandle::config`](crate::ClipHandle::config).
+    pub fn config(&self, autolock: bool, lock_mask: u16) -> Result<()> {
+        self.inner.config(autolock, lock_mask)
+    }
+
+    /// Arm an on-device catch-trigger. Instant; see
+    /// [`ClipHandle::arm_catch`](crate::ClipHandle::arm_catch).
+    pub fn arm_catch(&self, button: Option<Button>) -> Result<()> {
+        self.inner.arm_catch(button)
+    }
+
+    /// Clear a pending catch-arm. Instant; see [`ClipHandle::disarm`](crate::ClipHandle::disarm).
+    pub fn disarm(&self) -> Result<()> {
+        self.inner.disarm()
+    }
+
+    /// `QUERY(CLIP)` — the ring depth and playback counters, awaiting the correlated `RESP`. See
+    /// [`ClipHandle::status`](crate::ClipHandle::status).
+    pub async fn status(&self) -> Result<ClipStatus> {
+        let link = self.inner.link();
+        let payload = link
+            .query_async(Q_CLIP, link.query_timeout_default())
+            .await?;
+        match parse_resp(&payload) {
+            Some(Resp::Clip(s)) => Ok(s),
+            _ => Err(Error::NoReply),
+        }
     }
 }

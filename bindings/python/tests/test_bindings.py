@@ -17,6 +17,10 @@ from medius import (
     CatchEventKind,
     CatchMask,
     CatchState,
+    ClipBuilder,
+    ClipEdge,
+    ClipState,
+    ClipStatus,
     Device,
     EmitPace,
     FrameType,
@@ -377,3 +381,94 @@ def test_event_is_pressed_helpers_match_logic():
     assert k.is_pressed(Key.LEFT_CTRL)
     assert k.is_pressed(Key.A)
     assert not k.is_pressed(Key.B)
+
+
+# --- buffered clip playback (§3.11 / §4.15) ---
+
+
+def _clip_frames(d, mock, ty):
+    """The payloads of the recorded frames of a given FrameType, in order."""
+    return [
+        mock.recorded_frame(i).payload
+        for i in range(mock.recorded())
+        if mock.recorded_frame(i).type == ty
+    ]
+
+
+def test_clip_control_frames():
+    with MockBox() as mock, Device.with_mock(mock) as d:
+        clip = d.clip()
+        clip.start()
+        clip.start_autolock(0)
+        clip.config(True, 5)
+        clip.arm_catch()  # any button
+        clip.arm_catch(Button.RIGHT)
+        clip.disarm()
+        clip.stop()
+        clip.close()
+        ctrl = _clip_frames(d, mock, FrameType.CLIP_CTRL)
+    assert ctrl == [
+        bytes([0, 0, 0, 0]),        # start
+        bytes([0, 1, 0, 0]),        # start_autolock(0)
+        bytes([4, 1, 5, 0]),        # config(True, 5)
+        bytes([2, 0, 0xFF, 0xFF]),  # arm any
+        bytes([2, 0, 1, 0]),        # arm right
+        bytes([3]),                 # disarm
+        bytes([1]),                 # stop
+    ]
+
+
+def test_clip_append_encodes_and_chunks():
+    with MockBox() as mock, Device.with_mock(mock) as d:
+        b = ClipBuilder()
+        for _ in range(150):
+            b.move(3, -2)  # 150 * 5 = 750 bytes > 512: must split
+        b.press(Button.LEFT).gap(4).release(Button.LEFT)
+        clip = d.clip()
+        clip.append(b)
+        b.close()
+        clip.close()
+        appends = _clip_frames(d, mock, FrameType.CLIP_APPEND)
+    assert len(appends) >= 2, "a >512-byte clip must chunk"
+    joined = b"".join(appends)
+    # 150 move(3,-2): flags=0x01, dx=3 LE, dy=-2 LE = 01 03 00 FE FF
+    assert joined[:5] == bytes([0x01, 0x03, 0x00, 0xFE, 0xFF])
+    # ... then press left (04 01 00 00 00 01), gap 4 (00 04 00), release left (04 01 00 00 00 00)
+    assert joined.endswith(
+        bytes([0x04, 0x01, 0x00, 0x00, 0x00, 0x01, 0x00, 0x04, 0x00, 0x04, 0x01, 0x00, 0x00, 0x00, 0x00])
+    )
+    assert all(len(p) <= 512 for p in appends)
+
+
+def test_clip_builder_frame_edges():
+    with MockBox() as mock, Device.with_mock(mock) as d:
+        b = ClipBuilder()
+        b.frame(1, 2, -1, [ClipEdge.button(Button.LEFT), ClipEdge.key(0x04)])
+        d.clip().append(b)
+        b.close()
+        appends = _clip_frames(d, mock, FrameType.CLIP_APPEND)
+    # flags XY|WHEEL|EDGES=0x07, dx=1 dy=2, wheel=-1, n=2, [btn left press][key 0x04 press]
+    assert appends[0] == bytes(
+        [0x07, 0x01, 0x00, 0x02, 0x00, 0xFF, 0xFF, 0x02, 0x00, 0x00, 0x00, 0x01, 0x01, 0x04, 0x00, 0x01]
+    )
+
+
+def test_clip_status_roundtrip():
+    status = ClipStatus(ClipState.PLAYING, free=512, used=40, ticks=99,
+                        underruns=2, overruns=0, seq_gaps=1, held=True)
+    with MockBox() as mock:
+        mock.set_clip_status(status)
+        with Device.with_mock(mock) as d:
+            got = d.clip().status()
+    assert got == status
+    assert got.state == ClipState.PLAYING
+
+
+def test_clip_builder_gap_zero_is_noop():
+    with MockBox() as mock, Device.with_mock(mock) as d:
+        b = ClipBuilder()
+        b.gap(0)  # no-op
+        clip = d.clip()
+        clip.append(b)
+        appends = _clip_frames(d, mock, FrameType.CLIP_APPEND)
+    assert appends == [], "an empty clip appends nothing"

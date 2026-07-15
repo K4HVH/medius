@@ -42,6 +42,15 @@ class Action(IntEnum):
     FORCE_RELEASE = 2
 
 
+class ClipState(IntEnum):
+    """The device-side clip lifecycle state (`ClipStatus.state`)."""
+
+    IDLE = 0
+    ARMED = 1
+    PLAYING = 2
+    FAULTED = 3
+
+
 class RebootTarget(IntEnum):
     DEVICE_DOWNLOAD = 0
     HOST_DOWNLOAD = 1
@@ -127,6 +136,8 @@ class FrameType(IntEnum):
     KB_EVENT = 15
     CONS_EVENT = 16
     OPTION = 17
+    CLIP_APPEND = 18
+    CLIP_CTRL = 19
 
 
 class CatchMask(IntFlag):

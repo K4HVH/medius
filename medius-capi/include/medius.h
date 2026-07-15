@@ -71,6 +71,67 @@ typedef int32_t MediusStatus;
 #endif // __STDC_VERSION__ >= 202311L
 #endif // __cplusplus
 
+// A mouse button. Values match the firmware button id.
+enum MediusButton
+#if defined(__cplusplus) || __STDC_VERSION__ >= 202311L
+  : uint8_t
+#endif // defined(__cplusplus) || __STDC_VERSION__ >= 202311L
+ {
+    MEDIUS_BUTTON_LEFT = 0,
+    MEDIUS_BUTTON_RIGHT = 1,
+    MEDIUS_BUTTON_MIDDLE = 2,
+    MEDIUS_BUTTON_SIDE1 = 3,
+    MEDIUS_BUTTON_SIDE2 = 4,
+};
+#ifndef __cplusplus
+#if __STDC_VERSION__ >= 202311L
+typedef enum MediusButton MediusButton;
+#else
+typedef uint8_t MediusButton;
+#endif // __STDC_VERSION__ >= 202311L
+#endif // __cplusplus
+
+// An injection override action.
+enum MediusAction
+#if defined(__cplusplus) || __STDC_VERSION__ >= 202311L
+  : uint8_t
+#endif // defined(__cplusplus) || __STDC_VERSION__ >= 202311L
+ {
+    MEDIUS_ACTION_SOFT_RELEASE = 0,
+    MEDIUS_ACTION_PRESS = 1,
+    MEDIUS_ACTION_FORCE_RELEASE = 2,
+};
+#ifndef __cplusplus
+#if __STDC_VERSION__ >= 202311L
+typedef enum MediusAction MediusAction;
+#else
+typedef uint8_t MediusAction;
+#endif // __STDC_VERSION__ >= 202311L
+#endif // __cplusplus
+
+// The device-side clip lifecycle state (`medius_clip_status`).
+enum MediusClipState
+#if defined(__cplusplus) || __STDC_VERSION__ >= 202311L
+  : uint8_t
+#endif // defined(__cplusplus) || __STDC_VERSION__ >= 202311L
+ {
+    // No clip active.
+    MEDIUS_CLIP_STATE_IDLE = 0,
+    // A catch-trigger is armed; playback starts on the physical button edge.
+    MEDIUS_CLIP_STATE_ARMED = 1,
+    // Draining the ring, one entry per native frame.
+    MEDIUS_CLIP_STATE_PLAYING = 2,
+    // An append was dropped or the ring overflowed; stop and re-preload.
+    MEDIUS_CLIP_STATE_FAULTED = 3,
+};
+#ifndef __cplusplus
+#if __STDC_VERSION__ >= 202311L
+typedef enum MediusClipState MediusClipState;
+#else
+typedef uint8_t MediusClipState;
+#endif // __STDC_VERSION__ >= 202311L
+#endif // __cplusplus
+
 // The cloned device's primary kind, from its Boot-interface protocol.
 enum MediusDeviceKind
 #if defined(__cplusplus) || __STDC_VERSION__ >= 202311L
@@ -121,44 +182,6 @@ enum MediusInputKind
 typedef enum MediusInputKind MediusInputKind;
 #else
 typedef uint8_t MediusInputKind;
-#endif // __STDC_VERSION__ >= 202311L
-#endif // __cplusplus
-
-// An injection override action.
-enum MediusAction
-#if defined(__cplusplus) || __STDC_VERSION__ >= 202311L
-  : uint8_t
-#endif // defined(__cplusplus) || __STDC_VERSION__ >= 202311L
- {
-    MEDIUS_ACTION_SOFT_RELEASE = 0,
-    MEDIUS_ACTION_PRESS = 1,
-    MEDIUS_ACTION_FORCE_RELEASE = 2,
-};
-#ifndef __cplusplus
-#if __STDC_VERSION__ >= 202311L
-typedef enum MediusAction MediusAction;
-#else
-typedef uint8_t MediusAction;
-#endif // __STDC_VERSION__ >= 202311L
-#endif // __cplusplus
-
-// A mouse button. Values match the firmware button id.
-enum MediusButton
-#if defined(__cplusplus) || __STDC_VERSION__ >= 202311L
-  : uint8_t
-#endif // defined(__cplusplus) || __STDC_VERSION__ >= 202311L
- {
-    MEDIUS_BUTTON_LEFT = 0,
-    MEDIUS_BUTTON_RIGHT = 1,
-    MEDIUS_BUTTON_MIDDLE = 2,
-    MEDIUS_BUTTON_SIDE1 = 3,
-    MEDIUS_BUTTON_SIDE2 = 4,
-};
-#ifndef __cplusplus
-#if __STDC_VERSION__ >= 202311L
-typedef enum MediusButton MediusButton;
-#else
-typedef uint8_t MediusButton;
 #endif // __STDC_VERSION__ >= 202311L
 #endif // __cplusplus
 
@@ -349,6 +372,8 @@ enum MediusFrameType
     MEDIUS_FRAME_TYPE_KB_EVENT = 15,
     MEDIUS_FRAME_TYPE_CONS_EVENT = 16,
     MEDIUS_FRAME_TYPE_OPTION = 17,
+    MEDIUS_FRAME_TYPE_CLIP_APPEND = 18,
+    MEDIUS_FRAME_TYPE_CLIP_CTRL = 19,
 };
 #ifndef __cplusplus
 #if __STDC_VERSION__ >= 202311L
@@ -357,6 +382,14 @@ typedef enum MediusFrameType MediusFrameType;
 typedef uint8_t MediusFrameType;
 #endif // __STDC_VERSION__ >= 202311L
 #endif // __cplusplus
+
+// A handle to one box's buffered-clip playback. Create with `medius_device_clip`, release with
+// `medius_clip_free`. It owns the append-sequence counter, so keep one handle per clip session.
+typedef struct MediusClip MediusClip;
+
+// An opaque builder for a clip entry stream. Create with `medius_clip_builder_new`, fill with the
+// `medius_clip_builder_*` calls, append with `medius_clip_append`, and free with `medius_clip_builder_free`.
+typedef struct MediusClipBuilder MediusClipBuilder;
 
 // An open connection to one medius box. Opaque; create with `medius_device_open`/`_find`/`_with_mock`
 // and release with `medius_device_free`.
@@ -374,6 +407,33 @@ typedef struct MediusLogStream MediusLogStream;
 // Cloning (via `medius_device_with_mock`) shares state, so a configured mock drives a real `Device`.
 typedef struct MediusMockBox MediusMockBox;
 #endif
+
+// A keyboard key, addressed by HID Keyboard/Keypad usage. Modifiers are `0xE0..=0xE7`.
+typedef uint8_t MediusKey;
+
+// A media key, addressed by 16-bit HID Consumer usage.
+typedef uint16_t MediusMediaKey;
+
+// One clip edge: an injection action on a class/id, for `medius_clip_builder_frame`. Build with
+// `medius_clip_edge_button`/`_key`/`_media`.
+typedef struct MediusClipEdge {
+    uint16_t id;
+    uint8_t class_;
+    uint8_t action;
+} MediusClipEdge;
+
+// A snapshot of the device-side clip ring and playback counters. `free`/`used` pace top-ups;
+// `state == Faulted` means re-sync (stop + rebuild).
+typedef struct MediusClipStatus {
+    MediusClipState state;
+    uint32_t free;
+    uint32_t used;
+    uint32_t ticks;
+    uint16_t underruns;
+    uint16_t overruns;
+    uint16_t seq_gaps;
+    bool held;
+} MediusClipStatus;
 
 // A discovered medius serial port. `path` is NUL-terminated.
 typedef struct MediusPortInfo {
@@ -432,12 +492,6 @@ typedef struct MediusInput {
     MediusInputKind kind;
     uint16_t value;
 } MediusInput;
-
-// A keyboard key, addressed by HID Keyboard/Keypad usage. Modifiers are `0xE0..=0xE7`.
-typedef uint8_t MediusKey;
-
-// A media key, addressed by 16-bit HID Consumer usage.
-typedef uint16_t MediusMediaKey;
 
 // A lock target. `button` is meaningful only when `kind` is `Button`.
 typedef struct MediusLockTarget {
@@ -748,6 +802,96 @@ typedef struct MediusLogLine {
 extern "C" {
 #endif // __cplusplus
 
+// A new empty clip-entry builder. The caller owns it and must free it with `medius_clip_builder_free`.
+struct MediusClipBuilder *medius_clip_builder_new(void);
+
+// Free a clip-entry builder. Null is a no-op.
+void medius_clip_builder_free(struct MediusClipBuilder *b);
+
+// Clear the builder to reuse it after an append.
+MediusStatus medius_clip_builder_clear(struct MediusClipBuilder *b);
+
+// A gap run: emit nothing for `frames` native frames (a zero count is a no-op).
+MediusStatus medius_clip_builder_gap(struct MediusClipBuilder *b, uint16_t frames);
+
+// A cursor-motion frame (`dx`/`dy`).
+MediusStatus medius_clip_builder_move(struct MediusClipBuilder *b, int16_t dx, int16_t dy);
+
+// A wheel frame.
+MediusStatus medius_clip_builder_wheel(struct MediusClipBuilder *b, int16_t dz);
+
+// A frame that presses a button.
+MediusStatus medius_clip_builder_press(struct MediusClipBuilder *b, MediusButton button);
+
+// A frame that soft-releases a button (clears the injected press; a physical hold is left intact).
+MediusStatus medius_clip_builder_release(struct MediusClipBuilder *b, MediusButton button);
+
+// A frame that force-releases a button (masks a physical hold too).
+MediusStatus medius_clip_builder_force_release(struct MediusClipBuilder *b, MediusButton button);
+
+// A frame carrying one key edge.
+MediusStatus medius_clip_builder_key(struct MediusClipBuilder *b,
+                                     MediusKey key,
+                                     MediusAction action);
+
+// A frame carrying one media edge.
+MediusStatus medius_clip_builder_media(struct MediusClipBuilder *b,
+                                       MediusMediaKey media,
+                                       MediusAction action);
+
+// A general content frame: a motion delta (`dx`/`dy` cursor, `wheel`) plus `n` edges from `edges`
+// (may be null when `n` is 0). An all-zero frame with no edges is a zero-motion tick, never a gap.
+MediusStatus medius_clip_builder_frame(struct MediusClipBuilder *b,
+                                       int16_t dx,
+                                       int16_t dy,
+                                       int16_t wheel,
+                                       const struct MediusClipEdge *edges,
+                                       uintptr_t n);
+
+// Build a button [`MediusClipEdge`] for `medius_clip_builder_frame`.
+struct MediusClipEdge medius_clip_edge_button(MediusButton button, MediusAction action);
+
+// Build a key [`MediusClipEdge`] for `medius_clip_builder_frame`.
+struct MediusClipEdge medius_clip_edge_key(MediusKey key, MediusAction action);
+
+// Build a media [`MediusClipEdge`] for `medius_clip_builder_frame`.
+struct MediusClipEdge medius_clip_edge_media(MediusMediaKey media, MediusAction action);
+
+// A handle to this box's buffered-clip playback. The caller owns it and must free it with
+// `medius_clip_free`.
+MediusStatus medius_device_clip(struct MediusDevice *dev, struct MediusClip **out);
+
+// Free a clip handle. Null is a no-op.
+void medius_clip_free(struct MediusClip *clip);
+
+// Append the builder's entries to the ring (whole-entry frames, each with the next append sequence).
+MediusStatus medius_clip_append(struct MediusClip *clip,
+                                const struct MediusClipBuilder *builder);
+
+// Begin playback from the ring head.
+MediusStatus medius_clip_start(struct MediusClip *clip);
+
+// Begin playback with clip-owned auto-lock (`lock_mask` = 0 locks all mouse axes+buttons).
+MediusStatus medius_clip_start_autolock(struct MediusClip *clip, uint16_t lock_mask);
+
+// Stop playback, flush the ring, release any clip-owned auto-lock.
+MediusStatus medius_clip_stop(struct MediusClip *clip);
+
+// Set the auto-lock options a later start (including a catch-triggered one) uses, without starting.
+MediusStatus medius_clip_config(struct MediusClip *clip, bool autolock, uint16_t lock_mask);
+
+// Arm an on-device catch-trigger on a physical press of `button`.
+MediusStatus medius_clip_arm_catch(struct MediusClip *clip, MediusButton button);
+
+// Arm an on-device catch-trigger on a physical press of any mouse button.
+MediusStatus medius_clip_arm_catch_any(struct MediusClip *clip);
+
+// Clear a pending catch-arm.
+MediusStatus medius_clip_disarm(struct MediusClip *clip);
+
+// Query the ring depth and playback counters. A `Faulted` state means re-sync (stop + rebuild).
+MediusStatus medius_clip_status(struct MediusClip *clip, struct MediusClipStatus *out);
+
 // Open the box at serial `path` (a NUL-terminated UTF-8 string), handshake, and write the handle to
 // `*out`. The caller owns the handle and must free it with `medius_device_free`.
 MediusStatus medius_device_open(const char *path, struct MediusDevice **out);
@@ -923,7 +1067,8 @@ uint32_t medius_default_query_timeout_ms(void);
 uint32_t medius_default_keepalive_cadence_ms(void);
 
 // The C ABI version. Bumped on any breaking change to this header.
-// 2: `MediusVersion` grew a `name` field and `medius_device_set_name`/`_clear_name` were added (v2.4.0).
+// 2: `MediusVersion` grew a `name` field and `medius_device_set_name`/`_clear_name` were added, and
+// buffered clip playback (`medius_device_clip`, the `medius_clip_*` handle/builder calls) landed (v2.4.0).
 uint32_t medius_abi_version(void);
 
 // The medius-capi crate version as a static NUL-terminated string.
@@ -1119,6 +1264,11 @@ void medius_mock_set_movement_riding(struct MediusMockBox *mock, bool enabled, u
 // Set the emit-rate pacing mode the mock answers to an OPTION(EMIT) query; `hz` matters only for
 // `Fixed`.
 void medius_mock_set_emit_pace(struct MediusMockBox *mock, MediusEmitMode mode, uint16_t hz);
+#endif
+
+#if defined(MEDIUS_FEATURE_MOCK)
+// Set the [`ClipStatus`](medius::ClipStatus) the mock answers to `medius_clip_status`.
+void medius_mock_set_clip_status(struct MediusMockBox *mock, struct MediusClipStatus value);
 #endif
 
 #if defined(MEDIUS_FEATURE_MOCK)
