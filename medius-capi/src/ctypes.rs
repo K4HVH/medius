@@ -383,16 +383,6 @@ pub struct MediusClipStatus {
     pub held: bool,
 }
 
-/// One clip edge: an injection action on a class/id, for `medius_clip_builder_frame`. Build with
-/// `medius_clip_edge_button`/`_key`/`_media`.
-#[repr(C)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct MediusClipEdge {
-    pub id: u16,
-    pub class: u8,
-    pub action: u8,
-}
-
 /// Host-side always-on counters.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

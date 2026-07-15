@@ -48,8 +48,8 @@ fn clip_builder_encodes_entries_to_the_firmware_wire() {
         2,
         -1,
         &[
-            crate::types::ClipEdge::button(Button::Left, Action::Press),
-            crate::types::ClipEdge::button(Button::Left, Action::ForceRelease),
+            (Button::Left.into(), Action::Press),
+            (Button::Left.into(), Action::ForceRelease),
         ],
     );
     assert_eq!(
@@ -72,15 +72,11 @@ fn clip_builder_encodes_entries_to_the_firmware_wire() {
 
 #[test]
 fn clip_ctrl_payload_bytes() {
-    // START: [op=0][cfg][lock_mask u16 LE]; cfg bit0 = auto-lock
-    assert_eq!(clip_cfg_payload(CLIP_OP_START, false, 0), [0, 0, 0, 0]);
-    assert_eq!(clip_cfg_payload(CLIP_OP_START, true, 0), [0, 1, 0, 0]);
-    assert_eq!(
-        clip_cfg_payload(CLIP_OP_START, true, 0x00FF),
-        [0, 1, 0xFF, 0x00]
-    );
-    // CONFIG: [op=4][cfg][lock_mask]
-    assert_eq!(clip_cfg_payload(CLIP_OP_CONFIG, true, 5), [4, 1, 5, 0]);
+    // START: [op=0][cfg]; cfg bit0 = auto-lock
+    assert_eq!(clip_cfg_payload(CLIP_OP_START, false), [0, 0]);
+    assert_eq!(clip_cfg_payload(CLIP_OP_START, true), [0, 1]);
+    // CONFIG: [op=4][cfg]
+    assert_eq!(clip_cfg_payload(CLIP_OP_CONFIG, true), [4, 1]);
     // ARM_CATCH: [op=2][cond_class][cond_id u16 LE]
     assert_eq!(clip_arm_payload(0, 0xFFFF), [2, 0, 0xFF, 0xFF]);
     assert_eq!(clip_arm_payload(0, 1), [2, 0, 1, 0]);
@@ -145,8 +141,9 @@ fn clip_control_frames_carry_the_right_bytes() {
     let clip = device.clip();
 
     clip.start().unwrap();
-    clip.start_autolock(0).unwrap();
-    clip.config(true, 5).unwrap();
+    clip.start_autolock().unwrap();
+    clip.config(true).unwrap();
+    clip.config(false).unwrap();
     clip.arm_catch(None).unwrap();
     clip.arm_catch(Some(Button::Right)).unwrap();
     clip.disarm().unwrap();
@@ -161,9 +158,10 @@ fn clip_control_frames_carry_the_right_bytes() {
     assert_eq!(
         ctrl,
         vec![
-            vec![0, 0, 0, 0],       // start
-            vec![0, 1, 0, 0],       // start_autolock(0)
-            vec![4, 1, 5, 0],       // config(true, 5)
+            vec![0, 0],             // start
+            vec![0, 1],             // start_autolock
+            vec![4, 1],             // config(true)
+            vec![4, 0],             // config(false)
             vec![2, 0, 0xFF, 0xFF], // arm any
             vec![2, 0, 1, 0],       // arm right
             vec![3],                // disarm

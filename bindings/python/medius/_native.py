@@ -185,8 +185,6 @@ class MediusClipStatus(ctypes.Structure):
     ]
 
 
-class MediusClipEdge(ctypes.Structure):
-    _fields_ = [("id", u16), ("cls", u8), ("action", u8)]
 
 
 class MediusCountersSnapshot(ctypes.Structure):
@@ -389,17 +387,14 @@ _decl("medius_clip_builder_release", i32, [HANDLE, u8])
 _decl("medius_clip_builder_force_release", i32, [HANDLE, u8])
 _decl("medius_clip_builder_key", i32, [HANDLE, u8, u8])
 _decl("medius_clip_builder_media", i32, [HANDLE, u16, u8])
-_decl("medius_clip_builder_frame", i32, [HANDLE, i16, i16, i16, ctypes.POINTER(MediusClipEdge), usize])
-_decl("medius_clip_edge_button", MediusClipEdge, [u8, u8])
-_decl("medius_clip_edge_key", MediusClipEdge, [u8, u8])
-_decl("medius_clip_edge_media", MediusClipEdge, [u16, u8])
+_decl("medius_clip_builder_frame", i32, [HANDLE, i16, i16, i16, ctypes.POINTER(MediusInput), ctypes.POINTER(u8), usize])
 _decl("medius_device_clip", i32, [HANDLE, PHANDLE])
 _decl("medius_clip_free", None, [HANDLE])
 _decl("medius_clip_append", i32, [HANDLE, HANDLE])
 _decl("medius_clip_start", i32, [HANDLE])
-_decl("medius_clip_start_autolock", i32, [HANDLE, u16])
+_decl("medius_clip_start_autolock", i32, [HANDLE])
 _decl("medius_clip_stop", i32, [HANDLE])
-_decl("medius_clip_config", i32, [HANDLE, c_bool, u16])
+_decl("medius_clip_config", i32, [HANDLE, c_bool])
 _decl("medius_clip_arm_catch", i32, [HANDLE, u8])
 _decl("medius_clip_arm_catch_any", i32, [HANDLE])
 _decl("medius_clip_disarm", i32, [HANDLE])

@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 import ctypes
-from typing import Optional, Sequence
+from typing import Optional, Sequence, Tuple
 
 from . import _native
 from ._enums import Action, Button
 from ._errors import check
-from ._types import ClipEdge, ClipStatus, clip_status_from_c
+from ._types import Input, ClipStatus, clip_status_from_c
 
 
 class ClipBuilder:
@@ -81,18 +81,23 @@ class ClipBuilder:
         return self
 
     def frame(
-        self, dx: int = 0, dy: int = 0, wheel: int = 0, edges: Optional[Sequence[ClipEdge]] = None
+        self,
+        dx: int = 0,
+        dy: int = 0,
+        wheel: int = 0,
+        edges: Optional[Sequence[Tuple[Input, Action]]] = None,
     ) -> "ClipBuilder":
-        """A general content frame: a motion delta plus a list of `ClipEdge`s applied on the same frame."""
+        """A general content frame: a motion delta plus a list of `(Input, Action)` edges on the same frame."""
         edges = edges or []
         n = len(edges)
-        arr = (_native.MediusClipEdge * n)()
-        for i, e in enumerate(edges):
-            arr[i].id = e.id
-            arr[i].cls = e.cls
-            arr[i].action = e.action
-        ptr = ctypes.cast(arr, ctypes.POINTER(_native.MediusClipEdge)) if n else None
-        check(_native.lib.medius_clip_builder_frame(self._ptr, dx, dy, wheel, ptr, n))
+        inputs = (_native.MediusInput * n)()
+        actions = (ctypes.c_uint8 * n)()
+        for i, (inp, action) in enumerate(edges):
+            inputs[i] = inp._c
+            actions[i] = int(action)
+        iptr = ctypes.cast(inputs, ctypes.POINTER(_native.MediusInput)) if n else None
+        aptr = ctypes.cast(actions, ctypes.POINTER(ctypes.c_uint8)) if n else None
+        check(_native.lib.medius_clip_builder_frame(self._ptr, dx, dy, wheel, iptr, aptr, n))
         return self
 
 
@@ -126,17 +131,18 @@ class ClipHandle:
         """Begin playback from the ring head."""
         check(_native.lib.medius_clip_start(self._handle))
 
-    def start_autolock(self, lock_mask: int = 0):
-        """Begin playback with clip-owned auto-lock (`lock_mask` = 0 locks all mouse axes+buttons)."""
-        check(_native.lib.medius_clip_start_autolock(self._handle, lock_mask))
+    def start_autolock(self):
+        """Begin playback with clip-owned auto-lock over all physical input (released on stop). For selective
+        locking, lock what you want with the device `lock` calls and use `start()`."""
+        check(_native.lib.medius_clip_start_autolock(self._handle))
 
     def stop(self):
         """Stop playback, flush the ring, release any clip-owned auto-lock."""
         check(_native.lib.medius_clip_stop(self._handle))
 
-    def config(self, autolock: bool, lock_mask: int = 0):
-        """Set the auto-lock options a later start uses, without starting."""
-        check(_native.lib.medius_clip_config(self._handle, autolock, lock_mask))
+    def config(self, autolock: bool):
+        """Set whether a later start auto-locks, without starting."""
+        check(_native.lib.medius_clip_config(self._handle, autolock))
 
     def arm_catch(self, button: Optional[Button] = None):
         """Arm an on-device trigger: playback starts on a physical press of `button` (or any if `None`)."""

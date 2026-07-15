@@ -61,11 +61,10 @@ pub fn emit_pace_payload(mode: u8, hz: u16) -> [u8; 4] {
     let h = hz.to_le_bytes();
     [OPT_EMIT, mode, h[0], h[1]]
 }
-/// `CLIP_CTRL(START)` / `CLIP_CTRL(CONFIG)` (§3.11): `[op][cfg u8][lock_mask u16 LE]`. `cfg` bit 0 =
-/// auto-lock the physical mouse while playing; `lock_mask` picks the mouse targets (0 = all axes+buttons).
-pub fn clip_cfg_payload(op: u8, autolock: bool, lock_mask: u16) -> [u8; 4] {
-    let m = lock_mask.to_le_bytes();
-    [op, if autolock { CLIP_CFG_AUTOLOCK } else { 0 }, m[0], m[1]]
+/// `CLIP_CTRL(START)` / `CLIP_CTRL(CONFIG)` (§3.11): `[op][cfg u8]`. `cfg` bit 0 = auto-lock all physical
+/// input while playing.
+pub fn clip_cfg_payload(op: u8, autolock: bool) -> [u8; 2] {
+    [op, if autolock { CLIP_CFG_AUTOLOCK } else { 0 }]
 }
 
 /// `CLIP_CTRL(ARM_CATCH)` (§3.11): `[op][cond_class u8][cond_id u16 LE]` — fire START on a physical edge of

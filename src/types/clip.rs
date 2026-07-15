@@ -1,11 +1,11 @@
 //! Buffered clip playback (§3.11 / §4.15): the per-frame entry stream a host preloads into the device-side
-//! ring, and the ring/playback status. The box drains one entry per native frame and renders it through the
-//! normal injection engine — same rate pacing, same movement riding, no override.
+//! ring, and the ring/playback status. The box drains one entry per native frame, routing each edge to its
+//! class (mouse, keyboard, media), and emits it through the normal engine (rate pacing, movement riding).
 
 use crate::protocol::opcode::{
     CLIP_F_EDGES, CLIP_F_WHEEL, CLIP_F_XY, CLIP_TAG_GAP, INJ_BTN, INJ_KEY, INJ_MEDIA,
 };
-use crate::types::{Action, Button, Key, MediaKey};
+use crate::types::{Action, Button, Input, Key, MediaKey};
 
 /// The device-side clip lifecycle state ([`ClipStatus::state`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
@@ -40,7 +40,7 @@ impl ClipState {
 pub struct ClipStatus {
     /// The lifecycle state.
     pub state: ClipState,
-    /// Free bytes in the ring — the headroom for the next [`append`](crate::ClipHandle::append).
+    /// Free bytes in the ring, the headroom for the next [`append`](crate::ClipHandle::append).
     pub free: u32,
     /// Buffered bytes not yet drained.
     pub used: u32,
@@ -76,64 +76,12 @@ impl ClipStatus {
     }
 }
 
-/// One clip edge: an injection [`Action`] on a class/id (button, key, or media), applied on a
-/// [`ClipBuilder::frame`]. Sticky until a later frame changes it, exactly like
-/// [`Device::inject`](crate::Device::inject).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct ClipEdge {
-    pub(crate) class: u8,
-    pub(crate) id: u16,
-    pub(crate) action: u8,
-}
-
-impl ClipEdge {
-    /// A button edge.
-    pub fn button(button: Button, action: Action) -> ClipEdge {
-        ClipEdge {
-            class: INJ_BTN,
-            id: button.as_id() as u16,
-            action: action.as_u8(),
-        }
-    }
-
-    /// A keyboard key/modifier edge.
-    pub fn key(key: Key, action: Action) -> ClipEdge {
-        ClipEdge {
-            class: INJ_KEY,
-            id: key.usage() as u16,
-            action: action.as_u8(),
-        }
-    }
-
-    /// A media (Consumer) usage edge.
-    pub fn media(media: MediaKey, action: Action) -> ClipEdge {
-        ClipEdge {
-            class: INJ_MEDIA,
-            id: media.usage(),
-            action: action.as_u8(),
-        }
-    }
-
-    /// Build an edge from the raw INJECT wire tuple (`class` 0 button / 1 key / 2 media, a class-specific
-    /// `id`, and the [`Action`] byte). The typed constructors above are preferred; this is for bindings
-    /// that carry the tuple across an FFI boundary.
-    pub fn raw(class: u8, id: u16, action: u8) -> ClipEdge {
-        ClipEdge { class, id, action }
-    }
-
-    /// The injection class (0 button / 1 key / 2 media).
-    pub fn class(self) -> u8 {
-        self.class
-    }
-
-    /// The class-specific usage id.
-    pub fn id(self) -> u16 {
-        self.id
-    }
-
-    /// The wire [`Action`] byte.
-    pub fn action(self) -> u8 {
-        self.action
+/// Map the field-generic [`Input`] to its INJECT wire class and id.
+fn input_class_id(input: Input) -> (u8, u16) {
+    match input {
+        Input::Button(b) => (INJ_BTN, b.as_id() as u16),
+        Input::Key(k) => (INJ_KEY, k.usage() as u16),
+        Input::Media(m) => (INJ_MEDIA, m.usage()),
     }
 }
 
@@ -176,7 +124,7 @@ impl ClipBuilder {
     /// A content frame: a relative motion delta (`dx`/`dy` cursor, `wheel`) plus a list of edges. An
     /// all-zero frame with no edges still emits a report (a zero-motion tick, never a gap). At most
     /// [`CLIP_EDGES_MAX`] edges.
-    pub fn frame(&mut self, dx: i16, dy: i16, wheel: i16, edges: &[ClipEdge]) -> &mut Self {
+    pub fn frame(&mut self, dx: i16, dy: i16, wheel: i16, edges: &[(Input, Action)]) -> &mut Self {
         let mut flags = 0u8;
         if dx != 0 || dy != 0 {
             flags |= CLIP_F_XY;
@@ -200,10 +148,11 @@ impl ClipBuilder {
         }
         if flags & CLIP_F_EDGES != 0 {
             self.bytes.push(edges.len() as u8);
-            for e in edges {
-                self.bytes.push(e.class);
-                self.bytes.extend_from_slice(&e.id.to_le_bytes());
-                self.bytes.push(e.action);
+            for &(input, action) in edges {
+                let (class, id) = input_class_id(input);
+                self.bytes.push(class);
+                self.bytes.extend_from_slice(&id.to_le_bytes());
+                self.bytes.push(action.as_u8());
             }
         }
         self.ends.push(self.bytes.len());
@@ -220,34 +169,34 @@ impl ClipBuilder {
         self.frame(0, 0, dz, &[])
     }
 
-    /// A frame carrying only edges (no motion).
-    pub fn edges(&mut self, edges: &[ClipEdge]) -> &mut Self {
-        self.frame(0, 0, 0, edges)
+    /// A frame carrying one edge (any input class).
+    pub fn edge(&mut self, input: impl Into<Input>, action: Action) -> &mut Self {
+        self.frame(0, 0, 0, &[(input.into(), action)])
     }
 
     /// A frame that presses a button.
     pub fn press(&mut self, button: Button) -> &mut Self {
-        self.edges(&[ClipEdge::button(button, Action::Press)])
+        self.edge(button, Action::Press)
     }
 
     /// A frame that soft-releases a button (clears the injected press; a physical hold is left intact).
     pub fn release(&mut self, button: Button) -> &mut Self {
-        self.edges(&[ClipEdge::button(button, Action::SoftRelease)])
+        self.edge(button, Action::SoftRelease)
     }
 
     /// A frame that force-releases a button (masks a physical hold too).
     pub fn force_release(&mut self, button: Button) -> &mut Self {
-        self.edges(&[ClipEdge::button(button, Action::ForceRelease)])
+        self.edge(button, Action::ForceRelease)
     }
 
     /// A frame carrying one key edge.
     pub fn key(&mut self, key: Key, action: Action) -> &mut Self {
-        self.edges(&[ClipEdge::key(key, action)])
+        self.edge(key, action)
     }
 
     /// A frame carrying one media edge.
     pub fn media(&mut self, media: MediaKey, action: Action) -> &mut Self {
-        self.edges(&[ClipEdge::media(media, action)])
+        self.edge(media, action)
     }
 
     /// The raw encoded entry stream.

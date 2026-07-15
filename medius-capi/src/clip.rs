@@ -1,7 +1,8 @@
 //! Buffered clip playback: the opaque clip-entry builder and clip handle, and their functions.
 
-use medius::{Button, ClipBuilder, ClipEdge, ClipHandle, Key, MediaKey};
+use medius::{Button, ClipBuilder, ClipHandle, Key, MediaKey};
 
+use crate::convert::input_to_medius;
 use crate::ctypes::*;
 use crate::device::MediusDevice;
 use crate::error::{MediusStatus, clear_error, fail, guard, guard_status, record, status_of};
@@ -160,70 +161,40 @@ pub unsafe extern "C" fn medius_clip_builder_media(
     })
 }
 
-/// A general content frame: a motion delta (`dx`/`dy` cursor, `wheel`) plus `n` edges from `edges`
-/// (may be null when `n` is 0). An all-zero frame with no edges is a zero-motion tick, never a gap.
+/// A general content frame: a motion delta (`dx`/`dy` cursor, `wheel`) plus `n` edges, each a
+/// (`MediusInput`, `MediusAction`) pair from the parallel `inputs`/`actions` arrays (null when `n` is 0).
+/// Build the inputs with `medius_input_button`/`_key`/`_media`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_clip_builder_frame(
     b: *mut MediusClipBuilder,
     dx: i16,
     dy: i16,
     wheel: i16,
-    edges: *const MediusClipEdge,
+    inputs: *const MediusInput,
+    actions: *const MediusAction,
     n: usize,
 ) -> MediusStatus {
     guard_status(|| {
         if b.is_null() {
             return fail(MediusStatus::ErrInvalidArg, "null clip builder");
         }
-        if n > 0 && edges.is_null() {
-            return fail(MediusStatus::ErrInvalidArg, "null edges with n > 0");
+        if n > 0 && (inputs.is_null() || actions.is_null()) {
+            return fail(
+                MediusStatus::ErrInvalidArg,
+                "null inputs/actions with n > 0",
+            );
         }
-        let es: Vec<ClipEdge> = (0..n)
-            .map(|i| {
-                let e = unsafe { *edges.add(i) };
-                clip_edge_of(e)
-            })
-            .collect();
+        let mut es = Vec::with_capacity(n);
+        for i in 0..n {
+            let Some(input) = input_to_medius(unsafe { *inputs.add(i) }) else {
+                return fail(MediusStatus::ErrInvalidArg, "invalid clip edge input");
+            };
+            es.push((input, unsafe { *actions.add(i) }.into()));
+        }
         unsafe { &mut (*b).inner }.frame(dx, dy, wheel, &es);
         clear_error();
         MediusStatus::Ok
     })
-}
-
-/// Build a button [`MediusClipEdge`] for `medius_clip_builder_frame`.
-#[unsafe(no_mangle)]
-pub extern "C" fn medius_clip_edge_button(
-    button: MediusButton,
-    action: MediusAction,
-) -> MediusClipEdge {
-    edge_to_c(ClipEdge::button(Button::from(button), action.into()))
-}
-
-/// Build a key [`MediusClipEdge`] for `medius_clip_builder_frame`.
-#[unsafe(no_mangle)]
-pub extern "C" fn medius_clip_edge_key(key: MediusKey, action: MediusAction) -> MediusClipEdge {
-    edge_to_c(ClipEdge::key(Key::new(key), action.into()))
-}
-
-/// Build a media [`MediusClipEdge`] for `medius_clip_builder_frame`.
-#[unsafe(no_mangle)]
-pub extern "C" fn medius_clip_edge_media(
-    media: MediusMediaKey,
-    action: MediusAction,
-) -> MediusClipEdge {
-    edge_to_c(ClipEdge::media(MediaKey::new(media), action.into()))
-}
-
-fn edge_to_c(e: ClipEdge) -> MediusClipEdge {
-    MediusClipEdge {
-        id: e.id(),
-        class: e.class(),
-        action: e.action(),
-    }
-}
-
-fn clip_edge_of(e: MediusClipEdge) -> ClipEdge {
-    ClipEdge::raw(e.class, e.id, e.action)
 }
 
 // --- clip handle ---
@@ -277,13 +248,11 @@ pub unsafe extern "C" fn medius_clip_start(clip: *mut MediusClip) -> MediusStatu
     with_clip(clip, |c| c.start())
 }
 
-/// Begin playback with clip-owned auto-lock (`lock_mask` = 0 locks all mouse axes+buttons).
+/// Begin playback with clip-owned auto-lock: the box locks all physical input the host hasn't already
+/// locked and releases it on stop. For selective locking, use `medius_device_lock` + `medius_clip_start`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn medius_clip_start_autolock(
-    clip: *mut MediusClip,
-    lock_mask: u16,
-) -> MediusStatus {
-    with_clip(clip, |c| c.start_autolock(lock_mask))
+pub unsafe extern "C" fn medius_clip_start_autolock(clip: *mut MediusClip) -> MediusStatus {
+    with_clip(clip, |c| c.start_autolock())
 }
 
 /// Stop playback, flush the ring, release any clip-owned auto-lock.
@@ -292,14 +261,10 @@ pub unsafe extern "C" fn medius_clip_stop(clip: *mut MediusClip) -> MediusStatus
     with_clip(clip, |c| c.stop())
 }
 
-/// Set the auto-lock options a later start (including a catch-triggered one) uses, without starting.
+/// Set whether a later start (including a catch-triggered one) auto-locks, without starting.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn medius_clip_config(
-    clip: *mut MediusClip,
-    autolock: bool,
-    lock_mask: u16,
-) -> MediusStatus {
-    with_clip(clip, |c| c.config(autolock, lock_mask))
+pub unsafe extern "C" fn medius_clip_config(clip: *mut MediusClip, autolock: bool) -> MediusStatus {
+    with_clip(clip, |c| c.config(autolock))
 }
 
 /// Arm an on-device catch-trigger on a physical press of `button`.
