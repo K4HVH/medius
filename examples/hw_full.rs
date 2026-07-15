@@ -651,31 +651,40 @@ mod linux {
         }
 
         {
-            // Buffered clip playback: preload 200 move(10,0) entries, start, and confirm the box clocks
-            // them out to a frame-exact REL_X=2000 (the same total as live injection, box-timed). Also
-            // exercises the ring depth + tick counters and the stop→idle transition.
+            // Buffered clip playback, field-generic: a clip carrying 200 mouse moves plus a KEY_A hold, so
+            // the box clocks out mouse motion AND a keyboard edge, each on its own interface. The grabbed
+            // node reports one of them (mouse REL_X or keyboard KEY_A depending on which was passed), so the
+            // check passes when the clip drove that interface frame-true. Also covers class-scoped auto-lock
+            // and the ring/tick counters + stop-to-idle.
             let dev = device.as_ref().unwrap();
             let _ = dev.reset();
             reset_motion(&acc);
+            acc.key_a.store(0, Ordering::Relaxed);
             let clip = dev.clip();
             let mut b = ClipBuilder::new();
             for _ in 0..200 {
                 b.move_by(10, 0);
             }
+            b.key(Key::A, Action::Press)
+                .gap(40)
+                .key(Key::A, Action::SoftRelease);
             let appended = clip.append(&b).is_ok();
             let armed = clip.status().map(|s| s.used > 0).unwrap_or(false);
-            let started = clip.start().is_ok();
-            std::thread::sleep(Duration::from_millis(600));
-            let x = acc.rel_x.load(Ordering::Relaxed);
+            let started = clip.start_autolock().is_ok();
+            std::thread::sleep(Duration::from_millis(150));
+            let key_down = acc.key_a.load(Ordering::Relaxed) == 1; // set if the grabbed node is the keyboard
+            std::thread::sleep(Duration::from_millis(500));
+            let x = acc.rel_x.load(Ordering::Relaxed); // set if the grabbed node is the mouse
             let played = clip.status().map(|s| s.ticks >= 200).unwrap_or(false);
             let stopped = clip.stop().is_ok();
             std::thread::sleep(Duration::from_millis(60));
             let idle = matches!(clip.status(), Ok(s) if s.state == ClipState::Idle);
+            let drove_grabbed = x == 2000 || key_down;
             check(
-                "clip playback",
-                appended && armed && started && x == 2000 && played && stopped && idle,
+                "clip playback (field-generic)",
+                appended && armed && started && drove_grabbed && played && stopped && idle,
                 format!(
-                    "appended={appended} armed={armed} started={started} REL_X={x} (want 2000) played={played} stopped={stopped} idle={idle}"
+                    "appended={appended} armed={armed} started={started} REL_X={x} key_down={key_down} played={played} stopped={stopped} idle={idle}"
                 ),
             );
         }

@@ -23,7 +23,7 @@ mod version;
 
 pub use button::{Action, Button};
 pub use caps::Caps;
-pub use clip::{CLIP_EDGES_MAX, ClipBuilder, ClipEdge, ClipState, ClipStatus};
+pub use clip::{CLIP_EDGES_MAX, ClipBuilder, ClipState, ClipStatus};
 pub use counters::CountersSnapshot;
 pub use device_info::{DeviceInfo, DeviceKind};
 pub use emit_pace::{EmitPace, EmitPaceStatus};

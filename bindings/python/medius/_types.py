@@ -536,27 +536,6 @@ def emit_pace_status_from_c(c) -> EmitPaceStatus:
     return EmitPaceStatus(EmitPace(mode, c.fixed_hz), c.resolved_hz)
 
 
-@dataclass(frozen=True)
-class ClipEdge:
-    """One clip edge for `ClipBuilder.frame`. Build with `ClipEdge.button/key/media`."""
-
-    cls: int
-    id: int
-    action: int
-
-    @classmethod
-    def button(cls, button: Button, action: Action = Action.PRESS) -> "ClipEdge":
-        return cls(0, int(button), int(action))
-
-    @classmethod
-    def key(cls, usage, action: Action = Action.PRESS) -> "ClipEdge":
-        return cls(1, int(usage), int(action))
-
-    @classmethod
-    def media(cls, usage, action: Action = Action.PRESS) -> "ClipEdge":
-        return cls(2, int(usage), int(action))
-
-
 @dataclass
 class ClipStatus:
     """The device-side clip ring and playback status. `free`/`used` pace top-ups; `state == FAULTED`

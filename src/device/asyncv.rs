@@ -426,10 +426,10 @@ impl AsyncClipHandle {
         self.inner.start()
     }
 
-    /// Begin playback with clip-owned auto-lock. Instant; see
+    /// Begin playback with clip-owned auto-lock (all input). Instant; see
     /// [`ClipHandle::start_autolock`](crate::ClipHandle::start_autolock).
-    pub fn start_autolock(&self, lock_mask: u16) -> Result<()> {
-        self.inner.start_autolock(lock_mask)
+    pub fn start_autolock(&self) -> Result<()> {
+        self.inner.start_autolock()
     }
 
     /// Stop playback, flush the ring, release the auto-lock. Instant; see
@@ -438,10 +438,9 @@ impl AsyncClipHandle {
         self.inner.stop()
     }
 
-    /// Set the auto-lock options a later start uses. Instant; see
-    /// [`ClipHandle::config`](crate::ClipHandle::config).
-    pub fn config(&self, autolock: bool, lock_mask: u16) -> Result<()> {
-        self.inner.config(autolock, lock_mask)
+    /// Set whether a later start auto-locks. Instant; see [`ClipHandle::config`](crate::ClipHandle::config).
+    pub fn config(&self, autolock: bool) -> Result<()> {
+        self.inner.config(autolock)
     }
 
     /// Arm an on-device catch-trigger. Instant; see

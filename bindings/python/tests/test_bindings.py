@@ -17,10 +17,11 @@ from medius import (
     CatchEventKind,
     CatchMask,
     CatchState,
+    Action,
     ClipBuilder,
-    ClipEdge,
     ClipState,
     ClipStatus,
+    Input,
     Device,
     EmitPace,
     FrameType,
@@ -399,8 +400,9 @@ def test_clip_control_frames():
     with MockBox() as mock, Device.with_mock(mock) as d:
         clip = d.clip()
         clip.start()
-        clip.start_autolock(0)
-        clip.config(True, 5)
+        clip.start_autolock()
+        clip.config(True)
+        clip.config(False)
         clip.arm_catch()  # any button
         clip.arm_catch(Button.RIGHT)
         clip.disarm()
@@ -408,13 +410,14 @@ def test_clip_control_frames():
         clip.close()
         ctrl = _clip_frames(d, mock, FrameType.CLIP_CTRL)
     assert ctrl == [
-        bytes([0, 0, 0, 0]),        # start
-        bytes([0, 1, 0, 0]),        # start_autolock(0)
-        bytes([4, 1, 5, 0]),        # config(True, 5)
-        bytes([2, 0, 0xFF, 0xFF]),  # arm any
-        bytes([2, 0, 1, 0]),        # arm right
-        bytes([3]),                 # disarm
-        bytes([1]),                 # stop
+        bytes([0, 0]),               # start
+        bytes([0, 1]),               # start_autolock
+        bytes([4, 1]),               # config(True)
+        bytes([4, 0]),               # config(False)
+        bytes([2, 0, 0xFF, 0xFF]),   # arm any
+        bytes([2, 0, 1, 0]),         # arm right
+        bytes([3]),                  # disarm
+        bytes([1]),                  # stop
     ]
 
 
@@ -443,7 +446,7 @@ def test_clip_append_encodes_and_chunks():
 def test_clip_builder_frame_edges():
     with MockBox() as mock, Device.with_mock(mock) as d:
         b = ClipBuilder()
-        b.frame(1, 2, -1, [ClipEdge.button(Button.LEFT), ClipEdge.key(0x04)])
+        b.frame(1, 2, -1, [(Input.button(Button.LEFT), Action.PRESS), (Input.key(0x04), Action.PRESS)])
         d.clip().append(b)
         b.close()
         appends = _clip_frames(d, mock, FrameType.CLIP_APPEND)

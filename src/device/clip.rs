@@ -13,10 +13,10 @@ use crate::types::{Button, ClipBuilder, ClipStatus};
 use super::Device;
 
 impl Device {
-    /// A handle to this box's buffered-clip playback (§3.11): preload per-frame input into a device-side
-    /// ring, then let the box drain one entry per native frame — box-clocked, so it carries none of the
-    /// host's scheduling jitter and none of the per-command send floor. The clip rides the same rate pacing
-    /// and movement riding as live injection; it never overrides them.
+    /// A handle to this box's buffered-clip playback (§3.11): preload per-frame input (mouse, keyboard, and
+    /// media) into a device-side ring, then let the box drain one entry per native frame, box-clocked, so it
+    /// carries none of the host's scheduling jitter and none of the per-command send floor. The clip rides
+    /// the same rate pacing and movement riding as live injection; it never overrides them.
     ///
     /// The handle owns the append-sequence counter the box uses for drop detection, so keep one handle for a
     /// clip session and top it up with [`append`](crate::ClipHandle::append). Playback is RAM-backed and
@@ -71,57 +71,52 @@ impl ClipHandle {
         Ok(())
     }
 
-    /// `CLIP_CTRL(START)` — begin playback from the ring head. Fire-and-forget.
+    /// `CLIP_CTRL(START)`: begin playback from the ring head. Fire-and-forget.
     pub fn start(&self) -> Result<()> {
-        self.link.send(
-            FrameType::ClipCtrl,
-            &clip_cfg_payload(CLIP_OP_START, false, 0),
-        )
+        self.link
+            .send(FrameType::ClipCtrl, &clip_cfg_payload(CLIP_OP_START, false))
     }
 
-    /// `CLIP_CTRL(START)` with clip-owned auto-lock — the box locks the physical mouse targets it drives
-    /// (that the host hasn't already locked) for the duration, releasing them on [`stop`](Self::stop). A
-    /// lock the host set itself is untouched. `lock_mask` = 0 locks all mouse axes+buttons. Fire-and-forget.
-    pub fn start_autolock(&self, lock_mask: u16) -> Result<()> {
-        self.link.send(
-            FrameType::ClipCtrl,
-            &clip_cfg_payload(CLIP_OP_START, true, lock_mask),
-        )
+    /// `CLIP_CTRL(START)` with clip-owned auto-lock: the box locks all physical input (mouse, keyboard,
+    /// media) the host hasn't already locked and releases exactly that on [`stop`](Self::stop). For selective
+    /// locking, lock what you want with [`lock`](crate::Device::lock) and use [`start`](Self::start).
+    pub fn start_autolock(&self) -> Result<()> {
+        self.link
+            .send(FrameType::ClipCtrl, &clip_cfg_payload(CLIP_OP_START, true))
     }
 
-    /// `CLIP_CTRL(STOP)` — stop playback, flush the ring, and release any clip-owned auto-lock.
-    /// Fire-and-forget.
+    /// `CLIP_CTRL(STOP)`: stop playback, flush the ring, release any clip-owned auto-lock. Fire-and-forget.
     pub fn stop(&self) -> Result<()> {
         self.link
             .send(FrameType::ClipCtrl, &clip_op_payload(CLIP_OP_STOP))
     }
 
-    /// `CLIP_CTRL(CONFIG)` — set the auto-lock options a later start (including a catch-triggered one) uses,
-    /// without starting. Fire-and-forget.
-    pub fn config(&self, autolock: bool, lock_mask: u16) -> Result<()> {
+    /// `CLIP_CTRL(CONFIG)`: set whether a later start (including a catch-triggered one) auto-locks, without
+    /// starting. Fire-and-forget.
+    pub fn config(&self, autolock: bool) -> Result<()> {
         self.link.send(
             FrameType::ClipCtrl,
-            &clip_cfg_payload(CLIP_OP_CONFIG, autolock, lock_mask),
+            &clip_cfg_payload(CLIP_OP_CONFIG, autolock),
         )
     }
 
-    /// `CLIP_CTRL(ARM_CATCH)` — arm an on-device trigger: playback starts locally on a physical press of
-    /// `button` (or any mouse button if `None`), so even the first emitted frame has no host round-trip.
-    /// Preload the ring and optionally [`config`](Self::config) the auto-lock first. Fire-and-forget.
+    /// `CLIP_CTRL(ARM_CATCH)`: arm an on-device trigger. Playback starts locally on a physical press of
+    /// `button` (any mouse button if `None`), so even the first frame has no host round-trip. Preload the
+    /// ring and optionally [`config`](Self::config) the auto-lock first. Fire-and-forget.
     pub fn arm_catch(&self, button: Option<Button>) -> Result<()> {
         let id = button.map(|b| b.as_id() as u16).unwrap_or(0xFFFF);
         self.link
             .send(FrameType::ClipCtrl, &clip_arm_payload(INJ_BTN, id))
     }
 
-    /// `CLIP_CTRL(DISARM)` — clear a pending catch-arm. Fire-and-forget.
+    /// `CLIP_CTRL(DISARM)`: clear a pending catch-arm. Fire-and-forget.
     pub fn disarm(&self) -> Result<()> {
         self.link
             .send(FrameType::ClipCtrl, &clip_op_payload(CLIP_OP_DISARM))
     }
 
-    /// `QUERY(CLIP)` — the device-side ring depth (`free`/`used` to pace top-ups) and playback counters
-    /// (§4.15). A [`ClipState::Faulted`](crate::ClipState::Faulted) state means re-sync (stop + rebuild).
+    /// `QUERY(CLIP)`: the ring depth (`free`/`used` to pace top-ups) and playback counters (§4.15). A
+    /// [`ClipState::Faulted`](crate::ClipState::Faulted) state means re-sync (stop, then rebuild).
     pub fn status(&self) -> Result<ClipStatus> {
         let payload = self.link.query(Q_CLIP)?;
         match parse_resp(&payload) {
