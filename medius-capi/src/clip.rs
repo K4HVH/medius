@@ -184,12 +184,24 @@ pub unsafe extern "C" fn medius_clip_builder_frame(
                 "null inputs/actions with n > 0",
             );
         }
+        if n > medius::CLIP_EDGES_MAX {
+            return fail(
+                MediusStatus::ErrInvalidArg,
+                "too many clip edges on one frame",
+            );
+        }
         let mut es = Vec::with_capacity(n);
         for i in 0..n {
             let Some(input) = input_to_medius(unsafe { *inputs.add(i) }) else {
                 return fail(MediusStatus::ErrInvalidArg, "invalid clip edge input");
             };
-            es.push((input, unsafe { *actions.add(i) }.into()));
+            let action = match unsafe { *(actions.add(i) as *const u8) } {
+                0 => medius::Action::SoftRelease,
+                1 => medius::Action::Press,
+                2 => medius::Action::ForceRelease,
+                _ => return fail(MediusStatus::ErrInvalidArg, "invalid clip edge action"),
+            };
+            es.push((input, action));
         }
         unsafe { &mut (*b).inner }.frame(dx, dy, wheel, &es);
         clear_error();

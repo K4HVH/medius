@@ -181,7 +181,7 @@ class MediusClipStatus(ctypes.Structure):
         ("underruns", u16),
         ("overruns", u16),
         ("seq_gaps", u16),
-        ("held", c_bool),
+        ("held", u8),
     ]
 
 

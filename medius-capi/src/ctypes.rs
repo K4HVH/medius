@@ -380,7 +380,7 @@ pub struct MediusClipStatus {
     pub underruns: u16,
     pub overruns: u16,
     pub seq_gaps: u16,
-    pub held: bool,
+    pub held: u8,
 }
 
 /// Host-side always-on counters.

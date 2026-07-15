@@ -220,7 +220,7 @@ fn clip_status_payload(c: ClipStatus) -> Vec<u8> {
     p.extend_from_slice(&c.underruns.to_le_bytes());
     p.extend_from_slice(&c.overruns.to_le_bytes());
     p.extend_from_slice(&c.seq_gaps.to_le_bytes());
-    p.push(c.held as u8);
+    p.push(c.held);
     p
 }
 

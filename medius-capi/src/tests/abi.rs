@@ -852,7 +852,7 @@ fn clip_status_query_returns_configured_value() {
         underruns: 2,
         overruns: 0,
         seq_gaps: 1,
-        held: true,
+        held: 1,
     };
     unsafe { medius_mock_set_clip_status(mock, status) };
     let mut dev: *mut MediusDevice = ptr::null_mut();
@@ -873,7 +873,7 @@ fn clip_status_query_returns_configured_value() {
         underruns: 0,
         overruns: 0,
         seq_gaps: 0,
-        held: false,
+        held: 0,
     };
     assert_eq!(
         unsafe { medius_clip_status(clip, &mut out) },

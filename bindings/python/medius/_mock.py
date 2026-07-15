@@ -128,7 +128,7 @@ class MockBox:
             status.underruns,
             status.overruns,
             status.seq_gaps,
-            bool(status.held),
+            status.held,
         )
         _native.lib.medius_mock_set_clip_status(self._handle, c)
 

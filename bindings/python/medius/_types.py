@@ -548,7 +548,7 @@ class ClipStatus:
     underruns: int
     overruns: int
     seq_gaps: int
-    held: bool
+    held: int
 
 
 def clip_status_from_c(c) -> ClipStatus:
@@ -560,7 +560,7 @@ def clip_status_from_c(c) -> ClipStatus:
         c.underruns,
         c.overruns,
         c.seq_gaps,
-        bool(c.held),
+        c.held,
     )
 
 

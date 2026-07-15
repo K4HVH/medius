@@ -458,7 +458,7 @@ def test_clip_builder_frame_edges():
 
 def test_clip_status_roundtrip():
     status = ClipStatus(ClipState.PLAYING, free=512, used=40, ticks=99,
-                        underruns=2, overruns=0, seq_gaps=1, held=True)
+                        underruns=2, overruns=0, seq_gaps=1, held=1)
     with MockBox() as mock:
         mock.set_clip_status(status)
         with Device.with_mock(mock) as d:

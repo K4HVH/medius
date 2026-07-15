@@ -431,7 +431,7 @@ typedef struct MediusClipStatus {
     uint16_t underruns;
     uint16_t overruns;
     uint16_t seq_gaps;
-    bool held;
+    uint8_t held;
 } MediusClipStatus;
 
 // A discovered medius serial port. `path` is NUL-terminated.
