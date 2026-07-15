@@ -76,7 +76,7 @@ let device = Device::open("/dev/ttyACM0")?;   // a specific port
 
 ```rust
 for b in Device::list() {                     // every connected box
-    println!("{} {} {}", b.id(), b.device.kind, b.device);  // MAC, kind, vid:pid + product
+    println!("{} {:?} {} {}", b.id(), b.name(), b.device.kind, b.device);  // MAC, name, kind, vid:pid + product
 }
 let m = Device::find_mouse_box()?;            // the box cloning a mouse
 let k = Device::find_keyboard_box()?;         // the box cloning a keyboard
@@ -201,7 +201,7 @@ It uses `flume`'s async recv, so there's no runtime dependency and it runs on an
 use medius::{Button, Device, FrameType, Health, MockBox, Rate, Version};
 
 let mock = MockBox::new()
-    .with_version(Version { proto_ver: 1, fw_major: 1, fw_minor: 2, fw_patch: 3 })
+    .with_version(Version { proto_ver: 2, fw_major: 1, fw_minor: 2, fw_patch: 3, mac: [0; 6], name: "my-box".into() })
     .with_health(Health::from_flags(0x0F))
     .with_rate(Rate { native_period_us: 1000, poll_period_us: 1000, confident: true });
 

@@ -225,6 +225,16 @@ impl AsyncDevice {
         self.dev().set_emit_pace(pace)
     }
 
+    /// `OPTION(NAME)` — set the box's persistent name. Instant; see [`Device::set_name`].
+    pub fn set_name(&self, name: &str) -> Result<()> {
+        self.dev().set_name(name)
+    }
+
+    /// `OPTION(NAME)` clear — revert to the synthesized default. Instant; see [`Device::clear_name`].
+    pub fn clear_name(&self) -> Result<()> {
+        self.dev().clear_name()
+    }
+
     /// Query the box version, awaiting the correlated `RESP` with the default timeout.
     pub async fn query_version(&self) -> Result<Version> {
         let payload = self

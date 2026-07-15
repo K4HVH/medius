@@ -3,7 +3,7 @@
 use core::fmt;
 
 /// The decoded `RESP(VERSION)` payload.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Version {
     /// Protocol version, expected to be `2`.
     pub proto_ver: u8,
@@ -12,6 +12,10 @@ pub struct Version {
     pub fw_patch: u8,
     /// The device chip's factory base MAC — a stable per-box identity that survives port renumbering.
     pub mac: [u8; 6],
+    /// The box's human-readable name, its readable partner to the [`mac`](Self::mac). Set with
+    /// [`Device::set_name`](crate::Device::set_name); never empty (the firmware synthesizes a
+    /// `Medius-XXXX` default from the MAC when no custom name is set).
+    pub name: String,
 }
 
 impl Version {

@@ -187,12 +187,15 @@ pub(crate) fn emit_pace_to_medius(mode: MediusEmitMode, hz: u16) -> EmitPace {
 
 impl From<Version> for MediusVersion {
     fn from(v: Version) -> Self {
+        let mut name = [0 as c_char; MEDIUS_MAX_NAME];
+        fill_cstr(&mut name, &v.name);
         MediusVersion {
             proto_ver: v.proto_ver,
             fw_major: v.fw_major,
             fw_minor: v.fw_minor,
             fw_patch: v.fw_patch,
             mac: v.mac,
+            name,
         }
     }
 }
@@ -446,6 +449,7 @@ impl From<MediusVersion> for Version {
             fw_minor: v.fw_minor,
             fw_patch: v.fw_patch,
             mac: v.mac,
+            name: read_cstr(&v.name),
         }
     }
 }
@@ -652,7 +656,7 @@ pub(crate) fn port_to_medius(p: &PortInfo) -> Option<MediusPortInfo> {
 pub(crate) fn box_to_medius(b: &BoxInfo) -> Option<MediusBoxInfo> {
     Some(MediusBoxInfo {
         port: port_to_medius(&b.port)?,
-        version: b.version.into(),
+        version: b.version.clone().into(), // Version is no longer Copy (it carries the name String)
         device: b.device.clone().into(),
     })
 }

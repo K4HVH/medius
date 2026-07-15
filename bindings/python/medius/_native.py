@@ -20,6 +20,7 @@ MEDIUS_MAX_LOG_TEXT = 512
 MEDIUS_MAX_PATH = 512
 MEDIUS_MAX_PRODUCT = 128
 MEDIUS_MAX_SERIAL = 128
+MEDIUS_MAX_NAME = 33
 
 u8 = ctypes.c_uint8
 u16 = ctypes.c_uint16
@@ -65,6 +66,7 @@ class MediusVersion(ctypes.Structure):
         ("fw_minor", u8),
         ("fw_patch", u8),
         ("mac", u8 * 6),
+        ("name", ctypes.c_char * MEDIUS_MAX_NAME),
     ]
 
 
@@ -299,6 +301,8 @@ _decl("medius_device_reboot", i32, [HANDLE, u8])
 _decl("medius_device_allow_imperfect_clones", i32, [HANDLE, c_bool])
 _decl("medius_device_set_movement_riding", i32, [HANDLE, c_bool, u32])
 _decl("medius_device_set_emit_pace", i32, [HANDLE, u8, u16])
+_decl("medius_device_set_name", i32, [HANDLE, ctypes.c_char_p])
+_decl("medius_device_clear_name", i32, [HANDLE])
 
 # --- queries ---
 _decl("medius_device_query_version", i32, [HANDLE, ctypes.POINTER(MediusVersion)])

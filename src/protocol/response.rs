@@ -45,6 +45,9 @@ pub fn parse_resp(payload: &[u8]) -> Option<Resp> {
                 fw_minor: payload[3],
                 fw_patch: payload[4],
                 mac,
+                // Variable ASCII name tail after the MAC, LEN-delimited like DEVICE_INFO's product; an
+                // older box with no tail decodes to an empty name (the 11-byte header still parses).
+                name: String::from_utf8_lossy(&payload[11..]).into_owned(),
             }))
         }
         Q_HEALTH => {

@@ -16,6 +16,7 @@ fn device_info_and_version_mac_round_trip_through_the_mock() {
             fw_minor: 3,
             fw_patch: 0,
             mac: [0x5A, 0x4E, 0x00, 0x11, 0x1e, 0x28],
+            name: "Left PC".to_string(),
         })
         .with_device_info(DeviceInfo {
             vid: 0x1532,
@@ -31,6 +32,7 @@ fn device_info_and_version_mac_round_trip_through_the_mock() {
 
     let v = device.query_version().unwrap();
     assert_eq!(v.mac_hex(), "5a4e00111e28");
+    assert_eq!(v.name, "Left PC"); // the name rides RESP(VERSION) beside the MAC
 
     let info = device.device_info().unwrap();
     assert_eq!((info.vid, info.pid), (0x1532, 0x0072));
@@ -71,6 +73,7 @@ fn handshake_rejects_wrong_proto_ver() {
         fw_minor: 0,
         fw_patch: 0,
         mac: [0; 6],
+        name: String::new(),
     });
     let err = Device::open_mock(mock).unwrap_err();
     assert!(matches!(err, Error::BadProtoVer { got: 9 }), "got {err:?}");

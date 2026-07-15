@@ -25,6 +25,7 @@ pub use device::Device;
 pub use device::catch::EventStream;
 pub use device::discover::BoxInfo;
 pub use device::logs::LogStream;
+pub use device::options::{EMIT_MAX_HZ, NAME_MAX};
 pub use error::{Error, Result};
 pub use link::{DEFAULT_KEEPALIVE_CADENCE, DEFAULT_QUERY_TIMEOUT};
 pub use protocol::{DecodedFrame, FrameType};

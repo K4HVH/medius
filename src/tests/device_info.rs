@@ -9,7 +9,7 @@ use crate::types::{DeviceKind, Health};
 
 #[test]
 fn decode_version_with_mac() {
-    // [what=0][proto=2][maj=2][min=3][patch=0][mac 6B]
+    // [what=0][proto=2][maj=2][min=3][patch=0][mac 6B] — header only, no name tail (empty name).
     let p = [0u8, 2, 2, 3, 0, 0x5A, 0x4E, 0x11, 0x22, 0x1e, 0x28];
     let Some(Resp::Version(v)) = parse_resp(&p) else {
         panic!("expected Version");
@@ -20,8 +20,21 @@ fn decode_version_with_mac() {
     );
     assert_eq!(v.mac, [0x5A, 0x4E, 0x11, 0x22, 0x1e, 0x28]);
     assert_eq!(v.mac_hex(), "5a4e11221e28");
+    assert_eq!(v.name, ""); // an 11-byte (header-only) VERSION decodes to an empty name (older box)
     // A pre-mac (5-byte) VERSION no longer parses.
     assert!(parse_resp(&[0u8, 2, 2, 3, 0]).is_none());
+}
+
+#[test]
+fn decode_version_with_name_tail() {
+    // Header + a "Left PC" ASCII name tail after the MAC (offset 11..), LEN-delimited like DEVICE_INFO.
+    let mut p = vec![0u8, 2, 2, 4, 0, 0x5A, 0x4E, 0x11, 0x22, 0x1e, 0x28];
+    p.extend_from_slice(b"Left PC");
+    let Some(Resp::Version(v)) = parse_resp(&p) else {
+        panic!("expected Version");
+    };
+    assert_eq!(v.mac_hex(), "5a4e11221e28");
+    assert_eq!(v.name, "Left PC");
 }
 
 #[test]

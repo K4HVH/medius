@@ -346,6 +346,25 @@ mod linux {
         }
 
         {
+            // Box name: set it, read it back off query_version (the name rides RESP(VERSION) like the
+            // MAC), then clear it and confirm it reverts to the synthesized "Medius-XXXX" default.
+            let dev = device.as_ref().unwrap();
+            let set_ok = dev.set_name("hw-full box").is_ok();
+            std::thread::sleep(Duration::from_millis(60));
+            let named = matches!(dev.query_version(), Ok(v) if v.name == "hw-full box");
+            let clear_ok = dev.clear_name().is_ok();
+            std::thread::sleep(Duration::from_millis(60));
+            let after = dev.query_version().map(|v| v.name).unwrap_or_default();
+            let reverted = after.starts_with("Medius-");
+            let rejected = dev.set_name("").is_err(); // empty is a client-side validation error
+            check(
+                "box name",
+                set_ok && named && clear_ok && reverted && rejected,
+                format!("set 'hw-full box' -> read back, clear -> {after:?}"),
+            );
+        }
+
+        {
             // LED override is not visible on the clone, so this is a smoke check: every mode is
             // accepted, the box stays healthy, and the LED is handed back to its status display.
             let dev = device.as_ref().unwrap();
@@ -920,6 +939,8 @@ mod linux {
             let aopt_ok = block_on(adev.query_movement_riding()).is_ok()
                 && block_on(adev.query_imperfect()).is_ok()
                 && block_on(adev.query_emit_pace()).is_ok();
+            // async name setter parity: set then clear (leaves the box on its synth default)
+            let aname_ok = adev.set_name("async box").is_ok() && adev.clear_name().is_ok();
             reset_motion(&acc);
             let _ = adev.move_rel(12, 0);
             std::thread::sleep(Duration::from_millis(200));
@@ -933,9 +954,9 @@ mod linux {
             let arecon_ok = adev.reconnect().is_ok() && adev.counters().reconnects > arecon_base;
             check(
                 "async",
-                av_ok && ah_ok && aopt_ok && amoved == 12 && arecon_ok,
+                av_ok && ah_ok && aopt_ok && aname_ok && amoved == 12 && arecon_ok,
                 format!(
-                    "AsyncDevice: version_ok={av_ok}, health_ok={ah_ok}, option_queries_ok={aopt_ok}, reconnect_ok={arecon_ok}, async_logs_drained={alog_n}, async move REL_X={amoved}"
+                    "AsyncDevice: version_ok={av_ok}, health_ok={ah_ok}, option_queries_ok={aopt_ok}, name_ok={aname_ok}, reconnect_ok={arecon_ok}, async_logs_drained={alog_n}, async move REL_X={amoved}"
                 ),
             );
         }

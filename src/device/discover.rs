@@ -29,6 +29,12 @@ impl BoxInfo {
     pub fn serial(&self) -> Option<&str> {
         self.port.serial.as_deref()
     }
+
+    /// The box's human-readable name (its readable partner to [`id`](Self::id)), from `RESP(VERSION)`.
+    /// Never empty: the firmware synthesizes a `Medius-XXXX` default when no custom name is set.
+    pub fn name(&self) -> &str {
+        &self.version.name
+    }
 }
 
 fn probe(port: &PortInfo) -> Option<BoxInfo> {
