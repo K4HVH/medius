@@ -32,6 +32,7 @@ class Version:
     fw_minor: int
     fw_patch: int
     mac: bytes = b"\x00" * 6
+    name: str = ""
 
     @property
     def mac_hex(self) -> str:
@@ -204,6 +205,11 @@ class BoxInfo:
         return self.version.mac_hex
 
     @property
+    def name(self) -> str:
+        """The box's human-readable name (its readable partner to `id`); a synthesized default when unset."""
+        return self.version.name
+
+    @property
     def serial(self) -> Optional[str]:
         return self.port.serial
 
@@ -342,13 +348,20 @@ class LockTarget:
 
 
 def version_from_c(c) -> Version:
-    return Version(c.proto_ver, c.fw_major, c.fw_minor, c.fw_patch, bytes(c.mac))
+    return Version(
+        c.proto_ver, c.fw_major, c.fw_minor, c.fw_patch, bytes(c.mac), _cstr(c.name)
+    )
 
 
 def version_to_c(v) -> "_native.MediusVersion":
     mac = bytes(v.mac).ljust(6, b"\x00")[:6]
     return _native.MediusVersion(
-        v.proto_ver, v.fw_major, v.fw_minor, v.fw_patch, (_native.u8 * 6)(*mac)
+        v.proto_ver,
+        v.fw_major,
+        v.fw_minor,
+        v.fw_patch,
+        (_native.u8 * 6)(*mac),
+        v.name.encode("utf-8")[: _native.MEDIUS_MAX_NAME - 1],
     )
 
 

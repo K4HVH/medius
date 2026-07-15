@@ -1,12 +1,14 @@
 //! OPTION command + QUERY(OPTIONS) (§3.10 / §4.14): payload bytes, decoding through `parse_resp`, the
-//! command frames, and the query roundtrips for both options (imperfect-clone, movement riding). Bytes
-//! are pinned to the firmware wire format in `ctrl_proto.h`.
+//! command frames, and the query roundtrips for the options (imperfect-clone, movement riding, emit pace,
+//! box name). Bytes are pinned to the firmware wire format in `ctrl_proto.h`.
 
 use std::time::Duration;
 
 #[cfg(feature = "mock")]
 use crate::protocol::FrameType;
-use crate::protocol::command::{emit_pace_payload, imperfect_payload, move_ride_payload};
+use crate::protocol::command::{
+    emit_pace_payload, imperfect_payload, move_ride_payload, name_payload,
+};
 use crate::protocol::{Resp, parse_resp};
 use crate::types::{EmitPace, EmitPaceStatus, ImperfectStatus};
 
@@ -23,6 +25,9 @@ fn option_payload_bytes() {
     assert_eq!(emit_pace_payload(0, 0), [2, 0, 0, 0]);
     assert_eq!(emit_pace_payload(1, 0), [2, 1, 0, 0]);
     assert_eq!(emit_pace_payload(2, 1000), [2, 2, 0xE8, 0x03]);
+    // OPTION(NAME): [id=3][name ascii...]; empty name = clear (just the id byte)
+    assert_eq!(name_payload("AB"), vec![3, b'A', b'B']);
+    assert_eq!(name_payload(""), vec![3]);
 }
 
 #[test]
@@ -155,4 +160,44 @@ fn set_movement_riding_saturates_at_u16_max() {
         .find(|f| f.ty == FrameType::Option)
         .unwrap();
     assert_eq!(frame.payload, vec![1, 0xFF, 0xFF]); // [id=move_ride][u16::MAX LE]
+}
+
+#[cfg(feature = "mock")]
+#[test]
+fn set_name_sends_option_frame_and_clear_is_empty() {
+    use crate::{Device, MockBox};
+    let mock = MockBox::new();
+    let device = Device::with_mock(mock.clone());
+    device.set_name("Left PC").unwrap();
+    let frame = mock
+        .recorded_frames()
+        .into_iter()
+        .find(|f| f.ty == FrameType::Option)
+        .unwrap();
+    assert_eq!(frame.payload, b"\x03Left PC".to_vec()); // [id=3]["Left PC"]
+    device.clear_name().unwrap();
+    let cleared = mock
+        .recorded_frames()
+        .into_iter()
+        .rfind(|f| f.ty == FrameType::Option)
+        .unwrap();
+    assert_eq!(cleared.payload, vec![3]); // clear = OPTION(NAME) with only the id byte
+}
+
+#[cfg(feature = "mock")]
+#[test]
+fn set_name_sends_the_value_raw_for_the_box_to_sanitize() {
+    use crate::{Device, MockBox};
+    // Like the other setters, set_name does no host-side validation: it sends the string as-is and the
+    // firmware keeps the leading printable-ASCII run capped at NAME_MAX. So a control byte rides through
+    // on the wire (the box drops it), never a host error.
+    let mock = MockBox::new();
+    let device = Device::with_mock(mock.clone());
+    device.set_name("A\tB").unwrap();
+    let frame = mock
+        .recorded_frames()
+        .into_iter()
+        .find(|f| f.ty == FrameType::Option)
+        .unwrap();
+    assert_eq!(frame.payload, vec![3, b'A', b'\t', b'B']); // sent raw; the box, not the host, sanitizes
 }

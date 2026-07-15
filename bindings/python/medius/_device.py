@@ -219,6 +219,15 @@ class Device:
         """Set what paces injected motion (`hz` matters only for `EmitPace.fixed`)."""
         check(_native.lib.medius_device_set_emit_pace(self._handle, int(pace.mode), int(pace.hz)))
 
+    def set_name(self, name: str):
+        """Set the box's persistent human-readable name. The firmware keeps the leading printable-ASCII
+        run, capped at 32 bytes; an empty string clears it. Read it back from `query_version().name`."""
+        check(_native.lib.medius_device_set_name(self._handle, name.encode("utf-8")))
+
+    def clear_name(self):
+        """Clear the custom name, reverting the box to its synthesized `Medius-XXXX` default."""
+        check(_native.lib.medius_device_clear_name(self._handle))
+
     # --- queries ---
 
     def query_version(self) -> Version:

@@ -64,11 +64,22 @@ def test_configure_version_then_open_mock_matches():
     with Device.with_mock(mock) as d:
         proto = d.query_version().proto_ver
     mac = bytes([0x5A, 0x4E, 0x00, 0x11, 0x1E, 0x28])
-    mock.set_version(Version(proto, 9, 8, 7, mac))
+    mock.set_version(Version(proto, 9, 8, 7, mac, "Left PC"))
     with mock.open() as d:
         v = d.query_version()
-    assert v == Version(proto, 9, 8, 7, mac)
+    assert v == Version(proto, 9, 8, 7, mac, "Left PC")
     assert v.mac_hex == "5a4e00111e28"
+    assert v.name == "Left PC"  # the name rides the version readback beside the MAC
+    mock.close()
+
+
+def test_set_name_and_clear_name():
+    mock = MockBox()
+    with mock.open() as d:
+        # No host-side validation (like the other setters): the box sanitizes. These all just send.
+        d.set_name("Left PC")
+        d.set_name("x" * 40)  # over-length: the firmware caps it, the host does not error
+        d.clear_name()
     mock.close()
 
 

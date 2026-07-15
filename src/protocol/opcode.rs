@@ -44,6 +44,9 @@ pub const OPT_IMPERFECT: u8 = 0;
 pub const OPT_MOVE_RIDE: u8 = 1;
 /// `OPTION` id: emit-rate pacing. Value `[mode u8][rate_hz u16 LE]` — 0 learnt / 1 bInterval / 2 fixed.
 pub const OPT_EMIT: u8 = 2;
+/// `OPTION` id: box name. Value `[name ascii]` — 1..32 printable ASCII, 0 bytes clears to the synthesized
+/// default. Set-only: read the name off `RESP(VERSION)` ([`Version::name`](crate::Version)), not `QUERY(OPTIONS)`.
+pub const OPT_NAME: u8 = 3;
 
 pub const BTN_LEFT: u8 = 0;
 pub const BTN_RIGHT: u8 = 1;
@@ -158,7 +161,8 @@ pub enum FrameType {
     KbEvent = 0x0F,
     /// `CONS_EVENT` — one unsolicited media snapshot (active Consumer usages); box→PC (v2.0.0).
     ConsEvent = 0x10,
-    /// `OPTION` — set a persistent box option by id (imperfect-clone opt-in, movement riding) (PC→box).
+    /// `OPTION` — set a persistent box option by id (imperfect-clone, movement riding, emit pacing, box
+    /// name) (PC→box).
     Option = 0x11,
 }
 

@@ -15,6 +15,7 @@ fn concurrent_queries_never_cross_deliver() {
             fw_minor: 3,
             fw_patch: 4,
             mac: [0; 6],
+            name: String::new(),
         })
         .with_health(Health::from_flags(0x01));
     let device = Arc::new(Device::with_mock(mock));

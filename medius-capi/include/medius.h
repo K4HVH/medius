@@ -27,6 +27,9 @@
 // Capacity for a cloned device's product string (the wire caps it at 127 bytes).
 #define MEDIUS_MAX_PRODUCT 128
 
+// Capacity for the box name string (the wire caps it at 32 bytes; +1 for the NUL terminator).
+#define MEDIUS_MAX_NAME 33
+
 // Capacity for a control adapter's serial string.
 #define MEDIUS_MAX_SERIAL 128
 
@@ -382,13 +385,16 @@ typedef struct MediusPortInfo {
     uint8_t has_serial;
 } MediusPortInfo;
 
-// Decoded firmware version. `mac` is the device chip's base MAC — a stable per-box identity.
+// Decoded firmware version. `mac` is the device chip's base MAC — a stable per-box identity. `name` is
+// the box's NUL-terminated human-readable name (its readable partner to `mac`), never empty (the
+// firmware synthesizes a `Medius-XXXX` default when no custom name is set).
 typedef struct MediusVersion {
     uint8_t proto_ver;
     uint8_t fw_major;
     uint8_t fw_minor;
     uint8_t fw_patch;
     uint8_t mac[6];
+    char name[MEDIUS_MAX_NAME];
 } MediusVersion;
 
 // The cloned device's USB identity, primary kind, and product string. `product` is a NUL-terminated
@@ -870,6 +876,16 @@ MediusStatus medius_device_set_emit_pace(struct MediusDevice *dev,
                                          MediusEmitMode mode,
                                          uint16_t hz);
 
+// Set the box's persistent human-readable name (`name`, a NUL-terminated UTF-8 string). The firmware
+// keeps the leading printable-ASCII run, capped at `MEDIUS_MAX_NAME - 1` bytes; an empty string clears
+// the name. Read it back from `medius_device_query_version` (`MediusVersion.name`). Returns
+// `ErrInvalidArg` only for a null handle/name or non-UTF-8 input.
+MediusStatus medius_device_set_name(struct MediusDevice *dev,
+                                    const char *name);
+
+// Clear the box's custom name, reverting it to its synthesized `Medius-XXXX` default.
+MediusStatus medius_device_clear_name(struct MediusDevice *dev);
+
 MediusStatus medius_device_query_version(struct MediusDevice *dev, struct MediusVersion *out);
 
 MediusStatus medius_device_query_health(struct MediusDevice *dev, struct MediusHealth *out);
@@ -907,6 +923,7 @@ uint32_t medius_default_query_timeout_ms(void);
 uint32_t medius_default_keepalive_cadence_ms(void);
 
 // The C ABI version. Bumped on any breaking change to this header.
+// 2: `MediusVersion` grew a `name` field and `medius_device_set_name`/`_clear_name` were added (v2.4.0).
 uint32_t medius_abi_version(void);
 
 // The medius-capi crate version as a static NUL-terminated string.

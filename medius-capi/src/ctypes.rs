@@ -13,6 +13,8 @@ pub const MEDIUS_MAX_LOG_TEXT: usize = 512;
 pub const MEDIUS_MAX_PATH: usize = 512;
 /// Capacity for a cloned device's product string (the wire caps it at 127 bytes).
 pub const MEDIUS_MAX_PRODUCT: usize = 128;
+/// Capacity for the box name string (the wire caps it at 32 bytes; +1 for the NUL terminator).
+pub const MEDIUS_MAX_NAME: usize = 33;
 /// Capacity for a control adapter's serial string.
 pub const MEDIUS_MAX_SERIAL: usize = 128;
 
@@ -216,7 +218,9 @@ pub enum MediusDeviceKind {
     Mouse = 2,
 }
 
-/// Decoded firmware version. `mac` is the device chip's base MAC — a stable per-box identity.
+/// Decoded firmware version. `mac` is the device chip's base MAC — a stable per-box identity. `name` is
+/// the box's NUL-terminated human-readable name (its readable partner to `mac`), never empty (the
+/// firmware synthesizes a `Medius-XXXX` default when no custom name is set).
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MediusVersion {
@@ -225,6 +229,7 @@ pub struct MediusVersion {
     pub fw_minor: u8,
     pub fw_patch: u8,
     pub mac: [u8; 6],
+    pub name: [c_char; MEDIUS_MAX_NAME],
 }
 
 /// Box health flags (each field is 0 or 1).

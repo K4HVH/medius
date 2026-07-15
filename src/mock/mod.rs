@@ -42,6 +42,7 @@ impl Default for State {
                 fw_minor: 0,
                 fw_patch: 0,
                 mac: [0; 6],
+                name: String::new(),
             },
             health: Health::from_flags(0),
             device_info: DeviceInfo::default(),
@@ -252,9 +253,10 @@ impl MockBox {
             if ty == FrameType::Query && st.respond {
                 match payload.first().copied() {
                     Some(0) => {
-                        let v = st.version;
+                        let v = &st.version;
                         let mut p = vec![0, v.proto_ver, v.fw_major, v.fw_minor, v.fw_patch];
                         p.extend_from_slice(&v.mac);
+                        p.extend_from_slice(v.name.as_bytes()); // ASCII name tail, like the real box
                         encode(FrameType::Resp, seq, &p).expect("resp fits")
                     }
                     Some(1) => {

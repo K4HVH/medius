@@ -533,6 +533,33 @@ pub unsafe extern "C" fn medius_device_set_emit_pace(
     with_device(dev, |d| d.set_emit_pace(emit_pace_to_medius(mode, hz)))
 }
 
+/// Set the box's persistent human-readable name (`name`, a NUL-terminated UTF-8 string). The firmware
+/// keeps the leading printable-ASCII run, capped at `MEDIUS_MAX_NAME - 1` bytes; an empty string clears
+/// the name. Read it back from `medius_device_query_version` (`MediusVersion.name`). Returns
+/// `ErrInvalidArg` only for a null handle/name or non-UTF-8 input.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn medius_device_set_name(
+    dev: *mut MediusDevice,
+    name: *const c_char,
+) -> MediusStatus {
+    guard_status(|| {
+        if dev.is_null() || name.is_null() {
+            return fail(MediusStatus::ErrInvalidArg, "null pointer");
+        }
+        let Ok(s) = (unsafe { CStr::from_ptr(name) }).to_str() else {
+            return fail(MediusStatus::ErrInvalidArg, "name is not valid UTF-8");
+        };
+        let d = unsafe { &(*dev).inner };
+        status_of(d.set_name(s))
+    })
+}
+
+/// Clear the box's custom name, reverting it to its synthesized `Medius-XXXX` default.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn medius_device_clear_name(dev: *mut MediusDevice) -> MediusStatus {
+    with_device(dev, |d| d.clear_name())
+}
+
 // --- queries ---
 
 #[unsafe(no_mangle)]
@@ -681,9 +708,10 @@ pub extern "C" fn medius_default_keepalive_cadence_ms() -> u32 {
 }
 
 /// The C ABI version. Bumped on any breaking change to this header.
+/// 2: `MediusVersion` grew a `name` field and `medius_device_set_name`/`_clear_name` were added (v2.4.0).
 #[unsafe(no_mangle)]
 pub extern "C" fn medius_abi_version() -> u32 {
-    1
+    2
 }
 
 /// The medius-capi crate version as a static NUL-terminated string.

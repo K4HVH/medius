@@ -1,4 +1,6 @@
-use super::opcode::{INJ_MOTION_CURSOR, INJ_MOTION_WHEEL, OPT_EMIT, OPT_IMPERFECT, OPT_MOVE_RIDE};
+use super::opcode::{
+    INJ_MOTION_CURSOR, INJ_MOTION_WHEEL, OPT_EMIT, OPT_IMPERFECT, OPT_MOVE_RIDE, OPT_NAME,
+};
 
 /// `MOVE` cursor (§3.1): `[motion=0][dx i16 LE][dy i16 LE]`, no clamp (firmware clamps with carry).
 pub fn move_cursor_payload(dx: i16, dy: i16) -> [u8; 5] {
@@ -57,4 +59,13 @@ pub fn move_ride_payload(timeout_ms: u16) -> [u8; 3] {
 pub fn emit_pace_payload(mode: u8, hz: u16) -> [u8; 4] {
     let h = hz.to_le_bytes();
     [OPT_EMIT, mode, h[0], h[1]]
+}
+/// `OPTION(NAME)` set value: the id byte followed by the name's ASCII bytes (variable-length, unlike the
+/// fixed-size siblings). An empty `name` sends just the id — the box reads that as "clear to the default".
+/// The caller validates the name; the firmware also keeps only the leading printable run, capped at 32.
+pub fn name_payload(name: &str) -> Vec<u8> {
+    let mut v = Vec::with_capacity(1 + name.len());
+    v.push(OPT_NAME);
+    v.extend_from_slice(name.as_bytes());
+    v
 }

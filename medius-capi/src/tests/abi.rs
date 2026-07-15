@@ -4,9 +4,30 @@
 use std::ptr;
 use std::time::Duration;
 
+use std::os::raw::c_char;
+
 use medius::{DecodedFrame, Device, MockBox};
 
 use crate::*;
+
+/// Build a fixed-size C name buffer from a string (NUL-terminated, zero-padded), as the ABI expects.
+fn cname(s: &str) -> [c_char; MEDIUS_MAX_NAME] {
+    let mut buf = [0; MEDIUS_MAX_NAME];
+    for (i, b) in s.bytes().take(MEDIUS_MAX_NAME - 1).enumerate() {
+        buf[i] = b as c_char;
+    }
+    buf
+}
+
+/// Read a C name buffer back to a `String` (up to the first NUL).
+fn read_cname(buf: &[c_char]) -> String {
+    let bytes: Vec<u8> = buf
+        .iter()
+        .take_while(|&&c| c != 0)
+        .map(|&c| c as u8)
+        .collect();
+    String::from_utf8_lossy(&bytes).into_owned()
+}
 
 /// Frames recorded when `f` drives a native `Device` over a fresh mock.
 fn native_frames(f: impl FnOnce(&Device)) -> Vec<DecodedFrame> {
@@ -242,6 +263,8 @@ fn admin_and_options_parity() {
             d.set_movement_riding(Some(Duration::from_millis(5)))
                 .unwrap();
             d.set_movement_riding(None).unwrap();
+            d.set_name("rig-3").unwrap();
+            d.clear_name().unwrap();
         },
         |dev| unsafe {
             assert_eq!(medius_device_reset(dev), MediusStatus::Ok);
@@ -261,6 +284,11 @@ fn admin_and_options_parity() {
                 medius_device_set_movement_riding(dev, false, 0),
                 MediusStatus::Ok
             );
+            assert_eq!(
+                medius_device_set_name(dev, c"rig-3".as_ptr()),
+                MediusStatus::Ok
+            );
+            assert_eq!(medius_device_clear_name(dev), MediusStatus::Ok);
         },
     );
 }
@@ -279,6 +307,7 @@ fn query_version_returns_configured_value() {
                 fw_minor: 8,
                 fw_patch: 7,
                 mac: [0x5A, 0x4E, 0x00, 0x11, 0x1e, 0x28],
+                name: cname("Left PC"),
             },
         );
     }
@@ -293,6 +322,7 @@ fn query_version_returns_configured_value() {
         fw_minor: 0,
         fw_patch: 0,
         mac: [0; 6],
+        name: [0; MEDIUS_MAX_NAME],
     };
     assert_eq!(
         unsafe { medius_device_query_version(dev, &mut version) },
@@ -302,6 +332,7 @@ fn query_version_returns_configured_value() {
     assert_eq!(version.fw_minor, 8);
     assert_eq!(version.fw_patch, 7);
     assert_eq!(version.mac, [0x5A, 0x4E, 0x00, 0x11, 0x1e, 0x28]);
+    assert_eq!(read_cname(&version.name), "Left PC"); // the name rides the version readback
     unsafe {
         medius_device_free(dev);
         medius_mock_free(mock);
@@ -556,6 +587,7 @@ fn bad_proto_version_is_reported() {
                 fw_minor: 0,
                 fw_patch: 0,
                 mac: [0; 6],
+                name: [0; MEDIUS_MAX_NAME],
             },
         );
     }
