@@ -163,11 +163,11 @@ pub unsafe extern "C" fn medius_clip_builder_media(
 
 /// A one-edge frame for any input class: press/release `input` (a button, key, or media usage) with
 /// `action`. The field-generic form the press/release/key/media helpers wrap. Build the input with
-/// `medius_input_button`/`_key`/`_media`.
+/// `medius_usage_button`/`_key`/`_media`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_clip_builder_edge(
     b: *mut MediusClipBuilder,
-    input: MediusInput,
+    input: MediusUsage,
     action: MediusAction,
 ) -> MediusStatus {
     guard_status(|| {
@@ -184,15 +184,15 @@ pub unsafe extern "C" fn medius_clip_builder_edge(
 }
 
 /// A general content frame: a motion delta (`dx`/`dy` cursor, `wheel`) plus `n` edges, each a
-/// (`MediusInput`, `MediusAction`) pair from the parallel `inputs`/`actions` arrays (null when `n` is 0).
-/// Build the inputs with `medius_input_button`/`_key`/`_media`.
+/// (`MediusUsage`, `MediusAction`) pair from the parallel `inputs`/`actions` arrays (null when `n` is 0).
+/// Build the inputs with `medius_usage_button`/`_key`/`_media`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_clip_builder_frame(
     b: *mut MediusClipBuilder,
     dx: i16,
     dy: i16,
     wheel: i16,
-    inputs: *const MediusInput,
+    inputs: *const MediusUsage,
     actions: *const MediusAction,
     n: usize,
 ) -> MediusStatus {
@@ -305,12 +305,12 @@ pub unsafe extern "C" fn medius_clip_stop(clip: *mut MediusClip) -> MediusStatus
 }
 
 /// Arm an on-device catch-trigger on a physical press of `input` (a button, key, or media usage), starting
-/// with `config` when it fires. Build the input with `medius_input_button`/`_key`/`_media`; or use
+/// with `config` when it fires. Build the input with `medius_usage_button`/`_key`/`_media`; or use
 /// `medius_clip_arm_catch_any` for any input.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_clip_arm_catch(
     clip: *mut MediusClip,
-    input: MediusInput,
+    input: MediusUsage,
     config: MediusClipConfig,
 ) -> MediusStatus {
     let Some(inp) = input_to_medius(input) else {

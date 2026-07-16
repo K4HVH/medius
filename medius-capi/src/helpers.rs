@@ -4,29 +4,29 @@
 use crate::ctypes::*;
 use crate::error::guard;
 
-/// Build an [`MediusInput`] addressing a mouse button.
+/// Build an [`MediusUsage`] addressing a mouse button.
 #[unsafe(no_mangle)]
-pub extern "C" fn medius_input_button(button: MediusButton) -> MediusInput {
-    MediusInput {
-        kind: MediusInputKind::Button,
+pub extern "C" fn medius_usage_button(button: MediusButton) -> MediusUsage {
+    MediusUsage {
+        kind: MediusClass::Button,
         value: button as u16,
     }
 }
 
-/// Build an [`MediusInput`] addressing a keyboard key.
+/// Build an [`MediusUsage`] addressing a keyboard key.
 #[unsafe(no_mangle)]
-pub extern "C" fn medius_input_key(key: MediusKey) -> MediusInput {
-    MediusInput {
-        kind: MediusInputKind::Key,
+pub extern "C" fn medius_usage_key(key: MediusKey) -> MediusUsage {
+    MediusUsage {
+        kind: MediusClass::Key,
         value: key as u16,
     }
 }
 
-/// Build an [`MediusInput`] addressing a media key.
+/// Build an [`MediusUsage`] addressing a media key.
 #[unsafe(no_mangle)]
-pub extern "C" fn medius_input_media(media: MediusMediaKey) -> MediusInput {
-    MediusInput {
-        kind: MediusInputKind::Media,
+pub extern "C" fn medius_usage_media(media: MediusMediaKey) -> MediusUsage {
+    MediusUsage {
+        kind: MediusClass::Media,
         value: media,
     }
 }
@@ -58,8 +58,8 @@ pub extern "C" fn medius_motion_wheel(delta: i16) -> MediusMotion {
 pub extern "C" fn medius_lock_target_axis(kind: MediusLockTargetKind) -> MediusLockTarget {
     MediusLockTarget {
         kind,
-        usage: MediusInput {
-            kind: MediusInputKind::Button,
+        usage: MediusUsage {
+            kind: MediusClass::Button,
             value: 0,
         },
     }
@@ -67,17 +67,17 @@ pub extern "C" fn medius_lock_target_axis(kind: MediusLockTargetKind) -> MediusL
 
 /// Build a [`MediusLockTarget`] addressing a momentary usage (button, key, or media).
 #[unsafe(no_mangle)]
-pub extern "C" fn medius_lock_target_usage(usage: MediusInput) -> MediusLockTarget {
+pub extern "C" fn medius_lock_target_usage(usage: MediusUsage) -> MediusLockTarget {
     MediusLockTarget {
         kind: MediusLockTargetKind::Usage,
         usage,
     }
 }
 
-/// Whether `target`/`dir` is locked in `locks` (`Both` requires both edges). Mirrors
-/// `medius::Locks::is_locked`: an exact target match, not a whole-class blanket.
+/// Whether `target`/`dir` is locked in `locks` (`Both` requires both edges), by a specific entry or a
+/// covering whole-class blanket. Mirrors `medius::Locks::is_locked`.
 #[unsafe(no_mangle)]
-pub extern "C" fn medius_locks_is_locked(
+pub unsafe extern "C" fn medius_locks_is_locked(
     locks: *const MediusLocks,
     target: MediusLockTarget,
     dir: MediusLockDirection,
@@ -132,7 +132,7 @@ pub unsafe extern "C" fn medius_rate_native_hz(rate: MediusRate, out_hz: *mut f3
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_usage_event_is_held(
     event: *const MediusUsageEvent,
-    usage: MediusInput,
+    usage: MediusUsage,
 ) -> bool {
     guard(false, || {
         if event.is_null() {
@@ -148,7 +148,7 @@ pub unsafe extern "C" fn medius_usage_event_is_held(
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_clip_status_is_held(
     status: *const MediusClipStatus,
-    usage: MediusInput,
+    usage: MediusUsage,
 ) -> bool {
     guard(false, || {
         if status.is_null() {

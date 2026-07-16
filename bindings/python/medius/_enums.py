@@ -117,7 +117,7 @@ class MotionKind(IntEnum):
     WHEEL = 1
 
 
-class InputKind(IntEnum):
+class Class(IntEnum):
     BUTTON = 0
     KEY = 1
     MEDIA = 2

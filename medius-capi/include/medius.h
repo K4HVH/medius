@@ -112,21 +112,21 @@ typedef uint8_t MediusAction;
 #endif // __STDC_VERSION__ >= 202311L
 #endif // __cplusplus
 
-// Which arm of a [`MediusInput`] is populated.
-enum MediusInputKind
+// The class of a [`MediusUsage`] (button / key / media).
+enum MediusClass
 #if defined(__cplusplus) || __STDC_VERSION__ >= 202311L
   : uint8_t
 #endif // defined(__cplusplus) || __STDC_VERSION__ >= 202311L
  {
-    MEDIUS_INPUT_KIND_BUTTON = 0,
-    MEDIUS_INPUT_KIND_KEY = 1,
-    MEDIUS_INPUT_KIND_MEDIA = 2,
+    MEDIUS_CLASS_BUTTON = 0,
+    MEDIUS_CLASS_KEY = 1,
+    MEDIUS_CLASS_MEDIA = 2,
 };
 #ifndef __cplusplus
 #if __STDC_VERSION__ >= 202311L
-typedef enum MediusInputKind MediusInputKind;
+typedef enum MediusClass MediusClass;
 #else
-typedef uint8_t MediusInputKind;
+typedef uint8_t MediusClass;
 #endif // __STDC_VERSION__ >= 202311L
 #endif // __cplusplus
 
@@ -425,11 +425,11 @@ typedef uint8_t MediusKey;
 typedef uint16_t MediusMediaKey;
 
 // A momentary usage for `medius_device_inject`. `value` holds the button id, key usage, or media
-// usage depending on `kind`. Build with the `medius_input_*` helpers.
-typedef struct MediusInput {
-    MediusInputKind kind;
+// usage depending on `kind`. Build with the `medius_usage_*` helpers.
+typedef struct MediusUsage {
+    MediusClass kind;
     uint16_t value;
-} MediusInput;
+} MediusUsage;
 
 // Playback options for a clip start or catch trigger (`medius_clip_start` / `_arm_catch`). The single
 // place clip settings live; extensible as more are added. `autolock` points at `autolock_len`
@@ -452,7 +452,7 @@ typedef struct MediusClipStatus {
     uint16_t overruns;
     uint16_t seq_gaps;
     uint16_t held_n;
-    struct MediusInput held[MEDIUS_MAX_USAGES];
+    struct MediusUsage held[MEDIUS_MAX_USAGES];
 } MediusClipStatus;
 
 // A discovered medius serial port. `path` is NUL-terminated.
@@ -511,7 +511,7 @@ typedef struct MediusMotion {
 // helpers.
 typedef struct MediusLockTarget {
     MediusLockTargetKind kind;
-    struct MediusInput usage;
+    struct MediusUsage usage;
 } MediusLockTarget;
 
 // Box health flags (each field is 0 or 1).
@@ -623,7 +623,7 @@ typedef struct MediusCountersSnapshot {
 // Diff successive snapshots for edges, or use `medius_usage_event_is_held`.
 typedef struct MediusUsageEvent {
     uint16_t n;
-    struct MediusInput usages[MEDIUS_MAX_USAGES];
+    struct MediusUsage usages[MEDIUS_MAX_USAGES];
 } MediusUsageEvent;
 
 // A CATCH subscription mask, an OR of the `MEDIUS_CATCH_MASK_*` bits.
@@ -863,19 +863,19 @@ MediusStatus medius_clip_builder_media(struct MediusClipBuilder *b,
 
 // A one-edge frame for any input class: press/release `input` (a button, key, or media usage) with
 // `action`. The field-generic form the press/release/key/media helpers wrap. Build the input with
-// `medius_input_button`/`_key`/`_media`.
+// `medius_usage_button`/`_key`/`_media`.
 MediusStatus medius_clip_builder_edge(struct MediusClipBuilder *b,
-                                      struct MediusInput input,
+                                      struct MediusUsage input,
                                       MediusAction action);
 
 // A general content frame: a motion delta (`dx`/`dy` cursor, `wheel`) plus `n` edges, each a
-// (`MediusInput`, `MediusAction`) pair from the parallel `inputs`/`actions` arrays (null when `n` is 0).
-// Build the inputs with `medius_input_button`/`_key`/`_media`.
+// (`MediusUsage`, `MediusAction`) pair from the parallel `inputs`/`actions` arrays (null when `n` is 0).
+// Build the inputs with `medius_usage_button`/`_key`/`_media`.
 MediusStatus medius_clip_builder_frame(struct MediusClipBuilder *b,
                                        int16_t dx,
                                        int16_t dy,
                                        int16_t wheel,
-                                       const struct MediusInput *inputs,
+                                       const struct MediusUsage *inputs,
                                        const MediusAction *actions,
                                        uintptr_t n);
 
@@ -899,10 +899,10 @@ MediusStatus medius_clip_start(struct MediusClip *clip,
 MediusStatus medius_clip_stop(struct MediusClip *clip);
 
 // Arm an on-device catch-trigger on a physical press of `input` (a button, key, or media usage), starting
-// with `config` when it fires. Build the input with `medius_input_button`/`_key`/`_media`; or use
+// with `config` when it fires. Build the input with `medius_usage_button`/`_key`/`_media`; or use
 // `medius_clip_arm_catch_any` for any input.
 MediusStatus medius_clip_arm_catch(struct MediusClip *clip,
-                                   struct MediusInput input,
+                                   struct MediusUsage input,
                                    struct MediusClipConfig config);
 
 // Arm an on-device catch-trigger on any physical input (button, key, or media), starting with `config`.
@@ -962,17 +962,17 @@ MediusStatus medius_device_move_axis(struct MediusDevice *dev, struct MediusMoti
 
 // Drive one momentary usage (button, key, or media) with an explicit action. The one injection verb.
 MediusStatus medius_device_inject(struct MediusDevice *dev,
-                                  struct MediusInput input,
+                                  struct MediusUsage input,
                                   MediusAction action);
 
 // Press a usage (`Action::Press`).
-MediusStatus medius_device_press(struct MediusDevice *dev, struct MediusInput input);
+MediusStatus medius_device_press(struct MediusDevice *dev, struct MediusUsage input);
 
 // Soft-release a usage: clear an injected press, leaving a physical hold intact.
-MediusStatus medius_device_soft_release(struct MediusDevice *dev, struct MediusInput input);
+MediusStatus medius_device_soft_release(struct MediusDevice *dev, struct MediusUsage input);
 
 // Force-release a usage: mask a physical hold too.
-MediusStatus medius_device_force_release(struct MediusDevice *dev, struct MediusInput input);
+MediusStatus medius_device_force_release(struct MediusDevice *dev, struct MediusUsage input);
 
 // Lock a target (axis or usage) on an edge. A button, key, and media usage all lock the same way.
 MediusStatus medius_device_lock(struct MediusDevice *dev,
@@ -1070,7 +1070,7 @@ uint32_t medius_default_keepalive_cadence_ms(void);
 // The C ABI version. Bumped on any breaking change to this header.
 // 2: `MediusVersion` grew a `name` field and `medius_device_set_name`/`_clear_name` were added, and
 // buffered clip playback (`medius_device_clip`, the `medius_clip_*` handle/builder calls) landed (v2.4.0).
-// 3: unified input taxonomy — one `MediusInput` usage vocabulary for buttons, keys, and media across
+// 3: unified input taxonomy — one `MediusUsage` usage vocabulary for buttons, keys, and media across
 // inject/lock/catch. The class-specific `medius_device_button`/`_key*`/`_media*`/`_lock_key`/`_lock_media`
 // verbs collapsed into `medius_device_inject`/`_press`/`_soft_release`/`_force_release` and
 // `medius_device_lock`/`_unlock` over a `MediusLockTarget`; catch events became `Motion`/`Usages`
@@ -1087,14 +1087,14 @@ uintptr_t medius_last_error_message(char *buf, uintptr_t cap);
 // The `BadProtoVer` version byte from the last error, or 0 if the last error carried none.
 uint8_t medius_last_error_proto_ver(void);
 
-// Build an [`MediusInput`] addressing a mouse button.
-struct MediusInput medius_input_button(MediusButton button);
+// Build an [`MediusUsage`] addressing a mouse button.
+struct MediusUsage medius_usage_button(MediusButton button);
 
-// Build an [`MediusInput`] addressing a keyboard key.
-struct MediusInput medius_input_key(MediusKey key);
+// Build an [`MediusUsage`] addressing a keyboard key.
+struct MediusUsage medius_usage_key(MediusKey key);
 
-// Build an [`MediusInput`] addressing a media key.
-struct MediusInput medius_input_media(MediusMediaKey media);
+// Build an [`MediusUsage`] addressing a media key.
+struct MediusUsage medius_usage_media(MediusMediaKey media);
 
 // Build a cursor-motion [`MediusMotion`].
 struct MediusMotion medius_motion_cursor(int16_t dx, int16_t dy);
@@ -1106,10 +1106,10 @@ struct MediusMotion medius_motion_wheel(int16_t delta);
 struct MediusLockTarget medius_lock_target_axis(MediusLockTargetKind kind);
 
 // Build a [`MediusLockTarget`] addressing a momentary usage (button, key, or media).
-struct MediusLockTarget medius_lock_target_usage(struct MediusInput usage);
+struct MediusLockTarget medius_lock_target_usage(struct MediusUsage usage);
 
-// Whether `target`/`dir` is locked in `locks` (`Both` requires both edges). Mirrors
-// `medius::Locks::is_locked`: an exact target match, not a whole-class blanket.
+// Whether `target`/`dir` is locked in `locks` (`Both` requires both edges), by a specific entry or a
+// covering whole-class blanket. Mirrors `medius::Locks::is_locked`.
 bool medius_locks_is_locked(const struct MediusLocks *locks,
                             struct MediusLockTarget target,
                             MediusLockDirection dir);
@@ -1121,10 +1121,10 @@ bool medius_rate_native_hz(struct MediusRate rate, float *out_hz);
 // Whether `usage` is held in a usage snapshot (a button, key, or media usage; modifiers are key usages
 // `0xE0..=0xE7`). Mirrors `medius::UsageSnapshot::is_held`.
 bool medius_usage_event_is_held(const struct MediusUsageEvent *event,
-                                struct MediusInput usage);
+                                struct MediusUsage usage);
 
 // Whether the clip is currently holding `usage` down. Mirrors `medius::ClipStatus::is_held`.
-bool medius_clip_status_is_held(const struct MediusClipStatus *status, struct MediusInput usage);
+bool medius_clip_status_is_held(const struct MediusClipStatus *status, struct MediusUsage usage);
 
 // Whether a mouse interface is bound. Delegates to `medius::Caps::has_mouse`.
 bool medius_caps_has_mouse(struct MediusCaps caps);
