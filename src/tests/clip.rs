@@ -2,8 +2,8 @@
 //! wire), the `CLIP_CTRL` / `CLIP_APPEND` command frames, entry-boundary chunking, and the `QUERY(CLIP)`
 //! decode + roundtrip. Bytes are pinned to the firmware so the host and box can't drift.
 
-use crate::protocol::command::{clip_arm_payload, clip_cfg_payload, clip_op_payload};
-use crate::protocol::opcode::{CLIP_OP_CONFIG, CLIP_OP_DISARM, CLIP_OP_START, CLIP_OP_STOP};
+use crate::protocol::command::{clip_arm_payload, clip_op_payload, clip_start_payload};
+use crate::protocol::opcode::{CLIP_OP_DISARM, CLIP_OP_STOP};
 use crate::protocol::{Resp, parse_resp};
 use crate::types::{Action, Button, ClipBuilder, ClipState, ClipStatus};
 
@@ -72,14 +72,16 @@ fn clip_builder_encodes_entries_to_the_firmware_wire() {
 
 #[test]
 fn clip_ctrl_payload_bytes() {
-    // START: [op=0][cfg]; cfg bit0 = auto-lock
-    assert_eq!(clip_cfg_payload(CLIP_OP_START, false), [0, 0]);
-    assert_eq!(clip_cfg_payload(CLIP_OP_START, true), [0, 1]);
-    // CONFIG: [op=4][cfg]
-    assert_eq!(clip_cfg_payload(CLIP_OP_CONFIG, true), [4, 1]);
-    // ARM_CATCH: [op=2][cond_class][cond_id u16 LE]
-    assert_eq!(clip_arm_payload(0, 0xFFFF), [2, 0, 0xFF, 0xFF]);
-    assert_eq!(clip_arm_payload(0, 1), [2, 0, 1, 0]);
+    // START: [op=0][scope]; scope = CLIP_LOCK_* bits (0 = no autolock)
+    assert_eq!(clip_start_payload(0), [0, 0]);
+    assert_eq!(clip_start_payload(0x1F), [0, 0x1F]); // lock all
+    // ARM_CATCH: [op=2][cond_class][cond_id u16 LE][scope]
+    assert_eq!(clip_arm_payload(0, 0xFFFF, 0), [2, 0, 0xFF, 0xFF, 0]); // any button, no autolock
+    assert_eq!(clip_arm_payload(1, 0x04, 0x0C), [2, 1, 0x04, 0, 0x0C]); // key A, autolock buttons|keys
+    assert_eq!(
+        clip_arm_payload(0xFF, 0xFFFF, 0x1F),
+        [2, 0xFF, 0xFF, 0xFF, 0x1F]
+    ); // any input, lock all
     // STOP / DISARM: [op]
     assert_eq!(clip_op_payload(CLIP_OP_STOP), [1]);
     assert_eq!(clip_op_payload(CLIP_OP_DISARM), [3]);
@@ -122,6 +124,26 @@ fn decode_clip_status_through_parse_resp() {
 }
 
 #[test]
+fn clip_status_held_is_field_generic() {
+    // held byte: bits 0-4 buttons, bit 5 = key held, bit 6 = media held.
+    let s = ClipStatus {
+        held: 0b0110_0101,
+        ..Default::default()
+    };
+    assert_eq!(s.buttons_held(), 0b0_0101); // Left + Middle
+    assert!(s.keys_held());
+    assert!(s.media_held());
+
+    let only_btn = ClipStatus {
+        held: 0b0000_0010,
+        ..Default::default()
+    };
+    assert_eq!(only_btn.buttons_held(), 0b10); // Right
+    assert!(!only_btn.keys_held());
+    assert!(!only_btn.media_held());
+}
+
+#[test]
 fn clip_state_from_u8() {
     assert_eq!(ClipState::from_u8(0), Some(ClipState::Idle));
     assert_eq!(ClipState::from_u8(1), Some(ClipState::Armed));
@@ -134,18 +156,25 @@ fn clip_state_from_u8() {
 #[test]
 fn clip_control_frames_carry_the_right_bytes() {
     use crate::protocol::FrameType;
+    use crate::types::{Blanket, ClipConfig, Key, MediaKey};
     use crate::{Device, MockBox};
 
     let mock = MockBox::new();
     let device = Device::with_mock(mock.clone());
     let clip = device.clip();
 
-    clip.start().unwrap();
-    clip.start_autolock().unwrap();
-    clip.config(true).unwrap();
-    clip.config(false).unwrap();
-    clip.arm_catch(None).unwrap();
-    clip.arm_catch(Some(Button::Right)).unwrap();
+    let all = ClipConfig::new().autolock(Blanket::ALL);
+    let aim_btn = ClipConfig::new().autolock(&[Blanket::Aim, Blanket::Buttons]);
+
+    clip.start(&ClipConfig::new()).unwrap();
+    clip.start(&all).unwrap();
+    clip.start(&aim_btn).unwrap();
+    clip.arm_catch(Button::Right, &ClipConfig::new()).unwrap();
+    clip.arm_catch(Key::A, &ClipConfig::new().autolock(&[Blanket::Keys]))
+        .unwrap();
+    clip.arm_catch(MediaKey::new(0xCD), &ClipConfig::new())
+        .unwrap();
+    clip.arm_catch_any(&all).unwrap();
     clip.disarm().unwrap();
     clip.stop().unwrap();
 
@@ -158,14 +187,15 @@ fn clip_control_frames_carry_the_right_bytes() {
     assert_eq!(
         ctrl,
         vec![
-            vec![0, 0],             // start
-            vec![0, 1],             // start_autolock
-            vec![4, 1],             // config(true)
-            vec![4, 0],             // config(false)
-            vec![2, 0, 0xFF, 0xFF], // arm any
-            vec![2, 0, 1, 0],       // arm right
-            vec![3],                // disarm
-            vec![1],                // stop
+            vec![0, 0],                      // start, no autolock
+            vec![0, 0x1F],                   // start ClipConfig::autolock(Blanket::ALL)
+            vec![0, 0x05],                   // start autolock aim|buttons
+            vec![2, 0, 1, 0, 0],             // arm button Right, no autolock
+            vec![2, 1, 0x04, 0, 0x08],       // arm key A, autolock keys
+            vec![2, 2, 0xCD, 0, 0],          // arm media Play/Pause, no autolock
+            vec![2, 0xFF, 0xFF, 0xFF, 0x1F], // arm any input, autolock all
+            vec![3],                         // disarm
+            vec![1],                         // stop
         ]
     );
 }

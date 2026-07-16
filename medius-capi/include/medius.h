@@ -127,6 +127,26 @@ typedef uint8_t MediusInputKind;
 #endif // __STDC_VERSION__ >= 202311L
 #endif // __cplusplus
 
+// A whole input group for a blanket lock or a clip auto-lock scope.
+enum MediusBlanket
+#if defined(__cplusplus) || __STDC_VERSION__ >= 202311L
+  : uint8_t
+#endif // defined(__cplusplus) || __STDC_VERSION__ >= 202311L
+ {
+    MEDIUS_BLANKET_KEYS = 0,
+    MEDIUS_BLANKET_MEDIA = 1,
+    MEDIUS_BLANKET_BUTTONS = 2,
+    MEDIUS_BLANKET_AIM = 3,
+    MEDIUS_BLANKET_WHEEL = 4,
+};
+#ifndef __cplusplus
+#if __STDC_VERSION__ >= 202311L
+typedef enum MediusBlanket MediusBlanket;
+#else
+typedef uint8_t MediusBlanket;
+#endif // __STDC_VERSION__ >= 202311L
+#endif // __cplusplus
+
 // The device-side clip lifecycle state (`medius_clip_status`).
 enum MediusClipState
 #if defined(__cplusplus) || __STDC_VERSION__ >= 202311L
@@ -219,24 +239,6 @@ enum MediusLockDirection
 typedef enum MediusLockDirection MediusLockDirection;
 #else
 typedef uint8_t MediusLockDirection;
-#endif // __STDC_VERSION__ >= 202311L
-#endif // __cplusplus
-
-// A whole input class for a blanket lock.
-enum MediusBlanket
-#if defined(__cplusplus) || __STDC_VERSION__ >= 202311L
-  : uint8_t
-#endif // defined(__cplusplus) || __STDC_VERSION__ >= 202311L
- {
-    MEDIUS_BLANKET_KEYS = 0,
-    MEDIUS_BLANKET_MEDIA = 1,
-    MEDIUS_BLANKET_BUTTONS = 2,
-};
-#ifndef __cplusplus
-#if __STDC_VERSION__ >= 202311L
-typedef enum MediusBlanket MediusBlanket;
-#else
-typedef uint8_t MediusBlanket;
 #endif // __STDC_VERSION__ >= 202311L
 #endif // __cplusplus
 
@@ -420,6 +422,14 @@ typedef struct MediusInput {
     MediusInputKind kind;
     uint16_t value;
 } MediusInput;
+
+// Playback options for a clip start or catch trigger (`medius_clip_start` / `_arm_catch`). The single
+// place clip settings live; extensible as more are added. `autolock` points at `autolock_len`
+// `MediusBlanket` groups the clip auto-locks while playing (NULL / 0 = no auto-lock).
+typedef struct MediusClipConfig {
+    const MediusBlanket *autolock;
+    uintptr_t autolock_len;
+} MediusClipConfig;
 
 // A snapshot of the device-side clip ring and playback counters. `free`/`used` pace top-ups;
 // `state == Faulted` means re-sync (stop + rebuild).
@@ -831,6 +841,13 @@ MediusStatus medius_clip_builder_media(struct MediusClipBuilder *b,
                                        MediusMediaKey media,
                                        MediusAction action);
 
+// A one-edge frame for any input class: press/release `input` (a button, key, or media usage) with
+// `action`. The field-generic form the press/release/key/media helpers wrap. Build the input with
+// `medius_input_button`/`_key`/`_media`.
+MediusStatus medius_clip_builder_edge(struct MediusClipBuilder *b,
+                                      struct MediusInput input,
+                                      MediusAction action);
+
 // A general content frame: a motion delta (`dx`/`dy` cursor, `wheel`) plus `n` edges, each a
 // (`MediusInput`, `MediusAction`) pair from the parallel `inputs`/`actions` arrays (null when `n` is 0).
 // Build the inputs with `medius_input_button`/`_key`/`_media`.
@@ -853,24 +870,24 @@ void medius_clip_free(struct MediusClip *clip);
 MediusStatus medius_clip_append(struct MediusClip *clip,
                                 const struct MediusClipBuilder *builder);
 
-// Begin playback from the ring head.
-MediusStatus medius_clip_start(struct MediusClip *clip);
-
-// Begin playback with clip-owned auto-lock: the box locks all physical input the host hasn't already
-// locked and releases it on stop. For selective locking, use `medius_device_lock` + `medius_clip_start`.
-MediusStatus medius_clip_start_autolock(struct MediusClip *clip);
+// Begin playback from the ring head with `config` (the auto-lock scope, extensible). A config with an
+// empty `autolock` plays with no auto-lock.
+MediusStatus medius_clip_start(struct MediusClip *clip,
+                               struct MediusClipConfig config);
 
 // Stop playback, flush the ring, release any clip-owned auto-lock.
 MediusStatus medius_clip_stop(struct MediusClip *clip);
 
-// Set whether a later start (including a catch-triggered one) auto-locks, without starting.
-MediusStatus medius_clip_config(struct MediusClip *clip, bool autolock);
+// Arm an on-device catch-trigger on a physical press of `input` (a button, key, or media usage), starting
+// with `config` when it fires. Build the input with `medius_input_button`/`_key`/`_media`; or use
+// `medius_clip_arm_catch_any` for any input.
+MediusStatus medius_clip_arm_catch(struct MediusClip *clip,
+                                   struct MediusInput input,
+                                   struct MediusClipConfig config);
 
-// Arm an on-device catch-trigger on a physical press of `button`.
-MediusStatus medius_clip_arm_catch(struct MediusClip *clip, MediusButton button);
-
-// Arm an on-device catch-trigger on a physical press of any mouse button.
-MediusStatus medius_clip_arm_catch_any(struct MediusClip *clip);
+// Arm an on-device catch-trigger on any physical input (button, key, or media), starting with `config`.
+MediusStatus medius_clip_arm_catch_any(struct MediusClip *clip,
+                                       struct MediusClipConfig config);
 
 // Clear a pending catch-arm.
 MediusStatus medius_clip_disarm(struct MediusClip *clip);

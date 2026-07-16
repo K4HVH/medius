@@ -55,9 +55,16 @@ pub const CLIP_OP_START: u8 = 0;
 pub const CLIP_OP_STOP: u8 = 1;
 pub const CLIP_OP_ARM_CATCH: u8 = 2;
 pub const CLIP_OP_DISARM: u8 = 3;
-pub const CLIP_OP_CONFIG: u8 = 4;
-/// `START`/`CONFIG` config byte: auto-lock physical input while playing (clip-owned).
-pub const CLIP_CFG_AUTOLOCK: u8 = 0x01;
+/// Autolock scope bits (`START` scope, and `ARM_CATCH`'s trailing scope): which physical-input classes the
+/// clip auto-locks (0 = none).
+pub const CLIP_LOCK_AIM: u8 = 0x01;
+pub const CLIP_LOCK_WHEEL: u8 = 0x02;
+pub const CLIP_LOCK_BUTTONS: u8 = 0x04;
+pub const CLIP_LOCK_KEYS: u8 = 0x08;
+pub const CLIP_LOCK_MEDIA: u8 = 0x10;
+/// `ARM_CATCH` condition wildcards: any class, any usage within a class.
+pub const CLIP_COND_ANY_CLASS: u8 = 0xFF;
+pub const CLIP_COND_ANY_ID: u16 = 0xFFFF;
 /// Clip entry tags/flags (see [`ClipBuilder`](crate::ClipBuilder)).
 pub const CLIP_TAG_GAP: u8 = 0x00;
 pub const CLIP_F_XY: u8 = 0x01;
@@ -182,7 +189,7 @@ pub enum FrameType {
     Option = 0x11,
     /// `CLIP_APPEND` — append buffered-clip entries to the device ring; `SEQ` = append seq (PC→box).
     ClipAppend = 0x12,
-    /// `CLIP_CTRL` — start/stop/arm/config buffered clip playback (PC→box).
+    /// `CLIP_CTRL` — start/stop/arm-catch/disarm buffered clip playback (PC→box).
     ClipCtrl = 0x13,
 }
 

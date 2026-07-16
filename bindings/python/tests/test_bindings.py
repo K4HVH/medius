@@ -18,7 +18,9 @@ from medius import (
     CatchMask,
     CatchState,
     Action,
+    Blanket,
     ClipBuilder,
+    ClipConfig,
     ClipState,
     ClipStatus,
     Input,
@@ -399,25 +401,28 @@ def _clip_frames(d, mock, ty):
 def test_clip_control_frames():
     with MockBox() as mock, Device.with_mock(mock) as d:
         clip = d.clip()
-        clip.start()
-        clip.start_autolock()
-        clip.config(True)
-        clip.config(False)
-        clip.arm_catch()  # any button
-        clip.arm_catch(Button.RIGHT)
+        all_cfg = ClipConfig(autolock=list(Blanket))
+        clip.start()  # no config = no autolock
+        clip.start(all_cfg)
+        clip.start(ClipConfig(autolock=[Blanket.AIM, Blanket.BUTTONS]))
+        clip.arm_catch(Input.button(Button.RIGHT))
+        clip.arm_catch(Input.key(0x04), ClipConfig(autolock=[Blanket.KEYS]))
+        clip.arm_catch(Input.media(0xCD))
+        clip.arm_catch_any(all_cfg)
         clip.disarm()
         clip.stop()
         clip.close()
         ctrl = _clip_frames(d, mock, FrameType.CLIP_CTRL)
     assert ctrl == [
-        bytes([0, 0]),               # start
-        bytes([0, 1]),               # start_autolock
-        bytes([4, 1]),               # config(True)
-        bytes([4, 0]),               # config(False)
-        bytes([2, 0, 0xFF, 0xFF]),   # arm any
-        bytes([2, 0, 1, 0]),         # arm right
-        bytes([3]),                  # disarm
-        bytes([1]),                  # stop
+        bytes([0, 0]),                       # start, no autolock
+        bytes([0, 0x1F]),                    # start ClipConfig(all)
+        bytes([0, 0x05]),                    # start autolock aim|buttons
+        bytes([2, 0, 1, 0, 0]),              # arm button Right, no autolock
+        bytes([2, 1, 0x04, 0, 0x08]),        # arm key A, autolock keys
+        bytes([2, 2, 0xCD, 0, 0]),           # arm media Play/Pause, no autolock
+        bytes([2, 0xFF, 0xFF, 0xFF, 0x1F]),  # arm any input, autolock all
+        bytes([3]),                          # disarm
+        bytes([1]),                          # stop
     ]
 
 

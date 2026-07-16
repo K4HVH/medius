@@ -47,7 +47,7 @@ from ._errors import (
     QueryTimeoutError,
 )
 from ._device import Device
-from ._clip import ClipBuilder, ClipHandle
+from ._clip import ClipBuilder, ClipConfig, ClipHandle
 from ._streams import EventStream, LogStream
 from ._mock import MockBox
 from ._types import (
@@ -169,6 +169,7 @@ __all__ = [
     "PanicError",
     "Device",
     "ClipBuilder",
+    "ClipConfig",
     "ClipHandle",
     "EventStream",
     "LogStream",

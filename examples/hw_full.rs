@@ -19,8 +19,8 @@ mod linux {
     use std::time::{Duration, Instant};
 
     use medius::{
-        Action, Blanket, Button, CatchMask, ClipBuilder, ClipState, Device, EmitPace, Key, LedMode,
-        LedTarget, LockDirection, LockTarget, MediaKey, RebootTarget,
+        Action, Blanket, Button, CatchMask, ClipBuilder, ClipConfig, ClipState, Device, EmitPace,
+        Key, LedMode, LedTarget, LockDirection, LockTarget, MediaKey, RebootTarget,
     };
 
     const EVIOCGRAB: libc::c_ulong = 0x4004_4590;
@@ -670,9 +670,16 @@ mod linux {
                 .key(Key::A, Action::SoftRelease);
             let appended = clip.append(&b).is_ok();
             let armed = clip.status().map(|s| s.used > 0).unwrap_or(false);
-            let started = clip.start_autolock().is_ok();
+            // Selective auto-lock: only the aim axes and buttons, leaving the keyboard free (the clip still
+            // drives KEY_A; only physical input is scoped-locked).
+            let started = clip
+                .start(&ClipConfig::new().autolock(&[Blanket::Aim, Blanket::Buttons]))
+                .is_ok();
             std::thread::sleep(Duration::from_millis(150));
             let key_down = acc.key_a.load(Ordering::Relaxed) == 1; // set if the grabbed node is the keyboard
+            // Field-generic held telemetry: while the clip holds KEY_A (before its release entry), the status
+            // reports a key held.
+            let keys_held = clip.status().map(|s| s.keys_held()).unwrap_or(false);
             std::thread::sleep(Duration::from_millis(500));
             let x = acc.rel_x.load(Ordering::Relaxed); // set if the grabbed node is the mouse
             let played = clip.status().map(|s| s.ticks >= 200).unwrap_or(false);
@@ -682,9 +689,34 @@ mod linux {
             let drove_grabbed = x == 2000 || key_down;
             check(
                 "clip playback (field-generic)",
-                appended && armed && started && drove_grabbed && played && stopped && idle,
+                appended
+                    && armed
+                    && started
+                    && drove_grabbed
+                    && keys_held
+                    && played
+                    && stopped
+                    && idle,
                 format!(
-                    "appended={appended} armed={armed} started={started} REL_X={x} key_down={key_down} played={played} stopped={stopped} idle={idle}"
+                    "appended={appended} armed={armed} started={started} REL_X={x} key_down={key_down} keys_held={keys_held} played={played} stopped={stopped} idle={idle}"
+                ),
+            );
+
+            // Field-generic catch-trigger controls: arming on a key, on any input, and disarm all succeed
+            // (the actual firing needs a physical press, exercised in the physical-hand suite).
+            let arm_key = clip.arm_catch(Key::A, &ClipConfig::new()).is_ok();
+            let arm_any = clip
+                .arm_catch_any(&ClipConfig::new().autolock(Blanket::ALL))
+                .is_ok();
+            let armed_state = matches!(clip.status(), Ok(s) if s.state == ClipState::Armed);
+            let disarmed = clip.disarm().is_ok();
+            let disarmed_idle = matches!(clip.status(), Ok(s) if s.state == ClipState::Idle);
+            let _ = clip.stop();
+            check(
+                "clip catch-trigger controls (field-generic)",
+                arm_key && arm_any && armed_state && disarmed && disarmed_idle,
+                format!(
+                    "arm_key={arm_key} arm_any={arm_any} armed_state={armed_state} disarmed={disarmed} disarmed_idle={disarmed_idle}"
                 ),
             );
         }

@@ -1,6 +1,6 @@
 use super::opcode::{
-    CLIP_CFG_AUTOLOCK, CLIP_OP_ARM_CATCH, INJ_MOTION_CURSOR, INJ_MOTION_WHEEL, OPT_EMIT,
-    OPT_IMPERFECT, OPT_MOVE_RIDE, OPT_NAME,
+    CLIP_OP_ARM_CATCH, CLIP_OP_START, INJ_MOTION_CURSOR, INJ_MOTION_WHEEL, OPT_EMIT, OPT_IMPERFECT,
+    OPT_MOVE_RIDE, OPT_NAME,
 };
 
 /// `MOVE` cursor (§3.1): `[motion=0][dx i16 LE][dy i16 LE]`, no clamp (firmware clamps with carry).
@@ -61,17 +61,18 @@ pub fn emit_pace_payload(mode: u8, hz: u16) -> [u8; 4] {
     let h = hz.to_le_bytes();
     [OPT_EMIT, mode, h[0], h[1]]
 }
-/// `CLIP_CTRL(START)` / `CLIP_CTRL(CONFIG)` (§3.11): `[op][cfg u8]`. `cfg` bit 0 = auto-lock all physical
-/// input while playing.
-pub fn clip_cfg_payload(op: u8, autolock: bool) -> [u8; 2] {
-    [op, if autolock { CLIP_CFG_AUTOLOCK } else { 0 }]
+/// `CLIP_CTRL(START)` (§3.11): `[op=START][scope u8]`. `scope` is a `CLIP_LOCK_*` bitmask of the
+/// physical-input classes to auto-lock while playing (0 = none).
+pub fn clip_start_payload(scope: u8) -> [u8; 2] {
+    [CLIP_OP_START, scope]
 }
 
-/// `CLIP_CTRL(ARM_CATCH)` (§3.11): `[op][cond_class u8][cond_id u16 LE]` — fire START on a physical edge of
-/// the given button class/id (`cond_id` 0xFFFF = any button in the class).
-pub fn clip_arm_payload(cond_class: u8, cond_id: u16) -> [u8; 4] {
+/// `CLIP_CTRL(ARM_CATCH)` (§3.11): `[op][cond_class u8][cond_id u16 LE][scope u8]` — fire START on a physical
+/// press of the given class/id (`cond_class` = INJECT class or `CLIP_COND_ANY_CLASS`; `cond_id` = usage or
+/// `CLIP_COND_ANY_ID`), auto-locking `scope` on that triggered start.
+pub fn clip_arm_payload(cond_class: u8, cond_id: u16, scope: u8) -> [u8; 5] {
     let id = cond_id.to_le_bytes();
-    [CLIP_OP_ARM_CATCH, cond_class, id[0], id[1]]
+    [CLIP_OP_ARM_CATCH, cond_class, id[0], id[1], scope]
 }
 
 /// `CLIP_CTRL` single-byte op (STOP / DISARM) (§3.11): `[op]`.
