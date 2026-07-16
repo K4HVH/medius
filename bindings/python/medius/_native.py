@@ -14,8 +14,8 @@ import sys
 from ctypes.util import find_library
 from pathlib import Path
 
-MEDIUS_MAX_KEYS = 256
-MEDIUS_MAX_MEDIA_KEYS = 256
+MEDIUS_MAX_USAGES = 256
+MEDIUS_MAX_LOCKS = 256
 MEDIUS_MAX_LOG_TEXT = 512
 MEDIUS_MAX_PATH = 512
 MEDIUS_MAX_PRODUCT = 128
@@ -60,7 +60,7 @@ class MediusClipConfig(ctypes.Structure):
 
 
 class MediusLockTarget(ctypes.Structure):
-    _fields_ = [("kind", u8), ("button", u8)]
+    _fields_ = [("kind", u8), ("usage", MediusInput)]
 
 
 class MediusVersion(ctypes.Structure):
@@ -160,8 +160,17 @@ class MediusStats(ctypes.Structure):
     ]
 
 
+class MediusLockEntry(ctypes.Structure):
+    _fields_ = [
+        ("target", MediusLockTarget),
+        ("is_blanket", c_bool),
+        ("positive", c_bool),
+        ("negative", c_bool),
+    ]
+
+
 class MediusLocks(ctypes.Structure):
-    _fields_ = [("mask", u16)]
+    _fields_ = [("n", u16), ("entries", MediusLockEntry * MEDIUS_MAX_LOCKS)]
 
 
 class MediusCatchState(ctypes.Structure):
@@ -195,23 +204,18 @@ class MediusCountersSnapshot(ctypes.Structure):
     _fields_ = [("frames_tx", u64), ("frames_rx", u64), ("crc_drops", u64), ("reconnects", u64)]
 
 
-class MediusMouseEvent(ctypes.Structure):
-    _fields_ = [("buttons", u8), ("dx", i16), ("dy", i16), ("wheel", i16)]
+class MediusMotionEvent(ctypes.Structure):
+    _fields_ = [("dx", i16), ("dy", i16), ("dz", i16)]
 
 
-class MediusKeyboardEvent(ctypes.Structure):
-    _fields_ = [("modifiers", u8), ("n_keys", u8), ("keys", u8 * MEDIUS_MAX_KEYS)]
-
-
-class MediusMediaEvent(ctypes.Structure):
-    _fields_ = [("n_keys", u8), ("keys", u16 * MEDIUS_MAX_MEDIA_KEYS)]
+class MediusUsageEvent(ctypes.Structure):
+    _fields_ = [("n", u16), ("usages", MediusInput * MEDIUS_MAX_USAGES)]
 
 
 class MediusCatchEventData(ctypes.Union):
     _fields_ = [
-        ("mouse", MediusMouseEvent),
-        ("keyboard", MediusKeyboardEvent),
-        ("media", MediusMediaEvent),
+        ("motion", MediusMotionEvent),
+        ("usages", MediusUsageEvent),
     ]
 
 
@@ -292,26 +296,13 @@ _decl("medius_device_move_rel", i32, [HANDLE, i16, i16])
 _decl("medius_device_wheel", i32, [HANDLE, i16])
 _decl("medius_device_move_axis", i32, [HANDLE, MediusMotion])
 _decl("medius_device_inject", i32, [HANDLE, MediusInput, u8])
-_decl("medius_device_button", i32, [HANDLE, u8, u8])
-_decl("medius_device_press", i32, [HANDLE, u8])
-_decl("medius_device_soft_release", i32, [HANDLE, u8])
-_decl("medius_device_force_release", i32, [HANDLE, u8])
-_decl("medius_device_key", i32, [HANDLE, u8, u8])
-_decl("medius_device_key_down", i32, [HANDLE, u8])
-_decl("medius_device_key_up", i32, [HANDLE, u8])
-_decl("medius_device_key_force_release", i32, [HANDLE, u8])
-_decl("medius_device_media", i32, [HANDLE, u16, u8])
-_decl("medius_device_media_down", i32, [HANDLE, u16])
-_decl("medius_device_media_up", i32, [HANDLE, u16])
-_decl("medius_device_media_force_release", i32, [HANDLE, u16])
+_decl("medius_device_press", i32, [HANDLE, MediusInput])
+_decl("medius_device_soft_release", i32, [HANDLE, MediusInput])
+_decl("medius_device_force_release", i32, [HANDLE, MediusInput])
 _decl("medius_device_lock", i32, [HANDLE, MediusLockTarget, u8])
 _decl("medius_device_unlock", i32, [HANDLE, MediusLockTarget, u8])
-_decl("medius_device_lock_key", i32, [HANDLE, u8, u8])
-_decl("medius_device_unlock_key", i32, [HANDLE, u8, u8])
-_decl("medius_device_lock_media", i32, [HANDLE, u16])
-_decl("medius_device_unlock_media", i32, [HANDLE, u16])
-_decl("medius_device_lock_all", i32, [HANDLE, u8])
-_decl("medius_device_unlock_all", i32, [HANDLE, u8])
+_decl("medius_device_lock_all", i32, [HANDLE, u8, u8])
+_decl("medius_device_unlock_all", i32, [HANDLE, u8, u8])
 _decl("medius_device_led", i32, [HANDLE, u8, u8, u8])
 _decl("medius_device_reset", i32, [HANDLE])
 _decl("medius_device_reapply", i32, [HANDLE])
@@ -355,11 +346,11 @@ _decl("medius_input_key", MediusInput, [u8])
 _decl("medius_input_media", MediusInput, [u16])
 _decl("medius_motion_cursor", MediusMotion, [i16, i16])
 _decl("medius_motion_wheel", MediusMotion, [i16])
-_decl("medius_locks_is_locked", c_bool, [MediusLocks, MediusLockTarget, u8])
+_decl("medius_lock_target_axis", MediusLockTarget, [u8])
+_decl("medius_lock_target_usage", MediusLockTarget, [MediusInput])
+_decl("medius_locks_is_locked", c_bool, [ctypes.POINTER(MediusLocks), MediusLockTarget, u8])
 _decl("medius_rate_native_hz", c_bool, [MediusRate, ctypes.POINTER(ctypes.c_float)])
-_decl("medius_mouse_event_is_pressed", c_bool, [ctypes.POINTER(MediusMouseEvent), u8])
-_decl("medius_keyboard_event_is_pressed", c_bool, [ctypes.POINTER(MediusKeyboardEvent), u8])
-_decl("medius_media_event_is_pressed", c_bool, [ctypes.POINTER(MediusMediaEvent), u16])
+_decl("medius_usage_event_is_held", c_bool, [ctypes.POINTER(MediusUsageEvent), MediusInput])
 _decl("medius_caps_has_mouse", c_bool, [MediusCaps])
 _decl("medius_caps_has_keyboard", c_bool, [MediusCaps])
 _decl("medius_caps_is_composite", c_bool, [MediusCaps])
@@ -428,9 +419,8 @@ if HAS_MOCK:
     _decl("medius_mock_silent", None, [HANDLE])
     _decl("medius_mock_push_raw", None, [HANDLE, ctypes.POINTER(u8), usize])
     _decl("medius_mock_push_log", None, [HANDLE, u8, ctypes.c_char_p])
-    _decl("medius_mock_push_event", None, [HANDLE, u8, MediusMouseEvent])
-    _decl("medius_mock_push_kb_event", None, [HANDLE, u8, ctypes.POINTER(MediusKeyboardEvent)])
-    _decl("medius_mock_push_cons_event", None, [HANDLE, u8, ctypes.POINTER(MediusMediaEvent)])
+    _decl("medius_mock_push_motion", None, [HANDLE, u8, MediusMotionEvent])
+    _decl("medius_mock_push_usages", None, [HANDLE, u8, ctypes.POINTER(MediusUsageEvent)])
     _decl("medius_mock_recorded", usize, [HANDLE])
     _decl("medius_mock_saw", c_bool, [HANDLE, u8])
     _decl("medius_mock_clear_recorded", None, [HANDLE])

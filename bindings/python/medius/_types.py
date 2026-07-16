@@ -8,12 +8,11 @@ from typing import List, Optional, Union
 
 from . import _native
 from ._enums import (
-    Action,
-    Button,
     CatchEventKind,
     ClipState,
     DeviceKind,
     EmitMode,
+    InputKind,
     LockTargetKind,
     LogLevel,
 )
@@ -129,14 +128,24 @@ class Stats:
 
 
 @dataclass
+class LockEntry:
+    """One active lock: what is locked and which edges. `is_blanket` marks a whole-class lock (every
+    button / key / media usage), where `target` names only the class."""
+
+    target: "LockTarget"
+    is_blanket: bool
+    positive: bool
+    negative: bool
+
+
+@dataclass
 class Locks:
-    mask: int
+    entries: List[LockEntry] = field(default_factory=list)
 
     def is_locked(self, target: "LockTarget", direction) -> bool:
+        c = locks_to_c(self)
         return bool(
-            _native.lib.medius_locks_is_locked(
-                _native.MediusLocks(mask=self.mask), target._c, int(direction)
-            )
+            _native.lib.medius_locks_is_locked(ctypes.byref(c), target._c, int(direction))
         )
 
 
@@ -220,55 +229,38 @@ class BoxInfo:
 
 
 @dataclass
-class MouseEvent:
-    buttons: int
+class MotionEvent:
+    """A relative-axis catch event: the user's real motion at the merge point, before any lock
+    suppression or injection."""
+
     dx: int
     dy: int
-    wheel: int
-
-    def is_pressed(self, button) -> bool:
-        return self.buttons & (1 << int(button)) != 0
+    dz: int
 
 
 @dataclass
-class KeyboardEvent:
-    modifiers: int = 0
-    keys: List[int] = field(default_factory=list)
+class UsageSnapshot:
+    """A held-usage snapshot for one class: every held usage (button / key / media; modifiers are key
+    usages 0xE0..0xE7). A button press and a key press have the same shape."""
 
-    def is_pressed(self, key) -> bool:
-        key = int(key)
-        if 0xE0 <= key <= 0xE7:
-            return self.modifiers & (1 << (key - 0xE0)) != 0
-        return key in self.keys
+    usages: List["Input"] = field(default_factory=list)
 
-
-@dataclass
-class MediaEvent:
-    keys: List[int] = field(default_factory=list)
-
-    def is_pressed(self, media) -> bool:
-        return int(media) in self.keys
+    def is_held(self, usage: "Input") -> bool:
+        return any(u == usage for u in self.usages)
 
 
 @dataclass
 class CatchEvent:
     kind: CatchEventKind
-    payload: Union[MouseEvent, KeyboardEvent, MediaEvent]
+    payload: Union[MotionEvent, UsageSnapshot]
 
     @property
-    def mouse(self) -> Optional[MouseEvent]:
-        return self.payload if self.kind == CatchEventKind.MOUSE else None
+    def motion(self) -> Optional[MotionEvent]:
+        return self.payload if self.kind == CatchEventKind.MOTION else None
 
     @property
-    def keyboard(self) -> Optional[KeyboardEvent]:
-        return self.payload if self.kind == CatchEventKind.KEYBOARD else None
-
-    @property
-    def media(self) -> Optional[MediaEvent]:
-        return self.payload if self.kind == CatchEventKind.MEDIA else None
-
-    def is_pressed(self, target) -> bool:
-        return self.payload.is_pressed(target)
+    def usages(self) -> Optional[UsageSnapshot]:
+        return self.payload if self.kind == CatchEventKind.USAGES else None
 
 
 @dataclass
@@ -288,7 +280,8 @@ class RecordedFrame:
 
 
 class Input:
-    """An injection target. Build with `Input.button` / `key` / `media`."""
+    """A momentary usage (a button, key, or media usage — all one shape). Build with `Input.button` /
+    `key` / `media`. The same value drives `inject`/`press`/`lock` and appears in a `UsageSnapshot`."""
 
     def __init__(self, c):
         self._c = c
@@ -304,6 +297,28 @@ class Input:
     @classmethod
     def media(cls, media) -> "Input":
         return cls(_native.lib.medius_input_media(int(media)))
+
+    @property
+    def kind(self) -> InputKind:
+        return InputKind(self._c.kind)
+
+    @property
+    def value(self) -> int:
+        """The class-specific id: button id, HID keycode, or 16-bit Consumer usage."""
+        return int(self._c.value)
+
+    def __eq__(self, other) -> bool:
+        return (
+            isinstance(other, Input)
+            and self._c.kind == other._c.kind
+            and self._c.value == other._c.value
+        )
+
+    def __hash__(self) -> int:
+        return hash((int(self._c.kind), int(self._c.value)))
+
+    def __repr__(self) -> str:
+        return f"Input(kind={self.kind.name}, value={self.value})"
 
 
 class Motion:
@@ -322,28 +337,50 @@ class Motion:
 
 
 class LockTarget:
-    """A lock target. Build with `LockTarget.x/y/wheel/button`."""
+    """A lock target: an axis (`LockTarget.x/y/wheel`) or a momentary usage (`LockTarget.usage`, or the
+    `button`/`key`/`media` shortcuts). A button, key, and media usage all lock the same way."""
 
     def __init__(self, c):
         self._c = c
 
     @classmethod
     def x(cls) -> "LockTarget":
-        return cls(_native.MediusLockTarget(kind=int(LockTargetKind.X), button=int(Button.LEFT)))
+        return cls(_native.lib.medius_lock_target_axis(int(LockTargetKind.X)))
 
     @classmethod
     def y(cls) -> "LockTarget":
-        return cls(_native.MediusLockTarget(kind=int(LockTargetKind.Y), button=int(Button.LEFT)))
+        return cls(_native.lib.medius_lock_target_axis(int(LockTargetKind.Y)))
 
     @classmethod
     def wheel(cls) -> "LockTarget":
-        return cls(
-            _native.MediusLockTarget(kind=int(LockTargetKind.WHEEL), button=int(Button.LEFT))
-        )
+        return cls(_native.lib.medius_lock_target_axis(int(LockTargetKind.WHEEL)))
+
+    @classmethod
+    def usage(cls, usage: "Input") -> "LockTarget":
+        return cls(_native.lib.medius_lock_target_usage(usage._c))
 
     @classmethod
     def button(cls, button) -> "LockTarget":
-        return cls(_native.MediusLockTarget(kind=int(LockTargetKind.BUTTON), button=int(button)))
+        return cls.usage(Input.button(button))
+
+    @classmethod
+    def key(cls, key) -> "LockTarget":
+        return cls.usage(Input.key(key))
+
+    @classmethod
+    def media(cls, media) -> "LockTarget":
+        return cls.usage(Input.media(media))
+
+    @property
+    def kind(self) -> LockTargetKind:
+        return LockTargetKind(self._c.kind)
+
+    @property
+    def input(self) -> Optional["Input"]:
+        """The locked usage, when `kind` is `USAGE`; `None` for an axis."""
+        if self._c.kind == int(LockTargetKind.USAGE):
+            return Input(_native.MediusInput(kind=self._c.usage.kind, value=self._c.usage.value))
+        return None
 
 
 # --- ctypes <-> dataclass conversion ---
@@ -568,41 +605,66 @@ def counters_from_c(c) -> Counters:
     return Counters(c.frames_tx, c.frames_rx, c.crc_drops, c.reconnects)
 
 
-def mouse_event_to_c(e) -> "_native.MediusMouseEvent":
-    return _native.MediusMouseEvent(e.buttons, e.dx, e.dy, e.wheel)
+def _input_copy(c) -> Input:
+    return Input(_native.MediusInput(kind=c.kind, value=c.value))
 
 
-def keyboard_event_to_c(e) -> "_native.MediusKeyboardEvent":
-    c = _native.MediusKeyboardEvent()
-    c.modifiers = e.modifiers
-    n = min(len(e.keys), 0xFF)  # the count is a u8, so cap at 255
-    c.n_keys = n
-    for idx in range(n):
-        c.keys[idx] = int(e.keys[idx]) & 0xFF
+def lock_target_from_c(c) -> LockTarget:
+    return LockTarget(
+        _native.MediusLockTarget(
+            kind=c.kind, usage=_native.MediusInput(kind=c.usage.kind, value=c.usage.value)
+        )
+    )
+
+
+def lock_entry_from_c(c) -> LockEntry:
+    return LockEntry(
+        lock_target_from_c(c.target), bool(c.is_blanket), bool(c.positive), bool(c.negative)
+    )
+
+
+def locks_from_c(c) -> Locks:
+    n = min(int(c.n), _native.MEDIUS_MAX_LOCKS)
+    return Locks([lock_entry_from_c(c.entries[i]) for i in range(n)])
+
+
+def locks_to_c(locks) -> "_native.MediusLocks":
+    c = _native.MediusLocks()
+    n = min(len(locks.entries), _native.MEDIUS_MAX_LOCKS)
+    c.n = n
+    for i in range(n):
+        e = locks.entries[i]
+        c.entries[i] = _native.MediusLockEntry(
+            target=e.target._c,
+            is_blanket=bool(e.is_blanket),
+            positive=bool(e.positive),
+            negative=bool(e.negative),
+        )
     return c
 
 
-def media_event_to_c(e) -> "_native.MediusMediaEvent":
-    c = _native.MediusMediaEvent()
-    n = min(len(e.keys), 0xFF)
-    c.n_keys = n
+def motion_event_to_c(e) -> "_native.MediusMotionEvent":
+    return _native.MediusMotionEvent(e.dx, e.dy, e.dz)
+
+
+def usage_snapshot_to_c(s) -> "_native.MediusUsageEvent":
+    c = _native.MediusUsageEvent()
+    n = min(len(s.usages), _native.MEDIUS_MAX_USAGES)
+    c.n = n
     for idx in range(n):
-        c.keys[idx] = int(e.keys[idx]) & 0xFFFF
+        c.usages[idx] = s.usages[idx]._c
     return c
 
 
 def decode_catch_event(c) -> CatchEvent:
     kind = CatchEventKind(c.kind)
-    if kind == CatchEventKind.MOUSE:
-        m = c.data.mouse
-        return CatchEvent(kind, MouseEvent(m.buttons, m.dx, m.dy, m.wheel))
-    if kind == CatchEventKind.KEYBOARD:
-        k = c.data.keyboard
-        n = min(k.n_keys, _native.MEDIUS_MAX_KEYS)
-        return CatchEvent(kind, KeyboardEvent(k.modifiers, list(k.keys[:n])))
-    md = c.data.media
-    n = min(md.n_keys, _native.MEDIUS_MAX_MEDIA_KEYS)
-    return CatchEvent(kind, MediaEvent(list(md.keys[:n])))
+    if kind == CatchEventKind.MOTION:
+        m = c.data.motion
+        return CatchEvent(kind, MotionEvent(m.dx, m.dy, m.dz))
+    u = c.data.usages
+    n = min(int(u.n), _native.MEDIUS_MAX_USAGES)
+    usages = [_input_copy(u.usages[i]) for i in range(n)]
+    return CatchEvent(kind, UsageSnapshot(usages))
 
 
 def decode_log_line(c) -> LogLine:
