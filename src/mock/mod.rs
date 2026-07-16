@@ -156,18 +156,14 @@ fn stats_payload(s: Stats) -> Vec<u8> {
 
 fn locks_payload(l: &Locks) -> Vec<u8> {
     use crate::protocol::opcode::{LOCK_CLS_AXIS, LOCK_DIRBIT_NEG, LOCK_DIRBIT_POS, LOCK_ID_ALL};
-    use crate::types::LockTarget;
+    use crate::types::{LockScope, LockTarget};
     let entries = l.entries();
     let mut p = vec![6u8, entries.len() as u8];
     for e in entries {
-        let (class, id) = if let Some(class) = e.blanket {
-            (class.as_u8(), LOCK_ID_ALL)
-        } else {
-            match e.target {
-                Some(LockTarget::Axis(a)) => (LOCK_CLS_AXIS, a.as_u16()),
-                Some(LockTarget::Usage(u)) => u.class_id(),
-                None => (0, 0),
-            }
+        let (class, id) = match e.scope {
+            LockScope::Blanket(class) => (class.as_u8(), LOCK_ID_ALL),
+            LockScope::Target(LockTarget::Axis(a)) => (LOCK_CLS_AXIS, a.as_u16()),
+            LockScope::Target(LockTarget::Usage(u)) => u.class_id(),
         };
         let dirbits = (if e.positive { LOCK_DIRBIT_POS } else { 0 })
             | (if e.negative { LOCK_DIRBIT_NEG } else { 0 });
@@ -239,9 +235,7 @@ fn clip_status_payload(c: &ClipStatus) -> Vec<u8> {
     p.extend_from_slice(&c.seq_gaps.to_le_bytes());
     p.push(c.held.len() as u8);
     for u in &c.held {
-        let (class, id) = u.class_id();
-        p.push(class);
-        p.extend_from_slice(&id.to_le_bytes());
+        u.push_le(&mut p);
     }
     p
 }
@@ -258,9 +252,7 @@ fn usage_event_payload(usages: &[Usage]) -> Vec<u8> {
     let mut p = Vec::with_capacity(1 + 3 * usages.len());
     p.push(usages.len() as u8);
     for u in usages {
-        let (class, id) = u.class_id();
-        p.push(class);
-        p.extend_from_slice(&id.to_le_bytes());
+        u.push_le(&mut p);
     }
     p
 }

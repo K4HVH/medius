@@ -101,13 +101,21 @@ impl<T: Into<Usage>> From<T> for LockTarget {
     }
 }
 
-/// One entry in a decoded `RESP(LOCKS)` (§4.8): the locked target and which edges are locked.
+/// What a `RESP(LOCKS)` entry addresses: a specific [`LockTarget`] (an axis or one usage), or a whole-class
+/// blanket that locks every usage of a [`Class`] at once (`id == 0xFFFF` on the wire).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum LockScope {
+    /// A specific axis or usage.
+    Target(LockTarget),
+    /// A whole-class blanket (every button, key, or media usage of the class).
+    Blanket(Class),
+}
+
+/// One entry in a decoded `RESP(LOCKS)` (§4.8): what is locked and which edges are locked.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct LockEntry {
-    /// What is locked. `None` = a whole-class blanket (see [`blanket`](Self::blanket)).
-    pub target: Option<LockTarget>,
-    /// The blanket class, when this entry is a whole-class lock (`id == 0xFFFF` on the wire).
-    pub blanket: Option<Class>,
+    /// What this entry locks.
+    pub scope: LockScope,
     /// The positive/press edge is locked.
     pub positive: bool,
     /// The negative/release edge is locked.
@@ -122,7 +130,9 @@ pub struct Locks {
 }
 
 impl Locks {
-    /// Decode a `RESP(LOCKS)` payload: `[what][n u8]` then `n × [class u8][id u16 LE][dirbits u8]`.
+    /// Decode a `RESP(LOCKS)` payload: `[what][n u8]` then `n × [class u8][id u16 LE][dirbits u8]`. An entry
+    /// whose class/id is unknown (a malformed wire the firmware never sends) is skipped rather than kept as a
+    /// garbage entry.
     pub(crate) fn from_payload(p: &[u8]) -> Option<Locks> {
         let n = *p.get(1)? as usize;
         let mut entries = Vec::with_capacity(n);
@@ -131,14 +141,13 @@ impl Locks {
             let cls = *p.get(off)?;
             let id = u16::from_le_bytes([*p.get(off + 1)?, *p.get(off + 2)?]);
             let db = *p.get(off + 3)?;
-            let positive = db & LOCK_DIRBIT_POS != 0;
-            let negative = db & LOCK_DIRBIT_NEG != 0;
-            let (target, blanket) = decode_target(cls, id);
+            let Some(scope) = decode_scope(cls, id) else {
+                continue;
+            };
             entries.push(LockEntry {
-                target,
-                blanket,
-                positive,
-                negative,
+                scope,
+                positive: db & LOCK_DIRBIT_POS != 0,
+                negative: db & LOCK_DIRBIT_NEG != 0,
             });
         }
         Some(Locks { entries })
@@ -155,11 +164,18 @@ impl Locks {
         &self.entries
     }
 
-    /// Whether the given target is locked on the given edge.
+    /// Whether the given target is locked on the given edge — by a specific entry OR by a whole-class blanket
+    /// that covers it (so `is_locked(Button::Left, ..)` is true after `lock_all(Blanket::Buttons, ..)`).
     pub fn is_locked(&self, target: impl Into<LockTarget>, dir: LockDirection) -> bool {
         let target = target.into();
         self.entries.iter().any(|e| {
-            e.target == Some(target)
+            let covers = match e.scope {
+                LockScope::Target(t) => t == target,
+                LockScope::Blanket(class) => {
+                    matches!(target, LockTarget::Usage(u) if u.class == class)
+                }
+            };
+            covers
                 && match dir {
                     LockDirection::Both => e.positive && e.negative,
                     LockDirection::Positive => e.positive,
@@ -169,19 +185,19 @@ impl Locks {
     }
 }
 
-fn decode_target(cls: u8, id: u16) -> (Option<LockTarget>, Option<Class>) {
+fn decode_scope(cls: u8, id: u16) -> Option<LockScope> {
     if cls == LOCK_CLS_AXIS {
         let axis = match id {
-            LOCK_AXIS_X => Some(Axis::X),
-            LOCK_AXIS_Y => Some(Axis::Y),
-            LOCK_AXIS_WHEEL => Some(Axis::Wheel),
-            _ => None,
+            LOCK_AXIS_X => Axis::X,
+            LOCK_AXIS_Y => Axis::Y,
+            LOCK_AXIS_WHEEL => Axis::Wheel,
+            _ => return None,
         };
-        (axis.map(LockTarget::Axis), None)
+        Some(LockScope::Target(LockTarget::Axis(axis)))
     } else if id == crate::protocol::opcode::LOCK_ID_ALL {
-        (None, Class::from_u8(cls))
+        Some(LockScope::Blanket(Class::from_u8(cls)?))
     } else {
-        let target = Class::from_u8(cls).map(|class| LockTarget::Usage(Usage::new(class, id)));
-        (target, None)
+        let class = Class::from_u8(cls)?;
+        Some(LockScope::Target(LockTarget::Usage(Usage::new(class, id))))
     }
 }

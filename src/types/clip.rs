@@ -4,7 +4,7 @@
 
 use crate::protocol::opcode::{CLIP_F_EDGES, CLIP_F_WHEEL, CLIP_F_XY, CLIP_TAG_GAP};
 use crate::types::lock::blanket_scope;
-use crate::types::{Action, Blanket, Button, Class, Key, MediaKey, Usage};
+use crate::types::{Action, Blanket, Key, MediaKey, Usage};
 
 /// Playback options for a clip [`start`](crate::ClipHandle::start) or catch trigger
 /// ([`arm_catch`](crate::ClipHandle::arm_catch)). The single place clip settings live; extensible as more
@@ -89,9 +89,7 @@ impl ClipStatus {
         let u = usage.into();
         self.held.contains(&u)
     }
-}
 
-impl ClipStatus {
     /// Decode a `RESP(CLIP)` payload (§4.15): `[what][state u8][free u32][used u32][ticks u32]
     /// [underruns u16][overruns u16][seq_gaps u16][n u8]` then `n × [class u8][id u16 LE]` (the held-usage
     /// snapshot), all little-endian.
@@ -99,14 +97,7 @@ impl ClipStatus {
         if p.len() < 21 {
             return None;
         }
-        let n = p[20] as usize;
-        let mut held = Vec::with_capacity(n);
-        for i in 0..n {
-            let off = 21 + 3 * i;
-            let class = Class::from_u8(*p.get(off)?)?;
-            let id = u16::from_le_bytes([*p.get(off + 1)?, *p.get(off + 2)?]);
-            held.push(Usage::new(class, id));
-        }
+        let held = Usage::decode_list(&p[20..])?;
         Some(ClipStatus {
             state: ClipState::from_u8(p[1])?,
             free: u32::from_le_bytes([p[2], p[3], p[4], p[5]]),
@@ -214,19 +205,19 @@ impl ClipBuilder {
         self.frame(0, 0, 0, &[(input.into(), action)])
     }
 
-    /// A frame that presses a button.
-    pub fn press(&mut self, button: Button) -> &mut Self {
-        self.edge(button, Action::Press)
+    /// A frame that presses a usage (a button, key, or media usage), like [`Device::press`](crate::Device::press).
+    pub fn press(&mut self, usage: impl Into<Usage>) -> &mut Self {
+        self.edge(usage, Action::Press)
     }
 
-    /// A frame that soft-releases a button (clears the injected press; a physical hold is left intact).
-    pub fn release(&mut self, button: Button) -> &mut Self {
-        self.edge(button, Action::SoftRelease)
+    /// A frame that soft-releases a usage (clears the injected press; a physical hold is left intact).
+    pub fn release(&mut self, usage: impl Into<Usage>) -> &mut Self {
+        self.edge(usage, Action::SoftRelease)
     }
 
-    /// A frame that force-releases a button (masks a physical hold too).
-    pub fn force_release(&mut self, button: Button) -> &mut Self {
-        self.edge(button, Action::ForceRelease)
+    /// A frame that force-releases a usage (masks a physical hold too).
+    pub fn force_release(&mut self, usage: impl Into<Usage>) -> &mut Self {
+        self.edge(usage, Action::ForceRelease)
     }
 
     /// A frame carrying one key edge.

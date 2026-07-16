@@ -115,15 +115,9 @@ pub struct UsageSnapshot {
 impl UsageSnapshot {
     /// Decode a `USAGE_EVENT` payload (§4.10): `[n u8]` then `n × [class u8][id u16 LE]`.
     pub(crate) fn from_payload(p: &[u8]) -> Option<UsageSnapshot> {
-        let n = *p.first()? as usize;
-        let mut usages = Vec::with_capacity(n);
-        for i in 0..n {
-            let off = 1 + 3 * i;
-            let class = Class::from_u8(*p.get(off)?)?;
-            let id = u16::from_le_bytes([*p.get(off + 1)?, *p.get(off + 2)?]);
-            usages.push(Usage::new(class, id));
-        }
-        Some(UsageSnapshot { usages })
+        Some(UsageSnapshot {
+            usages: Usage::decode_list(p)?,
+        })
     }
 
     /// The class of this snapshot's usages (from the first entry), or `None` if empty.

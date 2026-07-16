@@ -58,6 +58,27 @@ impl Usage {
     pub fn class_id(self) -> (u8, u16) {
         (self.class as u8, self.id)
     }
+
+    /// Append this usage's wire bytes `[class u8][id u16 LE]` to `out`.
+    pub(crate) fn push_le(self, out: &mut Vec<u8>) {
+        out.push(self.class as u8);
+        out.extend_from_slice(&self.id.to_le_bytes());
+    }
+
+    /// Decode a length-prefixed usage list: `[n u8]` then `n × [class u8][id u16 LE]`, `None` on a short
+    /// or malformed buffer. Shared by the `USAGE_EVENT` and `RESP(CLIP)` held-snapshot decoders so the one
+    /// held-usage wire format lives in a single place.
+    pub(crate) fn decode_list(p: &[u8]) -> Option<Vec<Usage>> {
+        let n = *p.first()? as usize;
+        let mut out = Vec::with_capacity(n);
+        for i in 0..n {
+            let off = 1 + 3 * i;
+            let class = Class::from_u8(*p.get(off)?)?;
+            let id = u16::from_le_bytes([*p.get(off + 1)?, *p.get(off + 2)?]);
+            out.push(Usage::new(class, id));
+        }
+        Some(out)
+    }
 }
 
 impl From<Button> for Usage {

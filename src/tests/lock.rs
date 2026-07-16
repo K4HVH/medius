@@ -6,7 +6,9 @@ use crate::protocol::opcode::{
     LOCK_CLS_AXIS, LOCK_CLS_KEY, LOCK_CLS_MEDIA, LOCK_DIRBIT_NEG, LOCK_DIRBIT_POS, LOCK_ID_ALL,
 };
 use crate::protocol::{Resp, parse_resp};
-use crate::types::{Axis, Button, Class, Health, Key, LockDirection, LockTarget, Locks, Usage};
+use crate::types::{
+    Axis, Button, Class, Health, Key, LockDirection, LockScope, LockTarget, Locks, Usage,
+};
 
 #[test]
 fn lock_payload_bytes() {
@@ -102,9 +104,35 @@ fn locks_blanket_entry_decodes() {
     // Blanket all-keys: [6][n=1][KEY(1), 0xFFFF, POS].
     let l = Locks::from_payload(&[6, 1, 1, 0xFF, 0xFF, LOCK_DIRBIT_POS]).unwrap();
     let e = l.entries()[0];
-    assert_eq!(e.blanket, Some(Class::Key));
-    assert_eq!(e.target, None);
+    assert_eq!(e.scope, LockScope::Blanket(Class::Key));
     assert!(e.positive && !e.negative);
+    // A covering blanket answers is_locked for any usage of that class, but only on its locked edge.
+    assert!(l.is_locked(crate::Key::A, LockDirection::Positive));
+    assert!(!l.is_locked(crate::Key::A, LockDirection::Negative));
+    assert!(!l.is_locked(Button::Left, LockDirection::Positive)); // different class
+}
+
+#[test]
+fn locks_unknown_entry_is_skipped() {
+    // An unknown class byte (0x09) is a malformed wire; the entry is dropped, not kept as garbage.
+    let l = Locks::from_payload(&[
+        6,
+        2,
+        0x09,
+        0x00,
+        0x00,
+        LOCK_DIRBIT_POS,
+        1,
+        4,
+        0,
+        LOCK_DIRBIT_POS,
+    ])
+    .unwrap();
+    assert_eq!(l.entries().len(), 1);
+    assert_eq!(
+        l.entries()[0].scope,
+        LockScope::Target(crate::Key::new(4).into())
+    );
 }
 
 #[test]

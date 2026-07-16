@@ -130,17 +130,18 @@ typedef uint8_t MediusInputKind;
 #endif // __STDC_VERSION__ >= 202311L
 #endif // __cplusplus
 
-// A whole input group for a blanket lock or a clip auto-lock scope.
+// A whole input group for a blanket lock or a clip auto-lock scope. These discriminants are ABI-local
+// ordinals (matching the crate's `Blanket` order), not the `CLIP_LOCK_*` wire bits.
 enum MediusBlanket
 #if defined(__cplusplus) || __STDC_VERSION__ >= 202311L
   : uint8_t
 #endif // defined(__cplusplus) || __STDC_VERSION__ >= 202311L
  {
-    MEDIUS_BLANKET_KEYS = 0,
-    MEDIUS_BLANKET_MEDIA = 1,
+    MEDIUS_BLANKET_AIM = 0,
+    MEDIUS_BLANKET_WHEEL = 1,
     MEDIUS_BLANKET_BUTTONS = 2,
-    MEDIUS_BLANKET_AIM = 3,
-    MEDIUS_BLANKET_WHEEL = 4,
+    MEDIUS_BLANKET_KEYS = 3,
+    MEDIUS_BLANKET_MEDIA = 4,
 };
 #ifndef __cplusplus
 #if __STDC_VERSION__ >= 202311L

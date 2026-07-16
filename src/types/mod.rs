@@ -35,7 +35,7 @@ pub use input::{CatchEvent, CatchMask, CatchState, MotionEvent, UsageSnapshot};
 pub use kbd_caps::KbdCaps;
 pub use keyboard::Key;
 pub use led::{LedMode, LedTarget};
-pub use lock::{Blanket, LockDirection, LockEntry, LockTarget, Locks};
+pub use lock::{Blanket, LockDirection, LockEntry, LockScope, LockTarget, Locks};
 pub use log::{LogLevel, LogLine};
 pub use media::MediaKey;
 pub use mouse_caps::MouseCaps;
