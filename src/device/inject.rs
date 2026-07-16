@@ -13,8 +13,10 @@ impl Device {
         let u = usage.into();
         self.link.desired().lock().apply(u, action);
         let (class, id) = u.class_id();
-        self.link
-            .send(FrameType::Inject, &inject_payload(class, id, action.as_u8()))
+        self.link.send(
+            FrameType::Inject,
+            &inject_payload(class, id, action.as_u8()),
+        )
     }
 
     /// Press (force down) any usage — a button, key, or media usage.

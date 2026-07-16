@@ -13,8 +13,7 @@ use crate::protocol::{DecodedFrame, FrameType, encode};
 use crate::transport::mock::MockTransport;
 use crate::types::{
     Caps, CatchState, ClipState, ClipStatus, DeviceInfo, DeviceKind, EmitPace, Health,
-    ImperfectStatus, KbdCaps, Locks, LogLevel, MouseCaps, Usage,
-    Rate, Stats, Version,
+    ImperfectStatus, KbdCaps, Locks, LogLevel, MouseCaps, Rate, Stats, Usage, Version,
 };
 
 #[derive(Debug)]
@@ -170,8 +169,8 @@ fn locks_payload(l: &Locks) -> Vec<u8> {
                 None => (0, 0),
             }
         };
-        let dirbits =
-            (if e.positive { LOCK_DIRBIT_POS } else { 0 }) | (if e.negative { LOCK_DIRBIT_NEG } else { 0 });
+        let dirbits = (if e.positive { LOCK_DIRBIT_POS } else { 0 })
+            | (if e.negative { LOCK_DIRBIT_NEG } else { 0 });
         p.push(class);
         p.extend_from_slice(&id.to_le_bytes());
         p.push(dirbits);
@@ -502,8 +501,11 @@ impl MockBox {
     /// [`EventStream`](crate::EventStream) as [`CatchEvent::Motion`](crate::CatchEvent). `seq` is the
     /// rolling event counter the host sees as the frame `SEQ`.
     pub fn push_motion(&self, seq: u8, dx: i16, dy: i16, dz: i16) {
-        self.transport
-            .push_frame(FrameType::MotionEvent, seq, &motion_event_payload(dx, dy, dz));
+        self.transport.push_frame(
+            FrameType::MotionEvent,
+            seq,
+            &motion_event_payload(dx, dy, dz),
+        );
     }
 
     /// Push a `USAGE_EVENT` (a held-usage snapshot); surfaces as

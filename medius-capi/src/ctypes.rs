@@ -2,11 +2,12 @@
 
 use std::os::raw::c_char;
 
-/// Largest number of pressed keys / active media usages in one catch snapshot. The wire format
-/// length-prefixes both lists with a `u8`, so 256 can never truncate.
-pub const MEDIUS_MAX_KEYS: usize = 256;
-/// See [`MEDIUS_MAX_KEYS`].
-pub const MEDIUS_MAX_MEDIA_KEYS: usize = 256;
+/// Largest number of held usages in one catch snapshot. The wire format length-prefixes the list with a
+/// `u8`, so 256 can never truncate.
+pub const MEDIUS_MAX_USAGES: usize = 256;
+/// Largest number of entries in a decoded `RESP(LOCKS)`. Every distinct axis, usage, and whole-class
+/// blanket lock across all classes fits well within this.
+pub const MEDIUS_MAX_LOCKS: usize = 256;
 /// Capacity for a log line's text (the wire payload is at most 512 bytes).
 pub const MEDIUS_MAX_LOG_TEXT: usize = 512;
 /// Capacity for a discovered serial-port path.
@@ -23,7 +24,8 @@ pub const MEDIUS_CATCH_MASK_MOTION: u8 = 0x01;
 pub const MEDIUS_CATCH_MASK_WHEEL: u8 = 0x02;
 pub const MEDIUS_CATCH_MASK_BUTTONS: u8 = 0x04;
 pub const MEDIUS_CATCH_MASK_KEYS: u8 = 0x08;
-pub const MEDIUS_CATCH_MASK_ALL: u8 = 0x0F;
+pub const MEDIUS_CATCH_MASK_MEDIA: u8 = 0x10;
+pub const MEDIUS_CATCH_MASK_ALL: u8 = 0x1F;
 
 /// A keyboard key, addressed by HID Keyboard/Keypad usage. Modifiers are `0xE0..=0xE7`.
 pub type MediusKey = u8;
@@ -137,9 +139,8 @@ pub enum MediusFrameType {
     Led = 0x09,
     Lock = 0x0A,
     Catch = 0x0B,
-    MouseEvent = 0x0C,
-    KbEvent = 0x0F,
-    ConsEvent = 0x10,
+    MotionEvent = 0x0C,
+    UsageEvent = 0x0F,
     Option = 0x11,
     ClipAppend = 0x12,
     ClipCtrl = 0x13,
@@ -149,9 +150,10 @@ pub enum MediusFrameType {
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MediusCatchEventKind {
-    Mouse = 0,
-    Keyboard = 1,
-    Media = 2,
+    /// A relative-axis event (`data.motion`).
+    Motion = 0,
+    /// A held-usage snapshot for one class (`data.usages`).
+    Usages = 1,
 }
 
 /// Which arm of a [`MediusInput`] is populated.
@@ -171,14 +173,18 @@ pub enum MediusMotionKind {
     Wheel = 1,
 }
 
-/// Which axis/button a lock targets.
+/// What a lock addresses: a relative axis, or a momentary usage (button/key/media).
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MediusLockTargetKind {
+    /// The X cursor axis.
     X = 0,
+    /// The Y cursor axis.
     Y = 1,
+    /// The wheel.
     Wheel = 2,
-    Button = 3,
+    /// A momentary usage; read `usage`.
+    Usage = 3,
 }
 
 // --- data-carrying parameter structs ---
@@ -213,12 +219,14 @@ pub struct MediusMotion {
     pub wheel: i16,
 }
 
-/// A lock target. `button` is meaningful only when `kind` is `Button`.
+/// A lock target: an axis (`kind` is `X`/`Y`/`Wheel`) or a momentary usage (`kind` is `Usage`, read
+/// `usage`). A button, key, and media usage all lock the same way. Build with the `medius_lock_target_*`
+/// helpers.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MediusLockTarget {
     pub kind: MediusLockTargetKind,
-    pub button: MediusButton,
+    pub usage: MediusInput,
 }
 
 // --- value (query result) structs ---
@@ -332,11 +340,24 @@ pub struct MediusStats {
     pub config_count: u16,
 }
 
-/// The active lock bitmask. Use `medius_locks_is_locked` to test a target/direction.
+/// One entry in a decoded `RESP(LOCKS)`: the locked target and which edges are locked. When `is_blanket`
+/// is set the lock covers a whole class (every button / key / media usage) — `target.usage.kind` names
+/// the class and its `value` is unused.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MediusLockEntry {
+    pub target: MediusLockTarget,
+    pub is_blanket: bool,
+    pub positive: bool,
+    pub negative: bool,
+}
+
+/// The active locks: `entries[0..n]`. Use `medius_locks_is_locked` to test a target/direction.
+#[repr(C)]
+#[derive(Clone, Copy)]
 pub struct MediusLocks {
-    pub mask: u16,
+    pub n: u16,
+    pub entries: [MediusLockEntry; MEDIUS_MAX_LOCKS],
 }
 
 /// The active catch subscription mask plus the box-side dropped-event count.
@@ -428,44 +449,38 @@ pub struct MediusBoxInfo {
 
 // --- catch-stream snapshots ---
 
-/// One physical mouse report. `buttons` is a bitmask by button id.
+/// One relative-axis catch event: the user's real motion at the merge point, before any lock suppression
+/// or injection.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct MediusMouseEvent {
-    pub buttons: u8,
+pub struct MediusMotionEvent {
+    /// Relative X this report (right positive).
     pub dx: i16,
+    /// Relative Y this report (down positive).
     pub dy: i16,
-    pub wheel: i16,
+    /// Wheel delta this report (up positive).
+    pub dz: i16,
 }
 
-/// One physical keyboard snapshot: a modifier bitmap plus the pressed non-modifier keycodes in
-/// `keys[0..n_keys]`.
+/// One held-usage snapshot: every held usage of one class (button / key / media; modifiers are key
+/// usages `0xE0..=0xE7`) in `usages[0..n]`. A mouse-button press and a key press have the same shape.
+/// Diff successive snapshots for edges, or use `medius_usage_event_is_held`.
 #[repr(C)]
 #[derive(Clone, Copy)]
-pub struct MediusKeyboardEvent {
-    pub modifiers: u8,
-    pub n_keys: u8,
-    pub keys: [u8; MEDIUS_MAX_KEYS],
-}
-
-/// One physical media snapshot: the active Consumer usages in `keys[0..n_keys]`.
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub struct MediusMediaEvent {
-    pub n_keys: u8,
-    pub keys: [u16; MEDIUS_MAX_MEDIA_KEYS],
+pub struct MediusUsageEvent {
+    pub n: u16,
+    pub usages: [MediusInput; MEDIUS_MAX_USAGES],
 }
 
 /// The populated arm of a [`MediusCatchEvent`]; read the field matching the event's `kind`.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub union MediusCatchEventData {
-    pub mouse: MediusMouseEvent,
-    pub keyboard: MediusKeyboardEvent,
-    pub media: MediusMediaEvent,
+    pub motion: MediusMotionEvent,
+    pub usages: MediusUsageEvent,
 }
 
-/// One catch-stream event. Read `data.mouse` / `data.keyboard` / `data.media` per `kind`.
+/// One catch-stream event. Read `data.motion` / `data.usages` per `kind`.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct MediusCatchEvent {

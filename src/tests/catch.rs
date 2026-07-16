@@ -7,7 +7,7 @@ use crate::protocol::FrameType;
 use crate::protocol::command::catch_payload;
 use crate::protocol::opcode::{CATCH_BUTTONS, CATCH_KEYS, CATCH_MEDIA, CATCH_MOTION, CATCH_WHEEL};
 use crate::protocol::{Resp, parse_resp};
-use crate::types::{CatchMask, CatchState, Class, Health, MotionEvent, Usage, UsageSnapshot};
+use crate::types::{CatchMask, CatchState, Class, Health, MotionEvent, UsageSnapshot};
 
 #[test]
 fn catch_payload_bytes() {
@@ -31,7 +31,11 @@ fn catch_mask_class_bits_and_ops() {
     assert!(m.contains(CatchMask::BUTTONS));
     assert!(!m.contains(CatchMask::WHEEL));
     assert_eq!(
-        CatchMask::MOTION | CatchMask::WHEEL | CatchMask::BUTTONS | CatchMask::KEYS | CatchMask::MEDIA,
+        CatchMask::MOTION
+            | CatchMask::WHEEL
+            | CatchMask::BUTTONS
+            | CatchMask::KEYS
+            | CatchMask::MEDIA,
         CatchMask::all()
     );
 
@@ -108,7 +112,7 @@ fn dropping_the_stream_unsubscribes() {
 #[cfg(feature = "mock")]
 #[test]
 fn pushed_events_arrive_on_the_stream() {
-    use crate::{Button, CatchEvent, CatchMask, Device, MockBox};
+    use crate::{Button, CatchEvent, CatchMask, Device, MockBox, Usage};
     use std::time::Duration;
     let mock = MockBox::new();
     let device = Device::with_mock(mock.clone());
@@ -153,7 +157,9 @@ fn catch_buffer_drops_oldest_on_overflow() {
         "exactly the overflow count was dropped"
     );
     // The freshest survive: the oldest readable event is the first one NOT evicted, not dx=0.
-    let CatchEvent::Motion(first) = stream.recv_timeout(Duration::from_secs(1)).expect("survived")
+    let CatchEvent::Motion(first) = stream
+        .recv_timeout(Duration::from_secs(1))
+        .expect("survived")
     else {
         panic!("expected a motion event");
     };

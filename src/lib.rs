@@ -34,8 +34,8 @@ pub use transport::scan::find_medius;
 pub use types::{
     Action, Axis, Blanket, Button, CLIP_EDGES_MAX, Caps, CatchEvent, CatchMask, CatchState, Class,
     ClipBuilder, ClipConfig, ClipState, ClipStatus, CountersSnapshot, DeviceInfo, DeviceKind,
-    EmitPace, EmitPaceStatus, Health, ImperfectStatus, Input, KbdCaps, Key, LedMode, LedTarget,
-    LockDirection, LockEntry, LockTarget, Locks, LogLevel, LogLine, MediaKey, MotionEvent, Motion,
+    EmitPace, EmitPaceStatus, Health, ImperfectStatus, KbdCaps, Key, LedMode, LedTarget,
+    LockDirection, LockEntry, LockTarget, Locks, LogLevel, LogLine, MediaKey, Motion, MotionEvent,
     MouseCaps, PortInfo, Rate, RebootTarget, Stats, Usage, UsageSnapshot, Version,
 };
 

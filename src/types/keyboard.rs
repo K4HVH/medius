@@ -107,4 +107,3 @@ impl Key {
     pub const RIGHT_ALT: Key = Key(0xE6);
     pub const RIGHT_GUI: Key = Key(0xE7);
 }
-

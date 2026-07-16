@@ -102,15 +102,19 @@ fn move_axis_parity() {
 }
 
 #[test]
-fn button_parity() {
+fn inject_button_parity() {
     assert_parity(
         |d| {
-            d.button(medius::Button::Right, medius::Action::Press)
+            d.inject(medius::Button::Right, medius::Action::Press)
                 .unwrap();
         },
         |dev| unsafe {
             assert_eq!(
-                medius_device_button(dev, MediusButton::Right, MediusAction::Press),
+                medius_device_inject(
+                    dev,
+                    medius_input_button(MediusButton::Right),
+                    MediusAction::Press
+                ),
                 MediusStatus::Ok
             );
         },
@@ -122,28 +126,20 @@ fn press_release_parity() {
     assert_parity(
         |d| {
             d.press(medius::Button::Left).unwrap();
-            d.soft_release(medius::Button::Left).unwrap();
+            d.release(medius::Button::Left).unwrap();
             d.force_release(medius::Button::Left).unwrap();
         },
         |dev| unsafe {
-            assert_eq!(
-                medius_device_press(dev, MediusButton::Left),
-                MediusStatus::Ok
-            );
-            assert_eq!(
-                medius_device_soft_release(dev, MediusButton::Left),
-                MediusStatus::Ok
-            );
-            assert_eq!(
-                medius_device_force_release(dev, MediusButton::Left),
-                MediusStatus::Ok
-            );
+            let left = medius_input_button(MediusButton::Left);
+            assert_eq!(medius_device_press(dev, left), MediusStatus::Ok);
+            assert_eq!(medius_device_soft_release(dev, left), MediusStatus::Ok);
+            assert_eq!(medius_device_force_release(dev, left), MediusStatus::Ok);
         },
     );
 }
 
 #[test]
-fn inject_parity() {
+fn inject_key_parity() {
     assert_parity(
         |d| {
             d.inject(medius::Key::new(MEDIUS_KEY_A), medius::Action::Press)
@@ -159,34 +155,30 @@ fn inject_parity() {
 }
 
 #[test]
-fn keyboard_parity() {
+fn press_release_key_parity() {
+    // The same generic verbs drive a key, proving buttons and keys are treated identically.
     assert_parity(
         |d| {
-            d.key_down(medius::Key::ENTER).unwrap();
-            d.key_up(medius::Key::ENTER).unwrap();
+            d.press(medius::Key::ENTER).unwrap();
+            d.release(medius::Key::ENTER).unwrap();
         },
         |dev| unsafe {
-            assert_eq!(
-                medius_device_key_down(dev, MEDIUS_KEY_ENTER),
-                MediusStatus::Ok
-            );
-            assert_eq!(
-                medius_device_key_up(dev, MEDIUS_KEY_ENTER),
-                MediusStatus::Ok
-            );
+            let enter = medius_input_key(MEDIUS_KEY_ENTER);
+            assert_eq!(medius_device_press(dev, enter), MediusStatus::Ok);
+            assert_eq!(medius_device_soft_release(dev, enter), MediusStatus::Ok);
         },
     );
 }
 
 #[test]
-fn media_parity() {
+fn press_media_parity() {
     assert_parity(
         |d| {
-            d.media_down(medius::MediaKey::VOLUME_UP).unwrap();
+            d.press(medius::MediaKey::VOLUME_UP).unwrap();
         },
         |dev| unsafe {
             assert_eq!(
-                medius_device_media_down(dev, MEDIUS_MEDIA_VOLUME_UP),
+                medius_device_press(dev, medius_input_media(MEDIUS_MEDIA_VOLUME_UP)),
                 MediusStatus::Ok
             );
         },
@@ -197,25 +189,16 @@ fn media_parity() {
 fn lock_parity() {
     assert_parity(
         |d| {
-            d.lock(medius::LockTarget::X, medius::LockDirection::Both)
+            d.lock(medius::Axis::X, medius::LockDirection::Both)
                 .unwrap();
-            d.lock(
-                medius::LockTarget::Button(medius::Button::Side1),
-                medius::LockDirection::Positive,
-            )
-            .unwrap();
-            d.unlock(medius::LockTarget::X, medius::LockDirection::Both)
+            d.lock(medius::Button::Side1, medius::LockDirection::Positive)
+                .unwrap();
+            d.unlock(medius::Axis::X, medius::LockDirection::Both)
                 .unwrap();
         },
         |dev| unsafe {
-            let x = MediusLockTarget {
-                kind: MediusLockTargetKind::X,
-                button: MediusButton::Left,
-            };
-            let side1 = MediusLockTarget {
-                kind: MediusLockTargetKind::Button,
-                button: MediusButton::Side1,
-            };
+            let x = medius_lock_target_axis(MediusLockTargetKind::X);
+            let side1 = medius_lock_target_usage(medius_input_button(MediusButton::Side1));
             assert_eq!(
                 medius_device_lock(dev, x, MediusLockDirection::Both),
                 MediusStatus::Ok
@@ -236,13 +219,14 @@ fn lock_parity() {
 fn lock_all_and_led_parity() {
     assert_parity(
         |d| {
-            d.lock_all(medius::Blanket::Buttons).unwrap();
+            d.lock_all(medius::Blanket::Buttons, medius::LockDirection::Both)
+                .unwrap();
             d.led(medius::LedTarget::Both, medius::LedMode::Blink, 128)
                 .unwrap();
         },
         |dev| unsafe {
             assert_eq!(
-                medius_device_lock_all(dev, MediusBlanket::Buttons),
+                medius_device_lock_all(dev, MediusBlanket::Buttons, MediusLockDirection::Both),
                 MediusStatus::Ok
             );
             assert_eq!(
@@ -400,23 +384,28 @@ fn device_info_roundtrips_kind_and_product() {
 #[test]
 fn query_locks_roundtrips_through_is_locked() {
     let mock = medius_mock_new();
-    // X positive + negative locked -> bits 0 and 1.
-    unsafe { medius_mock_set_locks(mock, MediusLocks { mask: 0b11 }) };
+    // X positive + negative locked.
+    let x = medius_lock_target_axis(MediusLockTargetKind::X);
+    let mut set: MediusLocks = unsafe { std::mem::zeroed() };
+    set.n = 1;
+    set.entries[0] = MediusLockEntry {
+        target: x,
+        is_blanket: false,
+        positive: true,
+        negative: true,
+    };
+    unsafe { medius_mock_set_locks(mock, set) };
     let mut dev: *mut MediusDevice = ptr::null_mut();
     assert_eq!(
         unsafe { medius_device_with_mock(mock, &mut dev) },
         MediusStatus::Ok
     );
-    let mut locks = MediusLocks { mask: 0 };
+    let mut locks: MediusLocks = unsafe { std::mem::zeroed() };
     assert_eq!(
         unsafe { medius_device_query_locks(dev, &mut locks) },
         MediusStatus::Ok
     );
-    let x = MediusLockTarget {
-        kind: MediusLockTargetKind::X,
-        button: MediusButton::Left,
-    };
-    assert!(medius_locks_is_locked(locks, x, MediusLockDirection::Both));
+    assert!(medius_locks_is_locked(&locks, x, MediusLockDirection::Both));
     unsafe {
         medius_device_free(dev);
         medius_mock_free(mock);
@@ -457,7 +446,7 @@ fn zeroed_event() -> MediusCatchEvent {
 }
 
 #[test]
-fn catch_delivers_a_mouse_event() {
+fn catch_delivers_a_motion_event() {
     let mock = medius_mock_new();
     let mut dev: *mut MediusDevice = ptr::null_mut();
     assert_eq!(
@@ -470,24 +459,15 @@ fn catch_delivers_a_mouse_event() {
         MediusStatus::Ok
     );
     unsafe {
-        (*mock).inner.push_event(
-            1,
-            medius::MouseEvent {
-                buttons: 1 << 3,
-                dx: 12,
-                dy: -34,
-                wheel: 1,
-            },
-        );
+        (*mock).inner.push_motion(1, 12, -34, 1);
     }
     let mut event = zeroed_event();
     assert!(unsafe { medius_event_stream_recv_timeout(stream, 2000, &mut event) });
-    assert_eq!(event.kind, MediusCatchEventKind::Mouse);
-    let m = unsafe { event.data.mouse };
+    assert_eq!(event.kind, MediusCatchEventKind::Motion);
+    let m = unsafe { event.data.motion };
     assert_eq!(m.dx, 12);
     assert_eq!(m.dy, -34);
-    assert_eq!(m.wheel, 1);
-    assert!(unsafe { medius_mouse_event_is_pressed(&m, MediusButton::Side1) });
+    assert_eq!(m.dz, 1);
     unsafe {
         medius_event_stream_free(stream);
         medius_device_free(dev);
@@ -496,7 +476,7 @@ fn catch_delivers_a_mouse_event() {
 }
 
 #[test]
-fn catch_delivers_a_keyboard_event() {
+fn catch_delivers_a_usage_event() {
     let mock = medius_mock_new();
     let mut dev: *mut MediusDevice = ptr::null_mut();
     assert_eq!(
@@ -509,17 +489,15 @@ fn catch_delivers_a_keyboard_event() {
         MediusStatus::Ok
     );
     unsafe {
-        let kb = medius::KeyboardEvent {
-            modifiers: 0,
-            keys: vec![medius::Key::ESCAPE],
-        };
-        (*mock).inner.push_kb_event(1, &kb);
+        (*mock)
+            .inner
+            .push_usages(1, &[medius::Usage::from(medius::Key::ESCAPE)]);
     }
     let mut event = zeroed_event();
     assert!(unsafe { medius_event_stream_recv_timeout(stream, 2000, &mut event) });
-    assert_eq!(event.kind, MediusCatchEventKind::Keyboard);
-    let kb = unsafe { event.data.keyboard };
-    assert!(unsafe { medius_keyboard_event_is_pressed(&kb, MEDIUS_KEY_ESCAPE) });
+    assert_eq!(event.kind, MediusCatchEventKind::Usages);
+    let usages = unsafe { event.data.usages };
+    assert!(unsafe { medius_usage_event_is_held(&usages, medius_input_key(MEDIUS_KEY_ESCAPE)) });
     unsafe {
         medius_event_stream_free(stream);
         medius_device_free(dev);
@@ -694,20 +672,12 @@ fn event_stream_clone_shares_the_subscription() {
     let stream2 = unsafe { medius_event_stream_clone(stream) };
     assert!(!stream2.is_null());
     unsafe {
-        (*mock).inner.push_event(
-            1,
-            medius::MouseEvent {
-                buttons: 0,
-                dx: 5,
-                dy: 0,
-                wheel: 0,
-            },
-        );
+        (*mock).inner.push_motion(1, 5, 0, 0);
     }
     // Either handle can receive from the shared queue.
     let mut event = zeroed_event();
     assert!(unsafe { medius_event_stream_recv_timeout(stream2, 2000, &mut event) });
-    assert_eq!(event.kind, MediusCatchEventKind::Mouse);
+    assert_eq!(event.kind, MediusCatchEventKind::Motion);
     unsafe {
         medius_event_stream_free(stream);
         medius_event_stream_free(stream2);

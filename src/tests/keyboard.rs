@@ -56,12 +56,18 @@ fn pushed_keyboard_and_media_events_arrive_on_the_stream() {
     use std::time::Duration;
     let mock = MockBox::new();
     let device = Device::with_mock(mock.clone());
-    let stream = device.catch_events(CatchMask::KEYS | CatchMask::MEDIA).unwrap();
+    let stream = device
+        .catch_events(CatchMask::KEYS | CatchMask::MEDIA)
+        .unwrap();
 
     // A keyboard snapshot: LeftShift modifier (0xE1) + keys A, B — all one USAGE_EVENT of KEY usages.
     mock.push_usages(
         0,
-        &[Usage::from(Key::LEFT_SHIFT), Usage::from(Key::A), Usage::from(Key::B)],
+        &[
+            Usage::from(Key::LEFT_SHIFT),
+            Usage::from(Key::A),
+            Usage::from(Key::B),
+        ],
     );
     // A media snapshot: one MEDIA usage.
     mock.push_usages(1, &[Usage::from(MediaKey::VOLUME_UP)]);

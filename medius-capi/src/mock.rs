@@ -235,43 +235,29 @@ pub unsafe extern "C" fn medius_mock_push_log(
     });
 }
 
-/// Push a MOUSE_EVENT as if the box emitted it (surfaces as a `Mouse` catch event).
+/// Push a MOTION_EVENT as if the box emitted it (surfaces as a `Motion` catch event).
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn medius_mock_push_event(
+pub unsafe extern "C" fn medius_mock_push_motion(
     mock: *mut MediusMockBox,
     seq: u8,
-    report: MediusMouseEvent,
+    event: MediusMotionEvent,
 ) {
-    with_mock(mock, |m| m.push_event(seq, report.into()));
+    with_mock(mock, |m| m.push_motion(seq, event.dx, event.dy, event.dz));
 }
 
-/// Push a KB_EVENT as if the box emitted it (surfaces as a `Keyboard` catch event).
+/// Push a USAGE_EVENT as if the box emitted it (surfaces as a `Usages` catch event).
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn medius_mock_push_kb_event(
+pub unsafe extern "C" fn medius_mock_push_usages(
     mock: *mut MediusMockBox,
     seq: u8,
-    event: *const MediusKeyboardEvent,
+    event: *const MediusUsageEvent,
 ) {
     with_mock(mock, |m| {
         if event.is_null() {
             return;
         }
-        m.push_kb_event(seq, &(unsafe { &*event }).into());
-    });
-}
-
-/// Push a CONS_EVENT as if the box emitted it (surfaces as a `Media` catch event).
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn medius_mock_push_cons_event(
-    mock: *mut MediusMockBox,
-    seq: u8,
-    event: *const MediusMediaEvent,
-) {
-    with_mock(mock, |m| {
-        if event.is_null() {
-            return;
-        }
-        m.push_cons_event(seq, &(unsafe { &*event }).into());
+        let usages = crate::convert::usage_event_to_medius(unsafe { &*event });
+        m.push_usages(seq, &usages);
     });
 }
 

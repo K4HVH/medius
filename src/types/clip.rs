@@ -2,11 +2,9 @@
 //! ring, and the ring/playback status. The box drains one entry per native frame, routing each edge to its
 //! class (mouse, keyboard, media), and emits it through the normal engine (rate pacing, movement riding).
 
-use crate::protocol::opcode::{
-    CLIP_F_EDGES, CLIP_F_WHEEL, CLIP_F_XY, CLIP_TAG_GAP,
-};
+use crate::protocol::opcode::{CLIP_F_EDGES, CLIP_F_WHEEL, CLIP_F_XY, CLIP_TAG_GAP};
 use crate::types::lock::blanket_scope;
-use crate::types::{Action, Blanket, Button, Input, Key, MediaKey};
+use crate::types::{Action, Blanket, Button, Key, MediaKey, Usage};
 
 /// Playback options for a clip [`start`](crate::ClipHandle::start) or catch trigger
 /// ([`arm_catch`](crate::ClipHandle::arm_catch)). The single place clip settings live; extensible as more
@@ -165,7 +163,7 @@ impl ClipBuilder {
     /// A content frame: a relative motion delta (`dx`/`dy` cursor, `wheel`) plus a list of edges. An
     /// all-zero frame with no edges still emits a report (a zero-motion tick, never a gap). At most
     /// [`CLIP_EDGES_MAX`] edges.
-    pub fn frame(&mut self, dx: i16, dy: i16, wheel: i16, edges: &[(Input, Action)]) -> &mut Self {
+    pub fn frame(&mut self, dx: i16, dy: i16, wheel: i16, edges: &[(Usage, Action)]) -> &mut Self {
         debug_assert!(
             edges.len() <= CLIP_EDGES_MAX,
             "clip frame: {} edges exceeds CLIP_EDGES_MAX ({CLIP_EDGES_MAX})",
@@ -216,7 +214,7 @@ impl ClipBuilder {
     }
 
     /// A frame carrying one edge (any input class).
-    pub fn edge(&mut self, input: impl Into<Input>, action: Action) -> &mut Self {
+    pub fn edge(&mut self, input: impl Into<Usage>, action: Action) -> &mut Self {
         self.frame(0, 0, 0, &[(input.into(), action)])
     }
 

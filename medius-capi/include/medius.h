@@ -11,12 +11,13 @@
 #include <stdbool.h>
 #include <stddef.h>
 
-// Largest number of pressed keys / active media usages in one catch snapshot. The wire format
-// length-prefixes both lists with a `u8`, so 256 can never truncate.
-#define MEDIUS_MAX_KEYS 256
+// Largest number of held usages in one catch snapshot. The wire format length-prefixes the list with a
+// `u8`, so 256 can never truncate.
+#define MEDIUS_MAX_USAGES 256
 
-// See [`MEDIUS_MAX_KEYS`].
-#define MEDIUS_MAX_MEDIA_KEYS 256
+// Largest number of entries in a decoded `RESP(LOCKS)`. Every distinct axis, usage, and whole-class
+// blanket lock across all classes fits well within this.
+#define MEDIUS_MAX_LOCKS 256
 
 // Capacity for a log line's text (the wire payload is at most 512 bytes).
 #define MEDIUS_MAX_LOG_TEXT 512
@@ -42,7 +43,9 @@
 
 #define MEDIUS_CATCH_MASK_KEYS 8
 
-#define MEDIUS_CATCH_MASK_ALL 15
+#define MEDIUS_CATCH_MASK_MEDIA 16
+
+#define MEDIUS_CATCH_MASK_ALL 31
 
 // The result of a fallible `medius_*` call. `MEDIUS_OK` is zero; everything else is a failure.
 enum MediusStatus
@@ -205,16 +208,20 @@ typedef uint8_t MediusMotionKind;
 #endif // __STDC_VERSION__ >= 202311L
 #endif // __cplusplus
 
-// Which axis/button a lock targets.
+// What a lock addresses: a relative axis, or a momentary usage (button/key/media).
 enum MediusLockTargetKind
 #if defined(__cplusplus) || __STDC_VERSION__ >= 202311L
   : uint8_t
 #endif // defined(__cplusplus) || __STDC_VERSION__ >= 202311L
  {
+    // The X cursor axis.
     MEDIUS_LOCK_TARGET_KIND_X = 0,
+    // The Y cursor axis.
     MEDIUS_LOCK_TARGET_KIND_Y = 1,
+    // The wheel.
     MEDIUS_LOCK_TARGET_KIND_WHEEL = 2,
-    MEDIUS_LOCK_TARGET_KIND_BUTTON = 3,
+    // A momentary usage; read `usage`.
+    MEDIUS_LOCK_TARGET_KIND_USAGE = 3,
 };
 #ifndef __cplusplus
 #if __STDC_VERSION__ >= 202311L
@@ -322,9 +329,10 @@ enum MediusCatchEventKind
   : uint8_t
 #endif // defined(__cplusplus) || __STDC_VERSION__ >= 202311L
  {
-    MEDIUS_CATCH_EVENT_KIND_MOUSE = 0,
-    MEDIUS_CATCH_EVENT_KIND_KEYBOARD = 1,
-    MEDIUS_CATCH_EVENT_KIND_MEDIA = 2,
+    // A relative-axis event (`data.motion`).
+    MEDIUS_CATCH_EVENT_KIND_MOTION = 0,
+    // A held-usage snapshot for one class (`data.usages`).
+    MEDIUS_CATCH_EVENT_KIND_USAGES = 1,
 };
 #ifndef __cplusplus
 #if __STDC_VERSION__ >= 202311L
@@ -370,9 +378,8 @@ enum MediusFrameType
     MEDIUS_FRAME_TYPE_LED = 9,
     MEDIUS_FRAME_TYPE_LOCK = 10,
     MEDIUS_FRAME_TYPE_CATCH = 11,
-    MEDIUS_FRAME_TYPE_MOUSE_EVENT = 12,
-    MEDIUS_FRAME_TYPE_KB_EVENT = 15,
-    MEDIUS_FRAME_TYPE_CONS_EVENT = 16,
+    MEDIUS_FRAME_TYPE_MOTION_EVENT = 12,
+    MEDIUS_FRAME_TYPE_USAGE_EVENT = 15,
     MEDIUS_FRAME_TYPE_OPTION = 17,
     MEDIUS_FRAME_TYPE_CLIP_APPEND = 18,
     MEDIUS_FRAME_TYPE_CLIP_CTRL = 19,
@@ -495,10 +502,12 @@ typedef struct MediusMotion {
     int16_t wheel;
 } MediusMotion;
 
-// A lock target. `button` is meaningful only when `kind` is `Button`.
+// A lock target: an axis (`kind` is `X`/`Y`/`Wheel`) or a momentary usage (`kind` is `Usage`, read
+// `usage`). A button, key, and media usage all lock the same way. Build with the `medius_lock_target_*`
+// helpers.
 typedef struct MediusLockTarget {
     MediusLockTargetKind kind;
-    MediusButton button;
+    struct MediusInput usage;
 } MediusLockTarget;
 
 // Box health flags (each field is 0 or 1).
@@ -560,9 +569,20 @@ typedef struct MediusStats {
     uint16_t config_count;
 } MediusStats;
 
-// The active lock bitmask. Use `medius_locks_is_locked` to test a target/direction.
+// One entry in a decoded `RESP(LOCKS)`: the locked target and which edges are locked. When `is_blanket`
+// is set the lock covers a whole class (every button / key / media usage) — `target.usage.kind` names
+// the class and its `value` is unused.
+typedef struct MediusLockEntry {
+    struct MediusLockTarget target;
+    bool is_blanket;
+    bool positive;
+    bool negative;
+} MediusLockEntry;
+
+// The active locks: `entries[0..n]`. Use `medius_locks_is_locked` to test a target/direction.
 typedef struct MediusLocks {
-    uint16_t mask;
+    uint16_t n;
+    struct MediusLockEntry entries[MEDIUS_MAX_LOCKS];
 } MediusLocks;
 
 // The active catch subscription mask plus the box-side dropped-event count.
@@ -594,39 +614,35 @@ typedef struct MediusCountersSnapshot {
     uint64_t reconnects;
 } MediusCountersSnapshot;
 
-// One physical mouse report. `buttons` is a bitmask by button id.
-typedef struct MediusMouseEvent {
-    uint8_t buttons;
-    int16_t dx;
-    int16_t dy;
-    int16_t wheel;
-} MediusMouseEvent;
-
-// One physical keyboard snapshot: a modifier bitmap plus the pressed non-modifier keycodes in
-// `keys[0..n_keys]`.
-typedef struct MediusKeyboardEvent {
-    uint8_t modifiers;
-    uint8_t n_keys;
-    uint8_t keys[MEDIUS_MAX_KEYS];
-} MediusKeyboardEvent;
-
-// One physical media snapshot: the active Consumer usages in `keys[0..n_keys]`.
-typedef struct MediusMediaEvent {
-    uint8_t n_keys;
-    uint16_t keys[MEDIUS_MAX_MEDIA_KEYS];
-} MediusMediaEvent;
+// One held-usage snapshot: every held usage of one class (button / key / media; modifiers are key
+// usages `0xE0..=0xE7`) in `usages[0..n]`. A mouse-button press and a key press have the same shape.
+// Diff successive snapshots for edges, or use `medius_usage_event_is_held`.
+typedef struct MediusUsageEvent {
+    uint16_t n;
+    struct MediusInput usages[MEDIUS_MAX_USAGES];
+} MediusUsageEvent;
 
 // A CATCH subscription mask, an OR of the `MEDIUS_CATCH_MASK_*` bits.
 typedef uint8_t MediusCatchMask;
 
+// One relative-axis catch event: the user's real motion at the merge point, before any lock suppression
+// or injection.
+typedef struct MediusMotionEvent {
+    // Relative X this report (right positive).
+    int16_t dx;
+    // Relative Y this report (down positive).
+    int16_t dy;
+    // Wheel delta this report (up positive).
+    int16_t dz;
+} MediusMotionEvent;
+
 // The populated arm of a [`MediusCatchEvent`]; read the field matching the event's `kind`.
 typedef union MediusCatchEventData {
-    struct MediusMouseEvent mouse;
-    struct MediusKeyboardEvent keyboard;
-    struct MediusMediaEvent media;
+    struct MediusMotionEvent motion;
+    struct MediusUsageEvent usages;
 } MediusCatchEventData;
 
-// One catch-stream event. Read `data.mouse` / `data.keyboard` / `data.media` per `kind`.
+// One catch-stream event. Read `data.motion` / `data.usages` per `kind`.
 typedef struct MediusCatchEvent {
     MediusCatchEventKind kind;
     union MediusCatchEventData data;
@@ -940,61 +956,39 @@ MediusStatus medius_device_wheel(struct MediusDevice *dev, int16_t delta);
 
 MediusStatus medius_device_move_axis(struct MediusDevice *dev, struct MediusMotion motion);
 
+// Drive one momentary usage (button, key, or media) with an explicit action. The one injection verb.
 MediusStatus medius_device_inject(struct MediusDevice *dev,
                                   struct MediusInput input,
                                   MediusAction action);
 
-MediusStatus medius_device_button(struct MediusDevice *dev,
-                                  MediusButton button,
-                                  MediusAction action);
+// Press a usage (`Action::Press`).
+MediusStatus medius_device_press(struct MediusDevice *dev, struct MediusInput input);
 
-MediusStatus medius_device_press(struct MediusDevice *dev, MediusButton button);
+// Soft-release a usage: clear an injected press, leaving a physical hold intact.
+MediusStatus medius_device_soft_release(struct MediusDevice *dev, struct MediusInput input);
 
-MediusStatus medius_device_soft_release(struct MediusDevice *dev, MediusButton button);
+// Force-release a usage: mask a physical hold too.
+MediusStatus medius_device_force_release(struct MediusDevice *dev, struct MediusInput input);
 
-MediusStatus medius_device_force_release(struct MediusDevice *dev, MediusButton button);
-
-MediusStatus medius_device_key(struct MediusDevice *dev, MediusKey key, MediusAction action);
-
-MediusStatus medius_device_key_down(struct MediusDevice *dev, MediusKey key);
-
-MediusStatus medius_device_key_up(struct MediusDevice *dev, MediusKey key);
-
-MediusStatus medius_device_key_force_release(struct MediusDevice *dev, MediusKey key);
-
-MediusStatus medius_device_media(struct MediusDevice *dev,
-                                 MediusMediaKey media,
-                                 MediusAction action);
-
-MediusStatus medius_device_media_down(struct MediusDevice *dev, MediusMediaKey media);
-
-MediusStatus medius_device_media_up(struct MediusDevice *dev, MediusMediaKey media);
-
-MediusStatus medius_device_media_force_release(struct MediusDevice *dev, MediusMediaKey media);
-
+// Lock a target (axis or usage) on an edge. A button, key, and media usage all lock the same way.
 MediusStatus medius_device_lock(struct MediusDevice *dev,
                                 struct MediusLockTarget target,
                                 MediusLockDirection dir);
 
+// Release a lock set by `medius_device_lock`.
 MediusStatus medius_device_unlock(struct MediusDevice *dev,
                                   struct MediusLockTarget target,
                                   MediusLockDirection dir);
 
-MediusStatus medius_device_lock_key(struct MediusDevice *dev,
-                                    MediusKey key,
+// Lock a whole class blanket (cursor aim, wheel, all buttons, all keys, or all media).
+MediusStatus medius_device_lock_all(struct MediusDevice *dev,
+                                    MediusBlanket what,
                                     MediusLockDirection dir);
 
-MediusStatus medius_device_unlock_key(struct MediusDevice *dev,
-                                      MediusKey key,
+// Release a blanket lock set by `medius_device_lock_all`.
+MediusStatus medius_device_unlock_all(struct MediusDevice *dev,
+                                      MediusBlanket what,
                                       MediusLockDirection dir);
-
-MediusStatus medius_device_lock_media(struct MediusDevice *dev, MediusMediaKey media);
-
-MediusStatus medius_device_unlock_media(struct MediusDevice *dev, MediusMediaKey media);
-
-MediusStatus medius_device_lock_all(struct MediusDevice *dev, MediusBlanket what);
-
-MediusStatus medius_device_unlock_all(struct MediusDevice *dev, MediusBlanket what);
 
 MediusStatus medius_device_led(struct MediusDevice *dev,
                                MediusLedTarget target,
@@ -1072,6 +1066,11 @@ uint32_t medius_default_keepalive_cadence_ms(void);
 // The C ABI version. Bumped on any breaking change to this header.
 // 2: `MediusVersion` grew a `name` field and `medius_device_set_name`/`_clear_name` were added, and
 // buffered clip playback (`medius_device_clip`, the `medius_clip_*` handle/builder calls) landed (v2.4.0).
+// 3: unified input taxonomy — one `MediusInput` usage vocabulary for buttons, keys, and media across
+// inject/lock/catch. The class-specific `medius_device_button`/`_key*`/`_media*`/`_lock_key`/`_lock_media`
+// verbs collapsed into `medius_device_inject`/`_press`/`_soft_release`/`_force_release` and
+// `medius_device_lock`/`_unlock` over a `MediusLockTarget`; catch events became `Motion`/`Usages`
+// (`medius_usage_event_is_held`); `MediusLocks` became an entry list (v3.0.0).
 uint32_t medius_abi_version(void);
 
 // The medius-capi crate version as a static NUL-terminated string.
@@ -1099,9 +1098,15 @@ struct MediusMotion medius_motion_cursor(int16_t dx, int16_t dy);
 // Build a wheel [`MediusMotion`].
 struct MediusMotion medius_motion_wheel(int16_t delta);
 
+// Build a [`MediusLockTarget`] addressing an axis (`kind` must be `X`, `Y`, or `Wheel`).
+struct MediusLockTarget medius_lock_target_axis(MediusLockTargetKind kind);
+
+// Build a [`MediusLockTarget`] addressing a momentary usage (button, key, or media).
+struct MediusLockTarget medius_lock_target_usage(struct MediusInput usage);
+
 // Whether `target`/`dir` is locked in `locks` (`Both` requires both edges). Mirrors
-// `medius::Locks::is_locked`; `Locks` has no public constructor, so the bit logic is replicated here.
-bool medius_locks_is_locked(struct MediusLocks locks,
+// `medius::Locks::is_locked`: an exact target match, not a whole-class blanket.
+bool medius_locks_is_locked(const struct MediusLocks *locks,
                             struct MediusLockTarget target,
                             MediusLockDirection dir);
 
@@ -1109,15 +1114,10 @@ bool medius_locks_is_locked(struct MediusLocks locks,
 // when there is no continuous cadence. Delegates to `medius::Rate::native_hz`.
 bool medius_rate_native_hz(struct MediusRate rate, float *out_hz);
 
-// Whether `button` is held in a mouse snapshot. Delegates to `medius::MouseEvent::is_pressed`.
-bool medius_mouse_event_is_pressed(const struct MediusMouseEvent *event, MediusButton button);
-
-// Whether `key` is held in a keyboard snapshot (modifier from the bitmap, else searched in the
-// keycode list). Mirrors `medius::KeyboardEvent::is_pressed` without allocating.
-bool medius_keyboard_event_is_pressed(const struct MediusKeyboardEvent *event, MediusKey key);
-
-// Whether `media` is active in a media snapshot. Mirrors `medius::MediaEvent::is_pressed`.
-bool medius_media_event_is_pressed(const struct MediusMediaEvent *event, MediusMediaKey media);
+// Whether `usage` is held in a usage snapshot (a button, key, or media usage; modifiers are key usages
+// `0xE0..=0xE7`). Mirrors `medius::UsageSnapshot::is_held`.
+bool medius_usage_event_is_held(const struct MediusUsageEvent *event,
+                                struct MediusInput usage);
 
 // Whether a mouse interface is bound. Delegates to `medius::Caps::has_mouse`.
 bool medius_caps_has_mouse(struct MediusCaps caps);
@@ -1290,24 +1290,17 @@ void medius_mock_push_log(struct MediusMockBox *mock, MediusLogLevel level, cons
 #endif
 
 #if defined(MEDIUS_FEATURE_MOCK)
-// Push a MOUSE_EVENT as if the box emitted it (surfaces as a `Mouse` catch event).
-void medius_mock_push_event(struct MediusMockBox *mock,
-                            uint8_t seq,
-                            struct MediusMouseEvent report);
+// Push a MOTION_EVENT as if the box emitted it (surfaces as a `Motion` catch event).
+void medius_mock_push_motion(struct MediusMockBox *mock,
+                             uint8_t seq,
+                             struct MediusMotionEvent event);
 #endif
 
 #if defined(MEDIUS_FEATURE_MOCK)
-// Push a KB_EVENT as if the box emitted it (surfaces as a `Keyboard` catch event).
-void medius_mock_push_kb_event(struct MediusMockBox *mock,
-                               uint8_t seq,
-                               const struct MediusKeyboardEvent *event);
-#endif
-
-#if defined(MEDIUS_FEATURE_MOCK)
-// Push a CONS_EVENT as if the box emitted it (surfaces as a `Media` catch event).
-void medius_mock_push_cons_event(struct MediusMockBox *mock,
-                                 uint8_t seq,
-                                 const struct MediusMediaEvent *event);
+// Push a USAGE_EVENT as if the box emitted it (surfaces as a `Usages` catch event).
+void medius_mock_push_usages(struct MediusMockBox *mock,
+                             uint8_t seq,
+                             const struct MediusUsageEvent *event);
 #endif
 
 #if defined(MEDIUS_FEATURE_MOCK)

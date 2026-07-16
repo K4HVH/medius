@@ -7,11 +7,11 @@
 use std::os::raw::c_char;
 
 use medius::{
-    Action, Blanket, BoxInfo, Button, Caps, CatchEvent, CatchMask, CatchState, ClipState,
-    ClipStatus, CountersSnapshot, DeviceInfo, DeviceKind, EmitPace, EmitPaceStatus, Health,
-    ImperfectStatus, Input, KbdCaps, Key, KeyboardEvent, LedMode, LedTarget, LockDirection,
-    LockTarget, Locks, LogLevel, LogLine, MediaEvent, MediaKey, Motion, MouseCaps, MouseEvent,
-    PortInfo, Rate, RebootTarget, Stats, Version,
+    Action, Axis, Blanket, BoxInfo, Button, Caps, CatchEvent, CatchMask, CatchState, Class,
+    ClipState, ClipStatus, CountersSnapshot, DeviceInfo, DeviceKind, EmitPace, EmitPaceStatus,
+    Health, ImperfectStatus, KbdCaps, Key, LedMode, LedTarget, LockDirection, LockEntry,
+    LockTarget, Locks, LogLevel, LogLine, MediaKey, Motion, MouseCaps, PortInfo, Rate,
+    RebootTarget, Stats, Usage, Version,
 };
 
 use crate::ctypes::*;
@@ -147,15 +147,14 @@ impl From<MediusLogLevel> for LogLevel {
     }
 }
 
-impl From<MediusLockTarget> for LockTarget {
-    fn from(v: MediusLockTarget) -> Self {
-        match v.kind {
-            MediusLockTargetKind::X => LockTarget::X,
-            MediusLockTargetKind::Y => LockTarget::Y,
-            MediusLockTargetKind::Wheel => LockTarget::Wheel,
-            MediusLockTargetKind::Button => LockTarget::Button(v.button.into()),
-        }
-    }
+/// `MediusLockTarget` -> [`LockTarget`]. `None` when a `Usage` target carries an out-of-range button id.
+pub(crate) fn lock_target_to_medius(v: MediusLockTarget) -> Option<LockTarget> {
+    Some(match v.kind {
+        MediusLockTargetKind::X => LockTarget::Axis(Axis::X),
+        MediusLockTargetKind::Y => LockTarget::Axis(Axis::Y),
+        MediusLockTargetKind::Wheel => LockTarget::Axis(Axis::Wheel),
+        MediusLockTargetKind::Usage => LockTarget::Usage(input_to_medius(v.usage)?),
+    })
 }
 
 impl From<MediusMotion> for Motion {
@@ -167,13 +166,63 @@ impl From<MediusMotion> for Motion {
     }
 }
 
-/// `MediusInput` -> `Input`. `None` when an `Input::Button` carries an out-of-range button id.
-pub(crate) fn input_to_medius(v: MediusInput) -> Option<Input> {
+/// `MediusInput` -> a [`Usage`]. `None` when a button carries an out-of-range button id.
+pub(crate) fn input_to_medius(v: MediusInput) -> Option<Usage> {
     Some(match v.kind {
-        MediusInputKind::Button => Input::Button(Button::from_id(v.value as u8)?),
-        MediusInputKind::Key => Input::Key(Key::new(v.value as u8)),
-        MediusInputKind::Media => Input::Media(MediaKey::new(v.value)),
+        MediusInputKind::Button => Usage::from(Button::from_id(v.value as u8)?),
+        MediusInputKind::Key => Usage::from(Key::new(v.value as u8)),
+        MediusInputKind::Media => Usage::from(MediaKey::new(v.value)),
     })
+}
+
+/// A [`Class`] as the matching `MediusInputKind` arm.
+fn class_kind(class: Class) -> MediusInputKind {
+    match class {
+        Class::Button => MediusInputKind::Button,
+        Class::Key => MediusInputKind::Key,
+        Class::Media => MediusInputKind::Media,
+    }
+}
+
+/// A `MediusInputKind` as the matching [`Class`].
+fn kind_class(kind: MediusInputKind) -> Class {
+    match kind {
+        MediusInputKind::Button => Class::Button,
+        MediusInputKind::Key => Class::Key,
+        MediusInputKind::Media => Class::Media,
+    }
+}
+
+/// A [`Usage`] as its flat C mirror.
+fn usage_to_c(u: Usage) -> MediusInput {
+    MediusInput {
+        kind: class_kind(u.class),
+        value: u.id,
+    }
+}
+
+/// A [`LockTarget`] as its flat C mirror.
+fn lock_target_to_c(t: LockTarget) -> MediusLockTarget {
+    match t {
+        LockTarget::Axis(Axis::X) => axis_target(MediusLockTargetKind::X),
+        LockTarget::Axis(Axis::Y) => axis_target(MediusLockTargetKind::Y),
+        LockTarget::Axis(Axis::Wheel) => axis_target(MediusLockTargetKind::Wheel),
+        LockTarget::Usage(u) => MediusLockTarget {
+            kind: MediusLockTargetKind::Usage,
+            usage: usage_to_c(u),
+        },
+    }
+}
+
+/// An axis lock target of the given kind (its `usage` field is unused).
+fn axis_target(kind: MediusLockTargetKind) -> MediusLockTarget {
+    MediusLockTarget {
+        kind,
+        usage: MediusInput {
+            kind: MediusInputKind::Button,
+            value: 0,
+        },
+    }
 }
 
 /// `(MediusEmitMode, hz)` -> `EmitPace`. `hz` matters only for `Fixed`.
@@ -298,7 +347,43 @@ impl From<Stats> for MediusStats {
 
 impl From<Locks> for MediusLocks {
     fn from(l: Locks) -> Self {
-        MediusLocks { mask: l.mask() }
+        let blank = MediusLockEntry {
+            target: axis_target(MediusLockTargetKind::X),
+            is_blanket: false,
+            positive: false,
+            negative: false,
+        };
+        let mut out = MediusLocks {
+            n: 0,
+            entries: [blank; MEDIUS_MAX_LOCKS],
+        };
+        for e in l.entries() {
+            if out.n as usize >= MEDIUS_MAX_LOCKS {
+                break;
+            }
+            let (target, is_blanket) = if let Some(class) = e.blanket {
+                let target = MediusLockTarget {
+                    kind: MediusLockTargetKind::Usage,
+                    usage: MediusInput {
+                        kind: class_kind(class),
+                        value: 0,
+                    },
+                };
+                (target, true)
+            } else if let Some(t) = e.target {
+                (lock_target_to_c(t), false)
+            } else {
+                continue;
+            };
+            out.entries[out.n as usize] = MediusLockEntry {
+                target,
+                is_blanket,
+                positive: e.positive,
+                negative: e.negative,
+            };
+            out.n += 1;
+        }
+        out
     }
 }
 
@@ -413,66 +498,38 @@ impl From<LogLevel> for MediusLogLevel {
 
 // --- stream events: medius -> Medius ---
 
-impl From<MouseEvent> for MediusMouseEvent {
-    fn from(e: MouseEvent) -> Self {
-        MediusMouseEvent {
-            buttons: e.buttons,
-            dx: e.dx,
-            dy: e.dy,
-            wheel: e.wheel,
-        }
-    }
-}
-
-impl From<&KeyboardEvent> for MediusKeyboardEvent {
-    fn from(e: &KeyboardEvent) -> Self {
-        let mut keys = [0u8; MEDIUS_MAX_KEYS];
-        // The count is a u8; cap at 255 so it can never wrap (the wire list is u8-prefixed anyway).
-        let n = e.keys.len().min(u8::MAX as usize);
-        for (slot, k) in keys.iter_mut().zip(e.keys.iter()).take(n) {
-            *slot = k.usage();
-        }
-        MediusKeyboardEvent {
-            modifiers: e.modifiers,
-            n_keys: n as u8,
-            keys,
-        }
-    }
-}
-
-impl From<&MediaEvent> for MediusMediaEvent {
-    fn from(e: &MediaEvent) -> Self {
-        let mut keys = [0u16; MEDIUS_MAX_MEDIA_KEYS];
-        let n = e.keys.len().min(u8::MAX as usize);
-        for (slot, k) in keys.iter_mut().zip(e.keys.iter()).take(n) {
-            *slot = k.usage();
-        }
-        MediusMediaEvent {
-            n_keys: n as u8,
-            keys,
-        }
-    }
-}
-
 impl From<CatchEvent> for MediusCatchEvent {
     fn from(e: CatchEvent) -> Self {
         match e {
-            CatchEvent::Mouse(m) => MediusCatchEvent {
-                kind: MediusCatchEventKind::Mouse,
-                data: MediusCatchEventData { mouse: m.into() },
-            },
-            CatchEvent::Keyboard(k) => MediusCatchEvent {
-                kind: MediusCatchEventKind::Keyboard,
+            CatchEvent::Motion(m) => MediusCatchEvent {
+                kind: MediusCatchEventKind::Motion,
                 data: MediusCatchEventData {
-                    keyboard: (&k).into(),
+                    motion: MediusMotionEvent {
+                        dx: m.dx,
+                        dy: m.dy,
+                        dz: m.dz,
+                    },
                 },
             },
-            CatchEvent::Media(md) => MediusCatchEvent {
-                kind: MediusCatchEventKind::Media,
-                data: MediusCatchEventData {
-                    media: (&md).into(),
-                },
-            },
+            CatchEvent::Usages(s) => {
+                let mut usages = [MediusInput {
+                    kind: MediusInputKind::Button,
+                    value: 0,
+                }; MEDIUS_MAX_USAGES];
+                let n = s.usages.len().min(MEDIUS_MAX_USAGES);
+                for (slot, u) in usages.iter_mut().zip(s.usages.iter()).take(n) {
+                    *slot = usage_to_c(*u);
+                }
+                MediusCatchEvent {
+                    kind: MediusCatchEventKind::Usages,
+                    data: MediusCatchEventData {
+                        usages: MediusUsageEvent {
+                            n: n as u16,
+                            usages,
+                        },
+                    },
+                }
+            }
         }
     }
 }
@@ -602,7 +659,24 @@ impl From<MediusStats> for Stats {
 
 impl From<MediusLocks> for Locks {
     fn from(l: MediusLocks) -> Self {
-        Locks::from_mask(l.mask)
+        let n = (l.n as usize).min(MEDIUS_MAX_LOCKS);
+        let entries = l.entries[..n]
+            .iter()
+            .filter_map(|e| {
+                let (target, blanket) = if e.is_blanket {
+                    (None, Some(kind_class(e.target.usage.kind)))
+                } else {
+                    (Some(lock_target_to_medius(e.target)?), None)
+                };
+                Some(LockEntry {
+                    target,
+                    blanket,
+                    positive: e.positive,
+                    negative: e.negative,
+                })
+            })
+            .collect();
+        Locks::from_entries(entries)
     }
 }
 
@@ -625,34 +699,14 @@ impl From<MediusImperfectStatus> for ImperfectStatus {
     }
 }
 
-impl From<MediusMouseEvent> for MouseEvent {
-    fn from(e: MediusMouseEvent) -> Self {
-        MouseEvent {
-            buttons: e.buttons,
-            dx: e.dx,
-            dy: e.dy,
-            wheel: e.wheel,
-        }
-    }
-}
-
-impl From<&MediusKeyboardEvent> for KeyboardEvent {
-    fn from(e: &MediusKeyboardEvent) -> Self {
-        let n = (e.n_keys as usize).min(MEDIUS_MAX_KEYS);
-        KeyboardEvent {
-            modifiers: e.modifiers,
-            keys: e.keys[..n].iter().map(|&u| Key::new(u)).collect(),
-        }
-    }
-}
-
-impl From<&MediusMediaEvent> for MediaEvent {
-    fn from(e: &MediusMediaEvent) -> Self {
-        let n = (e.n_keys as usize).min(MEDIUS_MAX_MEDIA_KEYS);
-        MediaEvent {
-            keys: e.keys[..n].iter().map(|&u| MediaKey::new(u)).collect(),
-        }
-    }
+/// The held usages of a `MediusUsageEvent` as a `Usage` list (for mock injection). Invalid entries (an
+/// out-of-range button id) are dropped.
+pub(crate) fn usage_event_to_medius(e: &MediusUsageEvent) -> Vec<Usage> {
+    let n = (e.n as usize).min(MEDIUS_MAX_USAGES);
+    e.usages[..n]
+        .iter()
+        .filter_map(|&u| input_to_medius(u))
+        .collect()
 }
 
 // --- frame types (mock recorder) ---
@@ -672,9 +726,8 @@ impl From<medius::FrameType> for MediusFrameType {
             F::Led => MediusFrameType::Led,
             F::Lock => MediusFrameType::Lock,
             F::Catch => MediusFrameType::Catch,
-            F::MouseEvent => MediusFrameType::MouseEvent,
-            F::KbEvent => MediusFrameType::KbEvent,
-            F::ConsEvent => MediusFrameType::ConsEvent,
+            F::MotionEvent => MediusFrameType::MotionEvent,
+            F::UsageEvent => MediusFrameType::UsageEvent,
             F::Option => MediusFrameType::Option,
             F::ClipAppend => MediusFrameType::ClipAppend,
             F::ClipCtrl => MediusFrameType::ClipCtrl,
