@@ -87,7 +87,7 @@ class LockTargetKind(IntEnum):
     X = 0
     Y = 1
     WHEEL = 2
-    BUTTON = 3
+    USAGE = 3
 
 
 class Blanket(IntEnum):
@@ -107,9 +107,8 @@ class LogLevel(IntEnum):
 
 
 class CatchEventKind(IntEnum):
-    MOUSE = 0
-    KEYBOARD = 1
-    MEDIA = 2
+    MOTION = 0
+    USAGES = 1
 
 
 class MotionKind(IntEnum):
@@ -134,9 +133,8 @@ class FrameType(IntEnum):
     LED = 9
     LOCK = 10
     CATCH = 11
-    MOUSE_EVENT = 12
-    KB_EVENT = 15
-    CONS_EVENT = 16
+    MOTION_EVENT = 12
+    USAGE_EVENT = 15
     OPTION = 17
     CLIP_APPEND = 18
     CLIP_CTRL = 19
@@ -147,7 +145,8 @@ class CatchMask(IntFlag):
     WHEEL = 2
     BUTTONS = 4
     KEYS = 8
-    ALL = 15
+    MEDIA = 16
+    ALL = 31
 
 
 class Key(IntEnum):

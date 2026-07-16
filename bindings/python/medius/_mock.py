@@ -18,13 +18,13 @@ from ._types import (
     ImperfectStatus,
     DeviceInfo,
     KbdCaps,
-    KeyboardEvent,
-    MediaEvent,
+    Locks,
+    MotionEvent,
     MouseCaps,
-    MouseEvent,
     Rate,
     RecordedFrame,
     Stats,
+    UsageSnapshot,
     Version,
     caps_to_c,
     catch_state_to_c,
@@ -32,12 +32,12 @@ from ._types import (
     health_to_c,
     imperfect_to_c,
     kbd_caps_to_c,
-    keyboard_event_to_c,
-    media_event_to_c,
+    locks_to_c,
+    motion_event_to_c,
     mouse_caps_to_c,
-    mouse_event_to_c,
     rate_to_c,
     stats_to_c,
+    usage_snapshot_to_c,
     version_to_c,
 )
 
@@ -100,8 +100,8 @@ class MockBox:
     def set_stats(self, stats: Stats):
         _native.lib.medius_mock_set_stats(self._handle, stats_to_c(stats))
 
-    def set_locks(self, mask: int):
-        _native.lib.medius_mock_set_locks(self._handle, _native.MediusLocks(mask=mask))
+    def set_locks(self, locks: Locks):
+        _native.lib.medius_mock_set_locks(self._handle, locks_to_c(locks))
 
     def set_catch_state(self, state: CatchState):
         _native.lib.medius_mock_set_catch_state(self._handle, catch_state_to_c(state))
@@ -147,16 +147,12 @@ class MockBox:
     def push_log(self, level: LogLevel, text: str):
         _native.lib.medius_mock_push_log(self._handle, int(level), text.encode("utf-8"))
 
-    def push_event(self, seq: int, event: MouseEvent):
-        _native.lib.medius_mock_push_event(self._handle, seq, mouse_event_to_c(event))
+    def push_motion(self, seq: int, event: MotionEvent):
+        _native.lib.medius_mock_push_motion(self._handle, seq, motion_event_to_c(event))
 
-    def push_kb_event(self, seq: int, event: KeyboardEvent):
-        c = keyboard_event_to_c(event)
-        _native.lib.medius_mock_push_kb_event(self._handle, seq, ctypes.byref(c))
-
-    def push_cons_event(self, seq: int, event: MediaEvent):
-        c = media_event_to_c(event)
-        _native.lib.medius_mock_push_cons_event(self._handle, seq, ctypes.byref(c))
+    def push_usages(self, seq: int, event: UsageSnapshot):
+        c = usage_snapshot_to_c(event)
+        _native.lib.medius_mock_push_usages(self._handle, seq, ctypes.byref(c))
 
     # --- recorded commands ---
 

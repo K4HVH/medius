@@ -21,10 +21,10 @@ import medius
 
 with medius.Device.find() as dev:
     print(dev.query_version())
-    dev.move_rel(100, -50)            # relative move
-    dev.press(medius.Button.LEFT)     # force a button down
+    dev.move_rel(100, -50)                          # relative move
+    dev.press(medius.Input.button(medius.Button.LEFT))  # force a usage down
     with dev.catch_events(medius.CatchMask.ALL) as events:
-        for event in events:          # the user's real input, live
+        for event in events:                        # the user's real input, live
             ...
 ```
 

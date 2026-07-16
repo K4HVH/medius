@@ -30,22 +30,23 @@ from medius import (
     Health,
     ImperfectStatus,
     KbdCaps,
-    KeyboardEvent,
     Key,
     LockDirection,
+    LockEntry,
+    Locks,
     LockTarget,
     DeviceInfo,
     DeviceKind,
     LogLevel,
-    MediaEvent,
     MediaKey,
     MediusError,
     MockBox,
+    MotionEvent,
     MouseCaps,
-    MouseEvent,
     Rate,
     Stats,
     Status,
+    UsageSnapshot,
     Version,
 )
 
@@ -158,12 +159,13 @@ def test_rate_roundtrip_and_native_hz():
 
 
 def test_locks_roundtrip_and_is_locked():
+    x = LockTarget.x()
     with MockBox() as mock:
-        mock.set_locks(0b11)  # X positive + negative
+        mock.set_locks(Locks([LockEntry(x, is_blanket=False, positive=True, negative=True)]))
         with Device.with_mock(mock) as d:
             locks = d.query_locks()
-    assert locks.mask == 0b11
-    assert locks.is_locked(LockTarget.x(), LockDirection.BOTH)
+    assert len(locks.entries) == 1
+    assert locks.is_locked(x, LockDirection.BOTH)
     assert not locks.is_locked(LockTarget.y(), LockDirection.BOTH)
 
 
@@ -276,40 +278,37 @@ def test_counters_readable():
 # --- streams ---
 
 
-def test_catch_delivers_mouse_event():
+def test_catch_delivers_motion_event():
     with MockBox() as mock, Device.with_mock(mock) as d:
         with d.catch_events(CatchMask.ALL) as stream:
-            mock.push_event(1, MouseEvent(buttons=1 << Button.SIDE1, dx=12, dy=-34, wheel=1))
+            mock.push_motion(1, MotionEvent(dx=12, dy=-34, dz=1))
             ev = stream.recv_timeout(2000)
             assert ev is not None
-            assert ev.kind == CatchEventKind.MOUSE
-            assert ev.mouse.dx == 12
-            assert ev.mouse.dy == -34
-            assert ev.mouse.wheel == 1
-            assert ev.is_pressed(Button.SIDE1)
-            assert not ev.is_pressed(Button.LEFT)
+            assert ev.kind == CatchEventKind.MOTION
+            assert ev.motion.dx == 12
+            assert ev.motion.dy == -34
+            assert ev.motion.dz == 1
 
 
-def test_catch_delivers_keyboard_event():
+def test_catch_delivers_usage_event_for_a_key():
     with MockBox() as mock, Device.with_mock(mock) as d:
         with d.catch_events(CatchMask.KEYS) as stream:
-            mock.push_kb_event(1, KeyboardEvent(modifiers=0, keys=[int(Key.ESCAPE)]))
+            mock.push_usages(1, UsageSnapshot([Input.key(Key.ESCAPE)]))
             ev = stream.recv_timeout(2000)
             assert ev is not None
-            assert ev.kind == CatchEventKind.KEYBOARD
-            assert ev.keyboard.keys == [int(Key.ESCAPE)]
-            assert ev.is_pressed(Key.ESCAPE)
-            assert not ev.is_pressed(Key.A)
+            assert ev.kind == CatchEventKind.USAGES
+            assert ev.usages.is_held(Input.key(Key.ESCAPE))
+            assert not ev.usages.is_held(Input.key(Key.A))
 
 
-def test_catch_delivers_media_event():
+def test_catch_delivers_usage_event_for_media():
     with MockBox() as mock, Device.with_mock(mock) as d:
         with d.catch_events(CatchMask.ALL) as stream:
-            mock.push_cons_event(1, MediaEvent(keys=[int(MediaKey.VOLUME_UP)]))
+            mock.push_usages(1, UsageSnapshot([Input.media(MediaKey.VOLUME_UP)]))
             ev = stream.recv_timeout(2000)
             assert ev is not None
-            assert ev.kind == CatchEventKind.MEDIA
-            assert ev.is_pressed(MediaKey.VOLUME_UP)
+            assert ev.kind == CatchEventKind.USAGES
+            assert ev.usages.is_held(Input.media(MediaKey.VOLUME_UP))
 
 
 def test_try_recv_returns_none_when_empty():
@@ -349,9 +348,9 @@ def test_event_stream_clone_shares_subscription():
     with MockBox() as mock, Device.with_mock(mock) as d:
         with d.catch_events(CatchMask.ALL) as stream:
             stream2 = stream.clone()
-            mock.push_event(1, MouseEvent(buttons=0, dx=9, dy=0, wheel=0))
+            mock.push_motion(1, MotionEvent(dx=9, dy=0, dz=0))
             ev = stream2.recv_timeout(2000)
-            assert ev is not None and ev.kind == CatchEventKind.MOUSE and ev.mouse.dx == 9
+            assert ev is not None and ev.kind == CatchEventKind.MOTION and ev.motion.dx == 9
             stream2.close()
 
 
@@ -374,16 +373,16 @@ def test_gc_frees_cleanly():
     gc.collect()  # must not crash
 
 
-def test_event_is_pressed_helpers_match_logic():
-    e = MouseEvent(buttons=0b1010, dx=0, dy=0, wheel=0)
-    assert e.is_pressed(Button.RIGHT)
-    assert e.is_pressed(Button.SIDE1)
-    assert not e.is_pressed(Button.LEFT)
-
-    k = KeyboardEvent(modifiers=1 << 0, keys=[int(Key.A)])  # left ctrl held
-    assert k.is_pressed(Key.LEFT_CTRL)
-    assert k.is_pressed(Key.A)
-    assert not k.is_pressed(Key.B)
+def test_usage_snapshot_is_held_matches_any_class():
+    # Buttons, keys, and modifiers live in one snapshot, keyed the same way.
+    snap = UsageSnapshot(
+        [Input.button(Button.RIGHT), Input.key(Key.LEFT_CTRL), Input.key(Key.A)]
+    )
+    assert snap.is_held(Input.button(Button.RIGHT))
+    assert snap.is_held(Input.key(Key.LEFT_CTRL))
+    assert snap.is_held(Input.key(Key.A))
+    assert not snap.is_held(Input.button(Button.LEFT))
+    assert not snap.is_held(Input.key(Key.B))
 
 
 # --- buffered clip playback (§3.11 / §4.15) ---
