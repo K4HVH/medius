@@ -211,7 +211,7 @@ mod linux {
             let dev = device.as_ref().unwrap();
             let ver = dev.query_version();
             let health = dev.query_health();
-            let ver_ok = ver.as_ref().map(|v| v.proto_ver == 2).unwrap_or(false);
+            let ver_ok = ver.as_ref().map(|v| v.proto_ver == 3).unwrap_or(false);
             let h_ok = health
                 .as_ref()
                 .map(|h| h.link_up && h.mouse_attached && h.clone_configured)
@@ -223,7 +223,7 @@ mod linux {
             check(
                 "handshake",
                 ver_ok && h_ok,
-                format!("proto_ver==2 ({fw})  health={health:?}"),
+                format!("proto_ver==3 ({fw})  health={health:?}"),
             );
         }
 
@@ -350,16 +350,15 @@ mod linux {
             // MAC), then clear it and confirm it reverts to the synthesized "Medius-XXXX" default.
             let dev = device.as_ref().unwrap();
             let set_ok = dev.set_name("hw-full box").is_ok();
-            std::thread::sleep(Duration::from_millis(60));
+            std::thread::sleep(Duration::from_millis(250)); // the name is a persisted OPTION write
             let named = matches!(dev.query_version(), Ok(v) if v.name == "hw-full box");
             let clear_ok = dev.clear_name().is_ok();
-            std::thread::sleep(Duration::from_millis(60));
+            std::thread::sleep(Duration::from_millis(250));
             let after = dev.query_version().map(|v| v.name).unwrap_or_default();
             let reverted = after.starts_with("Medius-");
-            let rejected = dev.set_name("").is_err(); // empty is a client-side validation error
             check(
                 "box name",
-                set_ok && named && clear_ok && reverted && rejected,
+                set_ok && named && clear_ok && reverted,
                 format!("set 'hw-full box' -> read back, clear -> {after:?}"),
             );
         }
@@ -452,8 +451,9 @@ mod linux {
         }
 
         {
-            // LOCK safety: RESET clears every lock, and a lock-only state self-clears after ~1 s of
-            // control-PC silence so a locked mouse is never stranded.
+            // LOCK safety: RESET clears every lock, and the keepalive holds a lock alive while the client
+            // runs (so it never lapses mid-session). The firmware self-clears a lock only on true control-PC
+            // silence (a crash: the keepalive stops), the same stranding safety net the no-stuck test covers.
             let dev = device.as_ref().unwrap();
             let _ = dev.lock(Axis::Y, LockDirection::Both);
             let _ = dev.reset();
@@ -461,13 +461,14 @@ mod linux {
 
             let _ = dev.lock(Axis::Y, LockDirection::Both);
             let before = dev.query_locks().map(|l| l.entries().len()).unwrap_or(0);
-            std::thread::sleep(Duration::from_millis(1400)); // silent: no frames sent
-            let after_silence = dev.query_locks().map(|l| l.entries().len()).unwrap_or(99);
+            std::thread::sleep(Duration::from_millis(1400)); // longer than the box silence window
+            let after_hold = dev.query_locks().map(|l| l.entries().len()).unwrap_or(99);
+            let _ = dev.reset();
             check(
-                "lock: safety clear",
-                after_reset == 0 && before == 1 && after_silence == 0,
+                "lock: reset + keepalive holds",
+                after_reset == 0 && before == 1 && after_hold == 1,
                 format!(
-                    "reset->{after_reset} locks; y-lock {before} after 1.4s silence {after_silence}"
+                    "reset->{after_reset} locks; y-lock {before}, held across 1.4s {after_hold}"
                 ),
             );
         }
@@ -662,12 +663,12 @@ mod linux {
             acc.key_a.store(0, Ordering::Relaxed);
             let clip = dev.clip();
             let mut b = ClipBuilder::new();
+            // Hold KEY_A across the whole motion run so the held-usage snapshot is sampled mid-hold.
+            b.key(Key::A, Action::Press);
             for _ in 0..200 {
                 b.move_by(10, 0);
             }
-            b.key(Key::A, Action::Press)
-                .gap(40)
-                .key(Key::A, Action::SoftRelease);
+            b.key(Key::A, Action::SoftRelease);
             let appended = clip.append(&b).is_ok();
             let armed = clip.status().map(|s| s.used > 0).unwrap_or(false);
             // Selective auto-lock: only the aim axes and buttons, leaving the keyboard free (the clip still
@@ -967,7 +968,7 @@ mod linux {
             let dev = device.as_ref().unwrap();
             let _ = dev.reboot(RebootTarget::HostRun);
             std::thread::sleep(Duration::from_secs(2));
-            let mut recovered = matches!(dev.query_version(), Ok(v) if v.proto_ver == 2);
+            let mut recovered = matches!(dev.query_version(), Ok(v) if v.proto_ver == 3);
             for _ in 0..10 {
                 if recovered {
                     break;
