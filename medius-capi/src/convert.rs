@@ -170,9 +170,9 @@ impl From<MediusMotion> for Motion {
 /// id, or a HID keycode > 255) rather than silently truncating it.
 pub(crate) fn input_to_medius(v: MediusUsage) -> Option<Usage> {
     Some(match v.kind {
-        MediusClass::Button => Usage::from(Button::from_id(u8::try_from(v.value).ok()?)?),
-        MediusClass::Key => Usage::from(Key::new(u8::try_from(v.value).ok()?)),
-        MediusClass::Media => Usage::from(MediaKey::new(v.value)),
+        MediusClass::Button => Usage::from(Button::from_id(u8::try_from(v.id).ok()?)?),
+        MediusClass::Key => Usage::from(Key::new(u8::try_from(v.id).ok()?)),
+        MediusClass::Media => Usage::from(MediaKey::new(v.id)),
     })
 }
 
@@ -198,7 +198,7 @@ fn kind_class(kind: MediusClass) -> Class {
 fn usage_to_c(u: Usage) -> MediusUsage {
     MediusUsage {
         kind: class_kind(u.class),
-        value: u.id,
+        id: u.id,
     }
 }
 
@@ -221,7 +221,7 @@ fn axis_target(kind: MediusLockTargetKind) -> MediusLockTarget {
         kind,
         usage: MediusUsage {
             kind: MediusClass::Button,
-            value: 0,
+            id: 0,
         },
     }
 }
@@ -368,7 +368,7 @@ impl From<Locks> for MediusLocks {
                         kind: MediusLockTargetKind::Usage,
                         usage: MediusUsage {
                             kind: class_kind(class),
-                            value: 0,
+                            id: 0,
                         },
                     };
                     (target, true)
@@ -421,7 +421,7 @@ impl From<ClipStatus> for MediusClipStatus {
     fn from(s: ClipStatus) -> Self {
         let mut held = [MediusUsage {
             kind: MediusClass::Button,
-            value: 0,
+            id: 0,
         }; MEDIUS_MAX_USAGES];
         let n = s.held.len().min(MEDIUS_MAX_USAGES);
         for (slot, u) in held.iter_mut().zip(s.held.iter()).take(n) {
@@ -528,7 +528,7 @@ impl From<CatchEvent> for MediusCatchEvent {
             CatchEvent::Usages(s) => {
                 let mut usages = [MediusUsage {
                     kind: MediusClass::Button,
-                    value: 0,
+                    id: 0,
                 }; MEDIUS_MAX_USAGES];
                 let n = s.usages.len().min(MEDIUS_MAX_USAGES);
                 for (slot, u) in usages.iter_mut().zip(s.usages.iter()).take(n) {

@@ -52,7 +52,7 @@ class MediusMotion(ctypes.Structure):
 
 
 class MediusUsage(ctypes.Structure):
-    _fields_ = [("kind", u8), ("value", u16)]
+    _fields_ = [("kind", u8), ("id", u16)]
 
 
 class MediusClipConfig(ctypes.Structure):
@@ -379,11 +379,9 @@ _decl("medius_clip_builder_clear", i32, [HANDLE])
 _decl("medius_clip_builder_gap", i32, [HANDLE, u16])
 _decl("medius_clip_builder_move", i32, [HANDLE, i16, i16])
 _decl("medius_clip_builder_wheel", i32, [HANDLE, i16])
-_decl("medius_clip_builder_press", i32, [HANDLE, u8])
-_decl("medius_clip_builder_release", i32, [HANDLE, u8])
-_decl("medius_clip_builder_force_release", i32, [HANDLE, u8])
-_decl("medius_clip_builder_key", i32, [HANDLE, u8, u8])
-_decl("medius_clip_builder_media", i32, [HANDLE, u16, u8])
+_decl("medius_clip_builder_press", i32, [HANDLE, MediusUsage])
+_decl("medius_clip_builder_release", i32, [HANDLE, MediusUsage])
+_decl("medius_clip_builder_force_release", i32, [HANDLE, MediusUsage])
 _decl("medius_clip_builder_edge", i32, [HANDLE, MediusUsage, u8])
 _decl("medius_clip_builder_frame", i32, [HANDLE, i16, i16, i16, ctypes.POINTER(MediusUsage), ctypes.POINTER(u8), usize])
 _decl("medius_device_clip", i32, [HANDLE, PHANDLE])

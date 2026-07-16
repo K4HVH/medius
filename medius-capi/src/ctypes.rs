@@ -190,13 +190,13 @@ pub enum MediusLockTargetKind {
 
 // --- data-carrying parameter structs ---
 
-/// A momentary usage for `medius_device_inject`. `value` holds the button id, key usage, or media
+/// A momentary usage for `medius_device_inject`. `id` is the button id, HID keycode, or 16-bit Consumer
 /// usage depending on `kind`. Build with the `medius_usage_*` helpers.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MediusUsage {
     pub kind: MediusClass,
-    pub value: u16,
+    pub id: u16,
 }
 
 /// Playback options for a clip start or catch trigger (`medius_clip_start` / `_arm_catch`). The single

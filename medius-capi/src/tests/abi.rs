@@ -781,12 +781,12 @@ fn clip_append_parity() {
                 assert_eq!(medius_clip_builder_move(builder, 3, -2), MediusStatus::Ok);
             }
             assert_eq!(
-                medius_clip_builder_press(builder, MediusButton::Left),
+                medius_clip_builder_press(builder, medius_usage_button(MediusButton::Left)),
                 MediusStatus::Ok
             );
             assert_eq!(medius_clip_builder_gap(builder, 4), MediusStatus::Ok);
             assert_eq!(
-                medius_clip_builder_release(builder, MediusButton::Left),
+                medius_clip_builder_release(builder, medius_usage_button(MediusButton::Left)),
                 MediusStatus::Ok
             );
             let mut clip: *mut MediusClip = ptr::null_mut();

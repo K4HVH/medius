@@ -430,7 +430,8 @@ def test_clip_append_encodes_and_chunks():
         b = ClipBuilder()
         for _ in range(150):
             b.move(3, -2)  # 150 * 5 = 750 bytes > 512: must split
-        b.press(Button.LEFT).gap(4).release(Button.LEFT)
+        left = Usage.button(Button.LEFT)
+        b.press(left).gap(4).release(left)
         clip = d.clip()
         clip.append(b)
         b.close()
