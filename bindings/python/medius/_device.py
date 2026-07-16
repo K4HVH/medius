@@ -18,7 +18,7 @@ from ._types import (
     EmitPaceStatus,
     Health,
     ImperfectStatus,
-    Input,
+    Usage,
     Locks,
     LockTarget,
     DeviceInfo,
@@ -122,19 +122,19 @@ class Device:
         check(_native.lib.medius_device_move_axis(self._handle, motion._c))
 
     # --- injection ---
-    # One usage vocabulary (button / key / media) drives every verb. Build an `Input` with
-    # `Input.button/key/media`.
+    # One usage vocabulary (button / key / media) drives every verb. Build an `Usage` with
+    # `Usage.button/key/media`.
 
-    def inject(self, input: Input, action: Action):
+    def inject(self, input: Usage, action: Action):
         check(_native.lib.medius_device_inject(self._handle, input._c, int(action)))
 
-    def press(self, input: Input):
+    def press(self, input: Usage):
         check(_native.lib.medius_device_press(self._handle, input._c))
 
-    def soft_release(self, input: Input):
+    def soft_release(self, input: Usage):
         check(_native.lib.medius_device_soft_release(self._handle, input._c))
 
-    def force_release(self, input: Input):
+    def force_release(self, input: Usage):
         check(_native.lib.medius_device_force_release(self._handle, input._c))
 
     # --- locks ---

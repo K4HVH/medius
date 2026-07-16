@@ -8,7 +8,7 @@ from typing import Optional, Sequence, Tuple
 from . import _native
 from ._enums import Action, Blanket, Button
 from ._errors import check
-from ._types import Input, ClipStatus, clip_status_from_c
+from ._types import Usage, ClipStatus, clip_status_from_c
 
 
 class ClipConfig:
@@ -96,8 +96,8 @@ class ClipBuilder:
         check(_native.lib.medius_clip_builder_media(self._ptr, int(usage), int(action)))
         return self
 
-    def edge(self, input: Input, action: Action = Action.PRESS) -> "ClipBuilder":
-        """A one-edge frame for any `Input` (button/key/media) with an `Action` — the field-generic form the
+    def edge(self, input: Usage, action: Action = Action.PRESS) -> "ClipBuilder":
+        """A one-edge frame for any `Usage` (button/key/media) with an `Action` — the field-generic form the
         press/release/key/media helpers wrap."""
         check(_native.lib.medius_clip_builder_edge(self._ptr, input._c, int(action)))
         return self
@@ -107,17 +107,17 @@ class ClipBuilder:
         dx: int = 0,
         dy: int = 0,
         wheel: int = 0,
-        edges: Optional[Sequence[Tuple[Input, Action]]] = None,
+        edges: Optional[Sequence[Tuple[Usage, Action]]] = None,
     ) -> "ClipBuilder":
-        """A general content frame: a motion delta plus a list of `(Input, Action)` edges on the same frame."""
+        """A general content frame: a motion delta plus a list of `(Usage, Action)` edges on the same frame."""
         edges = edges or []
         n = len(edges)
-        inputs = (_native.MediusInput * n)()
+        inputs = (_native.MediusUsage * n)()
         actions = (ctypes.c_uint8 * n)()
         for i, (inp, action) in enumerate(edges):
             inputs[i] = inp._c
             actions[i] = int(action)
-        iptr = ctypes.cast(inputs, ctypes.POINTER(_native.MediusInput)) if n else None
+        iptr = ctypes.cast(inputs, ctypes.POINTER(_native.MediusUsage)) if n else None
         aptr = ctypes.cast(actions, ctypes.POINTER(ctypes.c_uint8)) if n else None
         check(_native.lib.medius_clip_builder_frame(self._ptr, dx, dy, wheel, iptr, aptr, n))
         return self
@@ -159,9 +159,9 @@ class ClipHandle:
         """Stop playback, flush the ring, release any clip-owned auto-lock."""
         check(_native.lib.medius_clip_stop(self._handle))
 
-    def arm_catch(self, trigger: Input, config: Optional[ClipConfig] = None):
-        """Arm an on-device trigger: playback starts on a physical press of `trigger`, any `Input` (a button,
-        key, or media usage) built with `Input.button` / `Input.key` / `Input.media`, with `config` when it
+    def arm_catch(self, trigger: Usage, config: Optional[ClipConfig] = None):
+        """Arm an on-device trigger: playback starts on a physical press of `trigger`, any `Usage` (a button,
+        key, or media usage) built with `Usage.button` / `Usage.key` / `Usage.media`, with `config` when it
         fires. For any input, use `arm_catch_any`."""
         cfg, _arr = (config or ClipConfig())._c()
         check(_native.lib.medius_clip_arm_catch(self._handle, trigger._c, cfg))

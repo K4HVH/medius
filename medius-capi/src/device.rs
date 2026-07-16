@@ -275,7 +275,7 @@ pub unsafe extern "C" fn medius_device_move_axis(
 /// Run `f` with the converted usage; `ErrInvalidArg` on a null handle or an invalid input value.
 fn with_input(
     dev: *mut MediusDevice,
-    input: MediusInput,
+    input: MediusUsage,
     f: impl FnOnce(&Device, medius::Usage) -> Result<(), medius::Error>,
 ) -> MediusStatus {
     guard_status(|| {
@@ -294,7 +294,7 @@ fn with_input(
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_device_inject(
     dev: *mut MediusDevice,
-    input: MediusInput,
+    input: MediusUsage,
     action: MediusAction,
 ) -> MediusStatus {
     with_input(dev, input, |d, u| d.inject(u, action.into()))
@@ -304,7 +304,7 @@ pub unsafe extern "C" fn medius_device_inject(
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_device_press(
     dev: *mut MediusDevice,
-    input: MediusInput,
+    input: MediusUsage,
 ) -> MediusStatus {
     with_input(dev, input, |d, u| d.press(u))
 }
@@ -313,7 +313,7 @@ pub unsafe extern "C" fn medius_device_press(
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_device_soft_release(
     dev: *mut MediusDevice,
-    input: MediusInput,
+    input: MediusUsage,
 ) -> MediusStatus {
     with_input(dev, input, |d, u| d.release(u))
 }
@@ -322,7 +322,7 @@ pub unsafe extern "C" fn medius_device_soft_release(
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_device_force_release(
     dev: *mut MediusDevice,
-    input: MediusInput,
+    input: MediusUsage,
 ) -> MediusStatus {
     with_input(dev, input, |d, u| d.force_release(u))
 }
@@ -634,7 +634,7 @@ pub extern "C" fn medius_default_keepalive_cadence_ms() -> u32 {
 /// The C ABI version. Bumped on any breaking change to this header.
 /// 2: `MediusVersion` grew a `name` field and `medius_device_set_name`/`_clear_name` were added, and
 /// buffered clip playback (`medius_device_clip`, the `medius_clip_*` handle/builder calls) landed (v2.4.0).
-/// 3: unified input taxonomy — one `MediusInput` usage vocabulary for buttons, keys, and media across
+/// 3: unified input taxonomy — one `MediusUsage` usage vocabulary for buttons, keys, and media across
 /// inject/lock/catch. The class-specific `medius_device_button`/`_key*`/`_media*`/`_lock_key`/`_lock_media`
 /// verbs collapsed into `medius_device_inject`/`_press`/`_soft_release`/`_force_release` and
 /// `medius_device_lock`/`_unlock` over a `MediusLockTarget`; catch events became `Motion`/`Usages`

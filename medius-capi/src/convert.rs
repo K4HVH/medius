@@ -166,37 +166,37 @@ impl From<MediusMotion> for Motion {
     }
 }
 
-/// `MediusInput` -> a [`Usage`]. `None` when a button/key `value` is out of range for its class (a button
+/// `MediusUsage` -> a [`Usage`]. `None` when a button/key `value` is out of range for its class (a button
 /// id, or a HID keycode > 255) rather than silently truncating it.
-pub(crate) fn input_to_medius(v: MediusInput) -> Option<Usage> {
+pub(crate) fn input_to_medius(v: MediusUsage) -> Option<Usage> {
     Some(match v.kind {
-        MediusInputKind::Button => Usage::from(Button::from_id(u8::try_from(v.value).ok()?)?),
-        MediusInputKind::Key => Usage::from(Key::new(u8::try_from(v.value).ok()?)),
-        MediusInputKind::Media => Usage::from(MediaKey::new(v.value)),
+        MediusClass::Button => Usage::from(Button::from_id(u8::try_from(v.value).ok()?)?),
+        MediusClass::Key => Usage::from(Key::new(u8::try_from(v.value).ok()?)),
+        MediusClass::Media => Usage::from(MediaKey::new(v.value)),
     })
 }
 
-/// A [`Class`] as the matching `MediusInputKind` arm.
-fn class_kind(class: Class) -> MediusInputKind {
+/// A [`Class`] as the matching `MediusClass` arm.
+fn class_kind(class: Class) -> MediusClass {
     match class {
-        Class::Button => MediusInputKind::Button,
-        Class::Key => MediusInputKind::Key,
-        Class::Media => MediusInputKind::Media,
+        Class::Button => MediusClass::Button,
+        Class::Key => MediusClass::Key,
+        Class::Media => MediusClass::Media,
     }
 }
 
-/// A `MediusInputKind` as the matching [`Class`].
-fn kind_class(kind: MediusInputKind) -> Class {
+/// A `MediusClass` as the matching [`Class`].
+fn kind_class(kind: MediusClass) -> Class {
     match kind {
-        MediusInputKind::Button => Class::Button,
-        MediusInputKind::Key => Class::Key,
-        MediusInputKind::Media => Class::Media,
+        MediusClass::Button => Class::Button,
+        MediusClass::Key => Class::Key,
+        MediusClass::Media => Class::Media,
     }
 }
 
 /// A [`Usage`] as its flat C mirror.
-fn usage_to_c(u: Usage) -> MediusInput {
-    MediusInput {
+fn usage_to_c(u: Usage) -> MediusUsage {
+    MediusUsage {
         kind: class_kind(u.class),
         value: u.id,
     }
@@ -219,8 +219,8 @@ fn lock_target_to_c(t: LockTarget) -> MediusLockTarget {
 fn axis_target(kind: MediusLockTargetKind) -> MediusLockTarget {
     MediusLockTarget {
         kind,
-        usage: MediusInput {
-            kind: MediusInputKind::Button,
+        usage: MediusUsage {
+            kind: MediusClass::Button,
             value: 0,
         },
     }
@@ -366,7 +366,7 @@ impl From<Locks> for MediusLocks {
                 LockScope::Blanket(class) => {
                     let target = MediusLockTarget {
                         kind: MediusLockTargetKind::Usage,
-                        usage: MediusInput {
+                        usage: MediusUsage {
                             kind: class_kind(class),
                             value: 0,
                         },
@@ -419,8 +419,8 @@ impl From<ClipState> for MediusClipState {
 
 impl From<ClipStatus> for MediusClipStatus {
     fn from(s: ClipStatus) -> Self {
-        let mut held = [MediusInput {
-            kind: MediusInputKind::Button,
+        let mut held = [MediusUsage {
+            kind: MediusClass::Button,
             value: 0,
         }; MEDIUS_MAX_USAGES];
         let n = s.held.len().min(MEDIUS_MAX_USAGES);
@@ -526,8 +526,8 @@ impl From<CatchEvent> for MediusCatchEvent {
                 },
             },
             CatchEvent::Usages(s) => {
-                let mut usages = [MediusInput {
-                    kind: MediusInputKind::Button,
+                let mut usages = [MediusUsage {
+                    kind: MediusClass::Button,
                     value: 0,
                 }; MEDIUS_MAX_USAGES];
                 let n = s.usages.len().min(MEDIUS_MAX_USAGES);

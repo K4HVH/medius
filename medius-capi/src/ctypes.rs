@@ -157,10 +157,10 @@ pub enum MediusCatchEventKind {
     Usages = 1,
 }
 
-/// Which arm of a [`MediusInput`] is populated.
+/// The class of a [`MediusUsage`] (button / key / media).
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum MediusInputKind {
+pub enum MediusClass {
     Button = 0,
     Key = 1,
     Media = 2,
@@ -191,11 +191,11 @@ pub enum MediusLockTargetKind {
 // --- data-carrying parameter structs ---
 
 /// A momentary usage for `medius_device_inject`. `value` holds the button id, key usage, or media
-/// usage depending on `kind`. Build with the `medius_input_*` helpers.
+/// usage depending on `kind`. Build with the `medius_usage_*` helpers.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct MediusInput {
-    pub kind: MediusInputKind,
+pub struct MediusUsage {
+    pub kind: MediusClass,
     pub value: u16,
 }
 
@@ -227,7 +227,7 @@ pub struct MediusMotion {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MediusLockTarget {
     pub kind: MediusLockTargetKind,
-    pub usage: MediusInput,
+    pub usage: MediusUsage,
 }
 
 // --- value (query result) structs ---
@@ -417,7 +417,7 @@ pub struct MediusClipStatus {
     pub overruns: u16,
     pub seq_gaps: u16,
     pub held_n: u16,
-    pub held: [MediusInput; MEDIUS_MAX_USAGES],
+    pub held: [MediusUsage; MEDIUS_MAX_USAGES],
 }
 
 /// Host-side always-on counters.
@@ -473,7 +473,7 @@ pub struct MediusMotionEvent {
 #[derive(Clone, Copy)]
 pub struct MediusUsageEvent {
     pub n: u16,
-    pub usages: [MediusInput; MEDIUS_MAX_USAGES],
+    pub usages: [MediusUsage; MEDIUS_MAX_USAGES],
 }
 
 /// The populated arm of a [`MediusCatchEvent`]; read the field matching the event's `kind`.

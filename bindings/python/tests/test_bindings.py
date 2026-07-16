@@ -23,7 +23,7 @@ from medius import (
     ClipConfig,
     ClipState,
     ClipStatus,
-    Input,
+    Usage,
     Device,
     EmitPace,
     FrameType,
@@ -293,22 +293,22 @@ def test_catch_delivers_motion_event():
 def test_catch_delivers_usage_event_for_a_key():
     with MockBox() as mock, Device.with_mock(mock) as d:
         with d.catch_events(CatchMask.KEYS) as stream:
-            mock.push_usages(1, UsageSnapshot([Input.key(Key.ESCAPE)]))
+            mock.push_usages(1, UsageSnapshot([Usage.key(Key.ESCAPE)]))
             ev = stream.recv_timeout(2000)
             assert ev is not None
             assert ev.kind == CatchEventKind.USAGES
-            assert ev.usages.is_held(Input.key(Key.ESCAPE))
-            assert not ev.usages.is_held(Input.key(Key.A))
+            assert ev.usages.is_held(Usage.key(Key.ESCAPE))
+            assert not ev.usages.is_held(Usage.key(Key.A))
 
 
 def test_catch_delivers_usage_event_for_media():
     with MockBox() as mock, Device.with_mock(mock) as d:
         with d.catch_events(CatchMask.ALL) as stream:
-            mock.push_usages(1, UsageSnapshot([Input.media(MediaKey.VOLUME_UP)]))
+            mock.push_usages(1, UsageSnapshot([Usage.media(MediaKey.VOLUME_UP)]))
             ev = stream.recv_timeout(2000)
             assert ev is not None
             assert ev.kind == CatchEventKind.USAGES
-            assert ev.usages.is_held(Input.media(MediaKey.VOLUME_UP))
+            assert ev.usages.is_held(Usage.media(MediaKey.VOLUME_UP))
 
 
 def test_try_recv_returns_none_when_empty():
@@ -376,13 +376,13 @@ def test_gc_frees_cleanly():
 def test_usage_snapshot_is_held_matches_any_class():
     # Buttons, keys, and modifiers live in one snapshot, keyed the same way.
     snap = UsageSnapshot(
-        [Input.button(Button.RIGHT), Input.key(Key.LEFT_CTRL), Input.key(Key.A)]
+        [Usage.button(Button.RIGHT), Usage.key(Key.LEFT_CTRL), Usage.key(Key.A)]
     )
-    assert snap.is_held(Input.button(Button.RIGHT))
-    assert snap.is_held(Input.key(Key.LEFT_CTRL))
-    assert snap.is_held(Input.key(Key.A))
-    assert not snap.is_held(Input.button(Button.LEFT))
-    assert not snap.is_held(Input.key(Key.B))
+    assert snap.is_held(Usage.button(Button.RIGHT))
+    assert snap.is_held(Usage.key(Key.LEFT_CTRL))
+    assert snap.is_held(Usage.key(Key.A))
+    assert not snap.is_held(Usage.button(Button.LEFT))
+    assert not snap.is_held(Usage.key(Key.B))
 
 
 # --- buffered clip playback (§3.11 / §4.15) ---
@@ -404,9 +404,9 @@ def test_clip_control_frames():
         clip.start()  # no config = no autolock
         clip.start(all_cfg)
         clip.start(ClipConfig(autolock=[Blanket.AIM, Blanket.BUTTONS]))
-        clip.arm_catch(Input.button(Button.RIGHT))
-        clip.arm_catch(Input.key(0x04), ClipConfig(autolock=[Blanket.KEYS]))
-        clip.arm_catch(Input.media(0xCD))
+        clip.arm_catch(Usage.button(Button.RIGHT))
+        clip.arm_catch(Usage.key(0x04), ClipConfig(autolock=[Blanket.KEYS]))
+        clip.arm_catch(Usage.media(0xCD))
         clip.arm_catch_any(all_cfg)
         clip.disarm()
         clip.stop()
@@ -450,7 +450,7 @@ def test_clip_append_encodes_and_chunks():
 def test_clip_builder_frame_edges():
     with MockBox() as mock, Device.with_mock(mock) as d:
         b = ClipBuilder()
-        b.frame(1, 2, -1, [(Input.button(Button.LEFT), Action.PRESS), (Input.key(0x04), Action.PRESS)])
+        b.frame(1, 2, -1, [(Usage.button(Button.LEFT), Action.PRESS), (Usage.key(0x04), Action.PRESS)])
         d.clip().append(b)
         b.close()
         appends = _clip_frames(d, mock, FrameType.CLIP_APPEND)
@@ -463,7 +463,7 @@ def test_clip_builder_frame_edges():
 def test_clip_status_roundtrip():
     status = ClipStatus(
         ClipState.PLAYING, free=512, used=40, ticks=99, underruns=2, overruns=0, seq_gaps=1,
-        held=[Input.button(Button.SIDE1), Input.key(Key.A)],
+        held=[Usage.button(Button.SIDE1), Usage.key(Key.A)],
     )
     with MockBox() as mock:
         mock.set_clip_status(status)
@@ -471,9 +471,9 @@ def test_clip_status_roundtrip():
             got = d.clip().status()
     assert got == status
     assert got.state == ClipState.PLAYING
-    assert got.is_held(Input.button(Button.SIDE1))
-    assert got.is_held(Input.key(Key.A))
-    assert not got.is_held(Input.button(Button.LEFT))
+    assert got.is_held(Usage.button(Button.SIDE1))
+    assert got.is_held(Usage.key(Key.A))
+    assert not got.is_held(Usage.button(Button.LEFT))
 
 
 def test_clip_builder_gap_zero_is_noop():

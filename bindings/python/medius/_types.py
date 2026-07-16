@@ -12,7 +12,7 @@ from ._enums import (
     ClipState,
     DeviceKind,
     EmitMode,
-    InputKind,
+    Class,
     LockTargetKind,
     LogLevel,
 )
@@ -243,9 +243,9 @@ class UsageSnapshot:
     """A held-usage snapshot for one class: every held usage (button / key / media; modifiers are key
     usages 0xE0..0xE7). A button press and a key press have the same shape."""
 
-    usages: List["Input"] = field(default_factory=list)
+    usages: List["Usage"] = field(default_factory=list)
 
-    def is_held(self, usage: "Input") -> bool:
+    def is_held(self, usage: "Usage") -> bool:
         return any(u == usage for u in self.usages)
 
 
@@ -279,28 +279,28 @@ class RecordedFrame:
 # --- parameter helpers (wrap a ctypes struct built by the C constructors) ---
 
 
-class Input:
-    """A momentary usage (a button, key, or media usage — all one shape). Build with `Input.button` /
+class Usage:
+    """A momentary usage (a button, key, or media usage — all one shape). Build with `Usage.button` /
     `key` / `media`. The same value drives `inject`/`press`/`lock` and appears in a `UsageSnapshot`."""
 
     def __init__(self, c):
         self._c = c
 
     @classmethod
-    def button(cls, button) -> "Input":
-        return cls(_native.lib.medius_input_button(int(button)))
+    def button(cls, button) -> "Usage":
+        return cls(_native.lib.medius_usage_button(int(button)))
 
     @classmethod
-    def key(cls, key) -> "Input":
-        return cls(_native.lib.medius_input_key(int(key)))
+    def key(cls, key) -> "Usage":
+        return cls(_native.lib.medius_usage_key(int(key)))
 
     @classmethod
-    def media(cls, media) -> "Input":
-        return cls(_native.lib.medius_input_media(int(media)))
+    def media(cls, media) -> "Usage":
+        return cls(_native.lib.medius_usage_media(int(media)))
 
     @property
-    def kind(self) -> InputKind:
-        return InputKind(self._c.kind)
+    def kind(self) -> Class:
+        return Class(self._c.kind)
 
     @property
     def value(self) -> int:
@@ -309,7 +309,7 @@ class Input:
 
     def __eq__(self, other) -> bool:
         return (
-            isinstance(other, Input)
+            isinstance(other, Usage)
             and self._c.kind == other._c.kind
             and self._c.value == other._c.value
         )
@@ -318,7 +318,7 @@ class Input:
         return hash((int(self._c.kind), int(self._c.value)))
 
     def __repr__(self) -> str:
-        return f"Input(kind={self.kind.name}, value={self.value})"
+        return f"Usage(kind={self.kind.name}, value={self.value})"
 
 
 class Motion:
@@ -356,30 +356,30 @@ class LockTarget:
         return cls(_native.lib.medius_lock_target_axis(int(LockTargetKind.WHEEL)))
 
     @classmethod
-    def usage(cls, usage: "Input") -> "LockTarget":
+    def usage(cls, usage: "Usage") -> "LockTarget":
         return cls(_native.lib.medius_lock_target_usage(usage._c))
 
     @classmethod
     def button(cls, button) -> "LockTarget":
-        return cls.usage(Input.button(button))
+        return cls.usage(Usage.button(button))
 
     @classmethod
     def key(cls, key) -> "LockTarget":
-        return cls.usage(Input.key(key))
+        return cls.usage(Usage.key(key))
 
     @classmethod
     def media(cls, media) -> "LockTarget":
-        return cls.usage(Input.media(media))
+        return cls.usage(Usage.media(media))
 
     @property
     def kind(self) -> LockTargetKind:
         return LockTargetKind(self._c.kind)
 
     @property
-    def input(self) -> Optional["Input"]:
+    def input(self) -> Optional["Usage"]:
         """The locked usage, when `kind` is `USAGE`; `None` for an axis."""
         if self._c.kind == int(LockTargetKind.USAGE):
-            return Input(_native.MediusInput(kind=self._c.usage.kind, value=self._c.usage.value))
+            return Usage(_native.MediusUsage(kind=self._c.usage.kind, value=self._c.usage.value))
         return None
 
 
@@ -586,9 +586,9 @@ class ClipStatus:
     underruns: int
     overruns: int
     seq_gaps: int
-    held: List["Input"] = field(default_factory=list)
+    held: List["Usage"] = field(default_factory=list)
 
-    def is_held(self, usage: "Input") -> bool:
+    def is_held(self, usage: "Usage") -> bool:
         return any(u == usage for u in self.held)
 
 
@@ -627,14 +627,14 @@ def counters_from_c(c) -> Counters:
     return Counters(c.frames_tx, c.frames_rx, c.crc_drops, c.reconnects)
 
 
-def _input_copy(c) -> Input:
-    return Input(_native.MediusInput(kind=c.kind, value=c.value))
+def _input_copy(c) -> Usage:
+    return Usage(_native.MediusUsage(kind=c.kind, value=c.value))
 
 
 def lock_target_from_c(c) -> LockTarget:
     return LockTarget(
         _native.MediusLockTarget(
-            kind=c.kind, usage=_native.MediusInput(kind=c.usage.kind, value=c.usage.value)
+            kind=c.kind, usage=_native.MediusUsage(kind=c.usage.kind, value=c.usage.value)
         )
     )
 

@@ -5,23 +5,23 @@ use crate::*;
 #[test]
 fn input_constructors_tag_and_value() {
     assert_eq!(
-        medius_input_button(MediusButton::Side1),
-        MediusInput {
-            kind: MediusInputKind::Button,
+        medius_usage_button(MediusButton::Side1),
+        MediusUsage {
+            kind: MediusClass::Button,
             value: 3
         }
     );
     assert_eq!(
-        medius_input_key(MEDIUS_KEY_A),
-        MediusInput {
-            kind: MediusInputKind::Key,
+        medius_usage_key(MEDIUS_KEY_A),
+        MediusUsage {
+            kind: MediusClass::Key,
             value: 0x04
         }
     );
     assert_eq!(
-        medius_input_media(MEDIUS_MEDIA_VOLUME_UP),
-        MediusInput {
-            kind: MediusInputKind::Media,
+        medius_usage_media(MEDIUS_MEDIA_VOLUME_UP),
+        MediusUsage {
+            kind: MediusClass::Media,
             value: 0xE9
         }
     );
@@ -68,8 +68,11 @@ fn locks_with(entries: &[MediusLockEntry]) -> MediusLocks {
 
 #[test]
 fn is_locked_matches_entries() {
+    let locked = |l: *const MediusLocks, t: MediusLockTarget, d: MediusLockDirection| unsafe {
+        medius_locks_is_locked(l, t, d)
+    };
     let x = medius_lock_target_axis(MediusLockTargetKind::X);
-    let side2 = medius_lock_target_usage(medius_input_button(MediusButton::Side2));
+    let side2 = medius_lock_target_usage(medius_usage_button(MediusButton::Side2));
     let locks = locks_with(&[
         MediusLockEntry {
             target: x,
@@ -84,60 +87,25 @@ fn is_locked_matches_entries() {
             negative: true,
         },
     ]);
-    assert!(medius_locks_is_locked(
-        &locks,
-        x,
-        MediusLockDirection::Positive
-    ));
-    assert!(!medius_locks_is_locked(
-        &locks,
-        x,
-        MediusLockDirection::Negative
-    ));
-    assert!(!medius_locks_is_locked(
-        &locks,
-        x,
-        MediusLockDirection::Both
-    ));
-    assert!(medius_locks_is_locked(
-        &locks,
-        side2,
-        MediusLockDirection::Negative
-    ));
-    assert!(!medius_locks_is_locked(
-        &locks,
-        side2,
-        MediusLockDirection::Positive
-    ));
-    assert!(!medius_locks_is_locked(
-        std::ptr::null(),
-        x,
-        MediusLockDirection::Positive
-    ));
+    assert!(locked(&locks, x, MediusLockDirection::Positive));
+    assert!(!locked(&locks, x, MediusLockDirection::Negative));
+    assert!(!locked(&locks, x, MediusLockDirection::Both));
+    assert!(locked(&locks, side2, MediusLockDirection::Negative));
+    assert!(!locked(&locks, side2, MediusLockDirection::Positive));
+    assert!(!locked(std::ptr::null(), x, MediusLockDirection::Positive));
 
     // A whole-class blanket entry covers any usage of its class (a buttons blanket locks Side2), but not a
     // usage of a different class or an axis.
     let blanket = locks_with(&[MediusLockEntry {
-        target: medius_lock_target_usage(medius_input_button(MediusButton::Left)),
+        target: medius_lock_target_usage(medius_usage_button(MediusButton::Left)),
         is_blanket: true,
         positive: true,
         negative: true,
     }]);
-    assert!(medius_locks_is_locked(
-        &blanket,
-        side2,
-        MediusLockDirection::Positive
-    ));
-    assert!(!medius_locks_is_locked(
-        &blanket,
-        medius_lock_target_usage(medius_input_key(MEDIUS_KEY_A)),
-        MediusLockDirection::Positive
-    ));
-    assert!(!medius_locks_is_locked(
-        &blanket,
-        x,
-        MediusLockDirection::Positive
-    ));
+    let key_a = medius_lock_target_usage(medius_usage_key(MEDIUS_KEY_A));
+    assert!(locked(&blanket, side2, MediusLockDirection::Positive));
+    assert!(!locked(&blanket, key_a, MediusLockDirection::Positive));
+    assert!(!locked(&blanket, x, MediusLockDirection::Positive));
 }
 
 #[test]
@@ -161,11 +129,11 @@ fn rate_native_hz_divides_the_period() {
     assert!(!unsafe { medius_rate_native_hz(no_cadence, &mut hz) });
 }
 
-fn usage_event(usages: &[MediusInput]) -> MediusUsageEvent {
+fn usage_event(usages: &[MediusUsage]) -> MediusUsageEvent {
     let mut e = MediusUsageEvent {
         n: usages.len() as u16,
-        usages: [MediusInput {
-            kind: MediusInputKind::Button,
+        usages: [MediusUsage {
+            kind: MediusClass::Button,
             value: 0,
         }; MEDIUS_MAX_USAGES],
     };
@@ -178,15 +146,15 @@ fn usage_event(usages: &[MediusInput]) -> MediusUsageEvent {
 #[test]
 fn usage_event_is_held_matches_any_class() {
     // Buttons, keys, and modifiers all live in one snapshot list, keyed the same way.
-    let a = medius_input_key(MEDIUS_KEY_A);
-    let shift = medius_input_key(MEDIUS_KEY_LEFT_SHIFT);
-    let side1 = medius_input_button(MediusButton::Side1);
+    let a = medius_usage_key(MEDIUS_KEY_A);
+    let shift = medius_usage_key(MEDIUS_KEY_LEFT_SHIFT);
+    let side1 = medius_usage_button(MediusButton::Side1);
     let e = usage_event(&[a, shift, side1]);
     assert!(unsafe { medius_usage_event_is_held(&e, a) });
     assert!(unsafe { medius_usage_event_is_held(&e, shift) });
     assert!(unsafe { medius_usage_event_is_held(&e, side1) });
-    assert!(!unsafe { medius_usage_event_is_held(&e, medius_input_key(MEDIUS_KEY_B)) });
-    assert!(!unsafe { medius_usage_event_is_held(&e, medius_input_button(MediusButton::Left)) });
+    assert!(!unsafe { medius_usage_event_is_held(&e, medius_usage_key(MEDIUS_KEY_B)) });
+    assert!(!unsafe { medius_usage_event_is_held(&e, medius_usage_button(MediusButton::Left)) });
     assert!(!unsafe { medius_usage_event_is_held(std::ptr::null(), a) });
 }
 
