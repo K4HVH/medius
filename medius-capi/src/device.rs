@@ -4,9 +4,9 @@ use std::ffi::CStr;
 use std::os::raw::c_char;
 use std::time::Duration;
 
-use medius::{Device, Key, MediaKey};
+use medius::Device;
 
-use crate::convert::{emit_pace_to_medius, input_to_medius};
+use crate::convert::{emit_pace_to_medius, input_to_medius, lock_target_to_medius};
 use crate::ctypes::*;
 use crate::error::{MediusStatus, clear_error, fail, guard, guard_status, record, status_of};
 
@@ -270,197 +270,121 @@ pub unsafe extern "C" fn medius_device_move_axis(
     with_device(dev, |d| d.move_axis(motion.into()))
 }
 
-// --- injection: buttons ---
+// --- injection ---
 
+/// Run `f` with the converted usage; `ErrInvalidArg` on a null handle or an invalid input value.
+fn with_input(
+    dev: *mut MediusDevice,
+    input: MediusInput,
+    f: impl FnOnce(&Device, medius::Usage) -> Result<(), medius::Error>,
+) -> MediusStatus {
+    guard_status(|| {
+        if dev.is_null() {
+            return fail(MediusStatus::ErrInvalidArg, "null device handle");
+        }
+        let Some(u) = input_to_medius(input) else {
+            return fail(MediusStatus::ErrInvalidArg, "invalid input value");
+        };
+        let d = unsafe { &(*dev).inner };
+        status_of(f(d, u))
+    })
+}
+
+/// Drive one momentary usage (button, key, or media) with an explicit action. The one injection verb.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_device_inject(
     dev: *mut MediusDevice,
     input: MediusInput,
     action: MediusAction,
 ) -> MediusStatus {
-    guard_status(|| {
-        if dev.is_null() {
-            return fail(MediusStatus::ErrInvalidArg, "null device handle");
-        }
-        let Some(inp) = input_to_medius(input) else {
-            return fail(MediusStatus::ErrInvalidArg, "invalid input value");
-        };
-        let d = unsafe { &(*dev).inner };
-        status_of(d.inject(inp, action.into()))
-    })
+    with_input(dev, input, |d, u| d.inject(u, action.into()))
 }
 
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn medius_device_button(
-    dev: *mut MediusDevice,
-    button: MediusButton,
-    action: MediusAction,
-) -> MediusStatus {
-    with_device(dev, |d| d.button(button.into(), action.into()))
-}
-
+/// Press a usage (`Action::Press`).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_device_press(
     dev: *mut MediusDevice,
-    button: MediusButton,
+    input: MediusInput,
 ) -> MediusStatus {
-    with_device(dev, |d| d.press(button.into()))
+    with_input(dev, input, |d, u| d.press(u))
 }
 
+/// Soft-release a usage: clear an injected press, leaving a physical hold intact.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_device_soft_release(
     dev: *mut MediusDevice,
-    button: MediusButton,
+    input: MediusInput,
 ) -> MediusStatus {
-    with_device(dev, |d| d.soft_release(button.into()))
+    with_input(dev, input, |d, u| d.release(u))
 }
 
+/// Force-release a usage: mask a physical hold too.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_device_force_release(
     dev: *mut MediusDevice,
-    button: MediusButton,
+    input: MediusInput,
 ) -> MediusStatus {
-    with_device(dev, |d| d.force_release(button.into()))
-}
-
-// --- injection: keyboard ---
-
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn medius_device_key(
-    dev: *mut MediusDevice,
-    key: MediusKey,
-    action: MediusAction,
-) -> MediusStatus {
-    with_device(dev, |d| d.key(Key::new(key), action.into()))
-}
-
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn medius_device_key_down(
-    dev: *mut MediusDevice,
-    key: MediusKey,
-) -> MediusStatus {
-    with_device(dev, |d| d.key_down(Key::new(key)))
-}
-
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn medius_device_key_up(
-    dev: *mut MediusDevice,
-    key: MediusKey,
-) -> MediusStatus {
-    with_device(dev, |d| d.key_up(Key::new(key)))
-}
-
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn medius_device_key_force_release(
-    dev: *mut MediusDevice,
-    key: MediusKey,
-) -> MediusStatus {
-    with_device(dev, |d| d.key_force_release(Key::new(key)))
-}
-
-// --- injection: media ---
-
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn medius_device_media(
-    dev: *mut MediusDevice,
-    media: MediusMediaKey,
-    action: MediusAction,
-) -> MediusStatus {
-    with_device(dev, |d| d.media(MediaKey::new(media), action.into()))
-}
-
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn medius_device_media_down(
-    dev: *mut MediusDevice,
-    media: MediusMediaKey,
-) -> MediusStatus {
-    with_device(dev, |d| d.media_down(MediaKey::new(media)))
-}
-
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn medius_device_media_up(
-    dev: *mut MediusDevice,
-    media: MediusMediaKey,
-) -> MediusStatus {
-    with_device(dev, |d| d.media_up(MediaKey::new(media)))
-}
-
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn medius_device_media_force_release(
-    dev: *mut MediusDevice,
-    media: MediusMediaKey,
-) -> MediusStatus {
-    with_device(dev, |d| d.media_force_release(MediaKey::new(media)))
+    with_input(dev, input, |d, u| d.force_release(u))
 }
 
 // --- locks ---
 
+/// Run `f` with the converted lock target; `ErrInvalidArg` on a null handle or an invalid usage target.
+fn with_lock_target(
+    dev: *mut MediusDevice,
+    target: MediusLockTarget,
+    f: impl FnOnce(&Device, medius::LockTarget) -> Result<(), medius::Error>,
+) -> MediusStatus {
+    guard_status(|| {
+        if dev.is_null() {
+            return fail(MediusStatus::ErrInvalidArg, "null device handle");
+        }
+        let Some(t) = lock_target_to_medius(target) else {
+            return fail(MediusStatus::ErrInvalidArg, "invalid lock target");
+        };
+        let d = unsafe { &(*dev).inner };
+        status_of(f(d, t))
+    })
+}
+
+/// Lock a target (axis or usage) on an edge. A button, key, and media usage all lock the same way.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_device_lock(
     dev: *mut MediusDevice,
     target: MediusLockTarget,
     dir: MediusLockDirection,
 ) -> MediusStatus {
-    with_device(dev, |d| d.lock(target.into(), dir.into()))
+    with_lock_target(dev, target, |d, t| d.lock(t, dir.into()))
 }
 
+/// Release a lock set by `medius_device_lock`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_device_unlock(
     dev: *mut MediusDevice,
     target: MediusLockTarget,
     dir: MediusLockDirection,
 ) -> MediusStatus {
-    with_device(dev, |d| d.unlock(target.into(), dir.into()))
+    with_lock_target(dev, target, |d, t| d.unlock(t, dir.into()))
 }
 
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn medius_device_lock_key(
-    dev: *mut MediusDevice,
-    key: MediusKey,
-    dir: MediusLockDirection,
-) -> MediusStatus {
-    with_device(dev, |d| d.lock_key(Key::new(key), dir.into()))
-}
-
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn medius_device_unlock_key(
-    dev: *mut MediusDevice,
-    key: MediusKey,
-    dir: MediusLockDirection,
-) -> MediusStatus {
-    with_device(dev, |d| d.unlock_key(Key::new(key), dir.into()))
-}
-
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn medius_device_lock_media(
-    dev: *mut MediusDevice,
-    media: MediusMediaKey,
-) -> MediusStatus {
-    with_device(dev, |d| d.lock_media(MediaKey::new(media)))
-}
-
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn medius_device_unlock_media(
-    dev: *mut MediusDevice,
-    media: MediusMediaKey,
-) -> MediusStatus {
-    with_device(dev, |d| d.unlock_media(MediaKey::new(media)))
-}
-
+/// Lock a whole class blanket (cursor aim, wheel, all buttons, all keys, or all media).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_device_lock_all(
     dev: *mut MediusDevice,
     what: MediusBlanket,
+    dir: MediusLockDirection,
 ) -> MediusStatus {
-    with_device(dev, |d| d.lock_all(what.into()))
+    with_device(dev, |d| d.lock_all(what.into(), dir.into()))
 }
 
+/// Release a blanket lock set by `medius_device_lock_all`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_device_unlock_all(
     dev: *mut MediusDevice,
     what: MediusBlanket,
+    dir: MediusLockDirection,
 ) -> MediusStatus {
-    with_device(dev, |d| d.unlock_all(what.into()))
+    with_device(dev, |d| d.unlock_all(what.into(), dir.into()))
 }
 
 // --- led ---
@@ -710,9 +634,14 @@ pub extern "C" fn medius_default_keepalive_cadence_ms() -> u32 {
 /// The C ABI version. Bumped on any breaking change to this header.
 /// 2: `MediusVersion` grew a `name` field and `medius_device_set_name`/`_clear_name` were added, and
 /// buffered clip playback (`medius_device_clip`, the `medius_clip_*` handle/builder calls) landed (v2.4.0).
+/// 3: unified input taxonomy — one `MediusInput` usage vocabulary for buttons, keys, and media across
+/// inject/lock/catch. The class-specific `medius_device_button`/`_key*`/`_media*`/`_lock_key`/`_lock_media`
+/// verbs collapsed into `medius_device_inject`/`_press`/`_soft_release`/`_force_release` and
+/// `medius_device_lock`/`_unlock` over a `MediusLockTarget`; catch events became `Motion`/`Usages`
+/// (`medius_usage_event_is_held`); `MediusLocks` became an entry list (v3.0.0).
 #[unsafe(no_mangle)]
 pub extern "C" fn medius_abi_version() -> u32 {
-    2
+    3
 }
 
 /// The medius-capi crate version as a static NUL-terminated string.

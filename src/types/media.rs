@@ -28,4 +28,3 @@ impl MediaKey {
     pub const PLAY: MediaKey = MediaKey(0xB0);
     pub const PAUSE: MediaKey = MediaKey(0xB1);
 }
-

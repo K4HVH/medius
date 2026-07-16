@@ -13,14 +13,23 @@ fn lock_payload_bytes() {
     // [class][id u16 LE][direction][state]. Axis wheel / Negative / lock.
     assert_eq!(lock_payload(LOCK_CLS_AXIS, 2, 2, 1), [3, 2, 0, 2, 1]);
     // Media usage round-trips its 16 bits (VolumeUp 0x00E9).
-    assert_eq!(lock_payload(LOCK_CLS_MEDIA, 0x00E9, 0, 1), [2, 0xE9, 0x00, 0, 1]);
+    assert_eq!(
+        lock_payload(LOCK_CLS_MEDIA, 0x00E9, 0, 1),
+        [2, 0xE9, 0x00, 0, 1]
+    );
     // Blanket all-keys: class KEY + id 0xFFFF.
-    assert_eq!(lock_payload(LOCK_CLS_KEY, LOCK_ID_ALL, 0, 1), [1, 0xFF, 0xFF, 0, 1]);
+    assert_eq!(
+        lock_payload(LOCK_CLS_KEY, LOCK_ID_ALL, 0, 1),
+        [1, 0xFF, 0xFF, 0, 1]
+    );
 }
 
 #[test]
 fn lock_target_and_direction_wire() {
-    assert_eq!((Axis::X.as_u16(), Axis::Y.as_u16(), Axis::Wheel.as_u16()), (0, 1, 2));
+    assert_eq!(
+        (Axis::X.as_u16(), Axis::Y.as_u16(), Axis::Wheel.as_u16()),
+        (0, 1, 2)
+    );
     // A button/key/media all become a LockTarget::Usage sharing INJECT's (class, id).
     let bt: LockTarget = Button::Left.into();
     assert_eq!(bt, LockTarget::Usage(Usage::new(Class::Button, 0)));
@@ -49,7 +58,16 @@ fn lock_target_and_direction_wire() {
 fn locks_list_decode() {
     // [6][n=2] then [AXIS(3), X(0), POS] and [KEY(1), 0x04, NEG].
     let l = Locks::from_payload(&[
-        6, 2, 3, 0, 0, LOCK_DIRBIT_POS, 1, 0x04, 0x00, LOCK_DIRBIT_NEG,
+        6,
+        2,
+        3,
+        0,
+        0,
+        LOCK_DIRBIT_POS,
+        1,
+        0x04,
+        0x00,
+        LOCK_DIRBIT_NEG,
     ])
     .unwrap();
     assert_eq!(l.entries().len(), 2);
@@ -70,7 +88,8 @@ fn locks_is_locked_both_needs_both_edges() {
 #[test]
 fn decode_locks_through_parse_resp() {
     // Y- and Side2.release, as a two-entry list.
-    let Some(Resp::Locks(l)) = parse_resp(&[6, 2, 3, 1, 0, LOCK_DIRBIT_NEG, 0, 4, 0, LOCK_DIRBIT_NEG])
+    let Some(Resp::Locks(l)) =
+        parse_resp(&[6, 2, 3, 1, 0, LOCK_DIRBIT_NEG, 0, 4, 0, LOCK_DIRBIT_NEG])
     else {
         panic!("expected Locks");
     };

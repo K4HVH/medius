@@ -19,8 +19,8 @@ mod linux {
     use std::time::{Duration, Instant};
 
     use medius::{
-        Action, Blanket, Button, CatchMask, ClipBuilder, ClipConfig, ClipState, Device, EmitPace,
-        Axis, Key, LedMode, LedTarget, LockDirection, MediaKey, RebootTarget,
+        Action, Axis, Blanket, Button, CatchMask, ClipBuilder, ClipConfig, ClipState, Device,
+        EmitPace, Key, LedMode, LedTarget, LockDirection, MediaKey, RebootTarget,
     };
 
     const EVIOCGRAB: libc::c_ulong = 0x4004_4590;
@@ -466,7 +466,9 @@ mod linux {
             check(
                 "lock: safety clear",
                 after_reset == 0 && before == 1 && after_silence == 0,
-                format!("reset->{after_reset} locks; y-lock {before} after 1.4s silence {after_silence}"),
+                format!(
+                    "reset->{after_reset} locks; y-lock {before} after 1.4s silence {after_silence}"
+                ),
             );
         }
 

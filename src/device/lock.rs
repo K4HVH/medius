@@ -13,10 +13,8 @@ impl Device {
     fn send_lock(&self, class: u8, id: u16, direction: LockDirection, on: bool) -> Result<()> {
         let dir = direction.as_u8();
         self.link.desired().lock().apply_lock((class, id, dir), on);
-        self.link.send(
-            FrameType::Lock,
-            &lock_payload(class, id, dir, u8::from(on)),
-        )
+        self.link
+            .send(FrameType::Lock, &lock_payload(class, id, dir, u8::from(on)))
     }
 
     /// `LOCK` — block physical input on a target while host injection still drives it. The target is a

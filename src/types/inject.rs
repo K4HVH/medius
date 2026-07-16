@@ -1,7 +1,5 @@
-//! The two field-generic injection verbs (§3.1–3.2): `move` drives a relative axis, `inject` sets a
-//! momentary usage. One verb per field kind, not one per device class.
-
-pub use crate::types::usage::Usage as Input;
+//! The relative-axis drive for the field-generic injection verbs (§3.1–3.2): `move` drives a [`Motion`],
+//! `inject` sets a momentary [`Usage`](crate::Usage). One verb per field kind, not one per device class.
 
 /// A relative axis to drive with the [`move_axis`](crate::Device::move_axis) verb.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

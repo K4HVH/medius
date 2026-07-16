@@ -38,7 +38,7 @@ impl Override {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct DesiredState {
     overrides: BTreeMap<(u8, u16), Override>, // (class, id) -> Press/Force (never sits at None in the map)
-    locks: BTreeSet<LockKey>,                 // active locks (any class), re-asserted after a reconnect
+    locks: BTreeSet<LockKey>, // active locks (any class), re-asserted after a reconnect
     catch: CatchMask,
 }
 
