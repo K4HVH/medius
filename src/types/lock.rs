@@ -1,29 +1,14 @@
-//! `LOCK` control vocabulary (§3.8).
+//! `LOCK` control vocabulary (§3.8): what a lock addresses, its edge, blanket groups, and the decoded
+//! `RESP(LOCKS)` list.
 
-use crate::types::Button;
+use crate::protocol::opcode::{
+    LOCK_AXIS_WHEEL, LOCK_AXIS_X, LOCK_AXIS_Y, LOCK_CLS_AXIS, LOCK_DIRBIT_NEG, LOCK_DIRBIT_POS,
+    LOCK_DIR_BOTH, LOCK_DIR_NEG, LOCK_DIR_POS,
+};
+use crate::types::{Axis, Class, Usage};
 
-/// Which input class a `LOCK` addresses (the wire `class` byte). A lock blocks physical input on the
-/// addressed field while host injection still drives it.
-#[repr(u8)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub(crate) enum LockClass {
-    Mouse = 0,
-    Key = 1,
-    Media = 2,
-    AllKeys = 3,
-    AllMedia = 4,
-    AllButtons = 5,
-}
-
-impl LockClass {
-    /// The wire `class` byte.
-    pub fn as_u8(self) -> u8 {
-        self as u8
-    }
-}
-
-/// A whole-group blanket lock: the cursor aim (X+Y), the wheel, every mouse button, every key, or every
-/// media usage. Used both by [`lock_all`](crate::Device::lock_all) and as the clip
+/// A whole-group blanket: the cursor aim (X+Y), the wheel, every mouse button, every key, or every media
+/// usage. Used by [`lock_all`](crate::Device::lock_all) and as the clip
 /// [`ClipConfig::autolock`](crate::ClipConfig::autolock) scope.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Blanket {
@@ -50,17 +35,6 @@ impl Blanket {
         Blanket::Media,
     ];
 
-    /// The single `LOCK` class this maps to, or `None` for the axis groups (Aim/Wheel), which lock per
-    /// target rather than by a whole-class blanket.
-    pub(crate) fn class(self) -> Option<LockClass> {
-        Some(match self {
-            Blanket::Keys => LockClass::AllKeys,
-            Blanket::Media => LockClass::AllMedia,
-            Blanket::Buttons => LockClass::AllButtons,
-            Blanket::Aim | Blanket::Wheel => return None,
-        })
-    }
-
     /// This group's clip auto-lock scope bit (`CLIP_LOCK_*`).
     pub(crate) fn clip_lock_bit(self) -> u8 {
         use crate::protocol::opcode::*;
@@ -79,45 +53,14 @@ pub(crate) fn blanket_scope(scope: &[Blanket]) -> u8 {
     scope.iter().fold(0, |m, b| m | b.clip_lock_bit())
 }
 
-/// What a `LOCK` command targets; the wire `target` byte is `as_u8()`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum LockTarget {
-    X,
-    Y,
-    Wheel,
-    Button(Button),
-}
-
-impl LockTarget {
-    /// The wire `target` byte (X=0, Y=1, Wheel=2, Button = 3 + the button id).
-    pub fn as_u8(self) -> u8 {
-        match self {
-            LockTarget::X => 0,
-            LockTarget::Y => 1,
-            LockTarget::Wheel => 2,
-            LockTarget::Button(b) => 3 + b.as_id(),
-        }
-    }
-
-    /// Map a wire `target` byte to a [`LockTarget`], or `None` if unknown.
-    pub fn from_u8(v: u8) -> Option<Self> {
-        Some(match v {
-            0 => LockTarget::X,
-            1 => LockTarget::Y,
-            2 => LockTarget::Wheel,
-            3..=7 => LockTarget::Button(Button::from_id(v - 3)?),
-            _ => return None,
-        })
-    }
-}
-
-/// Which edge a `LOCK` covers; for buttons `Positive` is the press edge and `Negative` the release.
+/// Which edge a `LOCK` covers; for a usage `Positive` is the press edge and `Negative` the release; for an
+/// axis they are the `+`/`-` sign.
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum LockDirection {
-    Both = 0,
-    Positive = 1,
-    Negative = 2,
+    Both = LOCK_DIR_BOTH,
+    Positive = LOCK_DIR_POS,
+    Negative = LOCK_DIR_NEG,
 }
 
 impl LockDirection {
@@ -129,51 +72,116 @@ impl LockDirection {
     /// Map a wire `direction` byte to a [`LockDirection`], or `None` if unknown.
     pub fn from_u8(v: u8) -> Option<Self> {
         Some(match v {
-            0 => LockDirection::Both,
-            1 => LockDirection::Positive,
-            2 => LockDirection::Negative,
+            LOCK_DIR_BOTH => LockDirection::Both,
+            LOCK_DIR_POS => LockDirection::Positive,
+            LOCK_DIR_NEG => LockDirection::Negative,
             _ => return None,
         })
     }
 }
 
-/// Decoded `RESP(LOCKS)` — the lock bitmask, 2 bits per target (positive/press, negative/release).
+/// What a lock addresses: a relative axis or a momentary usage (button/key/media). Both `INJECT` and `LOCK`
+/// speak this one vocabulary, so a button is locked exactly like a key.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum LockTarget {
+    /// A relative axis (X/Y/wheel), locked by sign.
+    Axis(Axis),
+    /// A momentary usage (button/key/media), locked by press/release edge.
+    Usage(Usage),
+}
+
+impl From<Axis> for LockTarget {
+    fn from(a: Axis) -> LockTarget {
+        LockTarget::Axis(a)
+    }
+}
+impl<T: Into<Usage>> From<T> for LockTarget {
+    fn from(u: T) -> LockTarget {
+        LockTarget::Usage(u.into())
+    }
+}
+
+/// One entry in a decoded `RESP(LOCKS)` (§4.8): the locked target and which edges are locked.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct LockEntry {
+    /// What is locked. `None` = a whole-class blanket (see [`blanket`](Self::blanket)).
+    pub target: Option<LockTarget>,
+    /// The blanket class, when this entry is a whole-class lock (`id == 0xFFFF` on the wire).
+    pub blanket: Option<Class>,
+    /// The positive/press edge is locked.
+    pub positive: bool,
+    /// The negative/release edge is locked.
+    pub negative: bool,
+}
+
+/// Decoded `RESP(LOCKS)` (§4.8) — every active lock across every class, so keyboard and media locks are
+/// reported the same as mouse ones.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Locks {
-    mask: u16,
+    entries: Vec<LockEntry>,
 }
 
 impl Locks {
-    /// Decode a `RESP(LOCKS)` payload (§4.8): `[what][mask u16 LE]`.
-    pub(crate) fn from_payload(p: &[u8]) -> Option<Self> {
-        if p.len() < 3 {
-            return None;
+    /// Decode a `RESP(LOCKS)` payload: `[what][n u8]` then `n × [class u8][id u16 LE][dirbits u8]`.
+    pub(crate) fn from_payload(p: &[u8]) -> Option<Locks> {
+        let n = *p.get(1)? as usize;
+        let mut entries = Vec::with_capacity(n);
+        for i in 0..n {
+            let off = 2 + 4 * i;
+            let cls = *p.get(off)?;
+            let id = u16::from_le_bytes([*p.get(off + 1)?, *p.get(off + 2)?]);
+            let db = *p.get(off + 3)?;
+            let positive = db & LOCK_DIRBIT_POS != 0;
+            let negative = db & LOCK_DIRBIT_NEG != 0;
+            let (target, blanket) = decode_target(cls, id);
+            entries.push(LockEntry {
+                target,
+                blanket,
+                positive,
+                negative,
+            });
         }
-        Some(Locks {
-            mask: u16::from_le_bytes([p[1], p[2]]),
+        Some(Locks { entries })
+    }
+
+    /// Build a [`Locks`] from decoded entries; useful for tests and for configuring a
+    /// [`MockBox`](crate::MockBox).
+    pub fn from_entries(entries: Vec<LockEntry>) -> Locks {
+        Locks { entries }
+    }
+
+    /// Every active lock entry.
+    pub fn entries(&self) -> &[LockEntry] {
+        &self.entries
+    }
+
+    /// Whether the given target is locked on the given edge.
+    pub fn is_locked(&self, target: impl Into<LockTarget>, dir: LockDirection) -> bool {
+        let target = target.into();
+        self.entries.iter().any(|e| {
+            e.target == Some(target)
+                && match dir {
+                    LockDirection::Both => e.positive && e.negative,
+                    LockDirection::Positive => e.positive,
+                    LockDirection::Negative => e.negative,
+                }
         })
     }
+}
 
-    /// Build a [`Locks`] from a raw bitmask (the inverse of [`mask`](Self::mask)); useful for tests and
-    /// for configuring a [`MockBox`](crate::MockBox).
-    pub const fn from_mask(mask: u16) -> Locks {
-        Locks { mask }
-    }
-
-    /// The raw lock bitmask: bit `target*2` is positive/press, bit `target*2+1` is negative/release.
-    pub fn mask(&self) -> u16 {
-        self.mask
-    }
-
-    /// Whether the given target/direction is locked (`Both` requires both edges locked).
-    pub fn is_locked(&self, target: LockTarget, dir: LockDirection) -> bool {
-        let base = target.as_u8() * 2;
-        let pos = self.mask & (1 << base) != 0;
-        let neg = self.mask & (1 << (base + 1)) != 0;
-        match dir {
-            LockDirection::Both => pos && neg,
-            LockDirection::Positive => pos,
-            LockDirection::Negative => neg,
-        }
+fn decode_target(cls: u8, id: u16) -> (Option<LockTarget>, Option<Class>) {
+    if cls == LOCK_CLS_AXIS {
+        let axis = match id {
+            LOCK_AXIS_X => Some(Axis::X),
+            LOCK_AXIS_Y => Some(Axis::Y),
+            LOCK_AXIS_WHEEL => Some(Axis::Wheel),
+            _ => None,
+        };
+        (axis.map(LockTarget::Axis), None)
+    } else if id == crate::protocol::opcode::LOCK_ID_ALL {
+        (None, Class::from_u8(cls))
+    } else {
+        let target = Class::from_u8(cls).map(|class| LockTarget::Usage(Usage::new(class, id)));
+        (target, None)
     }
 }

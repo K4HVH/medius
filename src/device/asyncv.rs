@@ -8,10 +8,9 @@ use crate::protocol::opcode::{
 };
 use crate::protocol::{Resp, parse_resp};
 use crate::types::{
-    Action, Blanket, Button, Caps, CatchMask, CatchState, ClipBuilder, ClipConfig, ClipStatus,
-    CountersSnapshot, DeviceInfo, EmitPace, EmitPaceStatus, Health, ImperfectStatus, Input, Key,
-    LedMode, LedTarget, LockDirection, LockTarget, Locks, MediaKey, Motion, Rate, RebootTarget,
-    Stats, Version,
+    Action, Axis, Blanket, Caps, CatchMask, CatchState, ClipBuilder, ClipConfig, ClipStatus,
+    CountersSnapshot, DeviceInfo, EmitPace, EmitPaceStatus, Health, ImperfectStatus, LedMode,
+    LedTarget, LockDirection, LockTarget, Locks, Motion, Rate, RebootTarget, Stats, Usage, Version,
 };
 
 use super::Device;
@@ -66,69 +65,24 @@ impl AsyncDevice {
         self.dev().move_axis(motion)
     }
 
-    /// `INJECT` — field-generic momentary override (button, key, or media). Instant; see [`Device::inject`].
-    pub fn inject(&self, input: impl Into<Input>, action: Action) -> Result<()> {
-        self.dev().inject(input, action)
+    /// `INJECT` — momentary override for any usage (button, key, or media). Instant; see [`Device::inject`].
+    pub fn inject(&self, usage: impl Into<Usage>, action: Action) -> Result<()> {
+        self.dev().inject(usage, action)
     }
 
-    /// `BUTTON` — set an injection override. Instant; see [`Device::button`].
-    pub fn button(&self, button: Button, action: Action) -> Result<()> {
-        self.dev().button(button, action)
+    /// Press (force down) any usage. Instant; see [`Device::press`].
+    pub fn press(&self, usage: impl Into<Usage>) -> Result<()> {
+        self.dev().press(usage)
     }
 
-    /// Press (hold) a button. Instant; see [`Device::press`].
-    pub fn press(&self, button: Button) -> Result<()> {
-        self.dev().press(button)
+    /// Soft-release any usage. Instant; see [`Device::release`].
+    pub fn release(&self, usage: impl Into<Usage>) -> Result<()> {
+        self.dev().release(usage)
     }
 
-    /// Soft-release a button. Instant; see [`Device::soft_release`].
-    pub fn soft_release(&self, button: Button) -> Result<()> {
-        self.dev().soft_release(button)
-    }
-
-    /// Force-release a button. Instant; see [`Device::force_release`].
-    pub fn force_release(&self, button: Button) -> Result<()> {
-        self.dev().force_release(button)
-    }
-
-    /// `KEY` — set a keyboard key/modifier override. Instant; see [`Device::key`].
-    pub fn key(&self, key: Key, action: Action) -> Result<()> {
-        self.dev().key(key, action)
-    }
-
-    /// Press (hold) a key. Instant; see [`Device::key_down`].
-    pub fn key_down(&self, key: Key) -> Result<()> {
-        self.dev().key_down(key)
-    }
-
-    /// Soft-release a key. Instant; see [`Device::key_up`].
-    pub fn key_up(&self, key: Key) -> Result<()> {
-        self.dev().key_up(key)
-    }
-
-    /// Force-release a key. Instant; see [`Device::key_force_release`].
-    pub fn key_force_release(&self, key: Key) -> Result<()> {
-        self.dev().key_force_release(key)
-    }
-
-    /// `CONSUMER` — set a media-key override. Instant; see [`Device::media`].
-    pub fn media(&self, key: MediaKey, action: Action) -> Result<()> {
-        self.dev().media(key, action)
-    }
-
-    /// Press (hold) a media key. Instant; see [`Device::media_down`].
-    pub fn media_down(&self, key: MediaKey) -> Result<()> {
-        self.dev().media_down(key)
-    }
-
-    /// Soft-release a media key. Instant; see [`Device::media_up`].
-    pub fn media_up(&self, key: MediaKey) -> Result<()> {
-        self.dev().media_up(key)
-    }
-
-    /// Force-release a media key. Instant; see [`Device::media_force_release`].
-    pub fn media_force_release(&self, key: MediaKey) -> Result<()> {
-        self.dev().media_force_release(key)
+    /// Force-release any usage. Instant; see [`Device::force_release`].
+    pub fn force_release(&self, usage: impl Into<Usage>) -> Result<()> {
+        self.dev().force_release(usage)
     }
 
     /// `RESET` — return to passthrough. Instant; see [`Device::reset`].
@@ -166,44 +120,34 @@ impl AsyncDevice {
         self.dev().led(target, mode, level)
     }
 
-    /// `LOCK` — lock an axis or button edge. Instant; see [`Device::lock`].
-    pub fn lock(&self, target: LockTarget, direction: LockDirection) -> Result<()> {
+    /// `LOCK` — block a usage (button/key/media) or axis. Instant; see [`Device::lock`].
+    pub fn lock(&self, target: impl Into<LockTarget>, direction: LockDirection) -> Result<()> {
         self.dev().lock(target, direction)
     }
 
-    /// `LOCK` — release a locked axis or button edge. Instant; see [`Device::unlock`].
-    pub fn unlock(&self, target: LockTarget, direction: LockDirection) -> Result<()> {
+    /// `LOCK` — release a locked usage or axis. Instant; see [`Device::unlock`].
+    pub fn unlock(&self, target: impl Into<LockTarget>, direction: LockDirection) -> Result<()> {
         self.dev().unlock(target, direction)
     }
 
-    /// `LOCK` — block a keyboard key or modifier. Instant; see [`Device::lock_key`].
-    pub fn lock_key(&self, key: Key, direction: LockDirection) -> Result<()> {
-        self.dev().lock_key(key, direction)
+    /// `LOCK` — block a relative axis by sign. Instant; see [`Device::lock_axis`].
+    pub fn lock_axis(&self, axis: Axis, direction: LockDirection) -> Result<()> {
+        self.dev().lock_axis(axis, direction)
     }
 
-    /// `LOCK` — release a locked keyboard key or modifier. Instant; see [`Device::unlock_key`].
-    pub fn unlock_key(&self, key: Key, direction: LockDirection) -> Result<()> {
-        self.dev().unlock_key(key, direction)
+    /// `LOCK` — release an axis lock. Instant; see [`Device::unlock_axis`].
+    pub fn unlock_axis(&self, axis: Axis, direction: LockDirection) -> Result<()> {
+        self.dev().unlock_axis(axis, direction)
     }
 
-    /// `LOCK` — block a media usage. Instant; see [`Device::lock_media`].
-    pub fn lock_media(&self, key: MediaKey) -> Result<()> {
-        self.dev().lock_media(key)
+    /// `LOCK` — blanket-block a whole group. Instant; see [`Device::lock_all`].
+    pub fn lock_all(&self, what: Blanket, direction: LockDirection) -> Result<()> {
+        self.dev().lock_all(what, direction)
     }
 
-    /// `LOCK` — release a locked media usage. Instant; see [`Device::unlock_media`].
-    pub fn unlock_media(&self, key: MediaKey) -> Result<()> {
-        self.dev().unlock_media(key)
-    }
-
-    /// `LOCK` — blanket-block a whole input class. Instant; see [`Device::lock_all`].
-    pub fn lock_all(&self, what: Blanket) -> Result<()> {
-        self.dev().lock_all(what)
-    }
-
-    /// `LOCK` — release a blanket whole-class lock. Instant; see [`Device::unlock_all`].
-    pub fn unlock_all(&self, what: Blanket) -> Result<()> {
-        self.dev().unlock_all(what)
+    /// `LOCK` — release a blanket lock. Instant; see [`Device::unlock_all`].
+    pub fn unlock_all(&self, what: Blanket, direction: LockDirection) -> Result<()> {
+        self.dev().unlock_all(what, direction)
     }
 
     /// Subscribe to the physical-input event stream. Instant; the returned [`EventStream`] offers
@@ -432,9 +376,9 @@ impl AsyncClipHandle {
         self.inner.stop()
     }
 
-    /// Arm an on-device catch-trigger on any [`Input`] (button/key/media) with a [`ClipConfig`]. Instant;
+    /// Arm an on-device catch-trigger on any [`Usage`] (button/key/media) with a [`ClipConfig`]. Instant;
     /// see [`ClipHandle::arm_catch`](crate::ClipHandle::arm_catch).
-    pub fn arm_catch(&self, trigger: impl Into<Input>, config: &ClipConfig) -> Result<()> {
+    pub fn arm_catch(&self, trigger: impl Into<Usage>, config: &ClipConfig) -> Result<()> {
         self.inner.arm_catch(trigger, config)
     }
 

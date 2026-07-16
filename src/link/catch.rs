@@ -12,7 +12,7 @@ use parking_lot::Mutex;
 use crate::error::Result;
 use crate::protocol::FrameType;
 use crate::protocol::command::catch_payload;
-use crate::types::{CatchEvent, CatchMask, KeyboardEvent, MediaEvent, MouseEvent};
+use crate::types::{CatchEvent, CatchMask, MotionEvent, UsageSnapshot};
 
 use super::Link;
 
@@ -44,9 +44,8 @@ impl CatchReg {
 /// Decode a box→PC catch frame into a [`CatchEvent`] by its frame type.
 fn decode_event(ty: FrameType, payload: &[u8]) -> Option<CatchEvent> {
     match ty {
-        FrameType::MouseEvent => MouseEvent::from_payload(payload).map(CatchEvent::Mouse),
-        FrameType::KbEvent => KeyboardEvent::from_payload(payload).map(CatchEvent::Keyboard),
-        FrameType::ConsEvent => MediaEvent::from_payload(payload).map(CatchEvent::Media),
+        FrameType::MotionEvent => MotionEvent::from_payload(payload).map(CatchEvent::Motion),
+        FrameType::UsageEvent => UsageSnapshot::from_payload(payload).map(CatchEvent::Usages),
         _ => None,
     }
 }

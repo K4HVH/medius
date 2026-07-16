@@ -3,7 +3,7 @@
 //! class (mouse, keyboard, media), and emits it through the normal engine (rate pacing, movement riding).
 
 use crate::protocol::opcode::{
-    CLIP_F_EDGES, CLIP_F_WHEEL, CLIP_F_XY, CLIP_TAG_GAP, INJ_BTN, INJ_KEY, INJ_MEDIA,
+    CLIP_F_EDGES, CLIP_F_WHEEL, CLIP_F_XY, CLIP_TAG_GAP,
 };
 use crate::types::lock::blanket_scope;
 use crate::types::{Action, Blanket, Button, Input, Key, MediaKey};
@@ -126,15 +126,6 @@ impl ClipStatus {
     }
 }
 
-/// Map the field-generic [`Input`] to its INJECT wire class and id.
-pub(crate) fn input_class_id(input: Input) -> (u8, u16) {
-    match input {
-        Input::Button(b) => (INJ_BTN, b.as_id() as u16),
-        Input::Key(k) => (INJ_KEY, k.usage() as u16),
-        Input::Media(m) => (INJ_MEDIA, m.usage()),
-    }
-}
-
 /// Max edges on one [`ClipBuilder::frame`], matching the firmware's `CLIP_EDGES_MAX`. More than this on a
 /// single frame is rejected by the box (the frame faults); it is far past any realistic single report.
 pub const CLIP_EDGES_MAX: usize = 8;
@@ -204,7 +195,7 @@ impl ClipBuilder {
         if flags & CLIP_F_EDGES != 0 {
             self.bytes.push(edges.len() as u8);
             for &(input, action) in edges {
-                let (class, id) = input_class_id(input);
+                let (class, id) = input.class_id();
                 self.bytes.push(class);
                 self.bytes.extend_from_slice(&id.to_le_bytes());
                 self.bytes.push(action.as_u8());

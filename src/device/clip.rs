@@ -8,7 +8,7 @@ use crate::protocol::opcode::{
     CLIP_COND_ANY_CLASS, CLIP_COND_ANY_ID, CLIP_OP_DISARM, CLIP_OP_STOP, MAX_PAYLOAD, Q_CLIP,
 };
 use crate::protocol::{FrameType, Resp, parse_resp};
-use crate::types::{ClipBuilder, ClipConfig, ClipStatus, Input, input_class_id};
+use crate::types::{ClipBuilder, ClipConfig, ClipStatus, Usage};
 
 use super::Device;
 
@@ -90,10 +90,10 @@ impl ClipHandle {
 
     /// `CLIP_CTRL(ARM_CATCH)`: arm an on-device trigger. Playback starts locally on a physical press of
     /// `trigger`, with the given [`ClipConfig`], so even the first frame has no host round-trip. Field-
-    /// generic like [`inject`](crate::Device::inject): the trigger is any [`Input`] (a button, key, or media
+    /// generic like [`inject`](crate::Device::inject): the trigger is any [`Usage`](crate::Usage) (a button, key, or media
     /// usage), or use [`arm_catch_any`](Self::arm_catch_any) for any input. Fire-and-forget.
-    pub fn arm_catch(&self, trigger: impl Into<Input>, config: &ClipConfig) -> Result<()> {
-        let (class, id) = input_class_id(trigger.into());
+    pub fn arm_catch(&self, trigger: impl Into<Usage>, config: &ClipConfig) -> Result<()> {
+        let (class, id) = trigger.into().class_id();
         self.link.send(
             FrameType::ClipCtrl,
             &clip_arm_payload(class, id, config.autolock_scope()),

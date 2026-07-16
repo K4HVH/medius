@@ -6,7 +6,7 @@ use parking_lot::Mutex;
 
 use crate::error::{Error, Result};
 use crate::protocol::command::{catch_payload, inject_payload, lock_payload};
-use crate::protocol::opcode::{INJ_BTN, INJ_KEY, INJ_MEDIA, Q_VERSION};
+use crate::protocol::opcode::Q_VERSION;
 use crate::protocol::{FrameDecoder, FrameType, Resp, encode, parse_resp};
 use crate::transport::Transport;
 use crate::types::Version;
@@ -130,17 +130,17 @@ fn reconnect(ctx: &ReconnectCtx) -> Result<()> {
 }
 
 fn reapply_held(ctx: &ReconnectCtx) -> Result<()> {
-    let (held, held_keys, held_media, held_locks, catch) = {
+    let (held, held_locks, catch) = {
         let d = ctx.desired.lock();
         (
             d.held().collect::<Vec<_>>(),
-            d.held_keys().collect::<Vec<_>>(),
-            d.held_media().collect::<Vec<_>>(),
             d.held_locks().collect::<Vec<_>>(),
             d.catch(),
         )
     };
-    for (button, action) in held {
+    // Re-assert every held momentary usage (button/key/media), class-blind.
+    for (usage, action) in held {
+        let (class, id) = usage.class_id();
         let seq = ctx.seq.fetch_add(1, Ordering::Relaxed);
         write_frame(
             &ctx.transport,
@@ -148,29 +148,7 @@ fn reapply_held(ctx: &ReconnectCtx) -> Result<()> {
             &ctx.counters,
             seq,
             FrameType::Inject,
-            &inject_payload(INJ_BTN, button.as_id() as u16, action.as_u8()),
-        )?;
-    }
-    for (key, action) in held_keys {
-        let seq = ctx.seq.fetch_add(1, Ordering::Relaxed);
-        write_frame(
-            &ctx.transport,
-            &ctx.write_lock,
-            &ctx.counters,
-            seq,
-            FrameType::Inject,
-            &inject_payload(INJ_KEY, key.usage() as u16, action.as_u8()),
-        )?;
-    }
-    for (key, action) in held_media {
-        let seq = ctx.seq.fetch_add(1, Ordering::Relaxed);
-        write_frame(
-            &ctx.transport,
-            &ctx.write_lock,
-            &ctx.counters,
-            seq,
-            FrameType::Inject,
-            &inject_payload(INJ_MEDIA, key.usage(), action.as_u8()),
+            &inject_payload(class, id, action.as_u8()),
         )?;
     }
     // Re-assert held locks: like injection, the firmware silence-clears every lock after the ~1 s

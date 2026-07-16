@@ -125,7 +125,7 @@ fn reapply_re_emits_only_held_overrides() {
     device.press(Button::Left).unwrap();
     device.force_release(Button::Side1).unwrap();
     device.press(Button::Middle).unwrap();
-    device.soft_release(Button::Middle).unwrap();
+    device.release(Button::Middle).unwrap();
     mock.clear_recorded();
 
     device.reapply().unwrap();
@@ -142,13 +142,13 @@ fn reapply_re_emits_only_held_overrides() {
 
 #[test]
 fn reapply_re_emits_held_locks_but_not_released_ones() {
-    use crate::{Blanket, Key, LockDirection, LockTarget};
+    use crate::{Axis, Blanket, Key, LockDirection};
     let mock = MockBox::new();
     let device = Device::with_mock(mock.clone());
-    device.lock(LockTarget::X, LockDirection::Positive).unwrap();
-    device.lock_key(Key::A, LockDirection::Both).unwrap();
-    device.lock_all(Blanket::Keys).unwrap();
-    device.unlock_key(Key::A, LockDirection::Both).unwrap(); // released -> must not reappear
+    device.lock(Axis::X, LockDirection::Positive).unwrap();
+    device.lock(Key::A, LockDirection::Both).unwrap();
+    device.lock_all(Blanket::Keys, LockDirection::Both).unwrap();
+    device.unlock(Key::A, LockDirection::Both).unwrap(); // released -> must not reappear
     mock.clear_recorded();
 
     device.reapply().unwrap();
@@ -158,8 +158,9 @@ fn reapply_re_emits_held_locks_but_not_released_ones() {
         .filter(|f| f.ty == FrameType::Lock)
         .map(|f| f.payload.clone())
         .collect();
-    // Only the two still-held locks, each re-asserted with state=1; key A is gone.
-    assert_eq!(locks, vec![vec![0, 0, 0, 1, 1], vec![3, 0, 0, 0, 1]]);
+    // Only the two still-held locks, each re-asserted with state=1; key A is gone. Ordered by the
+    // desired-set key (class,id,dir): the KEY blanket (1, 0xFFFF, both) before the AXIS X+ (3, 0, pos).
+    assert_eq!(locks, vec![vec![1, 0xFF, 0xFF, 0, 1], vec![3, 0, 0, 1, 1]]);
     drop(device);
 }
 

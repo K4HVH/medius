@@ -52,42 +52,29 @@ fn kbd_caps_decodes() {
 #[cfg(feature = "mock")]
 #[test]
 fn pushed_keyboard_and_media_events_arrive_on_the_stream() {
-    use crate::{CatchEvent, CatchMask, Device, Key, KeyboardEvent, MediaEvent, MediaKey, MockBox};
+    use crate::{CatchEvent, CatchMask, Device, Key, MediaKey, MockBox, Usage};
     use std::time::Duration;
     let mock = MockBox::new();
     let device = Device::with_mock(mock.clone());
-    let stream = device.catch_events(CatchMask::KEYS).unwrap();
+    let stream = device.catch_events(CatchMask::KEYS | CatchMask::MEDIA).unwrap();
 
-    mock.push_kb_event(
+    // A keyboard snapshot: LeftShift modifier (0xE1) + keys A, B — all one USAGE_EVENT of KEY usages.
+    mock.push_usages(
         0,
-        &KeyboardEvent {
-            modifiers: 0x02, // LeftShift
-            keys: vec![Key::A, Key::B],
-        },
+        &[Usage::from(Key::LEFT_SHIFT), Usage::from(Key::A), Usage::from(Key::B)],
     );
-    mock.push_cons_event(
-        1,
-        &MediaEvent {
-            keys: vec![MediaKey::VOLUME_UP],
-        },
-    );
+    // A media snapshot: one MEDIA usage.
+    mock.push_usages(1, &[Usage::from(MediaKey::VOLUME_UP)]);
 
-    let e1 = stream
-        .recv_timeout(Duration::from_secs(1))
-        .expect("a keyboard event arrived");
-    let CatchEvent::Keyboard(kb) = e1 else {
-        panic!("expected a keyboard event, got {e1:?}");
+    let CatchEvent::Usages(kb) = stream.recv_timeout(Duration::from_secs(1)).expect("keys") else {
+        panic!("expected a usage event");
     };
-    assert_eq!(kb.modifiers, 0x02);
-    assert!(kb.is_pressed(Key::A));
-    assert!(kb.is_pressed(Key::LEFT_SHIFT)); // read from the modifier bitmap
-    assert!(!kb.is_pressed(Key::C));
+    assert!(kb.is_held(Key::A));
+    assert!(kb.is_held(Key::LEFT_SHIFT)); // modifiers are key usages 0xE0..0xE7
+    assert!(!kb.is_held(Key::C));
 
-    let e2 = stream
-        .recv_timeout(Duration::from_secs(1))
-        .expect("a media event arrived");
-    let CatchEvent::Media(m) = e2 else {
-        panic!("expected a media event, got {e2:?}");
+    let CatchEvent::Usages(m) = stream.recv_timeout(Duration::from_secs(1)).expect("media") else {
+        panic!("expected a usage event");
     };
-    assert!(m.is_pressed(MediaKey::VOLUME_UP));
+    assert!(m.is_held(MediaKey::VOLUME_UP));
 }

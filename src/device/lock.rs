@@ -1,89 +1,75 @@
 use crate::error::Result;
 use crate::protocol::FrameType;
 use crate::protocol::command::lock_payload;
-use crate::types::{Blanket, Key, LockClass, LockDirection, LockTarget, MediaKey};
+use crate::protocol::opcode::{
+    LOCK_AXIS_WHEEL, LOCK_AXIS_X, LOCK_AXIS_Y, LOCK_CLS_AXIS, LOCK_CLS_BTN, LOCK_CLS_KEY,
+    LOCK_CLS_MEDIA, LOCK_ID_ALL,
+};
+use crate::types::{Axis, Blanket, LockDirection, LockTarget};
 
 use super::Device;
 
 impl Device {
-    fn send_lock(&self, class: LockClass, usage: u16, direction: u8, on: bool) -> Result<()> {
-        self.link
-            .desired()
-            .lock()
-            .apply_lock((class.as_u8(), usage, direction), on);
+    fn send_lock(&self, class: u8, id: u16, direction: LockDirection, on: bool) -> Result<()> {
+        let dir = direction.as_u8();
+        self.link.desired().lock().apply_lock((class, id, dir), on);
         self.link.send(
             FrameType::Lock,
-            &lock_payload(class.as_u8(), usage, direction, on as u8),
+            &lock_payload(class, id, dir, u8::from(on)),
         )
     }
 
-    /// `LOCK` — block a mouse axis or button edge so physical input is masked. Injection still drives it.
-    pub fn lock(&self, target: LockTarget, direction: LockDirection) -> Result<()> {
-        self.send_lock(
-            LockClass::Mouse,
-            target.as_u8() as u16,
-            direction.as_u8(),
-            true,
-        )
+    /// `LOCK` — block physical input on a target while host injection still drives it. The target is a
+    /// momentary usage (button/key/media) or a relative axis; `direction` is a press/release edge for a
+    /// usage, or a +/- sign for an axis. Reverts on control-PC silence.
+    pub fn lock(&self, target: impl Into<LockTarget>, direction: LockDirection) -> Result<()> {
+        let (class, id) = target_class_id(target.into());
+        self.send_lock(class, id, direction, true)
     }
 
-    /// `LOCK` — release a previously locked mouse axis or button edge.
-    pub fn unlock(&self, target: LockTarget, direction: LockDirection) -> Result<()> {
-        self.send_lock(
-            LockClass::Mouse,
-            target.as_u8() as u16,
-            direction.as_u8(),
-            false,
-        )
+    /// Release a lock on the given target/direction.
+    pub fn unlock(&self, target: impl Into<LockTarget>, direction: LockDirection) -> Result<()> {
+        let (class, id) = target_class_id(target.into());
+        self.send_lock(class, id, direction, false)
     }
 
-    /// `LOCK` — block a physical keyboard key or modifier. A press lock stops new hand presses; a
-    /// release lock latches a held key down. Injection still drives it.
-    pub fn lock_key(&self, key: Key, direction: LockDirection) -> Result<()> {
-        self.send_lock(LockClass::Key, key.usage() as u16, direction.as_u8(), true)
+    /// `LOCK` a relative axis by sign — convenience for `lock(axis, direction)`.
+    pub fn lock_axis(&self, axis: Axis, direction: LockDirection) -> Result<()> {
+        self.lock(axis, direction)
     }
 
-    /// `LOCK` — release a previously locked keyboard key or modifier.
-    pub fn unlock_key(&self, key: Key, direction: LockDirection) -> Result<()> {
-        self.send_lock(LockClass::Key, key.usage() as u16, direction.as_u8(), false)
+    /// Release an axis lock.
+    pub fn unlock_axis(&self, axis: Axis, direction: LockDirection) -> Result<()> {
+        self.unlock(axis, direction)
     }
 
-    /// `LOCK` — block a physical media usage.
-    pub fn lock_media(&self, key: MediaKey) -> Result<()> {
-        self.send_lock(LockClass::Media, key.usage(), 0, true)
+    /// `LOCK` a whole [`Blanket`] group (the aim, the wheel, or every button / key / media usage).
+    pub fn lock_all(&self, what: Blanket, direction: LockDirection) -> Result<()> {
+        self.blanket(what, direction, true)
     }
 
-    /// `LOCK` — release a previously locked media usage.
-    pub fn unlock_media(&self, key: MediaKey) -> Result<()> {
-        self.send_lock(LockClass::Media, key.usage(), 0, false)
+    /// Release a blanket lock.
+    pub fn unlock_all(&self, what: Blanket, direction: LockDirection) -> Result<()> {
+        self.blanket(what, direction, false)
     }
 
-    /// `LOCK` — blanket-block a whole input group: the cursor aim (X+Y), the wheel, every mouse button,
-    /// every key, or every media usage.
-    pub fn lock_all(&self, what: Blanket) -> Result<()> {
-        self.set_blanket(what, true)
-    }
-
-    /// `LOCK` — release a blanket whole-group lock.
-    pub fn unlock_all(&self, what: Blanket) -> Result<()> {
-        self.set_blanket(what, false)
-    }
-
-    fn set_blanket(&self, what: Blanket, on: bool) -> Result<()> {
-        let both = LockDirection::Both.as_u8();
-        match what.class() {
-            Some(class) => self.send_lock(class, 0, 0, on),
-            None => match what {
-                // The axis groups have no whole-class lock: block their targets directly, both directions.
-                Blanket::Aim => {
-                    self.send_lock(LockClass::Mouse, LockTarget::X.as_u8() as u16, both, on)?;
-                    self.send_lock(LockClass::Mouse, LockTarget::Y.as_u8() as u16, both, on)
-                }
-                Blanket::Wheel => {
-                    self.send_lock(LockClass::Mouse, LockTarget::Wheel.as_u8() as u16, both, on)
-                }
-                _ => unreachable!("class() is Some for non-axis groups"),
-            },
+    fn blanket(&self, what: Blanket, direction: LockDirection, on: bool) -> Result<()> {
+        match what {
+            Blanket::Aim => {
+                self.send_lock(LOCK_CLS_AXIS, LOCK_AXIS_X, direction, on)?;
+                self.send_lock(LOCK_CLS_AXIS, LOCK_AXIS_Y, direction, on)
+            }
+            Blanket::Wheel => self.send_lock(LOCK_CLS_AXIS, LOCK_AXIS_WHEEL, direction, on),
+            Blanket::Buttons => self.send_lock(LOCK_CLS_BTN, LOCK_ID_ALL, direction, on),
+            Blanket::Keys => self.send_lock(LOCK_CLS_KEY, LOCK_ID_ALL, direction, on),
+            Blanket::Media => self.send_lock(LOCK_CLS_MEDIA, LOCK_ID_ALL, direction, on),
         }
+    }
+}
+
+fn target_class_id(target: LockTarget) -> (u8, u16) {
+    match target {
+        LockTarget::Axis(a) => (LOCK_CLS_AXIS, a.as_u16()),
+        LockTarget::Usage(u) => u.class_id(),
     }
 }

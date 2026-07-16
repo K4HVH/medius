@@ -9,7 +9,8 @@ pub const SOF: u8 = 0xA5;
 pub const MAX_PAYLOAD: usize = 512;
 
 /// Protocol version in `RESP(VERSION)` (§4.1); the handshake requires this exact value.
-pub const PROTO_VER: u8 = 2; // v2: the unified-input-core redesign (generic INJECT/MOVE/LOCK, class-aware RATE)
+pub const PROTO_VER: u8 = 3; // v3: input-taxonomy unification (uniform LOCK class+id, list RESP(LOCKS),
+// MOTION/USAGE catch events, media its own catch bit)
 
 /// `INJECT` class byte: the momentary-usage field kind.
 pub const INJ_BTN: u8 = 0;
@@ -76,6 +77,7 @@ pub const BTN_RIGHT: u8 = 1;
 pub const BTN_MIDDLE: u8 = 2;
 pub const BTN_SIDE1: u8 = 3;
 pub const BTN_SIDE2: u8 = 4;
+#[allow(dead_code)]
 pub const BTN_COUNT: u8 = 5;
 
 /// Clear our injected press; defer to physical state.
@@ -108,12 +110,33 @@ pub const CATCH_MOTION: u8 = 0x01;
 pub const CATCH_WHEEL: u8 = 0x02;
 /// `CATCH` mask: stream reports with a button edge (§3.9).
 pub const CATCH_BUTTONS: u8 = 0x04;
-/// `CATCH` mask: stream keyboard + media changes (`KB_EVENT` / `CONS_EVENT`, v2.0.0).
+/// `CATCH` mask: stream keyboard changes (§3.9).
 pub const CATCH_KEYS: u8 = 0x08;
+/// `CATCH` mask: stream media (Consumer) usage changes (§3.9, its own bit as of proto v3).
+pub const CATCH_MEDIA: u8 = 0x10;
 /// `CATCH` mask: every class (§3.9).
-pub const CATCH_ALL: u8 = 0x0F;
+pub const CATCH_ALL: u8 = 0x1F;
 /// Valid `CATCH` mask bits; the firmware ignores any others (§3.9).
-pub const CATCH_MASK: u8 = 0x0F;
+pub const CATCH_MASK: u8 = 0x1F;
+
+/// `LOCK` class byte (§3.8): momentary usages share `INJECT`'s space, plus a relative-axis class.
+pub const LOCK_CLS_BTN: u8 = 0;
+pub const LOCK_CLS_KEY: u8 = 1;
+pub const LOCK_CLS_MEDIA: u8 = 2;
+pub const LOCK_CLS_AXIS: u8 = 3;
+/// `LOCK` id sentinel: the whole class (a blanket lock).
+pub const LOCK_ID_ALL: u16 = 0xFFFF;
+/// `LOCK` axis ids (for `LOCK_CLS_AXIS`).
+pub const LOCK_AXIS_X: u16 = 0;
+pub const LOCK_AXIS_Y: u16 = 1;
+pub const LOCK_AXIS_WHEEL: u16 = 2;
+/// `LOCK` direction byte: both / positive-or-press / negative-or-release.
+pub const LOCK_DIR_BOTH: u8 = 0;
+pub const LOCK_DIR_POS: u8 = 1;
+pub const LOCK_DIR_NEG: u8 = 2;
+/// `RESP(LOCKS)` per-entry dirbits (§4.8): b0 = positive/press locked, b1 = negative/release locked.
+pub const LOCK_DIRBIT_POS: u8 = 0x01;
+pub const LOCK_DIRBIT_NEG: u8 = 0x02;
 
 /// `CAPS` kbd_flags: keys are an NKRO bitmap (`n_keys` = 0xFF), else a keycode array (§4.4).
 pub const KBC_NKRO: u8 = 0x01;
@@ -178,12 +201,10 @@ pub enum FrameType {
     Lock = 0x0A,
     /// `CATCH` — subscribe to the physical-input event stream (PC→box).
     Catch = 0x0B,
-    /// `MOUSE_EVENT` — one unsolicited mouse snapshot; `SEQ` is a rolling counter (box→PC).
-    MouseEvent = 0x0C,
-    /// `KB_EVENT` — one unsolicited keyboard snapshot (modifiers + pressed keys); box→PC (v2.0.0).
-    KbEvent = 0x0F,
-    /// `CONS_EVENT` — one unsolicited media snapshot (active Consumer usages); box→PC (v2.0.0).
-    ConsEvent = 0x10,
+    /// `MOTION_EVENT` — one unsolicited relative-axis catch event (dx/dy/dz); `SEQ` rolling (box→PC).
+    MotionEvent = 0x0C,
+    /// `USAGE_EVENT` — one unsolicited held-usage snapshot (class-tagged button/key/media); box→PC.
+    UsageEvent = 0x0F,
     /// `OPTION` — set a persistent box option by id (imperfect-clone, movement riding, emit pacing, box
     /// name) (PC→box).
     Option = 0x11,
@@ -220,9 +241,8 @@ impl TryFrom<u8> for FrameType {
             0x09 => FrameType::Led,
             0x0A => FrameType::Lock,
             0x0B => FrameType::Catch,
-            0x0C => FrameType::MouseEvent,
-            0x0F => FrameType::KbEvent,
-            0x10 => FrameType::ConsEvent,
+            0x0C => FrameType::MotionEvent,
+            0x0F => FrameType::UsageEvent,
             0x11 => FrameType::Option,
             0x12 => FrameType::ClipAppend,
             0x13 => FrameType::ClipCtrl,
