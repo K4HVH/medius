@@ -6,7 +6,7 @@ use crate::types::Button;
 /// addressed field while host injection still drives it.
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum LockClass {
+pub(crate) enum LockClass {
     Mouse = 0,
     Key = 1,
     Media = 2,
@@ -22,22 +22,61 @@ impl LockClass {
     }
 }
 
-/// A whole-class blanket lock: every physical key, every media usage, or every mouse button.
+/// A whole-group blanket lock: the cursor aim (X+Y), the wheel, every mouse button, every key, or every
+/// media usage. Used both by [`lock_all`](crate::Device::lock_all) and as the clip
+/// [`ClipConfig::autolock`](crate::ClipConfig::autolock) scope.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Blanket {
-    Keys,
-    Media,
+    /// The X and Y cursor axes.
+    Aim,
+    /// The wheel.
+    Wheel,
+    /// Every mouse button.
     Buttons,
+    /// Every keyboard key and modifier.
+    Keys,
+    /// Every media (Consumer) usage.
+    Media,
 }
 
 impl Blanket {
-    pub(crate) fn class(self) -> LockClass {
-        match self {
+    /// Every input group, for a clip auto-lock over all physical input:
+    /// [`ClipConfig::new()`](crate::ClipConfig::new)`.autolock(Blanket::ALL)`.
+    pub const ALL: &'static [Blanket] = &[
+        Blanket::Aim,
+        Blanket::Wheel,
+        Blanket::Buttons,
+        Blanket::Keys,
+        Blanket::Media,
+    ];
+
+    /// The single `LOCK` class this maps to, or `None` for the axis groups (Aim/Wheel), which lock per
+    /// target rather than by a whole-class blanket.
+    pub(crate) fn class(self) -> Option<LockClass> {
+        Some(match self {
             Blanket::Keys => LockClass::AllKeys,
             Blanket::Media => LockClass::AllMedia,
             Blanket::Buttons => LockClass::AllButtons,
+            Blanket::Aim | Blanket::Wheel => return None,
+        })
+    }
+
+    /// This group's clip auto-lock scope bit (`CLIP_LOCK_*`).
+    pub(crate) fn clip_lock_bit(self) -> u8 {
+        use crate::protocol::opcode::*;
+        match self {
+            Blanket::Aim => CLIP_LOCK_AIM,
+            Blanket::Wheel => CLIP_LOCK_WHEEL,
+            Blanket::Buttons => CLIP_LOCK_BUTTONS,
+            Blanket::Keys => CLIP_LOCK_KEYS,
+            Blanket::Media => CLIP_LOCK_MEDIA,
         }
     }
+}
+
+/// The autolock scope byte for a set of [`Blanket`] groups (an empty set = no autolock).
+pub(crate) fn blanket_scope(scope: &[Blanket]) -> u8 {
+    scope.iter().fold(0, |m, b| m | b.clip_lock_bit())
 }
 
 /// What a `LOCK` command targets; the wire `target` byte is `as_u8()`.

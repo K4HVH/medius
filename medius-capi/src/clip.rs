@@ -161,6 +161,28 @@ pub unsafe extern "C" fn medius_clip_builder_media(
     })
 }
 
+/// A one-edge frame for any input class: press/release `input` (a button, key, or media usage) with
+/// `action`. The field-generic form the press/release/key/media helpers wrap. Build the input with
+/// `medius_input_button`/`_key`/`_media`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn medius_clip_builder_edge(
+    b: *mut MediusClipBuilder,
+    input: MediusInput,
+    action: MediusAction,
+) -> MediusStatus {
+    guard_status(|| {
+        if b.is_null() {
+            return fail(MediusStatus::ErrInvalidArg, "null clip builder");
+        }
+        let Some(inp) = input_to_medius(input) else {
+            return fail(MediusStatus::ErrInvalidArg, "invalid clip edge input");
+        };
+        unsafe { &mut (*b).inner }.edge(inp, action.into());
+        clear_error();
+        MediusStatus::Ok
+    })
+}
+
 /// A general content frame: a motion delta (`dx`/`dy` cursor, `wheel`) plus `n` edges, each a
 /// (`MediusInput`, `MediusAction`) pair from the parallel `inputs`/`actions` arrays (null when `n` is 0).
 /// Build the inputs with `medius_input_button`/`_key`/`_media`.
@@ -254,17 +276,26 @@ pub unsafe extern "C" fn medius_clip_append(
     })
 }
 
-/// Begin playback from the ring head.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn medius_clip_start(clip: *mut MediusClip) -> MediusStatus {
-    with_clip(clip, |c| c.start())
+/// Build a `medius::ClipConfig` from the C config: the auto-lock groups it points at (NULL / 0 = none).
+unsafe fn clip_config_from(config: MediusClipConfig) -> medius::ClipConfig {
+    if config.autolock.is_null() || config.autolock_len == 0 {
+        return medius::ClipConfig::new();
+    }
+    let groups: Vec<medius::Blanket> = (0..config.autolock_len)
+        .map(|i| medius::Blanket::from(unsafe { *config.autolock.add(i) }))
+        .collect();
+    medius::ClipConfig::new().autolock(&groups)
 }
 
-/// Begin playback with clip-owned auto-lock: the box locks all physical input the host hasn't already
-/// locked and releases it on stop. For selective locking, use `medius_device_lock` + `medius_clip_start`.
+/// Begin playback from the ring head with `config` (the auto-lock scope, extensible). A config with an
+/// empty `autolock` plays with no auto-lock.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn medius_clip_start_autolock(clip: *mut MediusClip) -> MediusStatus {
-    with_clip(clip, |c| c.start_autolock())
+pub unsafe extern "C" fn medius_clip_start(
+    clip: *mut MediusClip,
+    config: MediusClipConfig,
+) -> MediusStatus {
+    let cfg = unsafe { clip_config_from(config) };
+    with_clip(clip, |c| c.start(&cfg))
 }
 
 /// Stop playback, flush the ring, release any clip-owned auto-lock.
@@ -273,25 +304,33 @@ pub unsafe extern "C" fn medius_clip_stop(clip: *mut MediusClip) -> MediusStatus
     with_clip(clip, |c| c.stop())
 }
 
-/// Set whether a later start (including a catch-triggered one) auto-locks, without starting.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn medius_clip_config(clip: *mut MediusClip, autolock: bool) -> MediusStatus {
-    with_clip(clip, |c| c.config(autolock))
-}
-
-/// Arm an on-device catch-trigger on a physical press of `button`.
+/// Arm an on-device catch-trigger on a physical press of `input` (a button, key, or media usage), starting
+/// with `config` when it fires. Build the input with `medius_input_button`/`_key`/`_media`; or use
+/// `medius_clip_arm_catch_any` for any input.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_clip_arm_catch(
     clip: *mut MediusClip,
-    button: MediusButton,
+    input: MediusInput,
+    config: MediusClipConfig,
 ) -> MediusStatus {
-    with_clip(clip, |c| c.arm_catch(Some(Button::from(button))))
+    let Some(inp) = input_to_medius(input) else {
+        return fail(
+            MediusStatus::ErrInvalidArg,
+            "invalid clip catch-trigger input",
+        );
+    };
+    let cfg = unsafe { clip_config_from(config) };
+    with_clip(clip, |c| c.arm_catch(inp, &cfg))
 }
 
-/// Arm an on-device catch-trigger on a physical press of any mouse button.
+/// Arm an on-device catch-trigger on any physical input (button, key, or media), starting with `config`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn medius_clip_arm_catch_any(clip: *mut MediusClip) -> MediusStatus {
-    with_clip(clip, |c| c.arm_catch(None))
+pub unsafe extern "C" fn medius_clip_arm_catch_any(
+    clip: *mut MediusClip,
+    config: MediusClipConfig,
+) -> MediusStatus {
+    let cfg = unsafe { clip_config_from(config) };
+    with_clip(clip, |c| c.arm_catch_any(&cfg))
 }
 
 /// Clear a pending catch-arm.

@@ -8,9 +8,10 @@ use crate::types::{Button, KeyboardEvent, MediaEvent};
 
 /// Which classes of physical input the box streams as `EVENT` frames (§3.9).
 ///
-/// The event payload is always the full snapshot ([`MouseEvent`]); the mask only gates which report
-/// changes trigger an emission — so [`CatchMask::BUTTONS`] alone stays sparse even though the mouse
-/// reports at roughly 1 kHz. Combine classes with `|`.
+/// Each emission is a full snapshot: the mouse classes yield a [`MouseEvent`], [`CatchMask::KEYS`]
+/// yields a [`KeyboardEvent`] or [`MediaEvent`]. The mask only gates which report changes trigger an
+/// emission — so [`CatchMask::BUTTONS`] alone stays sparse even though the mouse reports at roughly
+/// 1 kHz. Combine classes with `|`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct CatchMask(u8);
 

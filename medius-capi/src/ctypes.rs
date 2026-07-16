@@ -101,13 +101,15 @@ pub enum MediusLockDirection {
     Negative = 2,
 }
 
-/// A whole input class for a blanket lock.
+/// A whole input group for a blanket lock or a clip auto-lock scope.
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MediusBlanket {
     Keys = 0,
     Media = 1,
     Buttons = 2,
+    Aim = 3,
+    Wheel = 4,
 }
 
 /// A device log line's severity.
@@ -188,6 +190,16 @@ pub enum MediusLockTargetKind {
 pub struct MediusInput {
     pub kind: MediusInputKind,
     pub value: u16,
+}
+
+/// Playback options for a clip start or catch trigger (`medius_clip_start` / `_arm_catch`). The single
+/// place clip settings live; extensible as more are added. `autolock` points at `autolock_len`
+/// `MediusBlanket` groups the clip auto-locks while playing (NULL / 0 = no auto-lock).
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct MediusClipConfig {
+    pub autolock: *const MediusBlanket,
+    pub autolock_len: usize,
 }
 
 /// A relative-axis drive for `medius_device_move_axis`. For `Cursor`, `dx`/`dy` apply; for `Wheel`,

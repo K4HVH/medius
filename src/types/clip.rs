@@ -5,7 +5,35 @@
 use crate::protocol::opcode::{
     CLIP_F_EDGES, CLIP_F_WHEEL, CLIP_F_XY, CLIP_TAG_GAP, INJ_BTN, INJ_KEY, INJ_MEDIA,
 };
-use crate::types::{Action, Button, Input, Key, MediaKey};
+use crate::types::lock::blanket_scope;
+use crate::types::{Action, Blanket, Button, Input, Key, MediaKey};
+
+/// Playback options for a clip [`start`](crate::ClipHandle::start) or catch trigger
+/// ([`arm_catch`](crate::ClipHandle::arm_catch)). The single place clip settings live; extensible as more
+/// are added. Build with the chained setters, e.g. `ClipConfig::new().autolock(Blanket::ALL)`.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Hash)]
+pub struct ClipConfig {
+    autolock: u8, // CLIP_LOCK_* scope bitmask (0 = none)
+}
+
+impl ClipConfig {
+    /// Default options: no auto-lock.
+    pub fn new() -> ClipConfig {
+        ClipConfig::default()
+    }
+
+    /// Auto-lock these physical-input groups while the clip plays (clip-owned, released on stop). Pass
+    /// [`Blanket::ALL`] for every class, or a subset like `&[Blanket::Aim, Blanket::Buttons]`.
+    pub fn autolock(mut self, scope: &[Blanket]) -> ClipConfig {
+        self.autolock = blanket_scope(scope);
+        self
+    }
+
+    /// The auto-lock scope byte (`CLIP_LOCK_*` bits) this config carries.
+    pub(crate) fn autolock_scope(&self) -> u8 {
+        self.autolock
+    }
+}
 
 /// The device-side clip lifecycle state ([`ClipStatus::state`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
@@ -52,8 +80,30 @@ pub struct ClipStatus {
     pub overruns: u16,
     /// Append-sequence gaps seen (a dropped `CLIP_APPEND` frame).
     pub seq_gaps: u16,
-    /// Bitmask of clip-injected mouse buttons the clip is currently holding down (bit `b` = button id `b`).
+    /// Held-input flags: bits 0-4 are the clip-held mouse buttons (bit `b` = button id `b`), bit 5 is set
+    /// when the clip holds a key, bit 6 when it holds a media usage. Read it with
+    /// [`buttons_held`](Self::buttons_held) / [`keys_held`](Self::keys_held) / [`media_held`](Self::media_held).
     pub held: u8,
+}
+
+/// `held` bit 5: the clip is holding a key.
+const CLIP_HELD_KEYS: u8 = 0x20;
+/// `held` bit 6: the clip is holding a media usage.
+const CLIP_HELD_MEDIA: u8 = 0x40;
+
+impl ClipStatus {
+    /// Bitmask of clip-held mouse buttons (bit `b` = button id `b`).
+    pub fn buttons_held(&self) -> u8 {
+        self.held & 0x1F
+    }
+    /// Whether the clip is currently holding a keyboard key down.
+    pub fn keys_held(&self) -> bool {
+        self.held & CLIP_HELD_KEYS != 0
+    }
+    /// Whether the clip is currently holding a media usage down.
+    pub fn media_held(&self) -> bool {
+        self.held & CLIP_HELD_MEDIA != 0
+    }
 }
 
 impl ClipStatus {
@@ -77,7 +127,7 @@ impl ClipStatus {
 }
 
 /// Map the field-generic [`Input`] to its INJECT wire class and id.
-fn input_class_id(input: Input) -> (u8, u16) {
+pub(crate) fn input_class_id(input: Input) -> (u8, u16) {
     match input {
         Input::Button(b) => (INJ_BTN, b.as_id() as u16),
         Input::Key(k) => (INJ_KEY, k.usage() as u16),

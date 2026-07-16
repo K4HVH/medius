@@ -733,25 +733,57 @@ fn clip_control_parity() {
     assert_parity(
         |d| {
             let clip = d.clip();
-            clip.start().unwrap();
-            clip.start_autolock().unwrap();
-            clip.config(true).unwrap();
-            clip.arm_catch(Some(medius::Button::Right)).unwrap();
-            clip.arm_catch(None).unwrap();
+            let none = medius::ClipConfig::new();
+            let all = medius::ClipConfig::new().autolock(medius::Blanket::ALL);
+            let keys = medius::ClipConfig::new().autolock(&[medius::Blanket::Keys]);
+            clip.start(&none).unwrap();
+            clip.start(&all).unwrap();
+            clip.arm_catch(medius::Button::Right, &none).unwrap();
+            clip.arm_catch(medius::Key::new(MEDIUS_KEY_A), &keys)
+                .unwrap();
+            clip.arm_catch(medius::MediaKey::new(0xCD), &none).unwrap();
+            clip.arm_catch_any(&all).unwrap();
             clip.disarm().unwrap();
             clip.stop().unwrap();
         },
         |dev| unsafe {
             let mut clip: *mut MediusClip = ptr::null_mut();
             assert_eq!(medius_device_clip(dev, &mut clip), MediusStatus::Ok);
-            assert_eq!(medius_clip_start(clip), MediusStatus::Ok);
-            assert_eq!(medius_clip_start_autolock(clip), MediusStatus::Ok);
-            assert_eq!(medius_clip_config(clip, true), MediusStatus::Ok);
+            let none = MediusClipConfig {
+                autolock: ptr::null(),
+                autolock_len: 0,
+            };
+            let all_groups = [
+                MediusBlanket::Aim,
+                MediusBlanket::Wheel,
+                MediusBlanket::Buttons,
+                MediusBlanket::Keys,
+                MediusBlanket::Media,
+            ];
+            let all = MediusClipConfig {
+                autolock: all_groups.as_ptr(),
+                autolock_len: all_groups.len(),
+            };
+            let key_group = [MediusBlanket::Keys];
+            let keys = MediusClipConfig {
+                autolock: key_group.as_ptr(),
+                autolock_len: key_group.len(),
+            };
+            assert_eq!(medius_clip_start(clip, none), MediusStatus::Ok);
+            assert_eq!(medius_clip_start(clip, all), MediusStatus::Ok);
             assert_eq!(
-                medius_clip_arm_catch(clip, MediusButton::Right),
+                medius_clip_arm_catch(clip, medius_input_button(MediusButton::Right), none),
                 MediusStatus::Ok
             );
-            assert_eq!(medius_clip_arm_catch_any(clip), MediusStatus::Ok);
+            assert_eq!(
+                medius_clip_arm_catch(clip, medius_input_key(MEDIUS_KEY_A), keys),
+                MediusStatus::Ok
+            );
+            assert_eq!(
+                medius_clip_arm_catch(clip, medius_input_media(0xCD), none),
+                MediusStatus::Ok
+            );
+            assert_eq!(medius_clip_arm_catch_any(clip, all), MediusStatus::Ok);
             assert_eq!(medius_clip_disarm(clip), MediusStatus::Ok);
             assert_eq!(medius_clip_stop(clip), MediusStatus::Ok);
             medius_clip_free(clip);

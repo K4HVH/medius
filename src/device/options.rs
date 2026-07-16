@@ -84,6 +84,6 @@ impl Device {
     /// `OPTION(NAME)` with an empty value — clear the custom name, reverting the box to its synthesized
     /// `Medius-XXXX` default. Fire-and-forget.
     pub fn clear_name(&self) -> Result<()> {
-        self.link.send(FrameType::Option, &name_payload(""))
+        self.set_name("")
     }
 }

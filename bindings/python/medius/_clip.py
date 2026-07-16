@@ -6,9 +6,25 @@ import ctypes
 from typing import Optional, Sequence, Tuple
 
 from . import _native
-from ._enums import Action, Button
+from ._enums import Action, Blanket, Button
 from ._errors import check
 from ._types import Input, ClipStatus, clip_status_from_c
+
+
+class ClipConfig:
+    """Playback options for a clip `start` or catch trigger. The single place clip settings live; extensible
+    as more are added. `autolock` is the list of `Blanket` groups to lock while playing (None/[] = none;
+    `list(Blanket)` for every class)."""
+
+    def __init__(self, autolock: Optional[Sequence[Blanket]] = None):
+        self.autolock = list(autolock) if autolock is not None else []
+
+    def _c(self):
+        """Build a (MediusClipConfig, backing array) pair; keep the array alive for the call's duration."""
+        groups = [int(b) for b in self.autolock]
+        arr = (_native.u8 * len(groups))(*groups)
+        ptr = ctypes.cast(arr, ctypes.POINTER(_native.u8)) if groups else ctypes.POINTER(_native.u8)()
+        return _native.MediusClipConfig(ptr, len(groups)), arr
 
 
 class ClipBuilder:
@@ -80,6 +96,12 @@ class ClipBuilder:
         check(_native.lib.medius_clip_builder_media(self._ptr, int(usage), int(action)))
         return self
 
+    def edge(self, input: Input, action: Action = Action.PRESS) -> "ClipBuilder":
+        """A one-edge frame for any `Input` (button/key/media) with an `Action` — the field-generic form the
+        press/release/key/media helpers wrap."""
+        check(_native.lib.medius_clip_builder_edge(self._ptr, input._c, int(action)))
+        return self
+
     def frame(
         self,
         dx: int = 0,
@@ -127,29 +149,27 @@ class ClipHandle:
         """Append the builder's entries to the ring (whole-entry frames, each with the next append seq)."""
         check(_native.lib.medius_clip_append(self._handle, builder._ptr))
 
-    def start(self):
-        """Begin playback from the ring head."""
-        check(_native.lib.medius_clip_start(self._handle))
-
-    def start_autolock(self):
-        """Begin playback with clip-owned auto-lock over all physical input (released on stop). For selective
-        locking, lock what you want with the device `lock` calls and use `start()`."""
-        check(_native.lib.medius_clip_start_autolock(self._handle))
+    def start(self, config: Optional[ClipConfig] = None):
+        """Begin playback from the ring head with a `ClipConfig` (its `autolock` scope, extensible). With no
+        config, plays with no auto-lock."""
+        cfg, _arr = (config or ClipConfig())._c()
+        check(_native.lib.medius_clip_start(self._handle, cfg))
 
     def stop(self):
         """Stop playback, flush the ring, release any clip-owned auto-lock."""
         check(_native.lib.medius_clip_stop(self._handle))
 
-    def config(self, autolock: bool):
-        """Set whether a later start auto-locks, without starting."""
-        check(_native.lib.medius_clip_config(self._handle, autolock))
+    def arm_catch(self, trigger: Input, config: Optional[ClipConfig] = None):
+        """Arm an on-device trigger: playback starts on a physical press of `trigger`, any `Input` (a button,
+        key, or media usage) built with `Input.button` / `Input.key` / `Input.media`, with `config` when it
+        fires. For any input, use `arm_catch_any`."""
+        cfg, _arr = (config or ClipConfig())._c()
+        check(_native.lib.medius_clip_arm_catch(self._handle, trigger._c, cfg))
 
-    def arm_catch(self, button: Optional[Button] = None):
-        """Arm an on-device trigger: playback starts on a physical press of `button` (or any if `None`)."""
-        if button is None:
-            check(_native.lib.medius_clip_arm_catch_any(self._handle))
-        else:
-            check(_native.lib.medius_clip_arm_catch(self._handle, int(button)))
+    def arm_catch_any(self, config: Optional[ClipConfig] = None):
+        """Arm a trigger on any physical input (button, key, or media), with `config` when it fires."""
+        cfg, _arr = (config or ClipConfig())._c()
+        check(_native.lib.medius_clip_arm_catch_any(self._handle, cfg))
 
     def disarm(self):
         """Clear a pending catch-arm."""

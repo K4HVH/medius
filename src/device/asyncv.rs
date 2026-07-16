@@ -8,7 +8,7 @@ use crate::protocol::opcode::{
 };
 use crate::protocol::{Resp, parse_resp};
 use crate::types::{
-    Action, Blanket, Button, Caps, CatchMask, CatchState, ClipBuilder, ClipStatus,
+    Action, Blanket, Button, Caps, CatchMask, CatchState, ClipBuilder, ClipConfig, ClipStatus,
     CountersSnapshot, DeviceInfo, EmitPace, EmitPaceStatus, Health, ImperfectStatus, Input, Key,
     LedMode, LedTarget, LockDirection, LockTarget, Locks, MediaKey, Motion, Rate, RebootTarget,
     Stats, Version,
@@ -421,15 +421,9 @@ impl AsyncClipHandle {
         self.inner.append(clip)
     }
 
-    /// Begin playback. Instant; see [`ClipHandle::start`](crate::ClipHandle::start).
-    pub fn start(&self) -> Result<()> {
-        self.inner.start()
-    }
-
-    /// Begin playback with clip-owned auto-lock (all input). Instant; see
-    /// [`ClipHandle::start_autolock`](crate::ClipHandle::start_autolock).
-    pub fn start_autolock(&self) -> Result<()> {
-        self.inner.start_autolock()
+    /// Begin playback with a [`ClipConfig`]. Instant; see [`ClipHandle::start`](crate::ClipHandle::start).
+    pub fn start(&self, config: &ClipConfig) -> Result<()> {
+        self.inner.start(config)
     }
 
     /// Stop playback, flush the ring, release the auto-lock. Instant; see
@@ -438,15 +432,16 @@ impl AsyncClipHandle {
         self.inner.stop()
     }
 
-    /// Set whether a later start auto-locks. Instant; see [`ClipHandle::config`](crate::ClipHandle::config).
-    pub fn config(&self, autolock: bool) -> Result<()> {
-        self.inner.config(autolock)
+    /// Arm an on-device catch-trigger on any [`Input`] (button/key/media) with a [`ClipConfig`]. Instant;
+    /// see [`ClipHandle::arm_catch`](crate::ClipHandle::arm_catch).
+    pub fn arm_catch(&self, trigger: impl Into<Input>, config: &ClipConfig) -> Result<()> {
+        self.inner.arm_catch(trigger, config)
     }
 
-    /// Arm an on-device catch-trigger. Instant; see
-    /// [`ClipHandle::arm_catch`](crate::ClipHandle::arm_catch).
-    pub fn arm_catch(&self, button: Option<Button>) -> Result<()> {
-        self.inner.arm_catch(button)
+    /// Arm a catch-trigger on any physical input with a [`ClipConfig`]. Instant; see
+    /// [`ClipHandle::arm_catch_any`](crate::ClipHandle::arm_catch_any).
+    pub fn arm_catch_any(&self, config: &ClipConfig) -> Result<()> {
+        self.inner.arm_catch_any(config)
     }
 
     /// Clear a pending catch-arm. Instant; see [`ClipHandle::disarm`](crate::ClipHandle::disarm).

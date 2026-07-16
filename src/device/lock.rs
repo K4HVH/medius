@@ -58,13 +58,32 @@ impl Device {
         self.send_lock(LockClass::Media, key.usage(), 0, false)
     }
 
-    /// `LOCK` — blanket-block a whole input class (every key, media usage, or mouse button).
+    /// `LOCK` — blanket-block a whole input group: the cursor aim (X+Y), the wheel, every mouse button,
+    /// every key, or every media usage.
     pub fn lock_all(&self, what: Blanket) -> Result<()> {
-        self.send_lock(what.class(), 0, 0, true)
+        self.set_blanket(what, true)
     }
 
-    /// `LOCK` — release a blanket whole-class lock.
+    /// `LOCK` — release a blanket whole-group lock.
     pub fn unlock_all(&self, what: Blanket) -> Result<()> {
-        self.send_lock(what.class(), 0, 0, false)
+        self.set_blanket(what, false)
+    }
+
+    fn set_blanket(&self, what: Blanket, on: bool) -> Result<()> {
+        let both = LockDirection::Both.as_u8();
+        match what.class() {
+            Some(class) => self.send_lock(class, 0, 0, on),
+            None => match what {
+                // The axis groups have no whole-class lock: block their targets directly, both directions.
+                Blanket::Aim => {
+                    self.send_lock(LockClass::Mouse, LockTarget::X.as_u8() as u16, both, on)?;
+                    self.send_lock(LockClass::Mouse, LockTarget::Y.as_u8() as u16, both, on)
+                }
+                Blanket::Wheel => {
+                    self.send_lock(LockClass::Mouse, LockTarget::Wheel.as_u8() as u16, both, on)
+                }
+                _ => unreachable!("class() is Some for non-axis groups"),
+            },
+        }
     }
 }

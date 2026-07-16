@@ -94,6 +94,8 @@ class Blanket(IntEnum):
     KEYS = 0
     MEDIA = 1
     BUTTONS = 2
+    AIM = 3
+    WHEEL = 4
 
 
 class LogLevel(IntEnum):

@@ -3,12 +3,12 @@ use std::sync::atomic::{AtomicU8, Ordering};
 
 use crate::error::{Error, Result};
 use crate::link::Link;
-use crate::protocol::command::{clip_arm_payload, clip_cfg_payload, clip_op_payload};
+use crate::protocol::command::{clip_arm_payload, clip_op_payload, clip_start_payload};
 use crate::protocol::opcode::{
-    CLIP_OP_CONFIG, CLIP_OP_DISARM, CLIP_OP_START, CLIP_OP_STOP, INJ_BTN, MAX_PAYLOAD, Q_CLIP,
+    CLIP_COND_ANY_CLASS, CLIP_COND_ANY_ID, CLIP_OP_DISARM, CLIP_OP_STOP, MAX_PAYLOAD, Q_CLIP,
 };
 use crate::protocol::{FrameType, Resp, parse_resp};
-use crate::types::{Button, ClipBuilder, ClipStatus};
+use crate::types::{ClipBuilder, ClipConfig, ClipStatus, Input, input_class_id};
 
 use super::Device;
 
@@ -71,18 +71,15 @@ impl ClipHandle {
         Ok(())
     }
 
-    /// `CLIP_CTRL(START)`: begin playback from the ring head. Fire-and-forget.
-    pub fn start(&self) -> Result<()> {
-        self.link
-            .send(FrameType::ClipCtrl, &clip_cfg_payload(CLIP_OP_START, false))
-    }
-
-    /// `CLIP_CTRL(START)` with clip-owned auto-lock: the box locks all physical input (mouse, keyboard,
-    /// media) the host hasn't already locked and releases exactly that on [`stop`](Self::stop). For selective
-    /// locking, lock what you want with [`lock`](crate::Device::lock) and use [`start`](Self::start).
-    pub fn start_autolock(&self) -> Result<()> {
-        self.link
-            .send(FrameType::ClipCtrl, &clip_cfg_payload(CLIP_OP_START, true))
+    /// `CLIP_CTRL(START)`: begin playback from the ring head with the given [`ClipConfig`]. A config with an
+    /// [`autolock`](ClipConfig::autolock) scope blocks those physical-input groups while playing (clip-owned,
+    /// released on [`stop`](Self::stop); a host lock is untouched); `&ClipConfig::new()` plays with no
+    /// auto-lock. Fire-and-forget.
+    pub fn start(&self, config: &ClipConfig) -> Result<()> {
+        self.link.send(
+            FrameType::ClipCtrl,
+            &clip_start_payload(config.autolock_scope()),
+        )
     }
 
     /// `CLIP_CTRL(STOP)`: stop playback, flush the ring, release any clip-owned auto-lock. Fire-and-forget.
@@ -91,22 +88,29 @@ impl ClipHandle {
             .send(FrameType::ClipCtrl, &clip_op_payload(CLIP_OP_STOP))
     }
 
-    /// `CLIP_CTRL(CONFIG)`: set whether a later start (including a catch-triggered one) auto-locks, without
-    /// starting. Fire-and-forget.
-    pub fn config(&self, autolock: bool) -> Result<()> {
+    /// `CLIP_CTRL(ARM_CATCH)`: arm an on-device trigger. Playback starts locally on a physical press of
+    /// `trigger`, with the given [`ClipConfig`], so even the first frame has no host round-trip. Field-
+    /// generic like [`inject`](crate::Device::inject): the trigger is any [`Input`] (a button, key, or media
+    /// usage), or use [`arm_catch_any`](Self::arm_catch_any) for any input. Fire-and-forget.
+    pub fn arm_catch(&self, trigger: impl Into<Input>, config: &ClipConfig) -> Result<()> {
+        let (class, id) = input_class_id(trigger.into());
         self.link.send(
             FrameType::ClipCtrl,
-            &clip_cfg_payload(CLIP_OP_CONFIG, autolock),
+            &clip_arm_payload(class, id, config.autolock_scope()),
         )
     }
 
-    /// `CLIP_CTRL(ARM_CATCH)`: arm an on-device trigger. Playback starts locally on a physical press of
-    /// `button` (any mouse button if `None`), so even the first frame has no host round-trip. Preload the
-    /// ring and optionally [`config`](Self::config) the auto-lock first. Fire-and-forget.
-    pub fn arm_catch(&self, button: Option<Button>) -> Result<()> {
-        let id = button.map(|b| b.as_id() as u16).unwrap_or(0xFFFF);
-        self.link
-            .send(FrameType::ClipCtrl, &clip_arm_payload(INJ_BTN, id))
+    /// `CLIP_CTRL(ARM_CATCH)` on any physical input: the next press of any button, key, or media usage fires
+    /// playback with the given [`ClipConfig`]. Fire-and-forget.
+    pub fn arm_catch_any(&self, config: &ClipConfig) -> Result<()> {
+        self.link.send(
+            FrameType::ClipCtrl,
+            &clip_arm_payload(
+                CLIP_COND_ANY_CLASS,
+                CLIP_COND_ANY_ID,
+                config.autolock_scope(),
+            ),
+        )
     }
 
     /// `CLIP_CTRL(DISARM)`: clear a pending catch-arm. Fire-and-forget.

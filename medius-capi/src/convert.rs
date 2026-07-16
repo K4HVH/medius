@@ -129,6 +129,8 @@ impl From<MediusBlanket> for Blanket {
             MediusBlanket::Keys => Blanket::Keys,
             MediusBlanket::Media => Blanket::Media,
             MediusBlanket::Buttons => Blanket::Buttons,
+            MediusBlanket::Aim => Blanket::Aim,
+            MediusBlanket::Wheel => Blanket::Wheel,
         }
     }
 }
