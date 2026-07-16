@@ -576,7 +576,8 @@ def emit_pace_status_from_c(c) -> EmitPaceStatus:
 @dataclass
 class ClipStatus:
     """The device-side clip ring and playback status. `free`/`used` pace top-ups; `state == FAULTED`
-    means re-sync (stop + rebuild)."""
+    means re-sync (stop + rebuild). `held` is the held-usage snapshot: the buttons, keys, and media the
+    clip is holding down, keyed like a `UsageSnapshot`."""
 
     state: ClipState
     free: int
@@ -585,10 +586,15 @@ class ClipStatus:
     underruns: int
     overruns: int
     seq_gaps: int
-    held: int
+    held: List["Input"] = field(default_factory=list)
+
+    def is_held(self, usage: "Input") -> bool:
+        return any(u == usage for u in self.held)
 
 
 def clip_status_from_c(c) -> ClipStatus:
+    n = min(int(c.held_n), _native.MEDIUS_MAX_USAGES)
+    held = [_input_copy(c.held[i]) for i in range(n)]
     return ClipStatus(
         ClipState(c.state),
         c.free,
@@ -597,8 +603,24 @@ def clip_status_from_c(c) -> ClipStatus:
         c.underruns,
         c.overruns,
         c.seq_gaps,
-        c.held,
+        held,
     )
+
+
+def clip_status_to_c(s) -> "_native.MediusClipStatus":
+    c = _native.MediusClipStatus()
+    c.state = int(s.state)
+    c.free = s.free
+    c.used = s.used
+    c.ticks = s.ticks
+    c.underruns = s.underruns
+    c.overruns = s.overruns
+    c.seq_gaps = s.seq_gaps
+    n = min(len(s.held), _native.MEDIUS_MAX_USAGES)
+    c.held_n = n
+    for i in range(n):
+        c.held[i] = s.held[i]._c
+    return c
 
 
 def counters_from_c(c) -> Counters:

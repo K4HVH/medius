@@ -194,7 +194,8 @@ class MediusClipStatus(ctypes.Structure):
         ("underruns", u16),
         ("overruns", u16),
         ("seq_gaps", u16),
-        ("held", u8),
+        ("held_n", u16),
+        ("held", MediusInput * MEDIUS_MAX_USAGES),
     ]
 
 
@@ -351,6 +352,7 @@ _decl("medius_lock_target_usage", MediusLockTarget, [MediusInput])
 _decl("medius_locks_is_locked", c_bool, [ctypes.POINTER(MediusLocks), MediusLockTarget, u8])
 _decl("medius_rate_native_hz", c_bool, [MediusRate, ctypes.POINTER(ctypes.c_float)])
 _decl("medius_usage_event_is_held", c_bool, [ctypes.POINTER(MediusUsageEvent), MediusInput])
+_decl("medius_clip_status_is_held", c_bool, [ctypes.POINTER(MediusClipStatus), MediusInput])
 _decl("medius_caps_has_mouse", c_bool, [MediusCaps])
 _decl("medius_caps_has_keyboard", c_bool, [MediusCaps])
 _decl("medius_caps_is_composite", c_bool, [MediusCaps])

@@ -4,7 +4,7 @@
 
 use crate::protocol::opcode::{CLIP_F_EDGES, CLIP_F_WHEEL, CLIP_F_XY, CLIP_TAG_GAP};
 use crate::types::lock::blanket_scope;
-use crate::types::{Action, Blanket, Button, Key, MediaKey, Usage};
+use crate::types::{Action, Blanket, Button, Class, Key, MediaKey, Usage};
 
 /// Playback options for a clip [`start`](crate::ClipHandle::start) or catch trigger
 /// ([`arm_catch`](crate::ClipHandle::arm_catch)). The single place clip settings live; extensible as more
@@ -62,7 +62,7 @@ impl ClipState {
 
 /// A snapshot of the device-side clip ring and playback counters (§4.15). `free`/`used` pace top-ups (append
 /// only while `free` has headroom); `state == `[`ClipState::Faulted`] means re-sync (stop + rebuild).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
 pub struct ClipStatus {
     /// The lifecycle state.
     pub state: ClipState,
@@ -78,38 +78,34 @@ pub struct ClipStatus {
     pub overruns: u16,
     /// Append-sequence gaps seen (a dropped `CLIP_APPEND` frame).
     pub seq_gaps: u16,
-    /// Held-input flags: bits 0-4 are the clip-held mouse buttons (bit `b` = button id `b`), bit 5 is set
-    /// when the clip holds a key, bit 6 when it holds a media usage. Read it with
-    /// [`buttons_held`](Self::buttons_held) / [`keys_held`](Self::keys_held) / [`media_held`](Self::media_held).
-    pub held: u8,
+    /// The usages the clip is currently holding down: buttons, keys, and media in one list, keyed exactly
+    /// like a catch [`UsageSnapshot`](crate::UsageSnapshot). Test one with [`is_held`](Self::is_held).
+    pub held: Vec<Usage>,
 }
 
-/// `held` bit 5: the clip is holding a key.
-const CLIP_HELD_KEYS: u8 = 0x20;
-/// `held` bit 6: the clip is holding a media usage.
-const CLIP_HELD_MEDIA: u8 = 0x40;
-
 impl ClipStatus {
-    /// Bitmask of clip-held mouse buttons (bit `b` = button id `b`).
-    pub fn buttons_held(&self) -> u8 {
-        self.held & 0x1F
-    }
-    /// Whether the clip is currently holding a keyboard key down.
-    pub fn keys_held(&self) -> bool {
-        self.held & CLIP_HELD_KEYS != 0
-    }
-    /// Whether the clip is currently holding a media usage down.
-    pub fn media_held(&self) -> bool {
-        self.held & CLIP_HELD_MEDIA != 0
+    /// Whether the clip is currently holding `usage` (a button, key, or media usage) down.
+    pub fn is_held(&self, usage: impl Into<Usage>) -> bool {
+        let u = usage.into();
+        self.held.contains(&u)
     }
 }
 
 impl ClipStatus {
     /// Decode a `RESP(CLIP)` payload (§4.15): `[what][state u8][free u32][used u32][ticks u32]
-    /// [underruns u16][overruns u16][seq_gaps u16][held u8]`, all little-endian (21 bytes).
+    /// [underruns u16][overruns u16][seq_gaps u16][n u8]` then `n × [class u8][id u16 LE]` (the held-usage
+    /// snapshot), all little-endian.
     pub(crate) fn from_payload(p: &[u8]) -> Option<ClipStatus> {
         if p.len() < 21 {
             return None;
+        }
+        let n = p[20] as usize;
+        let mut held = Vec::with_capacity(n);
+        for i in 0..n {
+            let off = 21 + 3 * i;
+            let class = Class::from_u8(*p.get(off)?)?;
+            let id = u16::from_le_bytes([*p.get(off + 1)?, *p.get(off + 2)?]);
+            held.push(Usage::new(class, id));
         }
         Some(ClipStatus {
             state: ClipState::from_u8(p[1])?,
@@ -119,7 +115,7 @@ impl ClipStatus {
             underruns: u16::from_le_bytes([p[14], p[15]]),
             overruns: u16::from_le_bytes([p[16], p[17]]),
             seq_gaps: u16::from_le_bytes([p[18], p[19]]),
-            held: p[20],
+            held,
         })
     }
 }

@@ -402,7 +402,9 @@ pub enum MediusClipState {
 }
 
 /// A snapshot of the device-side clip ring and playback counters. `free`/`used` pace top-ups;
-/// `state == Faulted` means re-sync (stop + rebuild).
+/// `state == Faulted` means re-sync (stop + rebuild). `held[0..held_n]` is the held-usage snapshot: the
+/// buttons, keys, and media the clip is holding down, keyed like a `MediusUsageEvent`. Test one with
+/// `medius_clip_status_is_held`.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MediusClipStatus {
@@ -413,7 +415,8 @@ pub struct MediusClipStatus {
     pub underruns: u16,
     pub overruns: u16,
     pub seq_gaps: u16,
-    pub held: u8,
+    pub held_n: u16,
+    pub held: [MediusInput; MEDIUS_MAX_USAGES],
 }
 
 /// Host-side always-on counters.

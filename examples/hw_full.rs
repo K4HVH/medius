@@ -678,8 +678,11 @@ mod linux {
             std::thread::sleep(Duration::from_millis(150));
             let key_down = acc.key_a.load(Ordering::Relaxed) == 1; // set if the grabbed node is the keyboard
             // Field-generic held telemetry: while the clip holds KEY_A (before its release entry), the status
-            // reports a key held.
-            let keys_held = clip.status().map(|s| s.keys_held()).unwrap_or(false);
+            // reports it in the held-usage snapshot.
+            let keys_held = clip
+                .status()
+                .map(|s| s.is_held(medius::Key::A))
+                .unwrap_or(false);
             std::thread::sleep(Duration::from_millis(500));
             let x = acc.rel_x.load(Ordering::Relaxed); // set if the grabbed node is the mouse
             let played = clip.status().map(|s| s.ticks >= 200).unwrap_or(false);

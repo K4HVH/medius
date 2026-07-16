@@ -461,14 +461,19 @@ def test_clip_builder_frame_edges():
 
 
 def test_clip_status_roundtrip():
-    status = ClipStatus(ClipState.PLAYING, free=512, used=40, ticks=99,
-                        underruns=2, overruns=0, seq_gaps=1, held=1)
+    status = ClipStatus(
+        ClipState.PLAYING, free=512, used=40, ticks=99, underruns=2, overruns=0, seq_gaps=1,
+        held=[Input.button(Button.SIDE1), Input.key(Key.A)],
+    )
     with MockBox() as mock:
         mock.set_clip_status(status)
         with Device.with_mock(mock) as d:
             got = d.clip().status()
     assert got == status
     assert got.state == ClipState.PLAYING
+    assert got.is_held(Input.button(Button.SIDE1))
+    assert got.is_held(Input.key(Key.A))
+    assert not got.is_held(Input.button(Button.LEFT))
 
 
 def test_clip_builder_gap_zero_is_noop():

@@ -28,6 +28,7 @@ from ._types import (
     Version,
     caps_to_c,
     catch_state_to_c,
+    clip_status_to_c,
     device_info_to_c,
     health_to_c,
     imperfect_to_c,
@@ -120,17 +121,7 @@ class MockBox:
 
     def set_clip_status(self, status: ClipStatus):
         """Set the `ClipStatus` the mock answers to `ClipHandle.status`."""
-        c = _native.MediusClipStatus(
-            int(status.state),
-            status.free,
-            status.used,
-            status.ticks,
-            status.underruns,
-            status.overruns,
-            status.seq_gaps,
-            status.held,
-        )
-        _native.lib.medius_mock_set_clip_status(self._handle, c)
+        _native.lib.medius_mock_set_clip_status(self._handle, clip_status_to_c(status))
 
     def silent(self):
         """Make the mock stop answering queries (one-way, for timeout tests)."""

@@ -5,7 +5,7 @@
 use crate::protocol::command::{clip_arm_payload, clip_op_payload, clip_start_payload};
 use crate::protocol::opcode::{CLIP_OP_DISARM, CLIP_OP_STOP};
 use crate::protocol::{Resp, parse_resp};
-use crate::types::{Action, Button, ClipBuilder, ClipState, ClipStatus};
+use crate::types::{Action, Button, ClipBuilder, ClipState, ClipStatus, Key, MediaKey, Usage};
 
 #[test]
 fn clip_builder_encodes_entries_to_the_firmware_wire() {
@@ -90,7 +90,7 @@ fn clip_ctrl_payload_bytes() {
 #[test]
 fn decode_clip_status_through_parse_resp() {
     // RESP(CLIP): [what=10][state][free u32][used u32][ticks u32][underruns u16][overruns u16]
-    // [seq_gaps u16][held u8]
+    // [seq_gaps u16][n u8] then n x [class u8][id u16 LE] held-usage snapshot
     let p = [
         10u8, 2, // playing
         0x00, 0x01, 0x00, 0x00, // free = 256
@@ -99,7 +99,9 @@ fn decode_clip_status_through_parse_resp() {
         0x03, 0x00, // underruns = 3
         0x01, 0x00, // overruns = 1
         0x02, 0x00, // seq_gaps = 2
-        0x01, // held
+        0x02, // held count
+        0x00, 0x04, 0x00, // button id 4 (Side2)
+        0x01, 0xE1, 0x00, // key 0xE1 (Left Shift)
     ];
     let Some(Resp::Clip(s)) = parse_resp(&p) else {
         panic!("expected Clip");
@@ -114,10 +116,10 @@ fn decode_clip_status_through_parse_resp() {
             underruns: 3,
             overruns: 1,
             seq_gaps: 2,
-            held: 1,
+            held: vec![Usage::from(Button::Side2), Usage::from(Key::new(0xE1))],
         }
     );
-    assert!(parse_resp(&p[..20]).is_none()); // 20 bytes < 21
+    assert!(parse_resp(&p[..20]).is_none()); // 20 bytes < 21 (no count byte)
     let mut bad = p;
     bad[1] = 9; // out-of-range state
     assert!(parse_resp(&bad).is_none());
@@ -125,22 +127,20 @@ fn decode_clip_status_through_parse_resp() {
 
 #[test]
 fn clip_status_held_is_field_generic() {
-    // held byte: bits 0-4 buttons, bit 5 = key held, bit 6 = media held.
+    // held is one class-tagged usage list: buttons, keys, and media reported the same way.
     let s = ClipStatus {
-        held: 0b0110_0101,
+        held: vec![
+            Usage::from(Button::Left),
+            Usage::from(Key::new(0x04)),
+            Usage::from(MediaKey::new(0x00E9)),
+        ],
         ..Default::default()
     };
-    assert_eq!(s.buttons_held(), 0b0_0101); // Left + Middle
-    assert!(s.keys_held());
-    assert!(s.media_held());
-
-    let only_btn = ClipStatus {
-        held: 0b0000_0010,
-        ..Default::default()
-    };
-    assert_eq!(only_btn.buttons_held(), 0b10); // Right
-    assert!(!only_btn.keys_held());
-    assert!(!only_btn.media_held());
+    assert!(s.is_held(Button::Left));
+    assert!(s.is_held(Key::new(0x04)));
+    assert!(s.is_held(MediaKey::new(0x00E9)));
+    assert!(!s.is_held(Button::Right));
+    assert!(!s.is_held(Key::new(0x05)));
 }
 
 #[test]
@@ -253,9 +253,12 @@ fn clip_status_roundtrips_through_the_mock() {
         underruns: 1,
         overruns: 2,
         seq_gaps: 1,
-        held: 0,
+        held: vec![
+            Usage::from(Button::Left),
+            Usage::from(MediaKey::new(0x00E9)),
+        ],
     };
-    let mock = MockBox::new().with_clip_status(status);
+    let mock = MockBox::new().with_clip_status(status.clone());
     let device = Device::with_mock(mock.clone());
     assert_eq!(device.clip().status().unwrap(), status);
 
