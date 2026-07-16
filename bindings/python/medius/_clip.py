@@ -6,7 +6,7 @@ import ctypes
 from typing import Optional, Sequence, Tuple
 
 from . import _native
-from ._enums import Action, Blanket, Button
+from ._enums import Action, Blanket
 from ._errors import check
 from ._types import Usage, ClipStatus, clip_status_from_c
 
@@ -71,35 +71,24 @@ class ClipBuilder:
         check(_native.lib.medius_clip_builder_wheel(self._ptr, dz))
         return self
 
-    def press(self, button: Button) -> "ClipBuilder":
-        """A frame that presses a button."""
-        check(_native.lib.medius_clip_builder_press(self._ptr, int(button)))
+    def press(self, usage: Usage) -> "ClipBuilder":
+        """A frame that presses a usage (a button, key, or media usage)."""
+        check(_native.lib.medius_clip_builder_press(self._ptr, usage._c))
         return self
 
-    def release(self, button: Button) -> "ClipBuilder":
-        """A frame that soft-releases a button (a physical hold is left intact)."""
-        check(_native.lib.medius_clip_builder_release(self._ptr, int(button)))
+    def release(self, usage: Usage) -> "ClipBuilder":
+        """A frame that soft-releases a usage (a physical hold is left intact)."""
+        check(_native.lib.medius_clip_builder_release(self._ptr, usage._c))
         return self
 
-    def force_release(self, button: Button) -> "ClipBuilder":
-        """A frame that force-releases a button (masks a physical hold too)."""
-        check(_native.lib.medius_clip_builder_force_release(self._ptr, int(button)))
+    def force_release(self, usage: Usage) -> "ClipBuilder":
+        """A frame that force-releases a usage (masks a physical hold too)."""
+        check(_native.lib.medius_clip_builder_force_release(self._ptr, usage._c))
         return self
 
-    def key(self, usage, action: Action = Action.PRESS) -> "ClipBuilder":
-        """A frame carrying one key edge."""
-        check(_native.lib.medius_clip_builder_key(self._ptr, int(usage), int(action)))
-        return self
-
-    def media(self, usage, action: Action = Action.PRESS) -> "ClipBuilder":
-        """A frame carrying one media edge."""
-        check(_native.lib.medius_clip_builder_media(self._ptr, int(usage), int(action)))
-        return self
-
-    def edge(self, input: Usage, action: Action = Action.PRESS) -> "ClipBuilder":
-        """A one-edge frame for any `Usage` (button/key/media) with an `Action` — the field-generic form the
-        press/release/key/media helpers wrap."""
-        check(_native.lib.medius_clip_builder_edge(self._ptr, input._c, int(action)))
+    def edge(self, usage: Usage, action: Action = Action.PRESS) -> "ClipBuilder":
+        """A one-edge frame for any `Usage` (button, key, or media) with an explicit `Action`."""
+        check(_native.lib.medius_clip_builder_edge(self._ptr, usage._c, int(action)))
         return self
 
     def frame(

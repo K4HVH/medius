@@ -8,21 +8,21 @@ fn input_constructors_tag_and_value() {
         medius_usage_button(MediusButton::Side1),
         MediusUsage {
             kind: MediusClass::Button,
-            value: 3
+            id: 3
         }
     );
     assert_eq!(
         medius_usage_key(MEDIUS_KEY_A),
         MediusUsage {
             kind: MediusClass::Key,
-            value: 0x04
+            id: 0x04
         }
     );
     assert_eq!(
         medius_usage_media(MEDIUS_MEDIA_VOLUME_UP),
         MediusUsage {
             kind: MediusClass::Media,
-            value: 0xE9
+            id: 0xE9
         }
     );
 }
@@ -134,7 +134,7 @@ fn usage_event(usages: &[MediusUsage]) -> MediusUsageEvent {
         n: usages.len() as u16,
         usages: [MediusUsage {
             kind: MediusClass::Button,
-            value: 0,
+            id: 0,
         }; MEDIUS_MAX_USAGES],
     };
     for (slot, u) in e.usages.iter_mut().zip(usages.iter()) {

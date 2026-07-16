@@ -4,7 +4,7 @@
 
 use crate::protocol::opcode::{CLIP_F_EDGES, CLIP_F_WHEEL, CLIP_F_XY, CLIP_TAG_GAP};
 use crate::types::lock::blanket_scope;
-use crate::types::{Action, Blanket, Key, MediaKey, Usage};
+use crate::types::{Action, Blanket, Usage};
 
 /// Playback options for a clip [`start`](crate::ClipHandle::start) or catch trigger
 /// ([`arm_catch`](crate::ClipHandle::arm_catch)). The single place clip settings live; extensible as more
@@ -218,16 +218,6 @@ impl ClipBuilder {
     /// A frame that force-releases a usage (masks a physical hold too).
     pub fn force_release(&mut self, usage: impl Into<Usage>) -> &mut Self {
         self.edge(usage, Action::ForceRelease)
-    }
-
-    /// A frame carrying one key edge.
-    pub fn key(&mut self, key: Key, action: Action) -> &mut Self {
-        self.edge(key, action)
-    }
-
-    /// A frame carrying one media edge.
-    pub fn media(&mut self, media: MediaKey, action: Action) -> &mut Self {
-        self.edge(media, action)
     }
 
     /// The raw encoded entry stream.

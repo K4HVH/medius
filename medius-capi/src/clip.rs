@@ -1,6 +1,6 @@
 //! Buffered clip playback: the opaque clip-entry builder and clip handle, and their functions.
 
-use medius::{Button, ClipBuilder, ClipHandle, Key, MediaKey};
+use medius::{ClipBuilder, ClipHandle};
 
 use crate::convert::input_to_medius;
 use crate::ctypes::*;
@@ -104,83 +104,61 @@ pub unsafe extern "C" fn medius_clip_builder_wheel(
     })
 }
 
-/// A frame that presses a button.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn medius_clip_builder_press(
+/// Append a one-edge frame driving `usage` with `action`; `ErrInvalidArg` on a null builder or invalid usage.
+fn builder_edge(
     b: *mut MediusClipBuilder,
-    button: MediusButton,
-) -> MediusStatus {
-    with_builder(b, |cb| {
-        cb.press(Button::from(button));
-    })
-}
-
-/// A frame that soft-releases a button (clears the injected press; a physical hold is left intact).
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn medius_clip_builder_release(
-    b: *mut MediusClipBuilder,
-    button: MediusButton,
-) -> MediusStatus {
-    with_builder(b, |cb| {
-        cb.release(Button::from(button));
-    })
-}
-
-/// A frame that force-releases a button (masks a physical hold too).
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn medius_clip_builder_force_release(
-    b: *mut MediusClipBuilder,
-    button: MediusButton,
-) -> MediusStatus {
-    with_builder(b, |cb| {
-        cb.force_release(Button::from(button));
-    })
-}
-
-/// A frame carrying one key edge.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn medius_clip_builder_key(
-    b: *mut MediusClipBuilder,
-    key: MediusKey,
-    action: MediusAction,
-) -> MediusStatus {
-    with_builder(b, |cb| {
-        cb.key(Key::new(key), action.into());
-    })
-}
-
-/// A frame carrying one media edge.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn medius_clip_builder_media(
-    b: *mut MediusClipBuilder,
-    media: MediusMediaKey,
-    action: MediusAction,
-) -> MediusStatus {
-    with_builder(b, |cb| {
-        cb.media(MediaKey::new(media), action.into());
-    })
-}
-
-/// A one-edge frame for any input class: press/release `input` (a button, key, or media usage) with
-/// `action`. The field-generic form the press/release/key/media helpers wrap. Build the input with
-/// `medius_usage_button`/`_key`/`_media`.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn medius_clip_builder_edge(
-    b: *mut MediusClipBuilder,
-    input: MediusUsage,
-    action: MediusAction,
+    usage: MediusUsage,
+    action: medius::Action,
 ) -> MediusStatus {
     guard_status(|| {
         if b.is_null() {
             return fail(MediusStatus::ErrInvalidArg, "null clip builder");
         }
-        let Some(inp) = input_to_medius(input) else {
-            return fail(MediusStatus::ErrInvalidArg, "invalid clip edge input");
+        let Some(u) = input_to_medius(usage) else {
+            return fail(MediusStatus::ErrInvalidArg, "invalid clip usage");
         };
-        unsafe { &mut (*b).inner }.edge(inp, action.into());
+        unsafe { &mut (*b).inner }.edge(u, action);
         clear_error();
         MediusStatus::Ok
     })
+}
+
+/// A frame that presses a usage (a button, key, or media usage).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn medius_clip_builder_press(
+    b: *mut MediusClipBuilder,
+    usage: MediusUsage,
+) -> MediusStatus {
+    builder_edge(b, usage, medius::Action::Press)
+}
+
+/// A frame that soft-releases a usage (clears the injected press; a physical hold is left intact).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn medius_clip_builder_release(
+    b: *mut MediusClipBuilder,
+    usage: MediusUsage,
+) -> MediusStatus {
+    builder_edge(b, usage, medius::Action::SoftRelease)
+}
+
+/// A frame that force-releases a usage (masks a physical hold too).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn medius_clip_builder_force_release(
+    b: *mut MediusClipBuilder,
+    usage: MediusUsage,
+) -> MediusStatus {
+    builder_edge(b, usage, medius::Action::ForceRelease)
+}
+
+/// A one-edge frame for any usage (a button, key, or media usage) with an explicit `action`. Build the
+/// usage with `medius_usage_button`/`_key`/`_media`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn medius_clip_builder_edge(
+    b: *mut MediusClipBuilder,
+    usage: MediusUsage,
+    action: MediusAction,
+) -> MediusStatus {
+    builder_edge(b, usage, action.into())
 }
 
 /// A general content frame: a motion delta (`dx`/`dy` cursor, `wheel`) plus `n` edges, each a

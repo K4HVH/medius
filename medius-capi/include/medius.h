@@ -74,23 +74,21 @@ typedef int32_t MediusStatus;
 #endif // __STDC_VERSION__ >= 202311L
 #endif // __cplusplus
 
-// A mouse button. Values match the firmware button id.
-enum MediusButton
+// The class of a [`MediusUsage`] (button / key / media).
+enum MediusClass
 #if defined(__cplusplus) || __STDC_VERSION__ >= 202311L
   : uint8_t
 #endif // defined(__cplusplus) || __STDC_VERSION__ >= 202311L
  {
-    MEDIUS_BUTTON_LEFT = 0,
-    MEDIUS_BUTTON_RIGHT = 1,
-    MEDIUS_BUTTON_MIDDLE = 2,
-    MEDIUS_BUTTON_SIDE1 = 3,
-    MEDIUS_BUTTON_SIDE2 = 4,
+    MEDIUS_CLASS_BUTTON = 0,
+    MEDIUS_CLASS_KEY = 1,
+    MEDIUS_CLASS_MEDIA = 2,
 };
 #ifndef __cplusplus
 #if __STDC_VERSION__ >= 202311L
-typedef enum MediusButton MediusButton;
+typedef enum MediusClass MediusClass;
 #else
-typedef uint8_t MediusButton;
+typedef uint8_t MediusClass;
 #endif // __STDC_VERSION__ >= 202311L
 #endif // __cplusplus
 
@@ -109,24 +107,6 @@ enum MediusAction
 typedef enum MediusAction MediusAction;
 #else
 typedef uint8_t MediusAction;
-#endif // __STDC_VERSION__ >= 202311L
-#endif // __cplusplus
-
-// The class of a [`MediusUsage`] (button / key / media).
-enum MediusClass
-#if defined(__cplusplus) || __STDC_VERSION__ >= 202311L
-  : uint8_t
-#endif // defined(__cplusplus) || __STDC_VERSION__ >= 202311L
- {
-    MEDIUS_CLASS_BUTTON = 0,
-    MEDIUS_CLASS_KEY = 1,
-    MEDIUS_CLASS_MEDIA = 2,
-};
-#ifndef __cplusplus
-#if __STDC_VERSION__ >= 202311L
-typedef enum MediusClass MediusClass;
-#else
-typedef uint8_t MediusClass;
 #endif // __STDC_VERSION__ >= 202311L
 #endif // __cplusplus
 
@@ -324,6 +304,26 @@ typedef uint8_t MediusEmitMode;
 #endif // __STDC_VERSION__ >= 202311L
 #endif // __cplusplus
 
+// A mouse button. Values match the firmware button id.
+enum MediusButton
+#if defined(__cplusplus) || __STDC_VERSION__ >= 202311L
+  : uint8_t
+#endif // defined(__cplusplus) || __STDC_VERSION__ >= 202311L
+ {
+    MEDIUS_BUTTON_LEFT = 0,
+    MEDIUS_BUTTON_RIGHT = 1,
+    MEDIUS_BUTTON_MIDDLE = 2,
+    MEDIUS_BUTTON_SIDE1 = 3,
+    MEDIUS_BUTTON_SIDE2 = 4,
+};
+#ifndef __cplusplus
+#if __STDC_VERSION__ >= 202311L
+typedef enum MediusButton MediusButton;
+#else
+typedef uint8_t MediusButton;
+#endif // __STDC_VERSION__ >= 202311L
+#endif // __cplusplus
+
 // Which arm of a [`MediusCatchEvent`] is populated.
 enum MediusCatchEventKind
 #if defined(__cplusplus) || __STDC_VERSION__ >= 202311L
@@ -418,17 +418,11 @@ typedef struct MediusLogStream MediusLogStream;
 typedef struct MediusMockBox MediusMockBox;
 #endif
 
-// A keyboard key, addressed by HID Keyboard/Keypad usage. Modifiers are `0xE0..=0xE7`.
-typedef uint8_t MediusKey;
-
-// A media key, addressed by 16-bit HID Consumer usage.
-typedef uint16_t MediusMediaKey;
-
-// A momentary usage for `medius_device_inject`. `value` holds the button id, key usage, or media
+// A momentary usage for `medius_device_inject`. `id` is the button id, HID keycode, or 16-bit Consumer
 // usage depending on `kind`. Build with the `medius_usage_*` helpers.
 typedef struct MediusUsage {
     MediusClass kind;
-    uint16_t value;
+    uint16_t id;
 } MediusUsage;
 
 // Playback options for a clip start or catch trigger (`medius_clip_start` / `_arm_catch`). The single
@@ -617,6 +611,12 @@ typedef struct MediusCountersSnapshot {
     uint64_t crc_drops;
     uint64_t reconnects;
 } MediusCountersSnapshot;
+
+// A keyboard key, addressed by HID Keyboard/Keypad usage. Modifiers are `0xE0..=0xE7`.
+typedef uint8_t MediusKey;
+
+// A media key, addressed by 16-bit HID Consumer usage.
+typedef uint16_t MediusMediaKey;
 
 // One held-usage snapshot: every held usage of one class (button / key / media; modifiers are key
 // usages `0xE0..=0xE7`) in `usages[0..n]`. A mouse-button press and a key press have the same shape.
@@ -842,30 +842,20 @@ MediusStatus medius_clip_builder_move(struct MediusClipBuilder *b, int16_t dx, i
 // A wheel frame.
 MediusStatus medius_clip_builder_wheel(struct MediusClipBuilder *b, int16_t dz);
 
-// A frame that presses a button.
-MediusStatus medius_clip_builder_press(struct MediusClipBuilder *b, MediusButton button);
+// A frame that presses a usage (a button, key, or media usage).
+MediusStatus medius_clip_builder_press(struct MediusClipBuilder *b, struct MediusUsage usage);
 
-// A frame that soft-releases a button (clears the injected press; a physical hold is left intact).
-MediusStatus medius_clip_builder_release(struct MediusClipBuilder *b, MediusButton button);
+// A frame that soft-releases a usage (clears the injected press; a physical hold is left intact).
+MediusStatus medius_clip_builder_release(struct MediusClipBuilder *b, struct MediusUsage usage);
 
-// A frame that force-releases a button (masks a physical hold too).
-MediusStatus medius_clip_builder_force_release(struct MediusClipBuilder *b, MediusButton button);
+// A frame that force-releases a usage (masks a physical hold too).
+MediusStatus medius_clip_builder_force_release(struct MediusClipBuilder *b,
+                                               struct MediusUsage usage);
 
-// A frame carrying one key edge.
-MediusStatus medius_clip_builder_key(struct MediusClipBuilder *b,
-                                     MediusKey key,
-                                     MediusAction action);
-
-// A frame carrying one media edge.
-MediusStatus medius_clip_builder_media(struct MediusClipBuilder *b,
-                                       MediusMediaKey media,
-                                       MediusAction action);
-
-// A one-edge frame for any input class: press/release `input` (a button, key, or media usage) with
-// `action`. The field-generic form the press/release/key/media helpers wrap. Build the input with
-// `medius_usage_button`/`_key`/`_media`.
+// A one-edge frame for any usage (a button, key, or media usage) with an explicit `action`. Build the
+// usage with `medius_usage_button`/`_key`/`_media`.
 MediusStatus medius_clip_builder_edge(struct MediusClipBuilder *b,
-                                      struct MediusUsage input,
+                                      struct MediusUsage usage,
                                       MediusAction action);
 
 // A general content frame: a motion delta (`dx`/`dy` cursor, `wheel`) plus `n` edges, each a

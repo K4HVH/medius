@@ -303,22 +303,22 @@ class Usage:
         return Class(self._c.kind)
 
     @property
-    def value(self) -> int:
+    def id(self) -> int:
         """The class-specific id: button id, HID keycode, or 16-bit Consumer usage."""
-        return int(self._c.value)
+        return int(self._c.id)
 
     def __eq__(self, other) -> bool:
         return (
             isinstance(other, Usage)
             and self._c.kind == other._c.kind
-            and self._c.value == other._c.value
+            and self._c.id == other._c.id
         )
 
     def __hash__(self) -> int:
-        return hash((int(self._c.kind), int(self._c.value)))
+        return hash((int(self._c.kind), int(self._c.id)))
 
     def __repr__(self) -> str:
-        return f"Usage(kind={self.kind.name}, value={self.value})"
+        return f"Usage(kind={self.kind.name}, id={self.id})"
 
 
 class Motion:
@@ -379,7 +379,7 @@ class LockTarget:
     def input(self) -> Optional["Usage"]:
         """The locked usage, when `kind` is `USAGE`; `None` for an axis."""
         if self._c.kind == int(LockTargetKind.USAGE):
-            return Usage(_native.MediusUsage(kind=self._c.usage.kind, value=self._c.usage.value))
+            return Usage(_native.MediusUsage(kind=self._c.usage.kind, id=self._c.usage.id))
         return None
 
 
@@ -628,13 +628,13 @@ def counters_from_c(c) -> Counters:
 
 
 def _input_copy(c) -> Usage:
-    return Usage(_native.MediusUsage(kind=c.kind, value=c.value))
+    return Usage(_native.MediusUsage(kind=c.kind, id=c.id))
 
 
 def lock_target_from_c(c) -> LockTarget:
     return LockTarget(
         _native.MediusLockTarget(
-            kind=c.kind, usage=_native.MediusUsage(kind=c.usage.kind, value=c.usage.value)
+            kind=c.kind, usage=_native.MediusUsage(kind=c.usage.kind, id=c.usage.id)
         )
     )
 

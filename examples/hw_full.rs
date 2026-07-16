@@ -664,11 +664,11 @@ mod linux {
             let clip = dev.clip();
             let mut b = ClipBuilder::new();
             // Hold KEY_A across the whole motion run so the held-usage snapshot is sampled mid-hold.
-            b.key(Key::A, Action::Press);
+            b.press(Key::A);
             for _ in 0..200 {
                 b.move_by(10, 0);
             }
-            b.key(Key::A, Action::SoftRelease);
+            b.release(Key::A);
             let appended = clip.append(&b).is_ok();
             let armed = clip.status().map(|s| s.used > 0).unwrap_or(false);
             // Selective auto-lock: only the aim axes and buttons, leaving the keyboard free (the clip still

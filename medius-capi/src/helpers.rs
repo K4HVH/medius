@@ -9,7 +9,7 @@ use crate::error::guard;
 pub extern "C" fn medius_usage_button(button: MediusButton) -> MediusUsage {
     MediusUsage {
         kind: MediusClass::Button,
-        value: button as u16,
+        id: button as u16,
     }
 }
 
@@ -18,7 +18,7 @@ pub extern "C" fn medius_usage_button(button: MediusButton) -> MediusUsage {
 pub extern "C" fn medius_usage_key(key: MediusKey) -> MediusUsage {
     MediusUsage {
         kind: MediusClass::Key,
-        value: key as u16,
+        id: key as u16,
     }
 }
 
@@ -27,7 +27,7 @@ pub extern "C" fn medius_usage_key(key: MediusKey) -> MediusUsage {
 pub extern "C" fn medius_usage_media(media: MediusMediaKey) -> MediusUsage {
     MediusUsage {
         kind: MediusClass::Media,
-        value: media,
+        id: media,
     }
 }
 
@@ -60,7 +60,7 @@ pub extern "C" fn medius_lock_target_axis(kind: MediusLockTargetKind) -> MediusL
         kind,
         usage: MediusUsage {
             kind: MediusClass::Button,
-            value: 0,
+            id: 0,
         },
     }
 }
