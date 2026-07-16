@@ -13,7 +13,7 @@ use crate::protocol::{DecodedFrame, FrameType, encode};
 use crate::transport::mock::MockTransport;
 use crate::types::{
     Caps, CatchState, ClipState, ClipStatus, DeviceInfo, DeviceKind, EmitPace, Health,
-    ImperfectStatus, KbdCaps, KeyboardEvent, Locks, LogLevel, MediaEvent, MouseCaps, MouseEvent,
+    ImperfectStatus, KbdCaps, Locks, LogLevel, MouseCaps, Usage,
     Rate, Stats, Version,
 };
 
@@ -155,9 +155,27 @@ fn stats_payload(s: Stats) -> Vec<u8> {
     p
 }
 
-fn locks_payload(l: Locks) -> Vec<u8> {
-    let mut p = vec![6u8];
-    p.extend_from_slice(&l.mask().to_le_bytes());
+fn locks_payload(l: &Locks) -> Vec<u8> {
+    use crate::protocol::opcode::{LOCK_CLS_AXIS, LOCK_DIRBIT_NEG, LOCK_DIRBIT_POS, LOCK_ID_ALL};
+    use crate::types::LockTarget;
+    let entries = l.entries();
+    let mut p = vec![6u8, entries.len() as u8];
+    for e in entries {
+        let (class, id) = if let Some(class) = e.blanket {
+            (class.as_u8(), LOCK_ID_ALL)
+        } else {
+            match e.target {
+                Some(LockTarget::Axis(a)) => (LOCK_CLS_AXIS, a.as_u16()),
+                Some(LockTarget::Usage(u)) => u.class_id(),
+                None => (0, 0),
+            }
+        };
+        let dirbits =
+            (if e.positive { LOCK_DIRBIT_POS } else { 0 }) | (if e.negative { LOCK_DIRBIT_NEG } else { 0 });
+        p.push(class);
+        p.extend_from_slice(&id.to_le_bytes());
+        p.push(dirbits);
+    }
     p
 }
 
@@ -224,26 +242,22 @@ fn clip_status_payload(c: ClipStatus) -> Vec<u8> {
     p
 }
 
-fn kb_event_payload(e: &KeyboardEvent) -> Vec<u8> {
-    let mut p = vec![e.modifiers, e.keys.len() as u8];
-    p.extend(e.keys.iter().map(|k| k.usage()));
+fn motion_event_payload(dx: i16, dy: i16, dz: i16) -> Vec<u8> {
+    let mut p = Vec::with_capacity(6);
+    p.extend_from_slice(&dx.to_le_bytes());
+    p.extend_from_slice(&dy.to_le_bytes());
+    p.extend_from_slice(&dz.to_le_bytes());
     p
 }
 
-fn cons_event_payload(e: &MediaEvent) -> Vec<u8> {
-    let mut p = vec![e.keys.len() as u8];
-    for k in &e.keys {
-        p.extend_from_slice(&k.usage().to_le_bytes());
+fn usage_event_payload(usages: &[Usage]) -> Vec<u8> {
+    let mut p = Vec::with_capacity(1 + 3 * usages.len());
+    p.push(usages.len() as u8);
+    for u in usages {
+        let (class, id) = u.class_id();
+        p.push(class);
+        p.extend_from_slice(&id.to_le_bytes());
     }
-    p
-}
-
-fn event_payload(r: MouseEvent) -> Vec<u8> {
-    let mut p = Vec::with_capacity(7);
-    p.push(r.buttons);
-    p.extend_from_slice(&r.dx.to_le_bytes());
-    p.extend_from_slice(&r.dy.to_le_bytes());
-    p.extend_from_slice(&r.wheel.to_le_bytes());
     p
 }
 
@@ -297,7 +311,7 @@ impl MockBox {
                         encode(FrameType::Resp, seq, &stats_payload(st.stats)).expect("resp fits")
                     }
                     Some(6) => {
-                        encode(FrameType::Resp, seq, &locks_payload(st.locks)).expect("resp fits")
+                        encode(FrameType::Resp, seq, &locks_payload(&st.locks)).expect("resp fits")
                     }
                     Some(7) => encode(FrameType::Resp, seq, &catch_resp_payload(st.catch))
                         .expect("resp fits"),
@@ -484,24 +498,19 @@ impl MockBox {
         self.transport.push_frame(FrameType::Log, 0, &payload);
     }
 
-    /// Push an `EVENT` (mouse snapshot) as if the box emitted it; it surfaces on a subscribed
-    /// [`EventStream`](crate::EventStream) as [`CatchEvent::Mouse`](crate::CatchEvent). `seq` is the
+    /// Push a `MOTION_EVENT` as if the box emitted it; it surfaces on a subscribed
+    /// [`EventStream`](crate::EventStream) as [`CatchEvent::Motion`](crate::CatchEvent). `seq` is the
     /// rolling event counter the host sees as the frame `SEQ`.
-    pub fn push_event(&self, seq: u8, report: MouseEvent) {
+    pub fn push_motion(&self, seq: u8, dx: i16, dy: i16, dz: i16) {
         self.transport
-            .push_frame(FrameType::MouseEvent, seq, &event_payload(report));
+            .push_frame(FrameType::MotionEvent, seq, &motion_event_payload(dx, dy, dz));
     }
 
-    /// Push a `KB_EVENT` (keyboard snapshot); surfaces as [`CatchEvent::Keyboard`](crate::CatchEvent).
-    pub fn push_kb_event(&self, seq: u8, event: &KeyboardEvent) {
+    /// Push a `USAGE_EVENT` (a held-usage snapshot); surfaces as
+    /// [`CatchEvent::Usages`](crate::CatchEvent).
+    pub fn push_usages(&self, seq: u8, usages: &[Usage]) {
         self.transport
-            .push_frame(FrameType::KbEvent, seq, &kb_event_payload(event));
-    }
-
-    /// Push a `CONS_EVENT` (media snapshot); surfaces as [`CatchEvent::Media`](crate::CatchEvent).
-    pub fn push_cons_event(&self, seq: u8, event: &MediaEvent) {
-        self.transport
-            .push_frame(FrameType::ConsEvent, seq, &cons_event_payload(event));
+            .push_frame(FrameType::UsageEvent, seq, &usage_event_payload(usages));
     }
 
     /// A snapshot copy of every command the host has sent so far, decoded, in order.

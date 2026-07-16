@@ -20,7 +20,7 @@ mod linux {
 
     use medius::{
         Action, Blanket, Button, CatchMask, ClipBuilder, ClipConfig, ClipState, Device, EmitPace,
-        Key, LedMode, LedTarget, LockDirection, LockTarget, MediaKey, RebootTarget,
+        Axis, Key, LedMode, LedTarget, LockDirection, MediaKey, RebootTarget,
     };
 
     const EVIOCGRAB: libc::c_ulong = 0x4004_4590;
@@ -391,7 +391,7 @@ mod linux {
             // mouse only). The 3 ms inject cadence doubles as the keepalive that holds the lock.
             let dev = device.as_ref().unwrap();
             let _ = dev.reset();
-            let _ = dev.lock(LockTarget::X, LockDirection::Both);
+            let _ = dev.lock(Axis::X, LockDirection::Both);
             reset_motion(&acc);
             for _ in 0..50 {
                 let _ = dev.move_rel(40, 0);
@@ -412,24 +412,24 @@ mod linux {
             // mask matches the wire layout (X+ = bit0, Left press = bit6 => 0x0041). LOCK_ON is set.
             let dev = device.as_ref().unwrap();
             let _ = dev.reset();
-            let _ = dev.lock(LockTarget::X, LockDirection::Positive);
-            let _ = dev.lock(LockTarget::Button(Button::Left), LockDirection::Positive);
+            let _ = dev.lock(Axis::X, LockDirection::Positive);
+            let _ = dev.lock(Button::Left, LockDirection::Positive);
             let locks = dev.query_locks();
             let lock_on = dev.query_health().map(|h| h.lock_on).unwrap_or(false);
-            let mask = locks.as_ref().map(|l| l.mask()).unwrap_or(0);
+            let n = locks.as_ref().map(|l| l.entries().len()).unwrap_or(0);
             let q_ok = locks
                 .as_ref()
                 .map(|l| {
-                    l.is_locked(LockTarget::X, LockDirection::Positive)
-                        && !l.is_locked(LockTarget::X, LockDirection::Negative)
-                        && l.is_locked(LockTarget::Button(Button::Left), LockDirection::Positive)
-                        && l.mask() == 0x0041
+                    l.is_locked(Axis::X, LockDirection::Positive)
+                        && !l.is_locked(Axis::X, LockDirection::Negative)
+                        && l.is_locked(Button::Left, LockDirection::Positive)
+                        && l.entries().len() == 2
                 })
                 .unwrap_or(false);
             check(
                 "lock: query + health",
                 q_ok && lock_on,
-                format!("mask=0x{mask:04X} lock_on={lock_on}"),
+                format!("{n} locks q_ok={q_ok} lock_on={lock_on}"),
             );
             let _ = dev.reset();
         }
@@ -438,7 +438,7 @@ mod linux {
             // LOCK: injection overrides a hand-locked button (block-press, but a forced press wins).
             let dev = device.as_ref().unwrap();
             let _ = dev.reset();
-            let _ = dev.lock(LockTarget::Button(Button::Left), LockDirection::Positive);
+            let _ = dev.lock(Button::Left, LockDirection::Positive);
             let _ = dev.press(Button::Left);
             std::thread::sleep(Duration::from_millis(200));
             let down = btn_val(&acc, Button::Left);
@@ -455,20 +455,18 @@ mod linux {
             // LOCK safety: RESET clears every lock, and a lock-only state self-clears after ~1 s of
             // control-PC silence so a locked mouse is never stranded.
             let dev = device.as_ref().unwrap();
-            let _ = dev.lock(LockTarget::Y, LockDirection::Both);
+            let _ = dev.lock(Axis::Y, LockDirection::Both);
             let _ = dev.reset();
-            let after_reset = dev.query_locks().map(|l| l.mask()).unwrap_or(0xFFFF);
+            let after_reset = dev.query_locks().map(|l| l.entries().len()).unwrap_or(99);
 
-            let _ = dev.lock(LockTarget::Y, LockDirection::Both);
-            let before = dev.query_locks().map(|l| l.mask()).unwrap_or(0);
+            let _ = dev.lock(Axis::Y, LockDirection::Both);
+            let before = dev.query_locks().map(|l| l.entries().len()).unwrap_or(0);
             std::thread::sleep(Duration::from_millis(1400)); // silent: no frames sent
-            let after_silence = dev.query_locks().map(|l| l.mask()).unwrap_or(0xFFFF);
+            let after_silence = dev.query_locks().map(|l| l.entries().len()).unwrap_or(99);
             check(
                 "lock: safety clear",
-                after_reset == 0 && before == 0x000C && after_silence == 0,
-                format!(
-                    "reset->0x{after_reset:04X}; y-lock 0x{before:04X} after 1.4s silence 0x{after_silence:04X}"
-                ),
+                after_reset == 0 && before == 1 && after_silence == 0,
+                format!("reset->{after_reset} locks; y-lock {before} after 1.4s silence {after_silence}"),
             );
         }
 
@@ -479,10 +477,10 @@ mod linux {
             let dev = device.as_ref().unwrap();
             let has_kbd = dev.query_health().map(|h| h.kbd_attached).unwrap_or(false);
             if has_kbd {
-                let _ = dev.lock_key(Key::A, LockDirection::Both);
+                let _ = dev.lock(Key::A, LockDirection::Both);
                 let on1 = dev.query_health().map(|h| h.lock_on).unwrap_or(false);
-                let _ = dev.unlock_key(Key::A, LockDirection::Both);
-                let _ = dev.lock_all(Blanket::Keys);
+                let _ = dev.unlock(Key::A, LockDirection::Both);
+                let _ = dev.lock_all(Blanket::Keys, LockDirection::Both);
                 let on2 = dev.query_health().map(|h| h.lock_on).unwrap_or(false);
                 let _ = dev.reset();
                 let off = dev.query_health().map(|h| !h.lock_on).unwrap_or(false);
@@ -549,14 +547,14 @@ mod linux {
             let mut detail = format!("kbd_caps={caps:?} attached={attached}");
             if attached {
                 acc.key_a.store(0, Ordering::Relaxed);
-                let _ = dev.key_down(Key::A);
+                let _ = dev.press(Key::A);
                 let key_on = dev
                     .query_health()
                     .map(|h| h.injection_active)
                     .unwrap_or(false);
                 std::thread::sleep(Duration::from_millis(200));
                 let evdev_down = acc.key_a.load(Ordering::Relaxed) == 1;
-                let _ = dev.key_up(Key::A);
+                let _ = dev.release(Key::A);
                 std::thread::sleep(Duration::from_millis(200));
                 let evdev_up = acc.key_a.load(Ordering::Relaxed) == 0;
                 let _ = dev.reset();
@@ -569,12 +567,12 @@ mod linux {
                     "{detail} key[on={key_on} off={key_off} evdev_down={evdev_down} evdev_up={evdev_up}]"
                 );
                 if caps.as_ref().map(|c| c.has_consumer).unwrap_or(false) {
-                    let _ = dev.media_down(MediaKey::VOLUME_UP);
+                    let _ = dev.press(MediaKey::VOLUME_UP);
                     let med_on = dev
                         .query_health()
                         .map(|h| h.injection_active)
                         .unwrap_or(false);
-                    let _ = dev.media_up(MediaKey::VOLUME_UP);
+                    let _ = dev.release(MediaKey::VOLUME_UP);
                     let _ = dev.reset();
                     inject_ok = inject_ok && med_on;
                     detail = format!("{detail} media[on={med_on}]");
@@ -770,7 +768,7 @@ mod linux {
                 let _ = dev.press(button);
                 std::thread::sleep(Duration::from_millis(200));
                 let down = btn_val(&acc, button);
-                let _ = dev.soft_release(button);
+                let _ = dev.release(button);
                 std::thread::sleep(Duration::from_millis(200));
                 let up = btn_val(&acc, button);
 
@@ -800,7 +798,7 @@ mod linux {
             let _ = dev.force_release(Button::Left);
             std::thread::sleep(Duration::from_millis(200));
             let up = acc.btn_left.load(Ordering::Relaxed);
-            let _ = dev.soft_release(Button::Left);
+            let _ = dev.release(Button::Left);
             check(
                 "force_release",
                 down == 1 && up == 0,
@@ -810,7 +808,7 @@ mod linux {
 
         {
             let dev = device.as_ref().unwrap();
-            let _ = dev.button(Button::Right, Action::Press);
+            let _ = dev.inject(Button::Right, Action::Press);
             std::thread::sleep(Duration::from_millis(200));
             let down = acc.btn_right.load(Ordering::Relaxed);
             let _ = dev.reset();
@@ -898,7 +896,7 @@ mod linux {
             let down = acc.btn_right.load(Ordering::Relaxed);
             std::thread::sleep(Duration::from_millis(1600));
             let still = acc.btn_right.load(Ordering::Relaxed);
-            let _ = dev.soft_release(Button::Right);
+            let _ = dev.release(Button::Right);
             std::thread::sleep(Duration::from_millis(150));
             check(
                 "keepalive holds",

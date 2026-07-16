@@ -103,8 +103,8 @@ impl Device {
     /// let device = Device::find()?;
     /// let events = device.catch_events(CatchMask::KEYS)?;
     /// while let Ok(event) = events.recv() {
-    ///     if let CatchEvent::Keyboard(kb) = event {
-    ///         if kb.is_pressed(Key::ESCAPE) {
+    ///     if let CatchEvent::Usages(held) = event {
+    ///         if held.is_held(Key::ESCAPE) {
     ///             // ...
     ///         }
     ///     }

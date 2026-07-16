@@ -1,10 +1,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::protocol::opcode::BTN_COUNT;
-use crate::types::{Action, Button, CatchMask, Key, MediaKey};
+use crate::types::{Action, CatchMask, Class, Usage};
 
 /// A lock the host wants held, keyed by its wire fields so a reapply is exact and idempotent.
-pub(crate) type LockKey = (u8, u16, u8); // (class, usage, direction)
+pub(crate) type LockKey = (u8, u16, u8); // (class, id, direction)
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(crate) enum Override {
@@ -33,52 +32,38 @@ impl Override {
     }
 }
 
-/// The PC-owned injection + subscription state, re-asserted after a reconnect so a held button/key/
-/// media key and an open catch stream survive a control-link blip. Buttons use a fixed slot array;
-/// keys and media (sparse) use ordered maps so a reapply is deterministic.
+/// The PC-owned injection + subscription state, re-asserted after a reconnect so a held usage (button,
+/// key, or media) and an open catch stream survive a control-link blip. Every momentary override lives in
+/// one `(class, id)`-keyed map, so a reapply is deterministic and class-blind.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct DesiredState {
-    overrides: [Override; BTN_COUNT as usize],
-    keys: BTreeMap<u8, Override>, // usage -> Press/Force (a key never sits at None in the map)
-    media: BTreeMap<u16, Override>, // Consumer usage -> Press/Force
-    locks: BTreeSet<LockKey>,     // active locks (any class), re-asserted after a reconnect
+    overrides: BTreeMap<(u8, u16), Override>, // (class, id) -> Press/Force (never sits at None in the map)
+    locks: BTreeSet<LockKey>,                 // active locks (any class), re-asserted after a reconnect
     catch: CatchMask,
 }
 
 impl Default for DesiredState {
     fn default() -> Self {
         DesiredState {
-            overrides: [Override::None; BTN_COUNT as usize],
-            keys: BTreeMap::new(),
-            media: BTreeMap::new(),
+            overrides: BTreeMap::new(),
             locks: BTreeSet::new(),
             catch: CatchMask::empty(),
         }
     }
 }
 
-fn apply_to_map<K: Ord>(map: &mut BTreeMap<K, Override>, key: K, action: Action) {
-    match Override::applied(action) {
-        Override::None => {
-            map.remove(&key);
-        }
-        ov => {
-            map.insert(key, ov);
-        }
-    }
-}
-
 impl DesiredState {
-    pub(crate) fn apply(&mut self, button: Button, action: Action) {
-        self.overrides[button.as_id() as usize] = Override::applied(action);
-    }
-
-    pub(crate) fn apply_key(&mut self, key: Key, action: Action) {
-        apply_to_map(&mut self.keys, key.usage(), action);
-    }
-
-    pub(crate) fn apply_media(&mut self, key: MediaKey, action: Action) {
-        apply_to_map(&mut self.media, key.usage(), action);
+    /// Record a momentary-usage override (any class) for reconnect-replay.
+    pub(crate) fn apply(&mut self, usage: Usage, action: Action) {
+        let key = usage.class_id();
+        match Override::applied(action) {
+            Override::None => {
+                self.overrides.remove(&key);
+            }
+            ov => {
+                self.overrides.insert(key, ov);
+            }
+        }
     }
 
     /// Track a lock (any class) so a reconnect re-asserts it. `on=false` forgets it.
@@ -92,11 +77,9 @@ impl DesiredState {
 
     pub(crate) fn clear(&mut self) {
         // Injection overrides + locks. Catch teardown on reset() is handled by Link::catch_disconnect_all
-        // (it drops the EventStream senders so recv() returns Err — a plain field-clear here couldn't);
-        // catch otherwise clears firmware-side on the same lifecycle as injection.
-        self.overrides = [Override::None; BTN_COUNT as usize];
-        self.keys.clear();
-        self.media.clear();
+        // (it drops the EventStream senders so recv() returns Err); catch otherwise clears firmware-side on
+        // the same lifecycle as injection.
+        self.overrides.clear();
         self.locks.clear();
     }
 
@@ -112,31 +95,16 @@ impl DesiredState {
     /// Idle = nothing for the keepalive to hold alive. A catch subscription counts, so the silence
     /// timer keeps being fed and the box keeps streaming while a stream is open.
     pub(crate) fn is_idle(&self) -> bool {
-        self.catch.is_empty()
-            && self.keys.is_empty()
-            && self.media.is_empty()
-            && self.locks.is_empty()
-            && self.overrides.iter().all(|o| *o == Override::None)
+        self.catch.is_empty() && self.overrides.is_empty() && self.locks.is_empty()
     }
 
-    pub(crate) fn held(&self) -> impl Iterator<Item = (Button, Action)> + '_ {
-        self.overrides.iter().enumerate().filter_map(|(id, ov)| {
+    /// Every held momentary override, as `(Usage, Action)`, for the reconnect reapply.
+    pub(crate) fn held(&self) -> impl Iterator<Item = (Usage, Action)> + '_ {
+        self.overrides.iter().filter_map(|(&(cls, id), ov)| {
             let action = ov.as_action()?;
-            let button = Button::from_id(id as u8)?;
-            Some((button, action))
+            let class = Class::from_u8(cls)?;
+            Some((Usage::new(class, id), action))
         })
-    }
-
-    pub(crate) fn held_keys(&self) -> impl Iterator<Item = (Key, Action)> + '_ {
-        self.keys
-            .iter()
-            .filter_map(|(&usage, ov)| Some((Key::new(usage), ov.as_action()?)))
-    }
-
-    pub(crate) fn held_media(&self) -> impl Iterator<Item = (MediaKey, Action)> + '_ {
-        self.media
-            .iter()
-            .filter_map(|(&usage, ov)| Some((MediaKey::new(usage), ov.as_action()?)))
     }
 
     pub(crate) fn held_locks(&self) -> impl Iterator<Item = LockKey> + '_ {

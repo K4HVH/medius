@@ -32,11 +32,11 @@ pub use link::{DEFAULT_KEEPALIVE_CADENCE, DEFAULT_QUERY_TIMEOUT};
 pub use protocol::{DecodedFrame, FrameType};
 pub use transport::scan::find_medius;
 pub use types::{
-    Action, Blanket, Button, CLIP_EDGES_MAX, Caps, CatchEvent, CatchMask, CatchState, ClipBuilder,
-    ClipConfig, ClipState, ClipStatus, CountersSnapshot, DeviceInfo, DeviceKind, EmitPace,
-    EmitPaceStatus, Health, ImperfectStatus, Input, KbdCaps, Key, KeyboardEvent, LedMode,
-    LedTarget, LockDirection, LockTarget, Locks, LogLevel, LogLine, MediaEvent,
-    MediaKey, Motion, MouseCaps, MouseEvent, PortInfo, Rate, RebootTarget, Stats, Version,
+    Action, Axis, Blanket, Button, CLIP_EDGES_MAX, Caps, CatchEvent, CatchMask, CatchState, Class,
+    ClipBuilder, ClipConfig, ClipState, ClipStatus, CountersSnapshot, DeviceInfo, DeviceKind,
+    EmitPace, EmitPaceStatus, Health, ImperfectStatus, Input, KbdCaps, Key, LedMode, LedTarget,
+    LockDirection, LockEntry, LockTarget, Locks, LogLevel, LogLine, MediaKey, MotionEvent, Motion,
+    MouseCaps, PortInfo, Rate, RebootTarget, Stats, Usage, UsageSnapshot, Version,
 };
 
 #[cfg(feature = "async")]
