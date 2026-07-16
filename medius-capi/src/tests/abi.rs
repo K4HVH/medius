@@ -846,16 +846,16 @@ fn clip_builder_frame_edges_match_native() {
 #[test]
 fn clip_status_query_returns_configured_value() {
     let mock = medius_mock_new();
-    let status = MediusClipStatus {
-        state: MediusClipState::Playing,
-        free: 512,
-        used: 40,
-        ticks: 99,
-        underruns: 2,
-        overruns: 0,
-        seq_gaps: 1,
-        held: 1,
-    };
+    let mut status: MediusClipStatus = unsafe { std::mem::zeroed() };
+    status.state = MediusClipState::Playing;
+    status.free = 512;
+    status.used = 40;
+    status.ticks = 99;
+    status.underruns = 2;
+    status.seq_gaps = 1;
+    status.held_n = 2;
+    status.held[0] = medius_input_button(MediusButton::Side1);
+    status.held[1] = medius_input_key(MEDIUS_KEY_A);
     unsafe { medius_mock_set_clip_status(mock, status) };
     let mut dev: *mut MediusDevice = ptr::null_mut();
     assert_eq!(
@@ -867,21 +867,16 @@ fn clip_status_query_returns_configured_value() {
         unsafe { medius_device_clip(dev, &mut clip) },
         MediusStatus::Ok
     );
-    let mut out = MediusClipStatus {
-        state: MediusClipState::Idle,
-        free: 0,
-        used: 0,
-        ticks: 0,
-        underruns: 0,
-        overruns: 0,
-        seq_gaps: 0,
-        held: 0,
-    };
+    let mut out: MediusClipStatus = unsafe { std::mem::zeroed() };
     assert_eq!(
         unsafe { medius_clip_status(clip, &mut out) },
         MediusStatus::Ok
     );
     assert_eq!(out, status);
+    assert_eq!(out.held_n, 2);
+    assert!(unsafe { medius_clip_status_is_held(&out, medius_input_button(MediusButton::Side1)) });
+    assert!(unsafe { medius_clip_status_is_held(&out, medius_input_key(MEDIUS_KEY_A)) });
+    assert!(!unsafe { medius_clip_status_is_held(&out, medius_input_button(MediusButton::Left)) });
     unsafe {
         medius_clip_free(clip);
         medius_device_free(dev);

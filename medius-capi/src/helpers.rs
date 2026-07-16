@@ -135,6 +135,22 @@ pub unsafe extern "C" fn medius_usage_event_is_held(
     })
 }
 
+/// Whether the clip is currently holding `usage` down. Mirrors `medius::ClipStatus::is_held`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn medius_clip_status_is_held(
+    status: *const MediusClipStatus,
+    usage: MediusInput,
+) -> bool {
+    guard(false, || {
+        if status.is_null() {
+            return false;
+        }
+        let s = unsafe { &*status };
+        let n = (s.held_n as usize).min(MEDIUS_MAX_USAGES);
+        s.held[..n].contains(&usage)
+    })
+}
+
 /// Whether a mouse interface is bound. Delegates to `medius::Caps::has_mouse`.
 #[unsafe(no_mangle)]
 pub extern "C" fn medius_caps_has_mouse(caps: MediusCaps) -> bool {

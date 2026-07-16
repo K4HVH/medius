@@ -439,7 +439,9 @@ typedef struct MediusClipConfig {
 } MediusClipConfig;
 
 // A snapshot of the device-side clip ring and playback counters. `free`/`used` pace top-ups;
-// `state == Faulted` means re-sync (stop + rebuild).
+// `state == Faulted` means re-sync (stop + rebuild). `held[0..held_n]` is the held-usage snapshot: the
+// buttons, keys, and media the clip is holding down, keyed like a `MediusUsageEvent`. Test one with
+// `medius_clip_status_is_held`.
 typedef struct MediusClipStatus {
     MediusClipState state;
     uint32_t free;
@@ -448,7 +450,8 @@ typedef struct MediusClipStatus {
     uint16_t underruns;
     uint16_t overruns;
     uint16_t seq_gaps;
-    uint8_t held;
+    uint16_t held_n;
+    struct MediusInput held[MEDIUS_MAX_USAGES];
 } MediusClipStatus;
 
 // A discovered medius serial port. `path` is NUL-terminated.
@@ -1118,6 +1121,9 @@ bool medius_rate_native_hz(struct MediusRate rate, float *out_hz);
 // `0xE0..=0xE7`). Mirrors `medius::UsageSnapshot::is_held`.
 bool medius_usage_event_is_held(const struct MediusUsageEvent *event,
                                 struct MediusInput usage);
+
+// Whether the clip is currently holding `usage` down. Mirrors `medius::ClipStatus::is_held`.
+bool medius_clip_status_is_held(const struct MediusClipStatus *status, struct MediusInput usage);
 
 // Whether a mouse interface is bound. Delegates to `medius::Caps::has_mouse`.
 bool medius_caps_has_mouse(struct MediusCaps caps);

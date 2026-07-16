@@ -221,9 +221,9 @@ fn options_emit_payload(pace: EmitPace) -> Vec<u8> {
     p
 }
 
-fn clip_status_payload(c: ClipStatus) -> Vec<u8> {
+fn clip_status_payload(c: &ClipStatus) -> Vec<u8> {
     // RESP(CLIP): [what=10][state][free u32][used u32][ticks u32][underruns u16][overruns u16]
-    // [seq_gaps u16][held u8]
+    // [seq_gaps u16][n u8] then n × [class u8][id u16 LE]
     let state = match c.state {
         ClipState::Idle => 0u8,
         ClipState::Armed => 1,
@@ -237,7 +237,12 @@ fn clip_status_payload(c: ClipStatus) -> Vec<u8> {
     p.extend_from_slice(&c.underruns.to_le_bytes());
     p.extend_from_slice(&c.overruns.to_le_bytes());
     p.extend_from_slice(&c.seq_gaps.to_le_bytes());
-    p.push(c.held);
+    p.push(c.held.len() as u8);
+    for u in &c.held {
+        let (class, id) = u.class_id();
+        p.push(class);
+        p.extend_from_slice(&id.to_le_bytes());
+    }
     p
 }
 
@@ -333,7 +338,7 @@ impl MockBox {
                         }
                         _ => Vec::new(),
                     },
-                    Some(10) => encode(FrameType::Resp, seq, &clip_status_payload(st.clip))
+                    Some(10) => encode(FrameType::Resp, seq, &clip_status_payload(&st.clip))
                         .expect("resp fits"),
                     _ => Vec::new(),
                 }

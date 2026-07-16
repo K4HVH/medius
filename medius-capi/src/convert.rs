@@ -419,6 +419,14 @@ impl From<ClipState> for MediusClipState {
 
 impl From<ClipStatus> for MediusClipStatus {
     fn from(s: ClipStatus) -> Self {
+        let mut held = [MediusInput {
+            kind: MediusInputKind::Button,
+            value: 0,
+        }; MEDIUS_MAX_USAGES];
+        let n = s.held.len().min(MEDIUS_MAX_USAGES);
+        for (slot, u) in held.iter_mut().zip(s.held.iter()).take(n) {
+            *slot = usage_to_c(*u);
+        }
         MediusClipStatus {
             state: s.state.into(),
             free: s.free,
@@ -427,7 +435,8 @@ impl From<ClipStatus> for MediusClipStatus {
             underruns: s.underruns,
             overruns: s.overruns,
             seq_gaps: s.seq_gaps,
-            held: s.held,
+            held_n: n as u16,
+            held,
         }
     }
 }
@@ -445,6 +454,11 @@ impl From<MediusClipState> for ClipState {
 
 impl From<MediusClipStatus> for ClipStatus {
     fn from(s: MediusClipStatus) -> Self {
+        let n = (s.held_n as usize).min(MEDIUS_MAX_USAGES);
+        let held = s.held[..n]
+            .iter()
+            .filter_map(|&u| input_to_medius(u))
+            .collect();
         ClipStatus {
             state: s.state.into(),
             free: s.free,
@@ -453,7 +467,7 @@ impl From<MediusClipStatus> for ClipStatus {
             underruns: s.underruns,
             overruns: s.overruns,
             seq_gaps: s.seq_gaps,
-            held: s.held,
+            held,
         }
     }
 }
