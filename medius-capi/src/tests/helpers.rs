@@ -115,16 +115,27 @@ fn is_locked_matches_entries() {
         MediusLockDirection::Positive
     ));
 
-    // A whole-class blanket entry does not answer an exact-target query.
+    // A whole-class blanket entry covers any usage of its class (a buttons blanket locks Side2), but not a
+    // usage of a different class or an axis.
     let blanket = locks_with(&[MediusLockEntry {
         target: medius_lock_target_usage(medius_input_button(MediusButton::Left)),
         is_blanket: true,
         positive: true,
         negative: true,
     }]);
-    assert!(!medius_locks_is_locked(
+    assert!(medius_locks_is_locked(
         &blanket,
         side2,
+        MediusLockDirection::Positive
+    ));
+    assert!(!medius_locks_is_locked(
+        &blanket,
+        medius_lock_target_usage(medius_input_key(MEDIUS_KEY_A)),
+        MediusLockDirection::Positive
+    ));
+    assert!(!medius_locks_is_locked(
+        &blanket,
+        x,
         MediusLockDirection::Positive
     ));
 }

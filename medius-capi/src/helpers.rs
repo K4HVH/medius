@@ -88,9 +88,18 @@ pub extern "C" fn medius_locks_is_locked(
         }
         let locks = unsafe { &*locks };
         let n = (locks.n as usize).min(MEDIUS_MAX_LOCKS);
+        let is_usage = target.kind == MediusLockTargetKind::Usage;
         locks.entries[..n].iter().any(|e| {
-            !e.is_blanket
-                && e.target == target
+            // A blanket covers any usage of its class; a specific entry matches its exact target. For an
+            // axis target only the kind is significant (the usage field is an unused sentinel).
+            let covers = if e.is_blanket {
+                is_usage
+                    && e.target.kind == MediusLockTargetKind::Usage
+                    && e.target.usage.kind == target.usage.kind
+            } else {
+                e.target.kind == target.kind && (!is_usage || e.target.usage == target.usage)
+            };
+            covers
                 && match dir {
                     MediusLockDirection::Both => e.positive && e.negative,
                     MediusLockDirection::Positive => e.positive,

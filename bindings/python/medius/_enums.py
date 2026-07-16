@@ -91,11 +91,12 @@ class LockTargetKind(IntEnum):
 
 
 class Blanket(IntEnum):
-    KEYS = 0
-    MEDIA = 1
+    # ABI-local ordinals matching the Rust MediusBlanket, not the CLIP_LOCK_* wire bits.
+    AIM = 0
+    WHEEL = 1
     BUTTONS = 2
-    AIM = 3
-    WHEEL = 4
+    KEYS = 3
+    MEDIA = 4
 
 
 class LogLevel(IntEnum):

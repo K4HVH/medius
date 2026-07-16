@@ -103,15 +103,16 @@ pub enum MediusLockDirection {
     Negative = 2,
 }
 
-/// A whole input group for a blanket lock or a clip auto-lock scope.
+/// A whole input group for a blanket lock or a clip auto-lock scope. These discriminants are ABI-local
+/// ordinals (matching the crate's `Blanket` order), not the `CLIP_LOCK_*` wire bits.
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MediusBlanket {
-    Keys = 0,
-    Media = 1,
+    Aim = 0,
+    Wheel = 1,
     Buttons = 2,
-    Aim = 3,
-    Wheel = 4,
+    Keys = 3,
+    Media = 4,
 }
 
 /// A device log line's severity.

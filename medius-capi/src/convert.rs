@@ -9,7 +9,7 @@ use std::os::raw::c_char;
 use medius::{
     Action, Axis, Blanket, BoxInfo, Button, Caps, CatchEvent, CatchMask, CatchState, Class,
     ClipState, ClipStatus, CountersSnapshot, DeviceInfo, DeviceKind, EmitPace, EmitPaceStatus,
-    Health, ImperfectStatus, KbdCaps, Key, LedMode, LedTarget, LockDirection, LockEntry,
+    Health, ImperfectStatus, KbdCaps, Key, LedMode, LedTarget, LockDirection, LockEntry, LockScope,
     LockTarget, Locks, LogLevel, LogLine, MediaKey, Motion, MouseCaps, PortInfo, Rate,
     RebootTarget, Stats, Usage, Version,
 };
@@ -166,11 +166,12 @@ impl From<MediusMotion> for Motion {
     }
 }
 
-/// `MediusInput` -> a [`Usage`]. `None` when a button carries an out-of-range button id.
+/// `MediusInput` -> a [`Usage`]. `None` when a button/key `value` is out of range for its class (a button
+/// id, or a HID keycode > 255) rather than silently truncating it.
 pub(crate) fn input_to_medius(v: MediusInput) -> Option<Usage> {
     Some(match v.kind {
-        MediusInputKind::Button => Usage::from(Button::from_id(v.value as u8)?),
-        MediusInputKind::Key => Usage::from(Key::new(v.value as u8)),
+        MediusInputKind::Button => Usage::from(Button::from_id(u8::try_from(v.value).ok()?)?),
+        MediusInputKind::Key => Usage::from(Key::new(u8::try_from(v.value).ok()?)),
         MediusInputKind::Media => Usage::from(MediaKey::new(v.value)),
     })
 }
@@ -361,19 +362,18 @@ impl From<Locks> for MediusLocks {
             if out.n as usize >= MEDIUS_MAX_LOCKS {
                 break;
             }
-            let (target, is_blanket) = if let Some(class) = e.blanket {
-                let target = MediusLockTarget {
-                    kind: MediusLockTargetKind::Usage,
-                    usage: MediusInput {
-                        kind: class_kind(class),
-                        value: 0,
-                    },
-                };
-                (target, true)
-            } else if let Some(t) = e.target {
-                (lock_target_to_c(t), false)
-            } else {
-                continue;
+            let (target, is_blanket) = match e.scope {
+                LockScope::Blanket(class) => {
+                    let target = MediusLockTarget {
+                        kind: MediusLockTargetKind::Usage,
+                        usage: MediusInput {
+                            kind: class_kind(class),
+                            value: 0,
+                        },
+                    };
+                    (target, true)
+                }
+                LockScope::Target(t) => (lock_target_to_c(t), false),
             };
             out.entries[out.n as usize] = MediusLockEntry {
                 target,
@@ -677,14 +677,13 @@ impl From<MediusLocks> for Locks {
         let entries = l.entries[..n]
             .iter()
             .filter_map(|e| {
-                let (target, blanket) = if e.is_blanket {
-                    (None, Some(kind_class(e.target.usage.kind)))
+                let scope = if e.is_blanket {
+                    LockScope::Blanket(kind_class(e.target.usage.kind))
                 } else {
-                    (Some(lock_target_to_medius(e.target)?), None)
+                    LockScope::Target(lock_target_to_medius(e.target)?)
                 };
                 Some(LockEntry {
-                    target,
-                    blanket,
+                    scope,
                     positive: e.positive,
                     negative: e.negative,
                 })
