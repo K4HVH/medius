@@ -6,23 +6,16 @@ import ctypes
 from typing import Optional, Sequence, Tuple
 
 from . import _native
-from ._enums import Action, Blanket
+from ._enums import Action, Blanket, Edge
 from ._errors import check
-from ._types import Usage, ClipStatus, clip_status_from_c
-
-
-class ClipConfig:
-    """Playback options for a clip `start` or catch trigger; `autolock` lists the `Blanket` groups to lock while playing."""
-
-    def __init__(self, autolock: Optional[Sequence[Blanket]] = None):
-        self.autolock = list(autolock) if autolock is not None else []
-
-    def _c(self):
-        """Build a (MediusClipConfig, backing array) pair; keep the array alive for the call's duration."""
-        groups = [int(b) for b in self.autolock]
-        arr = (_native.u8 * len(groups))(*groups)
-        ptr = ctypes.cast(arr, ctypes.POINTER(_native.u8)) if groups else ctypes.POINTER(_native.u8)()
-        return _native.MediusClipConfig(ptr, len(groups)), arr
+from ._types import (
+    ClipSettings,
+    ClipStatus,
+    ClipTrigger,
+    Usage,
+    clip_settings_from_c,
+    clip_status_from_c,
+)
 
 
 class ClipBuilder:
@@ -133,31 +126,76 @@ class ClipHandle:
         """Append the builder's entries to the ring (whole-entry frames, each with the next append seq)."""
         check(_native.lib.medius_clip_append(self._handle, builder._ptr))
 
-    def start(self, config: Optional[ClipConfig] = None):
-        """Begin playback from the ring head; with no `ClipConfig`, plays with no auto-lock."""
-        cfg, _arr = (config or ClipConfig())._c()
-        check(_native.lib.medius_clip_start(self._handle, cfg))
+    def set_autolock(self, scope: Optional[Sequence[Blanket]] = None):
+        """Auto-lock these input groups while the clip plays (clip-owned, released on stop). Set before the first append."""
+        groups = [int(b) for b in (scope or [])]
+        arr = (_native.u8 * len(groups))(*groups)
+        ptr = ctypes.cast(arr, ctypes.POINTER(_native.u8)) if groups else ctypes.POINTER(_native.u8)()
+        check(_native.lib.medius_clip_set_autolock(self._handle, ptr, len(groups)))
+
+    def set_loop(self, on: bool):
+        """Loop playback at the clip end (retained mode only)."""
+        check(_native.lib.medius_clip_set_loop(self._handle, 1 if on else 0))
+
+    def set_retain(self, on: bool):
+        """Retain the loaded clip so it can rewind and replay (False = streaming, the default). Set before the first append."""
+        check(_native.lib.medius_clip_set_retain(self._handle, 1 if on else 0))
+
+    def bind(self, trigger: ClipTrigger):
+        """Add or overwrite a trigger binding: `trigger.on`'s edge fires its action on the box, no host round-trip."""
+        t = _native.MediusClipTrigger(
+            trigger.on._c, int(trigger.edge), int(trigger.action), 1 if trigger.consume else 0
+        )
+        check(_native.lib.medius_clip_bind(self._handle, t))
+
+    def unbind(self, usage: Usage, edge: Edge):
+        """Remove the trigger binding on `usage`'s `edge`."""
+        check(_native.lib.medius_clip_unbind(self._handle, usage._c, int(edge)))
+
+    def clear_triggers(self):
+        """Remove every trigger binding."""
+        check(_native.lib.medius_clip_clear_triggers(self._handle))
+
+    def start(self):
+        """Rewind and play (resume from a pause)."""
+        check(_native.lib.medius_clip_start(self._handle))
 
     def stop(self):
-        """Stop playback, flush the ring, release any clip-owned auto-lock."""
+        """Stop, flush a streaming clip (rewind a retained one), release held input and the clip auto-lock."""
         check(_native.lib.medius_clip_stop(self._handle))
 
-    def arm_catch(self, trigger: Usage, config: Optional[ClipConfig] = None):
-        """Arm an on-device trigger: playback starts on a physical press of `trigger` with `config`; for any input use `arm_catch_any`."""
-        cfg, _arr = (config or ClipConfig())._c()
-        check(_native.lib.medius_clip_arm_catch(self._handle, trigger._c, cfg))
+    def pause(self):
+        """Halt mid-clip, retaining the cursor and any held input."""
+        check(_native.lib.medius_clip_pause(self._handle))
 
-    def arm_catch_any(self, config: Optional[ClipConfig] = None):
-        """Arm a trigger on any physical input (button, key, or media), with `config` when it fires."""
-        cfg, _arr = (config or ClipConfig())._c()
-        check(_native.lib.medius_clip_arm_catch_any(self._handle, cfg))
+    def resume(self):
+        """Continue from the paused cursor."""
+        check(_native.lib.medius_clip_resume(self._handle))
 
-    def disarm(self):
-        """Clear a pending catch-arm."""
-        check(_native.lib.medius_clip_disarm(self._handle))
+    def restart(self):
+        """Force a rewind and play, even mid-playback."""
+        check(_native.lib.medius_clip_restart(self._handle))
 
-    def status(self) -> ClipStatus:
-        """The ring depth (`free`/`used`) and playback counters. A `FAULTED` state means re-sync."""
+    def toggle(self):
+        """Toggle: play if idle/paused, stop if playing."""
+        check(_native.lib.medius_clip_toggle(self._handle))
+
+    def clear(self):
+        """Discard the loaded clip, free the ring, and clear a fault."""
+        check(_native.lib.medius_clip_clear(self._handle))
+
+    def finalize(self):
+        """Finalize a retained clip: fix its end so it can replay and loop."""
+        check(_native.lib.medius_clip_finalize(self._handle))
+
+    def query_status(self) -> ClipStatus:
+        """The ring depth, progress, and playback counters. A `FAULTED` state means recover with `clear`."""
         out = _native.MediusClipStatus()
-        check(_native.lib.medius_clip_status(self._handle, ctypes.byref(out)))
+        check(_native.lib.medius_clip_query_status(self._handle, ctypes.byref(out)))
         return clip_status_from_c(out)
+
+    def query_config(self) -> ClipSettings:
+        """The clip configuration: autolock, loop, retain, finalized, and the trigger set."""
+        out = _native.MediusClipSettings()
+        check(_native.lib.medius_clip_query_config(self._handle, ctypes.byref(out)))
+        return clip_settings_from_c(out)

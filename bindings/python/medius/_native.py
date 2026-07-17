@@ -9,6 +9,7 @@ from ctypes.util import find_library
 from pathlib import Path
 
 MEDIUS_MAX_USAGES = 256
+MEDIUS_CLIP_TRIG_MAX = 8
 MEDIUS_MAX_LOCKS = 256
 MEDIUS_MAX_LOG_TEXT = 512
 MEDIUS_MAX_PATH = 512
@@ -46,8 +47,19 @@ class MediusUsage(ctypes.Structure):
     _fields_ = [("kind", u8), ("id", u16)]
 
 
-class MediusClipConfig(ctypes.Structure):
-    _fields_ = [("autolock", ctypes.POINTER(u8)), ("autolock_len", usize)]
+class MediusClipTrigger(ctypes.Structure):
+    _fields_ = [("on", MediusUsage), ("edge", u8), ("action", u8), ("consume", u8)]
+
+
+class MediusClipSettings(ctypes.Structure):
+    _fields_ = [
+        ("autolock_bits", u8),
+        ("loop_", u8),
+        ("retain", u8),
+        ("finalized", u8),
+        ("triggers", MediusClipTrigger * MEDIUS_CLIP_TRIG_MAX),
+        ("n", u8),
+    ]
 
 
 class MediusLockTarget(ctypes.Structure):
@@ -180,7 +192,8 @@ class MediusClipStatus(ctypes.Structure):
     _fields_ = [
         ("state", u8),
         ("free", u32),
-        ("used", u32),
+        ("total", u32),
+        ("played", u32),
         ("ticks", u32),
         ("underruns", u16),
         ("overruns", u16),
@@ -368,12 +381,22 @@ _decl("medius_clip_builder_frame", i32, [HANDLE, i16, i16, i16, ctypes.POINTER(M
 _decl("medius_device_clip", i32, [HANDLE, PHANDLE])
 _decl("medius_clip_free", None, [HANDLE])
 _decl("medius_clip_append", i32, [HANDLE, HANDLE])
-_decl("medius_clip_start", i32, [HANDLE, MediusClipConfig])
+_decl("medius_clip_set_autolock", i32, [HANDLE, ctypes.POINTER(u8), usize])
+_decl("medius_clip_set_loop", i32, [HANDLE, u8])
+_decl("medius_clip_set_retain", i32, [HANDLE, u8])
+_decl("medius_clip_bind", i32, [HANDLE, MediusClipTrigger])
+_decl("medius_clip_unbind", i32, [HANDLE, MediusUsage, u8])
+_decl("medius_clip_clear_triggers", i32, [HANDLE])
+_decl("medius_clip_start", i32, [HANDLE])
 _decl("medius_clip_stop", i32, [HANDLE])
-_decl("medius_clip_arm_catch", i32, [HANDLE, MediusUsage, MediusClipConfig])
-_decl("medius_clip_arm_catch_any", i32, [HANDLE, MediusClipConfig])
-_decl("medius_clip_disarm", i32, [HANDLE])
-_decl("medius_clip_status", i32, [HANDLE, ctypes.POINTER(MediusClipStatus)])
+_decl("medius_clip_pause", i32, [HANDLE])
+_decl("medius_clip_resume", i32, [HANDLE])
+_decl("medius_clip_restart", i32, [HANDLE])
+_decl("medius_clip_toggle", i32, [HANDLE])
+_decl("medius_clip_clear", i32, [HANDLE])
+_decl("medius_clip_finalize", i32, [HANDLE])
+_decl("medius_clip_query_status", i32, [HANDLE, ctypes.POINTER(MediusClipStatus)])
+_decl("medius_clip_query_config", i32, [HANDLE, ctypes.POINTER(MediusClipSettings)])
 
 HAS_FLASH = _decl("medius_flash", i32, [ctypes.c_char_p, ctypes.c_char_p, c_bool], optional=True) is not None
 
@@ -395,6 +418,7 @@ if HAS_MOCK:
     _decl("medius_mock_set_movement_riding", None, [HANDLE, c_bool, u32])
     _decl("medius_mock_set_emit_pace", None, [HANDLE, u8, u16])
     _decl("medius_mock_set_clip_status", None, [HANDLE, MediusClipStatus])
+    _decl("medius_mock_set_clip_settings", None, [HANDLE, MediusClipSettings])
     _decl("medius_mock_silent", None, [HANDLE])
     _decl("medius_mock_push_raw", None, [HANDLE, ctypes.POINTER(u8), usize])
     _decl("medius_mock_push_log", None, [HANDLE, u8, ctypes.c_char_p])

@@ -489,6 +489,51 @@ fn blanket_bit(b: Blanket) -> u8 {
     }
 }
 
+/// Deserialize clip settings from the C struct (the inverse of [`clip_settings_to_c`]).
+#[cfg(feature = "mock")]
+pub(crate) fn clip_settings_from_c(c: &MediusClipSettings) -> medius::ClipSettings {
+    let n = (c.n as usize).min(MEDIUS_CLIP_TRIG_MAX);
+    let triggers = c.triggers[..n]
+        .iter()
+        .filter_map(|t| {
+            input_to_medius(t.on).map(|on| medius::ClipTrigger {
+                on,
+                edge: match t.edge {
+                    MediusEdge::Both => medius::Edge::Both,
+                    MediusEdge::Press => medius::Edge::Press,
+                    MediusEdge::Release => medius::Edge::Release,
+                },
+                action: match t.action {
+                    MediusClipAction::Start => medius::ClipAction::Start,
+                    MediusClipAction::Stop => medius::ClipAction::Stop,
+                    MediusClipAction::Pause => medius::ClipAction::Pause,
+                    MediusClipAction::Resume => medius::ClipAction::Resume,
+                    MediusClipAction::Restart => medius::ClipAction::Restart,
+                    MediusClipAction::Toggle => medius::ClipAction::Toggle,
+                },
+                consume: t.consume != 0,
+            })
+        })
+        .collect();
+    let autolock = [
+        Blanket::Aim,
+        Blanket::Wheel,
+        Blanket::Buttons,
+        Blanket::Keys,
+        Blanket::Media,
+    ]
+    .into_iter()
+    .filter(|&b| c.autolock_bits & blanket_bit(b) != 0)
+    .collect();
+    medius::ClipSettings {
+        autolock,
+        loop_: c.loop_ != 0,
+        retain: c.retain != 0,
+        finalized: c.finalized != 0,
+        triggers,
+    }
+}
+
 impl From<MediusClipStatus> for ClipStatus {
     fn from(s: MediusClipStatus) -> Self {
         let n = (s.held_n as usize).min(MEDIUS_MAX_USAGES);
@@ -775,6 +820,8 @@ impl From<medius::FrameType> for MediusFrameType {
             F::Option => MediusFrameType::Option,
             F::ClipAppend => MediusFrameType::ClipAppend,
             F::ClipCtrl => MediusFrameType::ClipCtrl,
+            F::ClipSet => MediusFrameType::ClipSet,
+            F::ClipTrigger => MediusFrameType::ClipTrigger,
         }
     }
 }
