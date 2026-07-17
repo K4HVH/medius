@@ -48,18 +48,34 @@ pub const OPT_NAME: u8 = 3;
 
 /// Buffered-clip status selector: `QUERY [Q_CLIP]` → `RESP(CLIP)` (§4.15).
 pub const Q_CLIP: u8 = 10;
-/// `CLIP_CTRL` sub-ops.
+/// `CLIP_CTRL` engine verbs. Ops 0..5 are the shared action space (also a trigger `action` byte).
 pub const CLIP_OP_START: u8 = 0;
 pub const CLIP_OP_STOP: u8 = 1;
-pub const CLIP_OP_ARM_CATCH: u8 = 2;
-pub const CLIP_OP_DISARM: u8 = 3;
-/// Autolock scope bits (`START` and `ARM_CATCH` scope): which physical-input classes the clip auto-locks (0 = none).
+pub const CLIP_OP_PAUSE: u8 = 2;
+pub const CLIP_OP_RESUME: u8 = 3;
+pub const CLIP_OP_RESTART: u8 = 4;
+pub const CLIP_OP_TOGGLE: u8 = 5;
+pub const CLIP_OP_CLEAR: u8 = 6;
+pub const CLIP_OP_FINALIZE: u8 = 7;
+/// `CLIP_SET` scalar setting ids (OPTION-shaped `[id][value]`).
+pub const CLIP_SET_AUTOLOCK: u8 = 0;
+pub const CLIP_SET_LOOP: u8 = 1;
+pub const CLIP_SET_RETAIN: u8 = 2;
+/// `CLIP_TRIGGER` set: max bindings and the flags byte bits.
+pub const CLIP_TRIG_MAX: usize = 8;
+pub const CLIP_TRIG_F_PRESENT: u8 = 0x01;
+pub const CLIP_TRIG_F_CONSUME: u8 = 0x02;
+/// `RESP(CLIP)` config-section flags byte.
+pub const CLIP_CFG_F_LOOP: u8 = 0x01;
+pub const CLIP_CFG_F_RETAIN: u8 = 0x02;
+pub const CLIP_CFG_F_FINALIZED: u8 = 0x04;
+/// Autolock scope bits (`CLIP_SET(AUTOLOCK)` value): which physical-input classes the clip auto-locks (0 = none).
 pub const CLIP_LOCK_AIM: u8 = 0x01;
 pub const CLIP_LOCK_WHEEL: u8 = 0x02;
 pub const CLIP_LOCK_BUTTONS: u8 = 0x04;
 pub const CLIP_LOCK_KEYS: u8 = 0x08;
 pub const CLIP_LOCK_MEDIA: u8 = 0x10;
-/// `ARM_CATCH` condition wildcards: any class, any usage within a class.
+/// Trigger binding class/id wildcards: any class, any usage within a class.
 pub const CLIP_COND_ANY_CLASS: u8 = 0xFF;
 pub const CLIP_COND_ANY_ID: u16 = 0xFFFF;
 /// Clip entry tags/flags (see [`ClipBuilder`](crate::ClipBuilder)).
@@ -205,8 +221,12 @@ pub enum FrameType {
     Option = 0x11,
     /// `CLIP_APPEND`: append buffered-clip entries to the device ring; `SEQ` = append seq (PC→box).
     ClipAppend = 0x12,
-    /// `CLIP_CTRL`: start/stop/arm-catch/disarm buffered clip playback (PC→box).
+    /// `CLIP_CTRL`: a clip engine verb (start/stop/pause/resume/restart/toggle/clear/finalize) (PC→box).
     ClipCtrl = 0x13,
+    /// `CLIP_SET`: a clip scalar setting `[id][value]` (autolock/loop/retain) (PC→box).
+    ClipSet = 0x14,
+    /// `CLIP_TRIGGER`: add/remove a clip trigger binding `[class][id u16][edge][action][flags]` (PC→box).
+    ClipTrigger = 0x15,
 }
 
 /// Error returned when a byte does not name a known [`FrameType`].
@@ -241,6 +261,8 @@ impl TryFrom<u8> for FrameType {
             0x11 => FrameType::Option,
             0x12 => FrameType::ClipAppend,
             0x13 => FrameType::ClipCtrl,
+            0x14 => FrameType::ClipSet,
+            0x15 => FrameType::ClipTrigger,
             other => return Err(UnknownFrameType(other)),
         })
     }

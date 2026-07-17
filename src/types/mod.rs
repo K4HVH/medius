@@ -11,7 +11,7 @@ mod input;
 mod kbd_caps;
 mod keyboard;
 mod led;
-mod lock;
+pub(crate) mod lock;
 mod log;
 mod media;
 mod mouse_caps;
@@ -24,7 +24,9 @@ mod version;
 
 pub use button::{Action, Button};
 pub use caps::Caps;
-pub use clip::{CLIP_EDGES_MAX, ClipBuilder, ClipConfig, ClipState, ClipStatus};
+pub use clip::{
+    CLIP_EDGES_MAX, ClipAction, ClipBuilder, ClipSettings, ClipState, ClipStatus, ClipTrigger, Edge,
+};
 pub use counters::CountersSnapshot;
 pub use device_info::{DeviceInfo, DeviceKind};
 pub use emit_pace::{EmitPace, EmitPaceStatus};

@@ -49,6 +49,15 @@ pub(crate) fn blanket_scope(scope: &[Blanket]) -> u8 {
     scope.iter().fold(0, |m, b| m | b.clip_lock_bit())
 }
 
+/// The [`Blanket`] groups a `CLIP_LOCK_*` scope byte names (the inverse of [`blanket_scope`]).
+pub(crate) fn blanket_from_scope(scope: u8) -> Vec<Blanket> {
+    Blanket::ALL
+        .iter()
+        .copied()
+        .filter(|b| scope & b.clip_lock_bit() != 0)
+        .collect()
+}
+
 /// Which edge a `LOCK` covers: press/release for a usage, `+`/`-` sign for an axis.
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
