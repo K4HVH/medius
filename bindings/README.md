@@ -46,7 +46,7 @@ medius_device_reset(dev);
 medius_device_free(dev);
 ```
 
-C++ programs use the same header and the same library — `#include <medius.h>` and
+C++ programs use the same header and the same library: `#include <medius.h>` and
 call the C API directly (it compiles as C++). There is no separate C++ wrapper.
 
 ## Python
@@ -101,11 +101,11 @@ build and ship the wheels and C/C++ assets for that same version.
 - **C / C++ → GitHub Release assets.** Attaches a `medius-capi-<target>.tar.gz`
   per platform to the release, each with `include/medius.h` and the prebuilt
   `libmedius_capi` (shared + static). Download, include the header, link the
-  library — the same header works in C and C++.
+  library; the same header works in C and C++.
 
 There's no vcpkg or Conan port: those registries build C/C++ from source in
 hermetic CI with no Rust toolchain, so a Rust-backed library doesn't fit. C/C++
 consumers use the release tarballs, or build `medius-capi` from source.
 
 `medius-capi` is `publish = false` (a substrate for other languages, not a Rust
-dependency), so it isn't on crates.io — Rust users use the `medius` crate.
+dependency), so it isn't on crates.io; Rust users use the `medius` crate.

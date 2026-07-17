@@ -125,7 +125,7 @@ impl UsageSnapshot {
 /// One event from the catch stream. Match on the variant: relative motion, or a held-usage snapshot.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum CatchEvent {
-    /// A relative-axis event — cursor motion and/or wheel.
+    /// A relative-axis event: cursor motion and/or wheel.
     Motion(MotionEvent),
     /// A held-usage snapshot for one class (buttons, keys, or media).
     Usages(UsageSnapshot),

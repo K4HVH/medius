@@ -115,7 +115,7 @@ device.media_down(MediaKey::VOLUME_UP)?; // a media key by 16-bit Consumer usage
 device.media_up(MediaKey::VOLUME_UP)?;
 ```
 
-Keys are HID keycodes (`Key::A`, `Key::ENTER`, the eight modifiers, F-keys, arrows…) or any usage via `Key::new(0x04)`; media keys are Consumer usages (`MediaKey::VOLUME_UP`, `PLAY_PAUSE`, `MUTE`…). The tri-state `Action` (press / soft-release / force-release) is shared with buttons. Held keys and media survive a reconnect, like buttons. Both are present-gated — a key the board can't report is a silent no-op; see `query_kbd_caps()`.
+Keys are HID keycodes (`Key::A`, `Key::ENTER`, the eight modifiers, F-keys, arrows…) or any usage via `Key::new(0x04)`; media keys are Consumer usages (`MediaKey::VOLUME_UP`, `PLAY_PAUSE`, `MUTE`…). The tri-state `Action` (press / soft-release / force-release) is shared with buttons. Held keys and media survive a reconnect, like buttons. Both are present-gated: a key the board can't report is a silent no-op; see `query_kbd_caps()`.
 
 ### Sustained motion
 
@@ -130,7 +130,7 @@ for _ in 0..1000 {
 
 ### Buffered clip playback
 
-For jitter-free playback, preload per-frame input into a device-side ring and let the box drain one entry per native frame — box-clocked, so it carries none of the host's scheduling jitter and none of the per-command send floor. Motion is a per-frame delta, edges (buttons/keys/media) are sticky until changed, and a gap run emits nothing for N frames. Pace top-ups off `status().free`.
+For jitter-free playback, preload per-frame input into a device-side ring and let the box drain one entry per native frame, box-clocked, so it carries none of the host's scheduling jitter and none of the per-command send floor. Motion is a per-frame delta, edges (buttons/keys/media) are sticky until changed, and a gap run emits nothing for N frames. Pace top-ups off `status().free`.
 
 ```rust
 use medius::{ClipBuilder, Button};
@@ -161,7 +161,7 @@ let catch = device.query_catch()?;      // active catch mask + box-side dropped 
 
 ### Catch (physical input events)
 
-Subscribe to the user's real input — mouse buttons/wheel/motion, keyboard keys, and media keys — as it happens. The box reports each physical report *before* any lock suppression or injection, so you can intercept an input (lock it) and rebind it (catch it) in one loop. One device-class-generic stream yields a `CatchEvent`; match on the variant. Dropping the stream unsubscribes.
+Subscribe to the user's real input (mouse buttons/wheel/motion, keyboard keys, and media keys) as it happens. The box reports each physical report *before* any lock suppression or injection, so you can intercept an input (lock it) and rebind it (catch it) in one loop. One device-class-generic stream yields a `CatchEvent`; match on the variant. Dropping the stream unsubscribes.
 
 ```rust
 use medius::{Button, CatchEvent, CatchMask, Key};
@@ -177,7 +177,7 @@ while let Ok(event) = events.recv() {
 }
 ```
 
-The mask picks which classes stream; each `CatchEvent` is a full snapshot — `Mouse` (buttons + dx/dy/wheel), `Keyboard` (modifier bitmap + pressed keys), or `Media` (active Consumer usages) — so diff successive snapshots for edges. The stream is bounded and lossy under back-pressure (`events.dropped()`), and the subscription is held alive by the keepalive and re-asserted across a reconnect. Under `async`, `events.recv_async().await`.
+The mask picks which classes stream; each `CatchEvent` is a full snapshot: `Mouse` (buttons + dx/dy/wheel), `Keyboard` (modifier bitmap + pressed keys), or `Media` (active Consumer usages); so diff successive snapshots for edges. The stream is bounded and lossy under back-pressure (`events.dropped()`), and the subscription is held alive by the keepalive and re-asserted across a reconnect. Under `async`, `events.recv_async().await`.
 
 ### Box management
 
