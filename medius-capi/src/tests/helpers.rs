@@ -94,8 +94,6 @@ fn is_locked_matches_entries() {
     assert!(!locked(&locks, side2, MediusLockDirection::Positive));
     assert!(!locked(std::ptr::null(), x, MediusLockDirection::Positive));
 
-    // A whole-class blanket entry covers any usage of its class (a buttons blanket locks Side2), but not a
-    // usage of a different class or an axis.
     let blanket = locks_with(&[MediusLockEntry {
         target: medius_lock_target_usage(medius_usage_button(MediusButton::Left)),
         is_blanket: true,
@@ -145,7 +143,6 @@ fn usage_event(usages: &[MediusUsage]) -> MediusUsageEvent {
 
 #[test]
 fn usage_event_is_held_matches_any_class() {
-    // Buttons, keys, and modifiers all live in one snapshot list, keyed the same way.
     let a = medius_usage_key(MEDIUS_KEY_A);
     let shift = medius_usage_key(MEDIUS_KEY_LEFT_SHIFT);
     let side1 = medius_usage_button(MediusButton::Side1);
@@ -200,7 +197,6 @@ fn caps_predicates() {
 
 #[test]
 fn usage_snapshot_count_caps_at_capacity_without_wrapping() {
-    // A snapshot larger than the C capacity caps at MEDIUS_MAX_USAGES, never wraps.
     let snap = medius::UsageSnapshot {
         usages: (0..(MEDIUS_MAX_USAGES as u16 + 44))
             .map(|i| medius::Usage::new(medius::Class::Key, i))
@@ -213,9 +209,7 @@ fn usage_snapshot_count_caps_at_capacity_without_wrapping() {
 
 #[test]
 fn last_error_message_truncates_and_reports_full_length() {
-    // No call has failed on this thread yet, but a short buffer must still NUL-terminate safely.
     let mut buf = [0i8; 8];
     let _ = unsafe { medius_last_error_message(buf.as_mut_ptr(), buf.len()) };
-    // The last byte we may have written is a NUL; the call must not overrun.
     assert_eq!(buf[7], 0);
 }

@@ -1,6 +1,4 @@
-//! Buffered clip playback (§3.11 / §4.15): the entry-stream encoder (pinned to the firmware `clip_entry.h`
-//! wire), the `CLIP_CTRL` / `CLIP_APPEND` command frames, entry-boundary chunking, and the `QUERY(CLIP)`
-//! decode + roundtrip. Bytes are pinned to the firmware so the host and box can't drift.
+//! Buffered clip playback (§3.11 / §4.15): entry-stream encoder, CLIP_CTRL/CLIP_APPEND frames, and QUERY(CLIP) decode, pinned to the firmware wire.
 
 use crate::protocol::command::{clip_arm_payload, clip_op_payload, clip_start_payload};
 use crate::protocol::opcode::{CLIP_OP_DISARM, CLIP_OP_STOP};
@@ -9,39 +7,32 @@ use crate::types::{Action, Button, ClipBuilder, ClipState, ClipStatus, Key, Medi
 
 #[test]
 fn clip_builder_encodes_entries_to_the_firmware_wire() {
-    // gap: [tag=0][count u16 LE]
     let mut b = ClipBuilder::new();
     b.gap(10);
     assert_eq!(b.as_bytes(), &[0x00, 0x0A, 0x00]);
     assert_eq!(b.len(), 1);
 
-    // gap(0) is a no-op (consumes no tick, emits nothing)
     let mut z = ClipBuilder::new();
     z.gap(0);
     assert!(z.is_empty());
     assert_eq!(z.as_bytes(), &[] as &[u8]);
 
-    // move: [flags=XY(1)][dx i16 LE][dy i16 LE]
     let mut m = ClipBuilder::new();
     m.move_by(5, -3);
     assert_eq!(m.as_bytes(), &[0x01, 0x05, 0x00, 0xFD, 0xFF]);
 
-    // wheel: [flags=WHEEL(2)][wheel i16 LE]
     let mut w = ClipBuilder::new();
     w.wheel(2);
     assert_eq!(w.as_bytes(), &[0x02, 0x02, 0x00]);
 
-    // press left: [flags=EDGES(4)][n=1][class=INJ_BTN(0)][id u16 LE][action=PRESS(1)]
     let mut p = ClipBuilder::new();
     p.press(Button::Left);
     assert_eq!(p.as_bytes(), &[0x04, 0x01, 0x00, 0x00, 0x00, 0x01]);
 
-    // release (soft-release) right: id 1, action SOFTREL(0)
     let mut r = ClipBuilder::new();
     r.release(Button::Right);
     assert_eq!(r.as_bytes(), &[0x04, 0x01, 0x00, 0x01, 0x00, 0x00]);
 
-    // a full frame: motion + wheel + a two-edge tuple, flags = XY|WHEEL|EDGES
     let mut f = ClipBuilder::new();
     f.frame(
         1,
@@ -55,12 +46,12 @@ fn clip_builder_encodes_entries_to_the_firmware_wire() {
     assert_eq!(
         f.as_bytes(),
         &[
-            0x07, // XY|WHEEL|EDGES
-            0x01, 0x00, 0x02, 0x00, // dx=1 dy=2
-            0xFF, 0xFF, // wheel=-1
-            0x02, // n=2 edges
-            0x00, 0x00, 0x00, 0x01, // btn left press
-            0x00, 0x00, 0x00, 0x02, // btn left forcerel
+            0x07,
+            0x01, 0x00, 0x02, 0x00,
+            0xFF, 0xFF,
+            0x02,
+            0x00, 0x00, 0x00, 0x01,
+            0x00, 0x00, 0x00, 0x02,
         ]
     );
 
@@ -72,36 +63,31 @@ fn clip_builder_encodes_entries_to_the_firmware_wire() {
 
 #[test]
 fn clip_ctrl_payload_bytes() {
-    // START: [op=0][scope]; scope = CLIP_LOCK_* bits (0 = no autolock)
     assert_eq!(clip_start_payload(0), [0, 0]);
-    assert_eq!(clip_start_payload(0x1F), [0, 0x1F]); // lock all
-    // ARM_CATCH: [op=2][cond_class][cond_id u16 LE][scope]
-    assert_eq!(clip_arm_payload(0, 0xFFFF, 0), [2, 0, 0xFF, 0xFF, 0]); // any button, no autolock
-    assert_eq!(clip_arm_payload(1, 0x04, 0x0C), [2, 1, 0x04, 0, 0x0C]); // key A, autolock buttons|keys
+    assert_eq!(clip_start_payload(0x1F), [0, 0x1F]);
+    assert_eq!(clip_arm_payload(0, 0xFFFF, 0), [2, 0, 0xFF, 0xFF, 0]);
+    assert_eq!(clip_arm_payload(1, 0x04, 0x0C), [2, 1, 0x04, 0, 0x0C]);
     assert_eq!(
         clip_arm_payload(0xFF, 0xFFFF, 0x1F),
         [2, 0xFF, 0xFF, 0xFF, 0x1F]
-    ); // any input, lock all
-    // STOP / DISARM: [op]
+    );
     assert_eq!(clip_op_payload(CLIP_OP_STOP), [1]);
     assert_eq!(clip_op_payload(CLIP_OP_DISARM), [3]);
 }
 
 #[test]
 fn decode_clip_status_through_parse_resp() {
-    // RESP(CLIP): [what=10][state][free u32][used u32][ticks u32][underruns u16][overruns u16]
-    // [seq_gaps u16][n u8] then n x [class u8][id u16 LE] held-usage snapshot
     let p = [
-        10u8, 2, // playing
-        0x00, 0x01, 0x00, 0x00, // free = 256
-        0x0A, 0x00, 0x00, 0x00, // used = 10
-        0xC8, 0x00, 0x00, 0x00, // ticks = 200
-        0x03, 0x00, // underruns = 3
-        0x01, 0x00, // overruns = 1
-        0x02, 0x00, // seq_gaps = 2
-        0x02, // held count
-        0x00, 0x04, 0x00, // button id 4 (Side2)
-        0x01, 0xE1, 0x00, // key 0xE1 (Left Shift)
+        10u8, 2,
+        0x00, 0x01, 0x00, 0x00,
+        0x0A, 0x00, 0x00, 0x00,
+        0xC8, 0x00, 0x00, 0x00,
+        0x03, 0x00,
+        0x01, 0x00,
+        0x02, 0x00,
+        0x02,
+        0x00, 0x04, 0x00,
+        0x01, 0xE1, 0x00,
     ];
     let Some(Resp::Clip(s)) = parse_resp(&p) else {
         panic!("expected Clip");
@@ -187,15 +173,15 @@ fn clip_control_frames_carry_the_right_bytes() {
     assert_eq!(
         ctrl,
         vec![
-            vec![0, 0],                      // start, no autolock
-            vec![0, 0x1F],                   // start ClipConfig::autolock(Blanket::ALL)
-            vec![0, 0x05],                   // start autolock aim|buttons
-            vec![2, 0, 1, 0, 0],             // arm button Right, no autolock
-            vec![2, 1, 0x04, 0, 0x08],       // arm key A, autolock keys
-            vec![2, 2, 0xCD, 0, 0],          // arm media Play/Pause, no autolock
-            vec![2, 0xFF, 0xFF, 0xFF, 0x1F], // arm any input, autolock all
-            vec![3],                         // disarm
-            vec![1],                         // stop
+            vec![0, 0],
+            vec![0, 0x1F],
+            vec![0, 0x05],
+            vec![2, 0, 1, 0, 0],
+            vec![2, 1, 0x04, 0, 0x08],
+            vec![2, 2, 0xCD, 0, 0],
+            vec![2, 0xFF, 0xFF, 0xFF, 0x1F],
+            vec![3],
+            vec![1],
         ]
     );
 }
@@ -262,7 +248,6 @@ fn clip_status_roundtrips_through_the_mock() {
     let device = Device::with_mock(mock.clone());
     assert_eq!(device.clip().status().unwrap(), status);
 
-    // in-place update (e.g. the ring draining) is reflected on the next query
     mock.set_clip_status(ClipStatus {
         state: ClipState::Idle,
         ..ClipStatus::default()

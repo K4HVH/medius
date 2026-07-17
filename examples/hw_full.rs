@@ -1,4 +1,4 @@
-//! Comprehensive hardware validation (Linux only).
+//! Hardware validation (Linux only).
 
 #[cfg(not(target_os = "linux"))]
 fn main() {
@@ -196,7 +196,7 @@ mod linux {
                 return ExitCode::FAILURE;
             }
         };
-        println!("grabbed {event} — injected input is captured here, NOT sent to the desktop\n");
+        println!("grabbed {event}: injected input is captured here, NOT sent to the desktop\n");
 
         let mut ok = true;
         let mut check = |name: &str, pass: bool, detail: String| {
@@ -299,9 +299,8 @@ mod linux {
         }
 
         {
-            // MOVE_RIDE option: set a 5ms ride window, read it back, then turn it off again — a
-            // round-trip + NVS-persistence-path check. The riding behaviour itself (inject only on
-            // native motion, stale-drop) needs the rig; this leaves the box back at the default (off).
+            // Wire round-trip + NVS-persistence check for the MOVE_RIDE option; the riding behaviour
+            // itself needs the rig. Leaves the box back at the default (off).
             let dev = device.as_ref().unwrap();
             let want = Duration::from_millis(5);
             let set_ok = dev.set_movement_riding(Some(want)).is_ok();
@@ -320,9 +319,8 @@ mod linux {
         }
 
         {
-            // EMIT option: a round-trip + NVS-persistence-path check. Set FIXED 500 Hz, read back the
-            // mode + the resolved ceiling, then restore LEARNED (the default). The pacing behaviour
-            // itself (the box emitting at the chosen rate) needs the rig; this exercises the wire only.
+            // Wire round-trip + NVS-persistence check for the EMIT option; the pacing behaviour itself
+            // needs the rig. Restores LEARNED (the default) afterward.
             let dev = device.as_ref().unwrap();
             let set_ok = dev.set_emit_pace(EmitPace::Fixed(500)).is_ok();
             std::thread::sleep(Duration::from_millis(60));
@@ -346,8 +344,8 @@ mod linux {
         }
 
         {
-            // Box name: set it, read it back off query_version (the name rides RESP(VERSION) like the
-            // MAC), then clear it and confirm it reverts to the synthesized "Medius-XXXX" default.
+            // The name rides RESP(VERSION) like the MAC; clearing reverts to the synthesized
+            // "Medius-XXXX" default.
             let dev = device.as_ref().unwrap();
             let set_ok = dev.set_name("hw-full box").is_ok();
             std::thread::sleep(Duration::from_millis(250)); // the name is a persisted OPTION write
@@ -451,9 +449,8 @@ mod linux {
         }
 
         {
-            // LOCK safety: RESET clears every lock, and the keepalive holds a lock alive while the client
-            // runs (so it never lapses mid-session). The firmware self-clears a lock only on true control-PC
-            // silence (a crash: the keepalive stops), the same stranding safety net the no-stuck test covers.
+            // LOCK safety: RESET clears every lock; the keepalive holds a lock alive while the client
+            // runs, and the firmware self-clears only on true control-PC silence (a crash stops it).
             let dev = device.as_ref().unwrap();
             let _ = dev.lock(Axis::Y, LockDirection::Both);
             let _ = dev.reset();
@@ -474,9 +471,8 @@ mod linux {
         }
 
         {
-            // LOCK (keyboard/blanket): a key lock and a blanket all-keys lock both register on HEALTH's
-            // lock_on, and RESET clears them. The physical block needs a hand on the keyboard (run
-            // `medius.py` and type); here we confirm the box accepts and reflects the generic classes.
+            // LOCK (keyboard/blanket): key-lock and all-keys blanket both register on HEALTH lock_on and
+            // RESET clears them; the physical block needs a hand on the keyboard (run `medius.py`).
             let dev = device.as_ref().unwrap();
             let has_kbd = dev.query_health().map(|h| h.kbd_attached).unwrap_or(false);
             if has_kbd {
@@ -502,10 +498,8 @@ mod linux {
         }
 
         {
-            // CATCH: subscribe and confirm the box reports it (CATCH_ON + the mask via query_catch),
-            // no events while the mouse is idle, and that a RESET clears catch like injection AND
-            // disconnects the host stream (recv -> Err, not a silent hang). Live physical-input delivery
-            // needs a hand on the mouse — watch it with `medius.py watch`.
+            // CATCH: subscribe, confirm CATCH_ON + mask via query_catch, idle stays quiet, and RESET
+            // clears catch AND disconnects the host stream (recv -> Err). Live delivery needs a hand.
             let dev = device.as_ref().unwrap();
             let stream = dev.catch_events(CatchMask::all());
             std::thread::sleep(Duration::from_millis(100));
@@ -518,7 +512,7 @@ mod linux {
                 .as_ref()
                 .map(|s| s.try_recv().is_none())
                 .unwrap_or(false);
-            let _ = dev.reset(); // clears catch like injection + disconnects the host stream
+            let _ = dev.reset();
             std::thread::sleep(Duration::from_millis(100));
             let off = dev.query_health().map(|h| !h.catch_on).unwrap_or(false);
             let cleared = dev
@@ -536,13 +530,8 @@ mod linux {
         }
 
         {
-            // KEYBOARD + MEDIA (v2.0.0): query CAPS; if a keyboard is bound, inject KEY_A and verify it
-            // is REALLY delivered to the grabbed evdev (key_a goes 1 then 0), not just that injection_active
-            // toggled. This catches a key injected onto the wrong interface: the game reads typing from the
-            // active keyboard interface, so an injected key landing elsewhere never reaches it. For this
-            // check the grabbed event node must be the KEYBOARD's node (the standard/boot keyboard interface
-            // the OS types on). Media injection verifies injection_active only (its Consumer reports land on
-            // a different evdev node than the grabbed one).
+            // KEYBOARD + MEDIA: verify an injected KEY_A really reaches the grabbed evdev (key_a 1 then 0),
+            // which catches a key landing on the wrong interface; the grabbed node must be the keyboard's.
             let dev = device.as_ref().unwrap();
             let caps = dev.caps().map(|c| c.keyboard);
             let attached = dev.query_health().map(|h| h.kbd_attached).unwrap_or(false);
@@ -652,11 +641,8 @@ mod linux {
         }
 
         {
-            // Buffered clip playback, field-generic: a clip carrying 200 mouse moves plus a KEY_A hold, so
-            // the box clocks out mouse motion AND a keyboard edge, each on its own interface. The grabbed
-            // node reports one of them (mouse REL_X or keyboard KEY_A depending on which was passed), so the
-            // check passes when the clip drove that interface frame-true. Also covers class-scoped auto-lock
-            // and the ring/tick counters + stop-to-idle.
+            // Buffered clip playback: a clip of 200 mouse moves plus a KEY_A hold drives both the mouse and
+            // keyboard interfaces; the grabbed node reports whichever it is. Also covers auto-lock and counters.
             let dev = device.as_ref().unwrap();
             let _ = dev.reset();
             reset_motion(&acc);
@@ -678,8 +664,7 @@ mod linux {
                 .is_ok();
             std::thread::sleep(Duration::from_millis(150));
             let key_down = acc.key_a.load(Ordering::Relaxed) == 1; // set if the grabbed node is the keyboard
-            // Field-generic held telemetry: while the clip holds KEY_A (before its release entry), the status
-            // reports it in the held-usage snapshot.
+            // While the clip still holds KEY_A (before its release entry), status reports it as held.
             let keys_held = clip
                 .status()
                 .map(|s| s.is_held(medius::Key::A))
@@ -1021,9 +1006,8 @@ mod linux {
             std::thread::sleep(Duration::from_millis(200));
             let amoved = acc.rel_x.load(Ordering::Relaxed);
             let _ = adev.reset();
-            // async parity: observers + reconnect mirror the sync Device over the shared link. Run
-            // LAST — reconnect() swaps the serial transport, so a reopen blip can't pollute the
-            // version/health/move checks above.
+            // async parity: observers + reconnect mirror the sync Device. Run LAST because reconnect()
+            // swaps the serial transport, so a reopen blip can't pollute the checks above.
             let alog_n = adev.logs().try_iter().count();
             let arecon_base = adev.counters().reconnects;
             let arecon_ok = adev.reconnect().is_ok() && adev.counters().reconnects > arecon_base;
@@ -1068,7 +1052,7 @@ mod linux {
                     let up0 = matches!(dev.query_version(), Ok(v) if v.proto_ver == 2);
                     println!(
                         "\n>>> AUTO-RECONNECT: physically UNPLUG the box's control USB, wait ~2s, then \
-                         replug.\n    Waiting up to 60s for the reader to self-heal — NO reconnect() is \
+                         replug.\n    Waiting up to 60s for the reader to self-heal; NO reconnect() is \
                          called by this test."
                     );
                     let deadline = Instant::now() + Duration::from_secs(60);

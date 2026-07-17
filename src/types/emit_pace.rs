@@ -1,8 +1,6 @@
-//! Emit-rate pacing override — what paces injected motion, and the rate in effect (§4.14).
+//! Emit-rate pacing override: what paces injected motion, and the rate in effect (§4.14).
 
-/// What paces injected motion (`OPTION(EMIT)`). The box raises the emit-rate ceiling to match; idle
-/// stays emit-when-pending, so the override never fills holds with synthetic frames — it only stops the
-/// box re-pacing a host stream that already models its own report density.
+/// What paces injected motion (`OPTION(EMIT)`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum EmitPace {
     /// Pace to the mouse's learnt native report rate (the default).

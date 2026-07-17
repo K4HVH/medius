@@ -23,9 +23,6 @@ def _cstr(buf) -> str:
     return raw.split(b"\x00", 1)[0].decode("utf-8", "replace")
 
 
-# --- query results ---
-
-
 @dataclass
 class Version:
     proto_ver: int
@@ -37,7 +34,7 @@ class Version:
 
     @property
     def mac_hex(self) -> str:
-        """The base MAC as 12 lowercase hex digits — the canonical box id."""
+        """The base MAC as 12 lowercase hex digits, the canonical box id."""
         return self.mac.hex()
 
 
@@ -129,8 +126,7 @@ class Stats:
 
 @dataclass
 class LockEntry:
-    """One active lock: what is locked and which edges. `is_blanket` marks a whole-class lock (every
-    button / key / media usage), where `target` names only the class."""
+    """One active lock: what is locked and which edges."""
 
     target: "LockTarget"
     is_blanket: bool
@@ -225,13 +221,9 @@ class BoxInfo:
         return self.port.serial
 
 
-# --- catch / log payloads ---
-
-
 @dataclass
 class MotionEvent:
-    """A relative-axis catch event: the user's real motion at the merge point, before any lock
-    suppression or injection."""
+    """A relative-axis catch event: the user's real motion at the merge point."""
 
     dx: int
     dy: int
@@ -240,8 +232,7 @@ class MotionEvent:
 
 @dataclass
 class UsageSnapshot:
-    """A held-usage snapshot for one class: every held usage (button / key / media; modifiers are key
-    usages 0xE0..0xE7). A button press and a key press have the same shape."""
+    """A held-usage snapshot for one class: every held usage (button, key, or media)."""
 
     usages: List["Usage"] = field(default_factory=list)
 
@@ -276,12 +267,8 @@ class RecordedFrame:
     payload: bytes
 
 
-# --- parameter helpers (wrap a ctypes struct built by the C constructors) ---
-
-
 class Usage:
-    """A momentary usage (a button, key, or media usage — all one shape). Build with `Usage.button` /
-    `key` / `media`. The same value drives `inject`/`press`/`lock` and appears in a `UsageSnapshot`."""
+    """A momentary usage (button, key, or media), all one shape. Build with `Usage.button`/`key`/`media`."""
 
     def __init__(self, c):
         self._c = c
@@ -337,8 +324,7 @@ class Motion:
 
 
 class LockTarget:
-    """A lock target: an axis (`LockTarget.x/y/wheel`) or a momentary usage (`LockTarget.usage`, or the
-    `button`/`key`/`media` shortcuts). A button, key, and media usage all lock the same way."""
+    """A lock target: an axis (`LockTarget.x/y/wheel`) or a momentary usage (`LockTarget.usage`)."""
 
     def __init__(self, c):
         self._c = c
@@ -381,9 +367,6 @@ class LockTarget:
         if self._c.kind == int(LockTargetKind.USAGE):
             return Usage(_native.MediusUsage(kind=self._c.usage.kind, id=self._c.usage.id))
         return None
-
-
-# --- ctypes <-> dataclass conversion ---
 
 
 def version_from_c(c) -> Version:
@@ -575,9 +558,7 @@ def emit_pace_status_from_c(c) -> EmitPaceStatus:
 
 @dataclass
 class ClipStatus:
-    """The device-side clip ring and playback status. `free`/`used` pace top-ups; `state == FAULTED`
-    means re-sync (stop + rebuild). `held` is the held-usage snapshot: the buttons, keys, and media the
-    clip is holding down, keyed like a `UsageSnapshot`."""
+    """The device-side clip ring and playback status."""
 
     state: ClipState
     free: int

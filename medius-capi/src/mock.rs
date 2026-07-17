@@ -12,7 +12,6 @@ use crate::device::MediusDevice;
 use crate::error::{MediusStatus, clear_error, fail, guard, guard_status, record};
 
 /// A scriptable fake box. Opaque; create with `medius_mock_new`, free with `medius_mock_free`.
-/// Cloning (via `medius_device_with_mock`) shares state, so a configured mock drives a real `Device`.
 pub struct MediusMockBox {
     pub(crate) inner: MockBox,
 }
@@ -28,7 +27,6 @@ pub extern "C" fn medius_mock_new() -> *mut MediusMockBox {
 }
 
 /// Clone a mock handle: another handle sharing the same recorded state (like `MockBox::clone`).
-/// Null in -> null out.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_mock_clone(mock: *const MediusMockBox) -> *mut MediusMockBox {
     guard(std::ptr::null_mut(), || {
@@ -173,8 +171,7 @@ pub unsafe extern "C" fn medius_mock_set_movement_riding(
     });
 }
 
-/// Set the emit-rate pacing mode the mock answers to an OPTION(EMIT) query; `hz` matters only for
-/// `Fixed`.
+/// Set the emit-rate pacing mode the mock answers to an OPTION(EMIT) query; `hz` matters only for `Fixed`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_mock_set_emit_pace(
     mock: *mut MediusMockBox,
@@ -292,9 +289,7 @@ pub unsafe extern "C" fn medius_mock_clear_recorded(mock: *mut MediusMockBox) {
     with_mock(mock, |m| m.clear_recorded());
 }
 
-/// Read recorded frame `idx`: its type to `*out_ty`, its SEQ to `*out_seq`, and up to `cap` payload
-/// bytes to `payload_buf`. Returns the full payload length (may exceed `cap`), or 0 if `idx` is out
-/// of range. Out-pointers may be null to skip them.
+/// Read recorded frame `idx`: type to `*out_ty`, SEQ to `*out_seq`, up to `cap` payload bytes to `payload_buf`; returns the full payload length, or 0 if `idx` is out of range.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_mock_recorded_frame(
     mock: *mut MediusMockBox,

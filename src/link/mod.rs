@@ -44,9 +44,8 @@ pub(crate) struct LinkInner {
     desired: Arc<Mutex<DesiredState>>,
     events: Arc<Mutex<CatchReg>>,
     catch_gen: Arc<AtomicU64>,
-    // Serializes a whole subscribe/unsubscribe sequence (registry mutate -> union recompute ->
-    // desired update -> CATCH send) so concurrent callers can't commit their masks out of order and
-    // leave the box streaming a mask that disagrees with the registry. Not taken on the reader path.
+    // Serializes a whole subscribe/unsubscribe sequence so concurrent callers can't commit masks
+    // out of order and leave the box streaming a mask that disagrees with the registry.
     catch_lock: Arc<Mutex<()>>,
     counters: Arc<Counters>,
     stop: Arc<AtomicBool>,

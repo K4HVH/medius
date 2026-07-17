@@ -148,7 +148,7 @@ fn reapply_re_emits_held_locks_but_not_released_ones() {
     device.lock(Axis::X, LockDirection::Positive).unwrap();
     device.lock(Key::A, LockDirection::Both).unwrap();
     device.lock_all(Blanket::Keys, LockDirection::Both).unwrap();
-    device.unlock(Key::A, LockDirection::Both).unwrap(); // released -> must not reappear
+    device.unlock(Key::A, LockDirection::Both).unwrap();
     mock.clear_recorded();
 
     device.reapply().unwrap();

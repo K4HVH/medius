@@ -1,5 +1,4 @@
-//! Pure, device-free helpers: parameter constructors and inspectors over the value types. These
-//! mirror the equivalent `medius` methods so a C caller has the same vocabulary.
+//! Pure, device-free helpers: parameter constructors and inspectors mirroring the `medius` value-type methods.
 
 use crate::ctypes::*;
 use crate::error::guard;
@@ -74,8 +73,7 @@ pub extern "C" fn medius_lock_target_usage(usage: MediusUsage) -> MediusLockTarg
     }
 }
 
-/// Whether `target`/`dir` is locked in `locks` (`Both` requires both edges), by a specific entry or a
-/// covering whole-class blanket. Mirrors `medius::Locks::is_locked`.
+/// Whether `target`/`dir` is locked in `locks` (`Both` requires both edges). Mirrors `medius::Locks::is_locked`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_locks_is_locked(
     locks: *const MediusLocks,
@@ -109,8 +107,7 @@ pub unsafe extern "C" fn medius_locks_is_locked(
     })
 }
 
-/// The native report rate in Hz, written to `out_hz`. Returns false (and leaves `out_hz` untouched)
-/// when there is no continuous cadence. Delegates to `medius::Rate::native_hz`.
+/// The native report rate in Hz written to `out_hz`, false when there is no continuous cadence. Delegates to `medius::Rate::native_hz`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_rate_native_hz(rate: MediusRate, out_hz: *mut f32) -> bool {
     guard(false, || {
@@ -127,8 +124,7 @@ pub unsafe extern "C" fn medius_rate_native_hz(rate: MediusRate, out_hz: *mut f3
     })
 }
 
-/// Whether `usage` is held in a usage snapshot (a button, key, or media usage; modifiers are key usages
-/// `0xE0..=0xE7`). Mirrors `medius::UsageSnapshot::is_held`.
+/// Whether `usage` is held in a usage snapshot. Mirrors `medius::UsageSnapshot::is_held`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_usage_event_is_held(
     event: *const MediusUsageEvent,

@@ -1,6 +1,4 @@
-//! OPTION command + QUERY(OPTIONS) (§3.10 / §4.14): payload bytes, decoding through `parse_resp`, the
-//! command frames, and the query roundtrips for the options (imperfect-clone, movement riding, emit pace,
-//! box name). Bytes are pinned to the firmware wire format in `ctrl_proto.h`.
+//! OPTION command and QUERY(OPTIONS): payload bytes, `parse_resp` decoding, and query roundtrips, pinned to the `ctrl_proto.h` wire format.
 
 use std::time::Duration;
 
@@ -14,25 +12,20 @@ use crate::types::{EmitPace, EmitPaceStatus, ImperfectStatus};
 
 #[test]
 fn option_payload_bytes() {
-    // OPTION(IMPERFECT): [id=0][allow]
     assert_eq!(imperfect_payload(true), [0, 1]);
     assert_eq!(imperfect_payload(false), [0, 0]);
-    // OPTION(MOVE_RIDE): [id=1][timeout u16 LE ms]
     assert_eq!(move_ride_payload(5), [1, 5, 0]);
     assert_eq!(move_ride_payload(0), [1, 0, 0]);
     assert_eq!(move_ride_payload(1000), [1, 0xE8, 0x03]);
-    // OPTION(EMIT): [id=2][mode][rate_hz u16 LE]
     assert_eq!(emit_pace_payload(0, 0), [2, 0, 0, 0]);
     assert_eq!(emit_pace_payload(1, 0), [2, 1, 0, 0]);
     assert_eq!(emit_pace_payload(2, 1000), [2, 2, 0xE8, 0x03]);
-    // OPTION(NAME): [id=3][name ascii...]; empty name = clear (just the id byte)
     assert_eq!(name_payload("AB"), vec![3, b'A', b'B']);
     assert_eq!(name_payload(""), vec![3]);
 }
 
 #[test]
 fn decode_imperfect_through_parse_resp() {
-    // RESP(OPTIONS, IMPERFECT): [what=9][id=0][allowed][over_capacity][clone_imperfect]
     let Some(Resp::Imperfect(i)) = parse_resp(&[9, 0, 1, 1, 1]) else {
         panic!("expected Imperfect");
     };
@@ -48,12 +41,11 @@ fn decode_imperfect_through_parse_resp() {
         panic!("expected Imperfect");
     };
     assert_eq!(none, ImperfectStatus::default());
-    assert!(parse_resp(&[9, 0, 0, 0]).is_none()); // needs 5 (what + id + 3 status bytes)
+    assert!(parse_resp(&[9, 0, 0, 0]).is_none());
 }
 
 #[test]
 fn decode_move_ride_through_parse_resp() {
-    // RESP(OPTIONS, MOVE_RIDE): [what=9][id=1][timeout u16 LE]
     let Some(Resp::MovementRiding(w)) = parse_resp(&[9, 1, 5, 0]) else {
         panic!("expected MovementRiding");
     };
@@ -61,13 +53,12 @@ fn decode_move_ride_through_parse_resp() {
     let Some(Resp::MovementRiding(off)) = parse_resp(&[9, 1, 0, 0]) else {
         panic!("expected MovementRiding");
     };
-    assert_eq!(off, None); // 0 ms = off
-    assert!(parse_resp(&[9, 1, 0]).is_none()); // needs 4 (what + id + u16)
+    assert_eq!(off, None);
+    assert!(parse_resp(&[9, 1, 0]).is_none());
 }
 
 #[test]
 fn decode_emit_pace_through_parse_resp() {
-    // RESP(OPTIONS, EMIT): [what=9][id=2][mode][fixed_hz u16 LE][resolved_hz u16 LE]
     let Some(Resp::EmitPace(s)) = parse_resp(&[9, 2, 2, 0xF4, 0x01, 0xF4, 0x01]) else {
         panic!("expected EmitPace");
     };
@@ -81,18 +72,17 @@ fn decode_emit_pace_through_parse_resp() {
     let Some(Resp::EmitPace(learned)) = parse_resp(&[9, 2, 0, 0, 0, 0, 0]) else {
         panic!("expected EmitPace");
     };
-    assert_eq!(learned, EmitPaceStatus::default()); // mode Learned, resolved 0
-    assert!(parse_resp(&[9, 2, 0, 0, 0, 0]).is_none()); // needs 7 (what + id + mode + 2×u16)
-    assert!(parse_resp(&[9, 2, 3, 0, 0, 0, 0]).is_none()); // unknown mode byte
+    assert_eq!(learned, EmitPaceStatus::default());
+    assert!(parse_resp(&[9, 2, 0, 0, 0, 0]).is_none());
+    assert!(parse_resp(&[9, 2, 3, 0, 0, 0, 0]).is_none());
 }
 
 #[cfg(feature = "mock")]
 #[test]
 fn mock_emit_pace_matches_firmware_snap() {
     use crate::{Device, EmitPace, EmitPaceStatus, MockBox};
-    // The mock must model the firmware's pacing exactly: Fixed(400) snaps to 1000/3 = 333 Hz on the
-    // 1 ms frame clock (NOT the raw 400), and Fixed(2000) clamps to 1 kHz. A naive echo would diverge
-    // from real hardware for any rate that is not a 1000/n divisor.
+    // The mock models firmware pacing: Fixed(400) snaps to 1000/3 = 333 Hz on the 1 ms frame clock
+    // (not raw 400) and Fixed(2000) clamps to 1 kHz; a naive echo would diverge from hardware.
     let mock = MockBox::new().with_emit_pace(EmitPace::Fixed(400));
     let device = Device::with_mock(mock.clone());
     assert_eq!(
@@ -122,8 +112,8 @@ fn mock_emit_pace_matches_firmware_snap() {
 
 #[test]
 fn unknown_option_id_and_missing_id_are_none() {
-    assert!(parse_resp(&[9, 0xFF, 0, 0]).is_none()); // unknown option id
-    assert!(parse_resp(&[9]).is_none()); // OPTIONS selector with no id
+    assert!(parse_resp(&[9, 0xFF, 0, 0]).is_none());
+    assert!(parse_resp(&[9]).is_none());
 }
 
 #[cfg(feature = "mock")]
@@ -141,7 +131,7 @@ fn set_movement_riding_rounds_sub_ms_up_to_on() {
         .into_iter()
         .find(|f| f.ty == FrameType::Option)
         .unwrap();
-    assert_eq!(frame.payload, vec![1, 1, 0]); // clamped to 1 ms (on, not off)
+    assert_eq!(frame.payload, vec![1, 1, 0]);
 }
 
 #[cfg(feature = "mock")]
@@ -159,7 +149,7 @@ fn set_movement_riding_saturates_at_u16_max() {
         .into_iter()
         .find(|f| f.ty == FrameType::Option)
         .unwrap();
-    assert_eq!(frame.payload, vec![1, 0xFF, 0xFF]); // [id=move_ride][u16::MAX LE]
+    assert_eq!(frame.payload, vec![1, 0xFF, 0xFF]);
 }
 
 #[cfg(feature = "mock")]
@@ -174,23 +164,22 @@ fn set_name_sends_option_frame_and_clear_is_empty() {
         .into_iter()
         .find(|f| f.ty == FrameType::Option)
         .unwrap();
-    assert_eq!(frame.payload, b"\x03Left PC".to_vec()); // [id=3]["Left PC"]
+    assert_eq!(frame.payload, b"\x03Left PC".to_vec());
     device.clear_name().unwrap();
     let cleared = mock
         .recorded_frames()
         .into_iter()
         .rfind(|f| f.ty == FrameType::Option)
         .unwrap();
-    assert_eq!(cleared.payload, vec![3]); // clear = OPTION(NAME) with only the id byte
+    assert_eq!(cleared.payload, vec![3]);
 }
 
 #[cfg(feature = "mock")]
 #[test]
 fn set_name_sends_the_value_raw_for_the_box_to_sanitize() {
     use crate::{Device, MockBox};
-    // Like the other setters, set_name does no host-side validation: it sends the string as-is and the
-    // firmware keeps the leading printable-ASCII run capped at NAME_MAX. So a control byte rides through
-    // on the wire (the box drops it), never a host error.
+    // set_name does no host-side validation: it sends the string as-is and the box sanitizes, so a
+    // control byte rides through on the wire (the box drops it) rather than raising a host error.
     let mock = MockBox::new();
     let device = Device::with_mock(mock.clone());
     device.set_name("A\tB").unwrap();
@@ -199,5 +188,5 @@ fn set_name_sends_the_value_raw_for_the_box_to_sanitize() {
         .into_iter()
         .find(|f| f.ty == FrameType::Option)
         .unwrap();
-    assert_eq!(frame.payload, vec![3, b'A', b'\t', b'B']); // sent raw; the box, not the host, sanitizes
+    assert_eq!(frame.payload, vec![3, b'A', b'\t', b'B']);
 }

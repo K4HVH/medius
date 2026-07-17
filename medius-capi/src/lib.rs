@@ -1,8 +1,4 @@
 //! C ABI for the [`medius`] host control library.
-//!
-//! This crate is the only `unsafe` layer in the stack. It defines `#[repr(C)]` mirror types and
-//! `extern "C"` functions over the safe [`medius`] crate, converting at the boundary. The generated
-//! header is `include/medius.h` (cbindgen).
 
 #![allow(clippy::missing_safety_doc)]
 

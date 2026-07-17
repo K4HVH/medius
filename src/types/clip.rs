@@ -1,17 +1,13 @@
-//! Buffered clip playback (§3.11 / §4.15): the per-frame entry stream a host preloads into the device-side
-//! ring, and the ring/playback status. The box drains one entry per native frame, routing each edge to its
-//! class (mouse, keyboard, media), and emits it through the normal engine (rate pacing, movement riding).
+//! Buffered clip playback (§3.11 / §4.15): the per-frame entry stream a host preloads into the device-side ring, plus the ring/playback status.
 
 use crate::protocol::opcode::{CLIP_F_EDGES, CLIP_F_WHEEL, CLIP_F_XY, CLIP_TAG_GAP};
 use crate::types::lock::blanket_scope;
 use crate::types::{Action, Blanket, Usage};
 
-/// Playback options for a clip [`start`](crate::ClipHandle::start) or catch trigger
-/// ([`arm_catch`](crate::ClipHandle::arm_catch)). The single place clip settings live; extensible as more
-/// are added. Build with the chained setters, e.g. `ClipConfig::new().autolock(Blanket::ALL)`.
+/// Playback options for a clip [`start`](crate::ClipHandle::start) or catch trigger ([`arm_catch`](crate::ClipHandle::arm_catch)).
 #[derive(Debug, Clone, Default, PartialEq, Eq, Hash)]
 pub struct ClipConfig {
-    autolock: u8, // CLIP_LOCK_* scope bitmask (0 = none)
+    autolock: u8,
 }
 
 impl ClipConfig {
@@ -20,8 +16,7 @@ impl ClipConfig {
         ClipConfig::default()
     }
 
-    /// Auto-lock these physical-input groups while the clip plays (clip-owned, released on stop). Pass
-    /// [`Blanket::ALL`] for every class, or a subset like `&[Blanket::Aim, Blanket::Buttons]`.
+    /// Auto-lock these physical-input groups while the clip plays (clip-owned, released on stop).
     pub fn autolock(mut self, scope: &[Blanket]) -> ClipConfig {
         self.autolock = blanket_scope(scope);
         self
@@ -43,8 +38,7 @@ pub enum ClipState {
     Armed,
     /// Draining the ring, one entry per native frame.
     Playing,
-    /// An append was dropped (a `CLIP_APPEND` frame lost) or the ring overflowed. The buffered stream is
-    /// out of sync; the host must [`stop`](crate::ClipHandle::stop) and re-preload.
+    /// An append was dropped or the ring overflowed; the host must [`stop`](crate::ClipHandle::stop) and re-preload.
     Faulted,
 }
 
@@ -60,8 +54,7 @@ impl ClipState {
     }
 }
 
-/// A snapshot of the device-side clip ring and playback counters (§4.15). `free`/`used` pace top-ups (append
-/// only while `free` has headroom); `state == `[`ClipState::Faulted`] means re-sync (stop + rebuild).
+/// A snapshot of the device-side clip ring and playback counters (§4.15).
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
 pub struct ClipStatus {
     /// The lifecycle state.
@@ -78,8 +71,7 @@ pub struct ClipStatus {
     pub overruns: u16,
     /// Append-sequence gaps seen (a dropped `CLIP_APPEND` frame).
     pub seq_gaps: u16,
-    /// The usages the clip is currently holding down: buttons, keys, and media in one list, keyed exactly
-    /// like a catch [`UsageSnapshot`](crate::UsageSnapshot). Test one with [`is_held`](Self::is_held).
+    /// The usages the clip is currently holding down: buttons, keys, and media in one list.
     pub held: Vec<Usage>,
 }
 
@@ -90,9 +82,7 @@ impl ClipStatus {
         self.held.contains(&u)
     }
 
-    /// Decode a `RESP(CLIP)` payload (§4.15): `[what][state u8][free u32][used u32][ticks u32]
-    /// [underruns u16][overruns u16][seq_gaps u16][n u8]` then `n × [class u8][id u16 LE]` (the held-usage
-    /// snapshot), all little-endian.
+    /// Decode a `RESP(CLIP)` payload (§4.15).
     pub(crate) fn from_payload(p: &[u8]) -> Option<ClipStatus> {
         if p.len() < 21 {
             return None;
@@ -111,18 +101,10 @@ impl ClipStatus {
     }
 }
 
-/// Max edges on one [`ClipBuilder::frame`], matching the firmware's `CLIP_EDGES_MAX`. More than this on a
-/// single frame is rejected by the box (the frame faults); it is far past any realistic single report.
+/// Max edges on one [`ClipBuilder::frame`], matching the firmware's `CLIP_EDGES_MAX`.
 pub const CLIP_EDGES_MAX: usize = 8;
 
-/// Builds a buffered-clip entry stream (§3.11) for [`ClipHandle::append`](crate::ClipHandle::append). Each
-/// method appends one per-frame entry: motion is a relative delta, edges are [`Action`]s that stick until a
-/// later frame changes them (like [`Device::inject`](crate::Device::inject)), and a [`gap`](Self::gap) run
-/// emits nothing for N frames (a faithful idle poll). Mirrors the firmware entry codec byte-for-byte.
-///
-/// The builder holds a growing stream you keep topping up; [`ClipHandle::append`](crate::ClipHandle::append)
-/// borrows it (call
-/// [`clear`](Self::clear) to reuse the allocation, or make a fresh builder per top-up).
+/// Builds a buffered-clip entry stream (§3.11) for [`ClipHandle::append`](crate::ClipHandle::append).
 #[derive(Debug, Default, Clone)]
 pub struct ClipBuilder {
     bytes: Vec<u8>,
@@ -135,8 +117,7 @@ impl ClipBuilder {
         ClipBuilder::default()
     }
 
-    /// A gap run: emit nothing for `frames` native frames (the endpoint NAKs like an idle mouse). A zero
-    /// count is a no-op.
+    /// A gap run: emit nothing for `frames` native frames (the endpoint NAKs like an idle mouse).
     pub fn gap(&mut self, frames: u16) -> &mut Self {
         if frames == 0 {
             return self;
@@ -147,9 +128,7 @@ impl ClipBuilder {
         self
     }
 
-    /// A content frame: a relative motion delta (`dx`/`dy` cursor, `wheel`) plus a list of edges. An
-    /// all-zero frame with no edges still emits a report (a zero-motion tick, never a gap). At most
-    /// [`CLIP_EDGES_MAX`] edges.
+    /// A content frame: a relative motion delta (`dx`/`dy` cursor, `wheel`) plus a list of edges.
     pub fn frame(&mut self, dx: i16, dy: i16, wheel: i16, edges: &[(Usage, Action)]) -> &mut Self {
         debug_assert!(
             edges.len() <= CLIP_EDGES_MAX,

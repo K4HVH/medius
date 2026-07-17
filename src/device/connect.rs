@@ -16,9 +16,7 @@ const HANDSHAKE_ATTEMPTS: usize = 5;
 const HANDSHAKE_ATTEMPT_TIMEOUT: Duration = Duration::from_millis(250);
 
 impl Device {
-    /// Open the box at serial `path`, run the version handshake, and return a ready [`Device`]. The
-    /// box's identity (CH343 serial + device MAC) is recorded so a later auto-reconnect re-finds this
-    /// same box even if ports renumber.
+    /// Open the box at serial `path`, run the version handshake, and return a ready [`Device`].
     pub fn open(path: impl AsRef<Path>) -> Result<Device> {
         let path = path.as_ref();
         let serial = crate::transport::serial::SerialTransport::open(path)?;

@@ -1,11 +1,6 @@
 //! Keyboard command vocabulary: a key by HID keycode, and the keyboard catch snapshot (v2.0.0).
 
 /// A keyboard key, addressed by HID Usage (Keyboard/Keypad page, §3.10).
-///
-/// Construct from a raw usage with [`Key::new`], or use an associated constant. Usages `0xE0..=0xE7`
-/// are the eight modifiers (the firmware folds them into the report's modifier byte); every other
-/// usage is a regular key. This is a thin newtype, so any HID keycode is expressible — the constants
-/// are just the common ones.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct Key(pub u8);
 
@@ -25,7 +20,6 @@ impl Key {
         self.0 >= 0xE0 && self.0 <= 0xE7
     }
 
-    // Letters (0x04..=0x1D).
     pub const A: Key = Key(0x04);
     pub const B: Key = Key(0x05);
     pub const C: Key = Key(0x06);
@@ -53,7 +47,6 @@ impl Key {
     pub const Y: Key = Key(0x1C);
     pub const Z: Key = Key(0x1D);
 
-    // Digit row (0x1E..=0x27), 1 through 0.
     pub const NUM1: Key = Key(0x1E);
     pub const NUM2: Key = Key(0x1F);
     pub const NUM3: Key = Key(0x20);
@@ -65,7 +58,6 @@ impl Key {
     pub const NUM9: Key = Key(0x26);
     pub const NUM0: Key = Key(0x27);
 
-    // Common keys.
     pub const ENTER: Key = Key(0x28);
     pub const ESCAPE: Key = Key(0x29);
     pub const BACKSPACE: Key = Key(0x2A);
@@ -83,7 +75,6 @@ impl Key {
     pub const DOWN: Key = Key(0x51);
     pub const UP: Key = Key(0x52);
 
-    // Function row (0x3A..=0x45).
     pub const F1: Key = Key(0x3A);
     pub const F2: Key = Key(0x3B);
     pub const F3: Key = Key(0x3C);
@@ -97,7 +88,6 @@ impl Key {
     pub const F11: Key = Key(0x44);
     pub const F12: Key = Key(0x45);
 
-    // Modifiers (0xE0..=0xE7).
     pub const LEFT_CTRL: Key = Key(0xE0);
     pub const LEFT_SHIFT: Key = Key(0xE1);
     pub const LEFT_ALT: Key = Key(0xE2);

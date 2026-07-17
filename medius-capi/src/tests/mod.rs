@@ -1,5 +1,4 @@
-//! In-crate tests for the C ABI. `helpers` needs no hardware or features; `abi` drives the full
-//! surface through the mock box and is gated on the `mock` feature.
+//! In-crate tests for the C ABI: `helpers` needs no features; `abi` drives the full surface through the mock box, gated on `mock`.
 
 mod helpers;
 

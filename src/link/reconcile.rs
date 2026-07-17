@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::types::{Action, CatchMask, Class, Usage};
 
 /// A lock the host wants held, keyed by its wire fields so a reapply is exact and idempotent.
-pub(crate) type LockKey = (u8, u16, u8); // (class, id, direction)
+pub(crate) type LockKey = (u8, u16, u8);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub(crate) enum Override {
@@ -22,7 +22,6 @@ impl Override {
         }
     }
 
-    /// Apply a tri-state action to an override slot; returns the new state.
     fn applied(action: Action) -> Override {
         match action {
             Action::Press => Override::Press,
@@ -32,13 +31,11 @@ impl Override {
     }
 }
 
-/// The PC-owned injection + subscription state, re-asserted after a reconnect so a held usage (button,
-/// key, or media) and an open catch stream survive a control-link blip. Every momentary override lives in
-/// one `(class, id)`-keyed map, so a reapply is deterministic and class-blind.
+/// PC-owned injection + subscription state, re-asserted after a reconnect so held usages and open catches survive a control-link blip.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct DesiredState {
-    overrides: BTreeMap<(u8, u16), Override>, // (class, id) -> Press/Force (never sits at None in the map)
-    locks: BTreeSet<LockKey>, // active locks (any class), re-asserted after a reconnect
+    overrides: BTreeMap<(u8, u16), Override>, // never sits at None in the map
+    locks: BTreeSet<LockKey>,
     catch: CatchMask,
 }
 
@@ -76,9 +73,8 @@ impl DesiredState {
     }
 
     pub(crate) fn clear(&mut self) {
-        // Injection overrides + locks. Catch teardown on reset() is handled by Link::catch_disconnect_all
-        // (it drops the EventStream senders so recv() returns Err); catch otherwise clears firmware-side on
-        // the same lifecycle as injection.
+        // Catch teardown is handled by Link::catch_disconnect_all (drops the EventStream senders); catch
+        // otherwise clears firmware-side on the same lifecycle as injection.
         self.overrides.clear();
         self.locks.clear();
     }
@@ -92,8 +88,7 @@ impl DesiredState {
         self.catch
     }
 
-    /// Idle = nothing for the keepalive to hold alive. A catch subscription counts, so the silence
-    /// timer keeps being fed and the box keeps streaming while a stream is open.
+    /// Idle = nothing for the keepalive to hold alive; a catch subscription counts.
     pub(crate) fn is_idle(&self) -> bool {
         self.catch.is_empty() && self.overrides.is_empty() && self.locks.is_empty()
     }

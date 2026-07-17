@@ -28,13 +28,13 @@ pub struct CommandOutput {
     pub stderr: String,
 }
 
-/// Injectable runner for the external flash command — the test seam.
+/// Injectable runner for the external flash command; the test seam.
 pub trait CommandRunner {
     /// Run `program` with `args`, capturing its output.
     fn run(&self, program: &str, args: &[String]) -> Result<CommandOutput>;
 }
 
-/// The production [`CommandRunner`] — spawns the real process.
+/// The production [`CommandRunner`]; spawns the real process.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct SystemRunner;
 

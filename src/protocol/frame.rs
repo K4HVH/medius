@@ -1,4 +1,4 @@
-//! Frame encoding and a streaming decoder — the wire packet codec.
+//! Frame encoding and a streaming decoder, the wire packet codec.
 
 use super::crc::crc16_ccitt;
 use super::opcode::{FrameType, MAX_PAYLOAD, SOF};

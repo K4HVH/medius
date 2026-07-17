@@ -104,12 +104,10 @@ fn media_soft_release_clears_the_override() {
 
 #[test]
 fn one_store_holds_every_class_and_orders_by_class_then_id() {
-    // The reconnect-reapply path can hold all three classes at once, in one (class, id) store.
     let mut d = DesiredState::default();
     d.apply(MediaKey::VOLUME_UP.into(), Action::Press);
     d.apply(Button::Left.into(), Action::Press);
     d.apply(Key::A.into(), Action::Press);
-    // Ordered Button(0) < Key(1) < Media(2).
     assert_eq!(
         d.held().map(|(u, _)| u).collect::<Vec<_>>(),
         vec![
@@ -125,7 +123,6 @@ fn one_store_holds_every_class_and_orders_by_class_then_id() {
 
 #[test]
 fn idle_requires_every_class_empty() {
-    // A held key alone keeps the state non-idle so reconnect reapplies it (not just buttons).
     let mut d = DesiredState::default();
     d.apply(Key::ESCAPE.into(), Action::Press);
     assert!(!d.is_idle());

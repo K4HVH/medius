@@ -1,5 +1,4 @@
-//! `INJECT` key/media (§3.2), `CAPS` (§4.4), and keyboard/media catch events.
-//! Bytes are pinned to the firmware wire format in `ctrl_proto.h`.
+//! `INJECT` key/media, `CAPS`, and keyboard/media catch events.
 
 use crate::protocol::command::inject_payload;
 use crate::protocol::opcode::{INJ_KEY, INJ_MEDIA};
@@ -7,7 +6,6 @@ use crate::types::{Key, MediaKey};
 
 #[test]
 fn key_inject_bytes() {
-    // INJECT [class=key][id u16 LE][action]: 'a' press, LeftShift modifier press.
     assert_eq!(
         inject_payload(INJ_KEY, Key::A.usage() as u16, 1),
         [1, 0x04, 0x00, 1]
@@ -20,7 +18,6 @@ fn key_inject_bytes() {
 
 #[test]
 fn media_inject_bytes() {
-    // INJECT [class=media][id u16 LE][action]: Vol+ = 0x00E9, press.
     assert_eq!(
         inject_payload(INJ_MEDIA, MediaKey::VOLUME_UP.usage(), 1),
         [2, 0xE9, 0x00, 1]
@@ -38,15 +35,13 @@ fn key_modifier_classification() {
 #[test]
 fn kbd_caps_decodes() {
     use crate::Caps;
-    // unified CAPS, keyboard half: n_keys=255 (NKRO bitmap), kbd_flags = NKRO|CONSUMER|REPORT_ID,
-    // keyboard class change-driven
     let c = Caps::from_payload(&[3, 0, 0, 0, 0xFF, 0x0B, 0x02]).unwrap();
     let k = c.keyboard;
     assert_eq!(k.n_keys, 0xFF);
     assert!(k.nkro && k.has_consumer && k.has_report_id);
     assert!(!k.has_system);
     assert!(c.has_keyboard() && c.kbd_change_driven && !c.has_mouse());
-    assert!(Caps::from_payload(&[3, 0]).is_none()); // needs 7
+    assert!(Caps::from_payload(&[3, 0]).is_none());
 }
 
 #[cfg(feature = "mock")]
@@ -60,7 +55,6 @@ fn pushed_keyboard_and_media_events_arrive_on_the_stream() {
         .catch_events(CatchMask::KEYS | CatchMask::MEDIA)
         .unwrap();
 
-    // A keyboard snapshot: LeftShift modifier (0xE1) + keys A, B — all one USAGE_EVENT of KEY usages.
     mock.push_usages(
         0,
         &[
@@ -69,7 +63,6 @@ fn pushed_keyboard_and_media_events_arrive_on_the_stream() {
             Usage::from(Key::B),
         ],
     );
-    // A media snapshot: one MEDIA usage.
     mock.push_usages(1, &[Usage::from(MediaKey::VOLUME_UP)]);
 
     let CatchEvent::Usages(kb) = stream.recv_timeout(Duration::from_secs(1)).expect("keys") else {

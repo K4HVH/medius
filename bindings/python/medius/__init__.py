@@ -1,10 +1,4 @@
-"""Python bindings for the medius transparent mouse passthrough box.
-
-A thin ctypes wrapper over the medius_capi C ABI. Open a box with
-`Device.find()` or `Device.open(path)`, drive it with the command methods, read
-state with the `query_*` methods, and consume physical input with
-`catch_events()`.
-"""
+"""Python bindings for the medius transparent mouse passthrough box."""
 
 from __future__ import annotations
 
@@ -123,8 +117,7 @@ def version_string() -> str:
 
 
 def flash(port: str, bin_path: str, host: bool = False) -> None:
-    """Reboot a chip to ROM download and flash a firmware binary via esptool.
-    Linux and Windows only. Requires a library built with the flash feature."""
+    """Reboot a chip to ROM download and flash a firmware binary via esptool (Linux/Windows only)."""
     if not HAS_FLASH:
         raise RuntimeError(
             "the loaded medius_capi library was built without the flash feature "

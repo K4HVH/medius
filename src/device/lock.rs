@@ -17,9 +17,7 @@ impl Device {
             .send(FrameType::Lock, &lock_payload(class, id, dir, u8::from(on)))
     }
 
-    /// `LOCK` — block physical input on a target while host injection still drives it. The target is a
-    /// momentary usage (button/key/media) or a relative axis; `direction` is a press/release edge for a
-    /// usage, or a +/- sign for an axis. Reverts on control-PC silence.
+    /// `LOCK` blocks physical input on a target while host injection still drives it; reverts on control-PC silence.
     pub fn lock(&self, target: impl Into<LockTarget>, direction: LockDirection) -> Result<()> {
         let (class, id) = target_class_id(target.into());
         self.send_lock(class, id, direction, true)
@@ -31,7 +29,7 @@ impl Device {
         self.send_lock(class, id, direction, false)
     }
 
-    /// `LOCK` a relative axis by sign — convenience for `lock(axis, direction)`.
+    /// `LOCK` a relative axis by sign; convenience for `lock(axis, direction)`.
     pub fn lock_axis(&self, axis: Axis, direction: LockDirection) -> Result<()> {
         self.lock(axis, direction)
     }

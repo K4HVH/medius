@@ -181,7 +181,6 @@ fn catch_resp_payload(c: CatchState) -> Vec<u8> {
 }
 
 fn options_imperfect_payload(i: ImperfectStatus) -> Vec<u8> {
-    // RESP(OPTIONS, IMPERFECT): [what=9][id=0][allowed][over_capacity][clone_imperfect]
     vec![
         9u8,
         OPT_IMPERFECT,
@@ -192,16 +191,14 @@ fn options_imperfect_payload(i: ImperfectStatus) -> Vec<u8> {
 }
 
 fn options_move_ride_payload(ms: u16) -> Vec<u8> {
-    // RESP(OPTIONS, MOVE_RIDE): [what=9][id=1][timeout u16 LE ms]
     let mut p = vec![9u8, OPT_MOVE_RIDE];
     p.extend_from_slice(&ms.to_le_bytes());
     p
 }
 
 fn options_emit_payload(pace: EmitPace) -> Vec<u8> {
-    // RESP(OPTIONS, EMIT): [what=9][id=2][mode][fixed_hz u16 LE][resolved_hz u16 LE]. Mirror the
-    // firmware exactly: Fixed clamps the echoed rate to 1..=1000 (0 -> 1000) and snaps resolved to the
-    // 1 ms frame clock (1000/n); Learned/Interval echo 0 (the mock has no real device to resolve).
+    // Mirror the firmware: Fixed clamps the echoed rate to 1..=1000 (0 -> 1000) and snaps resolved
+    // to the 1 ms frame clock (1000/n); Learned/Interval echo 0 (no real device to resolve).
     let (mode, fixed_hz, resolved) = match pace {
         EmitPace::Learned => (0u8, 0u16, 0u16),
         EmitPace::Interval => (1, 0, 0),
@@ -218,8 +215,6 @@ fn options_emit_payload(pace: EmitPace) -> Vec<u8> {
 }
 
 fn clip_status_payload(c: &ClipStatus) -> Vec<u8> {
-    // RESP(CLIP): [what=10][state][free u32][used u32][ticks u32][underruns u16][overruns u16]
-    // [seq_gaps u16][n u8] then n × [class u8][id u16 LE]
     let state = match c.state {
         ClipState::Idle => 0u8,
         ClipState::Armed => 1,
@@ -289,7 +284,7 @@ impl MockBox {
                         let v = &st.version;
                         let mut p = vec![0, v.proto_ver, v.fw_major, v.fw_minor, v.fw_patch];
                         p.extend_from_slice(&v.mac);
-                        p.extend_from_slice(v.name.as_bytes()); // ASCII name tail, like the real box
+                        p.extend_from_slice(v.name.as_bytes());
                         encode(FrameType::Resp, seq, &p).expect("resp fits")
                     }
                     Some(1) => {
@@ -377,8 +372,7 @@ impl MockBox {
         self
     }
 
-    /// Set the keyboard half of the [`Caps`] answered to `QUERY(CAPS)` (builder style). Also marks the
-    /// keyboard class change-driven, since a keyboard reports only on a key change.
+    /// Set the keyboard half of the [`Caps`] answered to `QUERY(CAPS)`, marking the keyboard class change-driven.
     #[must_use]
     pub fn with_kbd_caps(self, keyboard: KbdCaps) -> Self {
         let mut st = self.state.lock();
@@ -494,9 +488,7 @@ impl MockBox {
         self.transport.push_frame(FrameType::Log, 0, &payload);
     }
 
-    /// Push a `MOTION_EVENT` as if the box emitted it; it surfaces on a subscribed
-    /// [`EventStream`](crate::EventStream) as [`CatchEvent::Motion`](crate::CatchEvent). `seq` is the
-    /// rolling event counter the host sees as the frame `SEQ`.
+    /// Push a `MOTION_EVENT` as if the box emitted it; surfaces as [`CatchEvent::Motion`](crate::CatchEvent).
     pub fn push_motion(&self, seq: u8, dx: i16, dy: i16, dz: i16) {
         self.transport.push_frame(
             FrameType::MotionEvent,
@@ -505,8 +497,7 @@ impl MockBox {
         );
     }
 
-    /// Push a `USAGE_EVENT` (a held-usage snapshot); surfaces as
-    /// [`CatchEvent::Usages`](crate::CatchEvent).
+    /// Push a `USAGE_EVENT` (a held-usage snapshot); surfaces as [`CatchEvent::Usages`](crate::CatchEvent).
     pub fn push_usages(&self, seq: u8, usages: &[Usage]) {
         self.transport
             .push_frame(FrameType::UsageEvent, seq, &usage_event_payload(usages));

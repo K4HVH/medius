@@ -12,9 +12,7 @@ from ._types import Usage, ClipStatus, clip_status_from_c
 
 
 class ClipConfig:
-    """Playback options for a clip `start` or catch trigger. The single place clip settings live; extensible
-    as more are added. `autolock` is the list of `Blanket` groups to lock while playing (None/[] = none;
-    `list(Blanket)` for every class)."""
+    """Playback options for a clip `start` or catch trigger; `autolock` lists the `Blanket` groups to lock while playing."""
 
     def __init__(self, autolock: Optional[Sequence[Blanket]] = None):
         self.autolock = list(autolock) if autolock is not None else []
@@ -28,9 +26,7 @@ class ClipConfig:
 
 
 class ClipBuilder:
-    """Builds a buffered-clip entry stream. Each call appends one per-frame entry: motion is a relative
-    delta, edges are actions that stick until a later frame changes them (like `inject`), and a `gap` run
-    emits nothing for N frames. Pass it to `ClipHandle.append`, then `clear()` to reuse it."""
+    """Builds a buffered-clip entry stream; pass it to `ClipHandle.append`, then `clear()` to reuse it."""
 
     def __init__(self):
         self._ptr = _native.lib.medius_clip_builder_new()
@@ -113,8 +109,7 @@ class ClipBuilder:
 
 
 class ClipHandle:
-    """A handle to one box's buffered-clip playback, from `Device.clip`. Owns the append-sequence counter,
-    so keep one handle for a clip session and top it up with `append`."""
+    """A handle to one box's buffered-clip playback, from `Device.clip`; keep one handle per clip session."""
 
     def __init__(self, handle, device=None):
         self._handle = handle
@@ -139,8 +134,7 @@ class ClipHandle:
         check(_native.lib.medius_clip_append(self._handle, builder._ptr))
 
     def start(self, config: Optional[ClipConfig] = None):
-        """Begin playback from the ring head with a `ClipConfig` (its `autolock` scope, extensible). With no
-        config, plays with no auto-lock."""
+        """Begin playback from the ring head; with no `ClipConfig`, plays with no auto-lock."""
         cfg, _arr = (config or ClipConfig())._c()
         check(_native.lib.medius_clip_start(self._handle, cfg))
 
@@ -149,9 +143,7 @@ class ClipHandle:
         check(_native.lib.medius_clip_stop(self._handle))
 
     def arm_catch(self, trigger: Usage, config: Optional[ClipConfig] = None):
-        """Arm an on-device trigger: playback starts on a physical press of `trigger`, any `Usage` (a button,
-        key, or media usage) built with `Usage.button` / `Usage.key` / `Usage.media`, with `config` when it
-        fires. For any input, use `arm_catch_any`."""
+        """Arm an on-device trigger: playback starts on a physical press of `trigger` with `config`; for any input use `arm_catch_any`."""
         cfg, _arr = (config or ClipConfig())._c()
         check(_native.lib.medius_clip_arm_catch(self._handle, trigger._c, cfg))
 

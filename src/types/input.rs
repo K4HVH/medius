@@ -1,5 +1,4 @@
-//! `CATCH` event-stream vocabulary (§3.9): the subscription mask, the catch events, and the decoded
-//! `RESP(CATCH)`. Bytes are pinned to the firmware wire format in `ctrl_proto.h`.
+//! `CATCH` event-stream vocabulary (§3.9): subscription mask, catch events, decoded `RESP(CATCH)`.
 
 use crate::protocol::opcode::{
     CATCH_ALL, CATCH_BUTTONS, CATCH_KEYS, CATCH_MASK, CATCH_MEDIA, CATCH_MOTION, CATCH_WHEEL,
@@ -7,11 +6,6 @@ use crate::protocol::opcode::{
 use crate::types::{Class, Usage};
 
 /// Which classes of physical input the box streams as catch events (§3.9).
-///
-/// `MOTION`/`WHEEL` yield a [`CatchEvent::Motion`]; `BUTTONS`/`KEYS`/`MEDIA` each yield a
-/// [`CatchEvent::Usages`] snapshot. The mask only gates which report changes trigger an emission — so
-/// [`CatchMask::BUTTONS`] alone stays sparse even though the mouse reports at roughly 1 kHz. Combine
-/// classes with `|`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct CatchMask(u8);
 
@@ -32,7 +26,7 @@ impl CatchMask {
         CatchMask(0)
     }
 
-    /// Every class — the full physical-input mirror.
+    /// Every class, the full physical-input mirror.
     pub const fn all() -> CatchMask {
         CatchMask(CATCH_ALL)
     }
@@ -76,8 +70,7 @@ impl core::ops::BitOrAssign for CatchMask {
     }
 }
 
-/// A relative-axis catch event — a `MOTION_EVENT` frame (§4.10). The user's real motion at the merge
-/// point, BEFORE any lock suppression or injection.
+/// A relative-axis catch event, a `MOTION_EVENT` frame (§4.10).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct MotionEvent {
     /// Relative X this report (right positive).
@@ -102,10 +95,7 @@ impl MotionEvent {
     }
 }
 
-/// A held-usage snapshot catch event — a `USAGE_EVENT` frame (§4.10). Every held usage of one class
-/// (button / key / media; modifiers are key usages `0xE0..=0xE7`), so a mouse-button press and a key
-/// press have the same shape. Self-correcting: a dropped frame is recovered by the next one. Diff
-/// successive snapshots for press/release edges, or use [`is_held`](Self::is_held) for the current state.
+/// A held-usage snapshot catch event, a `USAGE_EVENT` frame (§4.10).
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct UsageSnapshot {
     /// The currently-held usages (all of one class per event).
@@ -141,9 +131,7 @@ pub enum CatchEvent {
     Usages(UsageSnapshot),
 }
 
-/// Decoded `RESP(CATCH)` (§4.9): the active subscription mask + the firmware-side dropped-event count
-/// (events the box could not queue under back-pressure; distinct from host-side
-/// [`EventStream::dropped`](crate::EventStream::dropped)).
+/// Decoded `RESP(CATCH)` (§4.9): active subscription mask + firmware-side dropped-event count.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct CatchState {
     /// The classes the box is currently streaming.

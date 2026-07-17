@@ -75,9 +75,8 @@ impl Link {
         self.register_query_with(what, &query_payload(what))
     }
 
-    // Register a pending reply keyed on `expected_what` and send a custom QUERY request body. The option
-    // query needs this: its request is `[Q_OPTIONS][id]`, while the reply still leads with the Q_OPTIONS
-    // selector (so correlation matches on that, and the SEQ disambiguates concurrent option reads).
+    // The option query's request is `[Q_OPTIONS][id]` but its reply still leads with the Q_OPTIONS
+    // selector, so correlation matches on `expected_what` while SEQ disambiguates concurrent reads.
     pub(crate) fn register_query_with(
         &self,
         expected_what: u8,
@@ -100,7 +99,7 @@ impl Link {
         self.recv_query(seq, gen_id, &rx, what, timeout)
     }
 
-    /// `QUERY(OPTIONS, id)` — read one persistent box option, correlated on the `Q_OPTIONS` selector.
+    /// `QUERY(OPTIONS, id)`: read one persistent box option, correlated on the `Q_OPTIONS` selector.
     pub(crate) fn query_option(&self, id: u8) -> Result<Vec<u8>> {
         let timeout = self.query_timeout_default();
         let (seq, gen_id, rx) = self.register_query_with(Q_OPTIONS, &[Q_OPTIONS, id])?;

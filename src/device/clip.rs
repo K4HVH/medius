@@ -13,14 +13,7 @@ use crate::types::{ClipBuilder, ClipConfig, ClipStatus, Usage};
 use super::Device;
 
 impl Device {
-    /// A handle to this box's buffered-clip playback (§3.11): preload per-frame input (mouse, keyboard, and
-    /// media) into a device-side ring, then let the box drain one entry per native frame, box-clocked, so it
-    /// carries none of the host's scheduling jitter and none of the per-command send floor. The clip rides
-    /// the same rate pacing and movement riding as live injection; it never overrides them.
-    ///
-    /// The handle owns the append-sequence counter the box uses for drop detection, so keep one handle for a
-    /// clip session and top it up with [`append`](crate::ClipHandle::append). Playback is RAM-backed and
-    /// transient: a box reboot or reconnect drops it, so re-preload after one.
+    /// A handle to this box's buffered-clip playback (§3.11): preload per-frame input into a device-side ring the box drains one entry per native frame.
     pub fn clip(&self) -> ClipHandle {
         ClipHandle {
             link: self.link.clone(),
@@ -29,8 +22,7 @@ impl Device {
     }
 }
 
-/// A handle to one box's buffered-clip playback, from [`Device::clip`]. Cloning shares the same
-/// append-sequence counter.
+/// A handle to one box's buffered-clip playback, from [`Device::clip`]. Cloning shares the append-sequence counter.
 #[derive(Clone, Debug)]
 pub struct ClipHandle {
     link: Link,
@@ -48,9 +40,7 @@ impl ClipHandle {
         self.link.send_with_seq(seq, FrameType::ClipAppend, chunk)
     }
 
-    /// Append the builder's entries to the ring. Large clips split into whole-entry frames (never a partial
-    /// entry), each stamped with the next append-sequence number so the box flags a dropped frame. Empty is
-    /// a no-op. Fire-and-forget: flow-control by keeping [`status`](Self::status)`.free` above what you push.
+    /// Append the builder's entries to the ring, split into whole-entry frames each stamped with the next append-sequence number. Fire-and-forget.
     pub fn append(&self, clip: &ClipBuilder) -> Result<()> {
         if clip.is_empty() {
             return Ok(());
@@ -71,10 +61,7 @@ impl ClipHandle {
         Ok(())
     }
 
-    /// `CLIP_CTRL(START)`: begin playback from the ring head with the given [`ClipConfig`]. A config with an
-    /// [`autolock`](ClipConfig::autolock) scope blocks those physical-input groups while playing (clip-owned,
-    /// released on [`stop`](Self::stop); a host lock is untouched); `&ClipConfig::new()` plays with no
-    /// auto-lock. Fire-and-forget.
+    /// `CLIP_CTRL(START)`: begin playback from the ring head with the given [`ClipConfig`]. Fire-and-forget.
     pub fn start(&self, config: &ClipConfig) -> Result<()> {
         self.link.send(
             FrameType::ClipCtrl,
@@ -88,10 +75,7 @@ impl ClipHandle {
             .send(FrameType::ClipCtrl, &clip_op_payload(CLIP_OP_STOP))
     }
 
-    /// `CLIP_CTRL(ARM_CATCH)`: arm an on-device trigger. Playback starts locally on a physical press of
-    /// `trigger`, with the given [`ClipConfig`], so even the first frame has no host round-trip. Field-
-    /// generic like [`inject`](crate::Device::inject): the trigger is any [`Usage`](crate::Usage) (a button, key, or media
-    /// usage), or use [`arm_catch_any`](Self::arm_catch_any) for any input. Fire-and-forget.
+    /// `CLIP_CTRL(ARM_CATCH)`: arm an on-device trigger so playback starts locally on a physical press of `trigger`. Fire-and-forget.
     pub fn arm_catch(&self, trigger: impl Into<Usage>, config: &ClipConfig) -> Result<()> {
         let (class, id) = trigger.into().class_id();
         self.link.send(
@@ -100,8 +84,7 @@ impl ClipHandle {
         )
     }
 
-    /// `CLIP_CTRL(ARM_CATCH)` on any physical input: the next press of any button, key, or media usage fires
-    /// playback with the given [`ClipConfig`]. Fire-and-forget.
+    /// `CLIP_CTRL(ARM_CATCH)` on any physical input: the next press of any button, key, or media usage fires playback. Fire-and-forget.
     pub fn arm_catch_any(&self, config: &ClipConfig) -> Result<()> {
         self.link.send(
             FrameType::ClipCtrl,
@@ -119,8 +102,7 @@ impl ClipHandle {
             .send(FrameType::ClipCtrl, &clip_op_payload(CLIP_OP_DISARM))
     }
 
-    /// `QUERY(CLIP)`: the ring depth (`free`/`used` to pace top-ups) and playback counters (§4.15). A
-    /// [`ClipState::Faulted`](crate::ClipState::Faulted) state means re-sync (stop, then rebuild).
+    /// `QUERY(CLIP)`: the ring depth and playback counters (§4.15).
     pub fn status(&self) -> Result<ClipStatus> {
         let payload = self.link.query(Q_CLIP)?;
         match parse_resp(&payload) {
