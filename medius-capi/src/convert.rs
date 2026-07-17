@@ -394,8 +394,8 @@ impl From<ClipState> for MediusClipState {
     fn from(s: ClipState) -> Self {
         match s {
             ClipState::Idle => MediusClipState::Idle,
-            ClipState::Armed => MediusClipState::Armed,
             ClipState::Playing => MediusClipState::Playing,
+            ClipState::Paused => MediusClipState::Paused,
             ClipState::Faulted => MediusClipState::Faulted,
         }
     }
@@ -414,7 +414,8 @@ impl From<ClipStatus> for MediusClipStatus {
         MediusClipStatus {
             state: s.state.into(),
             free: s.free,
-            used: s.used,
+            total: s.total,
+            played: s.played,
             ticks: s.ticks,
             underruns: s.underruns,
             overruns: s.overruns,
@@ -429,10 +430,62 @@ impl From<MediusClipState> for ClipState {
     fn from(s: MediusClipState) -> Self {
         match s {
             MediusClipState::Idle => ClipState::Idle,
-            MediusClipState::Armed => ClipState::Armed,
             MediusClipState::Playing => ClipState::Playing,
+            MediusClipState::Paused => ClipState::Paused,
             MediusClipState::Faulted => ClipState::Faulted,
         }
+    }
+}
+
+/// Serialize clip settings to the C struct (autolock as a `CLIP_LOCK_*` bitmask, triggers into the fixed array).
+pub(crate) fn clip_settings_to_c(s: &medius::ClipSettings) -> MediusClipSettings {
+    let mut triggers = [MediusClipTrigger {
+        on: MediusUsage {
+            kind: MediusClass::Button,
+            id: 0,
+        },
+        edge: MediusEdge::Both,
+        action: MediusClipAction::Start,
+        consume: 0,
+    }; MEDIUS_CLIP_TRIG_MAX];
+    let n = s.triggers.len().min(MEDIUS_CLIP_TRIG_MAX);
+    for (slot, t) in triggers.iter_mut().zip(s.triggers.iter()).take(n) {
+        *slot = MediusClipTrigger {
+            on: usage_to_c(t.on),
+            edge: match t.edge {
+                medius::Edge::Both => MediusEdge::Both,
+                medius::Edge::Press => MediusEdge::Press,
+                medius::Edge::Release => MediusEdge::Release,
+            },
+            action: match t.action {
+                medius::ClipAction::Start => MediusClipAction::Start,
+                medius::ClipAction::Stop => MediusClipAction::Stop,
+                medius::ClipAction::Pause => MediusClipAction::Pause,
+                medius::ClipAction::Resume => MediusClipAction::Resume,
+                medius::ClipAction::Restart => MediusClipAction::Restart,
+                medius::ClipAction::Toggle => MediusClipAction::Toggle,
+            },
+            consume: t.consume as u8,
+        };
+    }
+    MediusClipSettings {
+        autolock_bits: s.autolock.iter().fold(0u8, |m, b| m | blanket_bit(*b)),
+        loop_: s.loop_ as u8,
+        retain: s.retain as u8,
+        finalized: s.finalized as u8,
+        triggers,
+        n: n as u8,
+    }
+}
+
+/// A blanket group's `CLIP_LOCK_*` scope bit.
+fn blanket_bit(b: Blanket) -> u8 {
+    match b {
+        Blanket::Aim => 0x01,
+        Blanket::Wheel => 0x02,
+        Blanket::Buttons => 0x04,
+        Blanket::Keys => 0x08,
+        Blanket::Media => 0x10,
     }
 }
 
@@ -446,7 +499,8 @@ impl From<MediusClipStatus> for ClipStatus {
         ClipStatus {
             state: s.state.into(),
             free: s.free,
-            used: s.used,
+            total: s.total,
+            played: s.played,
             ticks: s.ticks,
             underruns: s.underruns,
             overruns: s.overruns,

@@ -140,6 +140,8 @@ pub enum MediusFrameType {
     Option = 0x11,
     ClipAppend = 0x12,
     ClipCtrl = 0x13,
+    ClipSet = 0x14,
+    ClipTrigger = 0x15,
 }
 
 /// Which arm of a [`MediusCatchEvent`] is populated.
@@ -191,12 +193,35 @@ pub struct MediusUsage {
     pub id: u16,
 }
 
-/// Playback options for a clip start or catch trigger (`medius_clip_start` / `_arm_catch`).
+/// Which edge of a trigger usage fires its binding (matches the lock direction wire values).
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MediusEdge {
+    Both = 0,
+    Press = 1,
+    Release = 2,
+}
+
+/// The engine action a trigger binding drives.
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MediusClipAction {
+    Start = 0,
+    Stop = 1,
+    Pause = 2,
+    Resume = 3,
+    Restart = 4,
+    Toggle = 5,
+}
+
+/// One clip trigger binding: `on`'s `edge` drives `action`; `consume` suppresses the input from the game.
 #[repr(C)]
-#[derive(Debug, Clone, Copy)]
-pub struct MediusClipConfig {
-    pub autolock: *const MediusBlanket,
-    pub autolock_len: usize,
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MediusClipTrigger {
+    pub on: MediusUsage,
+    pub edge: MediusEdge,
+    pub action: MediusClipAction,
+    pub consume: u8,
 }
 
 /// A relative-axis drive for `medius_device_move_axis`; build with the `medius_motion_*` helpers.
@@ -367,33 +392,53 @@ pub struct MediusEmitPaceStatus {
     pub resolved_hz: u16,
 }
 
-/// The device-side clip lifecycle state (`medius_clip_status`).
+/// The device-side clip lifecycle state (`medius_clip_query_status`).
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MediusClipState {
-    /// No clip active.
+    /// No clip playing (empty, or a loaded clip parked at its start).
     Idle = 0,
-    /// A catch-trigger is armed; playback starts on the physical button edge.
-    Armed = 1,
     /// Draining the ring, one entry per native frame.
-    Playing = 2,
-    /// An append was dropped or the ring overflowed; stop and re-preload.
+    Playing = 1,
+    /// Halted mid-clip; the cursor and any held usages are retained.
+    Paused = 2,
+    /// An append was dropped or the ring overflowed; recover with `medius_clip_clear`.
     Faulted = 3,
 }
 
-/// A snapshot of the device-side clip ring and playback counters.
+/// A snapshot of the device-side clip ring and playback counters (the runtime view of `RESP(CLIP)`).
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MediusClipStatus {
     pub state: MediusClipState,
     pub free: u32,
-    pub used: u32,
+    /// The retained clip size in bytes (streaming: buffered-but-undrained bytes).
+    pub total: u32,
+    /// Bytes played from the clip start (retained progress; ~0 while streaming).
+    pub played: u32,
     pub ticks: u32,
     pub underruns: u16,
     pub overruns: u16,
     pub seq_gaps: u16,
     pub held_n: u16,
     pub held: [MediusUsage; MEDIUS_MAX_USAGES],
+}
+
+/// The max clip trigger bindings in a `MediusClipSettings` (matches the firmware `CLIP_TRIG_MAX`).
+pub const MEDIUS_CLIP_TRIG_MAX: usize = 8;
+
+/// The clip configuration read back from `RESP(CLIP)`: autolock scope, loop/retain scalars, and triggers.
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct MediusClipSettings {
+    /// The autolock scope as `CLIP_LOCK_*` bits (`medius_clip_set_autolock`).
+    pub autolock_bits: u8,
+    pub loop_: u8,
+    pub retain: u8,
+    pub finalized: u8,
+    pub triggers: [MediusClipTrigger; MEDIUS_CLIP_TRIG_MAX],
+    /// The number of valid entries in `triggers`.
+    pub n: u8,
 }
 
 /// Host-side always-on counters.
