@@ -2,7 +2,7 @@
 
 use medius::{ClipBuilder, ClipHandle};
 
-use crate::convert::input_to_medius;
+use crate::convert::{clip_settings_to_c, input_to_medius};
 use crate::ctypes::*;
 use crate::device::MediusDevice;
 use crate::error::{MediusStatus, clear_error, fail, guard, guard_status, record, status_of};
@@ -242,69 +242,146 @@ pub unsafe extern "C" fn medius_clip_append(
     })
 }
 
-/// Build a `medius::ClipConfig` from the C config: the auto-lock groups it points at (NULL / 0 = none).
-unsafe fn clip_config_from(config: MediusClipConfig) -> medius::ClipConfig {
-    if config.autolock.is_null() || config.autolock_len == 0 {
-        return medius::ClipConfig::new();
+fn edge_to_medius(e: MediusEdge) -> medius::Edge {
+    match e {
+        MediusEdge::Both => medius::Edge::Both,
+        MediusEdge::Press => medius::Edge::Press,
+        MediusEdge::Release => medius::Edge::Release,
     }
-    let groups: Vec<medius::Blanket> = (0..config.autolock_len)
-        .map(|i| medius::Blanket::from(unsafe { *config.autolock.add(i) }))
-        .collect();
-    medius::ClipConfig::new().autolock(&groups)
+}
+fn action_to_medius(a: MediusClipAction) -> medius::ClipAction {
+    match a {
+        MediusClipAction::Start => medius::ClipAction::Start,
+        MediusClipAction::Stop => medius::ClipAction::Stop,
+        MediusClipAction::Pause => medius::ClipAction::Pause,
+        MediusClipAction::Resume => medius::ClipAction::Resume,
+        MediusClipAction::Restart => medius::ClipAction::Restart,
+        MediusClipAction::Toggle => medius::ClipAction::Toggle,
+    }
 }
 
-/// Begin playback from the ring head with `config` (an empty `autolock` plays with no auto-lock).
+/// Set the autolock scope: the input groups `scope` points at (NULL / 0 = none). Set before the first append.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn medius_clip_start(
+pub unsafe extern "C" fn medius_clip_set_autolock(
     clip: *mut MediusClip,
-    config: MediusClipConfig,
+    scope: *const MediusBlanket,
+    scope_len: usize,
 ) -> MediusStatus {
-    let cfg = unsafe { clip_config_from(config) };
-    with_clip(clip, |c| c.start(&cfg))
+    guard_status(|| {
+        if clip.is_null() {
+            return fail(MediusStatus::ErrInvalidArg, "null clip handle");
+        }
+        let groups: Vec<medius::Blanket> = if scope.is_null() || scope_len == 0 {
+            Vec::new()
+        } else {
+            (0..scope_len)
+                .map(|i| medius::Blanket::from(unsafe { *scope.add(i) }))
+                .collect()
+        };
+        status_of(unsafe { &(*clip).inner }.set_autolock(&groups))
+    })
 }
 
-/// Stop playback, flush the ring, release any clip-owned auto-lock.
+/// Loop playback at the clip end (retained mode only).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn medius_clip_set_loop(clip: *mut MediusClip, on: u8) -> MediusStatus {
+    with_clip(clip, |c| c.set_loop(on != 0))
+}
+
+/// Retain the loaded clip so it can rewind and replay (0 = streaming, the default). Set before the first append.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn medius_clip_set_retain(clip: *mut MediusClip, on: u8) -> MediusStatus {
+    with_clip(clip, |c| c.set_retain(on != 0))
+}
+
+/// Add or overwrite a trigger binding.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn medius_clip_bind(
+    clip: *mut MediusClip,
+    trigger: MediusClipTrigger,
+) -> MediusStatus {
+    let Some(on) = input_to_medius(trigger.on) else {
+        return fail(MediusStatus::ErrInvalidArg, "invalid clip trigger usage");
+    };
+    let t = medius::ClipTrigger {
+        on,
+        edge: edge_to_medius(trigger.edge),
+        action: action_to_medius(trigger.action),
+        consume: trigger.consume != 0,
+    };
+    with_clip(clip, |c| c.bind(t))
+}
+
+/// Remove the trigger binding on `usage`'s `edge`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn medius_clip_unbind(
+    clip: *mut MediusClip,
+    usage: MediusUsage,
+    edge: MediusEdge,
+) -> MediusStatus {
+    let Some(u) = input_to_medius(usage) else {
+        return fail(MediusStatus::ErrInvalidArg, "invalid clip trigger usage");
+    };
+    with_clip(clip, |c| c.unbind(u, edge_to_medius(edge)))
+}
+
+/// Remove every trigger binding.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn medius_clip_clear_triggers(clip: *mut MediusClip) -> MediusStatus {
+    with_clip(clip, |c| c.clear_triggers())
+}
+
+/// Rewind and play (resume from a pause).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn medius_clip_start(clip: *mut MediusClip) -> MediusStatus {
+    with_clip(clip, |c| c.start())
+}
+
+/// Stop, flush a streaming clip (rewind a retained one), release held input and the clip auto-lock.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_clip_stop(clip: *mut MediusClip) -> MediusStatus {
     with_clip(clip, |c| c.stop())
 }
 
-/// Arm an on-device catch-trigger on a physical press of `input`, starting with `config` when it fires.
+/// Halt mid-clip, retaining the cursor and any held input.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn medius_clip_arm_catch(
-    clip: *mut MediusClip,
-    input: MediusUsage,
-    config: MediusClipConfig,
-) -> MediusStatus {
-    let Some(inp) = input_to_medius(input) else {
-        return fail(
-            MediusStatus::ErrInvalidArg,
-            "invalid clip catch-trigger input",
-        );
-    };
-    let cfg = unsafe { clip_config_from(config) };
-    with_clip(clip, |c| c.arm_catch(inp, &cfg))
+pub unsafe extern "C" fn medius_clip_pause(clip: *mut MediusClip) -> MediusStatus {
+    with_clip(clip, |c| c.pause())
 }
 
-/// Arm an on-device catch-trigger on any physical input (button, key, or media), starting with `config`.
+/// Continue from the paused cursor.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn medius_clip_arm_catch_any(
-    clip: *mut MediusClip,
-    config: MediusClipConfig,
-) -> MediusStatus {
-    let cfg = unsafe { clip_config_from(config) };
-    with_clip(clip, |c| c.arm_catch_any(&cfg))
+pub unsafe extern "C" fn medius_clip_resume(clip: *mut MediusClip) -> MediusStatus {
+    with_clip(clip, |c| c.resume())
 }
 
-/// Clear a pending catch-arm.
+/// Force a rewind and play, even mid-playback.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn medius_clip_disarm(clip: *mut MediusClip) -> MediusStatus {
-    with_clip(clip, |c| c.disarm())
+pub unsafe extern "C" fn medius_clip_restart(clip: *mut MediusClip) -> MediusStatus {
+    with_clip(clip, |c| c.restart())
 }
 
-/// Query the ring depth and playback counters. A `Faulted` state means re-sync (stop + rebuild).
+/// Toggle: play if idle/paused, stop if playing.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn medius_clip_status(
+pub unsafe extern "C" fn medius_clip_toggle(clip: *mut MediusClip) -> MediusStatus {
+    with_clip(clip, |c| c.toggle())
+}
+
+/// Discard the loaded clip, free the ring, and clear a fault.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn medius_clip_clear(clip: *mut MediusClip) -> MediusStatus {
+    with_clip(clip, |c| c.clear())
+}
+
+/// Finalize a retained clip: fix its end so it can replay and loop.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn medius_clip_finalize(clip: *mut MediusClip) -> MediusStatus {
+    with_clip(clip, |c| c.finalize())
+}
+
+/// Query the ring depth, progress, and playback counters. A `Faulted` state means recover with `medius_clip_clear`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn medius_clip_query_status(
     clip: *mut MediusClip,
     out: *mut MediusClipStatus,
 ) -> MediusStatus {
@@ -312,9 +389,30 @@ pub unsafe extern "C" fn medius_clip_status(
         if clip.is_null() || out.is_null() {
             return fail(MediusStatus::ErrInvalidArg, "null pointer");
         }
-        match unsafe { &(*clip).inner }.status() {
+        match unsafe { &(*clip).inner }.query_status() {
             Ok(s) => {
                 unsafe { *out = MediusClipStatus::from(s) };
+                clear_error();
+                MediusStatus::Ok
+            }
+            Err(e) => record(&e),
+        }
+    })
+}
+
+/// Query the clip configuration: autolock scope, loop/retain, finalized, and the trigger set.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn medius_clip_query_config(
+    clip: *mut MediusClip,
+    out: *mut MediusClipSettings,
+) -> MediusStatus {
+    guard_status(|| {
+        if clip.is_null() || out.is_null() {
+            return fail(MediusStatus::ErrInvalidArg, "null pointer");
+        }
+        match unsafe { &(*clip).inner }.query_config() {
+            Ok(s) => {
+                unsafe { *out = clip_settings_to_c(&s) };
                 clear_error();
                 MediusStatus::Ok
             }
