@@ -1,5 +1,4 @@
-//! Full-surface tests through the mock box. The core check is parity: the same operation driven
-//! through the native crate and through the C ABI must record byte-identical frames.
+//! Full-surface tests through the mock box: the same operation via the native crate and the C ABI must record byte-identical frames.
 
 use std::ptr;
 use std::time::Duration;
@@ -10,7 +9,6 @@ use medius::{DecodedFrame, Device, MockBox};
 
 use crate::*;
 
-/// Build a fixed-size C name buffer from a string (NUL-terminated, zero-padded), as the ABI expects.
 fn cname(s: &str) -> [c_char; MEDIUS_MAX_NAME] {
     let mut buf = [0; MEDIUS_MAX_NAME];
     for (i, b) in s.bytes().take(MEDIUS_MAX_NAME - 1).enumerate() {
@@ -19,7 +17,6 @@ fn cname(s: &str) -> [c_char; MEDIUS_MAX_NAME] {
     buf
 }
 
-/// Read a C name buffer back to a `String` (up to the first NUL).
 fn read_cname(buf: &[c_char]) -> String {
     let bytes: Vec<u8> = buf
         .iter()
@@ -29,7 +26,6 @@ fn read_cname(buf: &[c_char]) -> String {
     String::from_utf8_lossy(&bytes).into_owned()
 }
 
-/// Frames recorded when `f` drives a native `Device` over a fresh mock.
 fn native_frames(f: impl FnOnce(&Device)) -> Vec<DecodedFrame> {
     let mock = MockBox::new();
     let dev = Device::with_mock(mock.clone());
@@ -37,7 +33,6 @@ fn native_frames(f: impl FnOnce(&Device)) -> Vec<DecodedFrame> {
     mock.recorded_frames()
 }
 
-/// Frames recorded when `f` drives the C ABI device over a fresh mock.
 unsafe fn capi_frames(f: impl FnOnce(*mut MediusDevice)) -> Vec<DecodedFrame> {
     let mock = medius_mock_new();
     let mut dev: *mut MediusDevice = ptr::null_mut();
@@ -54,7 +49,6 @@ unsafe fn capi_frames(f: impl FnOnce(*mut MediusDevice)) -> Vec<DecodedFrame> {
     frames
 }
 
-/// Assert the native operation and the C ABI operation record identical frames.
 fn assert_parity(native: impl FnOnce(&Device), capi: impl FnOnce(*mut MediusDevice)) {
     let want = native_frames(native);
     let got = unsafe { capi_frames(capi) };
@@ -156,7 +150,6 @@ fn inject_key_parity() {
 
 #[test]
 fn press_release_key_parity() {
-    // The same generic verbs drive a key, proving buttons and keys are treated identically.
     assert_parity(
         |d| {
             d.press(medius::Key::ENTER).unwrap();
@@ -277,8 +270,6 @@ fn admin_and_options_parity() {
     );
 }
 
-// --- queries ---
-
 #[test]
 fn query_version_returns_configured_value() {
     let mock = medius_mock_new();
@@ -316,7 +307,7 @@ fn query_version_returns_configured_value() {
     assert_eq!(version.fw_minor, 8);
     assert_eq!(version.fw_patch, 7);
     assert_eq!(version.mac, [0x5A, 0x4E, 0x00, 0x11, 0x1e, 0x28]);
-    assert_eq!(read_cname(&version.name), "Left PC"); // the name rides the version readback
+    assert_eq!(read_cname(&version.name), "Left PC");
     unsafe {
         medius_device_free(dev);
         medius_mock_free(mock);
@@ -384,7 +375,6 @@ fn device_info_roundtrips_kind_and_product() {
 #[test]
 fn query_locks_roundtrips_through_is_locked() {
     let mock = medius_mock_new();
-    // X positive + negative locked.
     let x = medius_lock_target_axis(MediusLockTargetKind::X);
     let mut set: MediusLocks = unsafe { std::mem::zeroed() };
     set.n = 1;
@@ -437,8 +427,6 @@ fn counters_are_readable() {
         medius_mock_free(mock);
     }
 }
-
-// --- streams ---
 
 fn zeroed_event() -> MediusCatchEvent {
     // Safe: every arm of the union is plain-old-data, and we overwrite it before reading.
@@ -536,8 +524,6 @@ fn log_stream_delivers_a_line() {
         medius_mock_free(mock);
     }
 }
-
-// --- errors ---
 
 #[test]
 fn silent_mock_fails_the_handshake() {
@@ -638,14 +624,12 @@ fn device_and_mock_clone_share_state() {
         unsafe { medius_device_with_mock(mock, &mut dev) },
         MediusStatus::Ok
     );
-    // A cloned device drives the same box.
     let dev2 = unsafe { medius_device_clone(dev) };
     assert!(!dev2.is_null());
     unsafe {
         assert_eq!(medius_device_move_rel(dev, 1, 0), MediusStatus::Ok);
         assert_eq!(medius_device_move_rel(dev2, 2, 0), MediusStatus::Ok);
     }
-    // A cloned mock observes the same recorded state.
     let mock2 = unsafe { medius_mock_clone(mock) };
     assert_eq!(unsafe { medius_mock_recorded(mock2) }, 2);
     unsafe {
@@ -674,7 +658,6 @@ fn event_stream_clone_shares_the_subscription() {
     unsafe {
         (*mock).inner.push_motion(1, 5, 0, 0);
     }
-    // Either handle can receive from the shared queue.
     let mut event = zeroed_event();
     assert!(unsafe { medius_event_stream_recv_timeout(stream2, 2000, &mut event) });
     assert_eq!(event.kind, MediusCatchEventKind::Motion);
@@ -800,7 +783,6 @@ fn clip_append_parity() {
 
 #[test]
 fn clip_builder_frame_edges_match_native() {
-    // The general multi-edge frame must encode the same bytes through the C MediusUsage arrays as native.
     assert_parity(
         |d| {
             let mut b = medius::ClipBuilder::new();

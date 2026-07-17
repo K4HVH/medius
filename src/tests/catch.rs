@@ -1,6 +1,4 @@
-//! CATCH command (§3.9): payload bytes, the `CatchMask` / `MotionEvent` / `UsageSnapshot` / `CatchState`
-//! types, the event decode through the reader, the HEALTH `catch_on` bit, and the `EventStream`
-//! lifecycle. Bytes are pinned to the firmware wire format in `ctrl_proto.h`.
+//! CATCH command (§3.9): payload bytes, the mask/event/snapshot/state decode, the HEALTH catch_on bit, and EventStream lifecycle; bytes pinned to the firmware wire format in ctrl_proto.h.
 
 #[cfg(feature = "mock")]
 use crate::protocol::FrameType;
@@ -39,14 +37,12 @@ fn catch_mask_class_bits_and_ops() {
         CatchMask::all()
     );
 
-    // Bits outside the valid mask are dropped.
     assert_eq!(CatchMask::from_bits_truncate(0xFF), CatchMask::all());
     assert_eq!(CatchMask::from_bits_truncate(0xE0), CatchMask::empty());
 }
 
 #[test]
 fn motion_event_decodes() {
-    // dx=+300, dy=-50, dz=-1
     let r = MotionEvent::from_payload(&[0x2C, 0x01, 0xCE, 0xFF, 0xFF, 0xFF]).unwrap();
     assert_eq!((r.dx, r.dy, r.dz), (300, -50, -1));
     assert!(MotionEvent::from_payload(&[0, 0, 0, 0, 0]).is_none()); // needs 6
@@ -54,7 +50,6 @@ fn motion_event_decodes() {
 
 #[test]
 fn usage_snapshot_decodes() {
-    // [n=2][BTN,0][KEY,0x04]
     let s = UsageSnapshot::from_payload(&[2, 0, 0, 0, 1, 0x04, 0x00]).unwrap();
     assert_eq!(s.usages.len(), 2);
     assert_eq!(s.class(), Some(Class::Button));
@@ -65,7 +60,6 @@ fn usage_snapshot_decodes() {
 
 #[test]
 fn catch_state_decodes_mask_and_drops() {
-    // what=7, mask=BUTTONS (0x04), dropped=0x01020304 (LE)
     let c = CatchState::from_payload(&[7, 0x04, 0x04, 0x03, 0x02, 0x01]).unwrap();
     assert_eq!(c.mask, CatchMask::BUTTONS);
     assert_eq!(c.dropped, 0x01020304);
@@ -87,7 +81,6 @@ fn health_catch_on_bit_roundtrips() {
     assert!(h.catch_on);
     assert!(!h.lock_on && !h.link_up);
     assert_eq!(h.to_flags(), 0x40);
-    // survives a full round-trip with every defined bit set
     assert_eq!(Health::from_flags(0x7F).to_flags(), 0x7F);
 }
 
@@ -105,8 +98,8 @@ fn dropping_the_stream_unsubscribes() {
         .into_iter()
         .filter(|f| f.ty == FrameType::Catch)
         .collect();
-    assert_eq!(catch_frames.first().unwrap().payload, vec![0x1F]); // subscribe (all classes)
-    assert_eq!(catch_frames.last().unwrap().payload, vec![0x00]); // unsubscribe
+    assert_eq!(catch_frames.first().unwrap().payload, vec![0x1F]);
+    assert_eq!(catch_frames.last().unwrap().payload, vec![0x00]);
 }
 
 #[cfg(feature = "mock")]
@@ -145,7 +138,6 @@ fn catch_buffer_drops_oldest_on_overflow() {
     for i in 0..TOTAL {
         mock.push_motion((i & 0xff) as u8, i as i16, 0, 0); // dx is a monotonic marker
     }
-    // Wait until the reader has processed every push (drop count reaches the overflow).
     let want_dropped = (TOTAL - KEPT) as u64;
     let deadline = Instant::now() + Duration::from_secs(2);
     while stream.dropped() < want_dropped && Instant::now() < deadline {
@@ -156,7 +148,6 @@ fn catch_buffer_drops_oldest_on_overflow() {
         want_dropped,
         "exactly the overflow count was dropped"
     );
-    // The freshest survive: the oldest readable event is the first one NOT evicted, not dx=0.
     let CatchEvent::Motion(first) = stream
         .recv_timeout(Duration::from_secs(1))
         .expect("survived")

@@ -19,14 +19,12 @@ use super::{Link, write_frame};
 const AUTO_RECONNECT_MIN: Duration = Duration::from_millis(100);
 const AUTO_RECONNECT_MAX: Duration = Duration::from_secs(2);
 
-/// How long to wait for a `RESP(VERSION)` when confirming a rescanned port is our box.
 const PROBE_DEADLINE: Duration = Duration::from_millis(1200);
-/// Re-send the version probe this often within the deadline (the box drops PC-owned state on a fresh
-/// control-link open and can miss the first query while it settles).
+// The box drops PC-owned state on a fresh control-link open and can miss the first query while it
+// settles, so re-send the probe this often within the deadline.
 const PROBE_QUERY_GAP: Duration = Duration::from_millis(300);
 
-/// The opened box's stable identity: the CH343 serial (scan-time, may be absent) plus the device
-/// chip's base MAC (authoritative, from `RESP(VERSION)`).
+/// The opened box's stable identity: CH343 serial (may be absent) plus the device chip's base MAC.
 #[derive(Clone, Debug)]
 pub(crate) struct BoxIdentity {
     pub(crate) serial: Option<String>,
@@ -43,8 +41,7 @@ pub(crate) struct ReconnectCtx {
     pub(crate) identity: Arc<Mutex<Option<BoxIdentity>>>,
 }
 
-/// Probe a freshly-opened, not-yet-adopted transport for its `RESP(VERSION)` so a rescan can confirm
-/// the MAC before committing. Runs a self-contained query loop off the reader thread.
+// Runs its own query loop (the reader thread isn't up yet) so a rescan confirms the MAC before adopting.
 fn probe_version(transport: &dyn Transport) -> Option<Version> {
     let frame = encode(FrameType::Query, 0, &[Q_VERSION]).ok()?;
     let mut decoder = FrameDecoder::new();
@@ -79,9 +76,8 @@ fn reconnect(ctx: &ReconnectCtx) -> Result<()> {
     let identity = ctx.identity.lock().clone();
     let ports = crate::transport::scan::find_medius();
 
-    // Candidate order: with a known serial, try the port(s) that match it first — fast and
-    // unambiguous. If none match (the adapter serves no serial, or it changed), fall back to every
-    // port and let the MAC confirm which one is ours.
+    // With a known serial, try matching port(s) first; if none match (no serial served, or it
+    // changed), fall back to every port and let the MAC confirm which is ours.
     let candidates: Vec<_> = match &identity {
         Some(id) if id.serial.is_some() => {
             let matched: Vec<_> = ports
@@ -138,7 +134,6 @@ fn reapply_held(ctx: &ReconnectCtx) -> Result<()> {
             d.catch(),
         )
     };
-    // Re-assert every held momentary usage (button/key/media), class-blind.
     for (usage, action) in held {
         let (class, id) = usage.class_id();
         let seq = ctx.seq.fetch_add(1, Ordering::Relaxed);
@@ -152,7 +147,7 @@ fn reapply_held(ctx: &ReconnectCtx) -> Result<()> {
         )?;
     }
     // Re-assert held locks: like injection, the firmware silence-clears every lock after the ~1 s
-    // window, so a blip past it would unlock physical input without this. (class, usage, direction).
+    // window, so a blip past it would unlock physical input without this.
     for (class, usage, direction) in held_locks {
         let seq = ctx.seq.fetch_add(1, Ordering::Relaxed);
         write_frame(
@@ -164,9 +159,8 @@ fn reapply_held(ctx: &ReconnectCtx) -> Result<()> {
             &lock_payload(class, usage, direction, 1),
         )?;
     }
-    // Re-assert the catch subscription: a control-link drop longer than the firmware's ~1 s silence
-    // window makes the box silence-clear the mask, so without this the stream would stay dead after a
-    // long blip. Idempotent if the drop was short (the mask was never cleared).
+    // Re-assert the catch subscription: a link drop past the firmware's ~1 s silence window makes the
+    // box clear the mask, so without this the stream stays dead. Idempotent if the drop was short.
     if !catch.is_empty() {
         let seq = ctx.seq.fetch_add(1, Ordering::Relaxed);
         write_frame(
@@ -205,8 +199,7 @@ impl Link {
         }
     }
 
-    /// Record the box's stable identity so a later rescan reconnects to this same box, not whichever
-    /// one happens to be plugged in.
+    /// Record the box's stable identity so a later rescan reconnects to this same box.
     pub(crate) fn set_identity(&self, id: BoxIdentity) {
         *self.inner.identity.lock() = Some(id);
     }

@@ -1,9 +1,6 @@
 //! Media-key command vocabulary: a media key by 16-bit Consumer usage, and the media catch snapshot.
 
 /// A media key, addressed by 16-bit HID Consumer Usage (§3.11, v2.0.0).
-///
-/// Construct from a raw usage with [`MediaKey::new`], or use a constant. Present-gated: a key the
-/// cloned board does not declare is a silent no-op, so check [`KbdCaps::has_consumer`](crate::KbdCaps).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct MediaKey(pub u16);
 

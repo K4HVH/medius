@@ -23,11 +23,11 @@ pub enum Resp {
     Locks(Locks),
     Catch(CatchState),
     Imperfect(ImperfectStatus),
-    /// `RESP(OPTIONS, MOVE_RIDE)` — the movement-riding window (`None` = off).
+    /// `RESP(OPTIONS, MOVE_RIDE)`: the movement-riding window (`None` = off).
     MovementRiding(Option<Duration>),
-    /// `RESP(OPTIONS, EMIT)` — the emit-rate pacing mode and the rate in effect.
+    /// `RESP(OPTIONS, EMIT)`: the emit-rate pacing mode and the rate in effect.
     EmitPace(EmitPaceStatus),
-    /// `RESP(CLIP)` — the device-side clip ring and playback status.
+    /// `RESP(CLIP)`: the device-side clip ring and playback status.
     Clip(ClipStatus),
 }
 

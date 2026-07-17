@@ -1,8 +1,4 @@
 //! Conversions between the safe `medius` types and the `#[repr(C)]` mirrors.
-//!
-//! `From<MediusX> for medius::X` handles command parameters; `From<medius::X> for MediusX` handles
-//! query results and stream events. Both directions are concrete-to-concrete, so the orphan rule
-//! permits the foreign-for-local impls.
 
 use std::os::raw::c_char;
 
@@ -21,7 +17,6 @@ fn b(v: bool) -> u8 {
     v as u8
 }
 
-/// Copy `s` into a fixed C buffer, NUL-terminated, truncating to fit.
 fn fill_cstr(dst: &mut [c_char], s: &str) {
     let bytes = s.as_bytes();
     let n = bytes.len().min(dst.len().saturating_sub(1));
@@ -31,7 +26,6 @@ fn fill_cstr(dst: &mut [c_char], s: &str) {
     dst[n] = 0;
 }
 
-/// Read a NUL-terminated fixed C buffer back into a `String` (lossy).
 fn read_cstr(src: &[c_char]) -> String {
     let bytes: Vec<u8> = src
         .iter()
@@ -56,8 +50,6 @@ fn kind_from_medius(k: MediusDeviceKind) -> DeviceKind {
         MediusDeviceKind::Mouse => DeviceKind::Mouse,
     }
 }
-
-// --- command parameters: Medius -> medius ---
 
 impl From<MediusButton> for Button {
     fn from(v: MediusButton) -> Self {
@@ -147,7 +139,7 @@ impl From<MediusLogLevel> for LogLevel {
     }
 }
 
-/// `MediusLockTarget` -> [`LockTarget`]. `None` when a `Usage` target carries an out-of-range button id.
+/// `MediusLockTarget` to [`LockTarget`]; `None` when a `Usage` target has an out-of-range button id.
 pub(crate) fn lock_target_to_medius(v: MediusLockTarget) -> Option<LockTarget> {
     Some(match v.kind {
         MediusLockTargetKind::X => LockTarget::Axis(Axis::X),
@@ -166,8 +158,7 @@ impl From<MediusMotion> for Motion {
     }
 }
 
-/// `MediusUsage` -> a [`Usage`]. `None` when a button/key `value` is out of range for its class (a button
-/// id, or a HID keycode > 255) rather than silently truncating it.
+/// `MediusUsage` to a [`Usage`]; `None` when a button/key id is out of range for its class.
 pub(crate) fn input_to_medius(v: MediusUsage) -> Option<Usage> {
     Some(match v.kind {
         MediusClass::Button => Usage::from(Button::from_id(u8::try_from(v.id).ok()?)?),
@@ -176,7 +167,6 @@ pub(crate) fn input_to_medius(v: MediusUsage) -> Option<Usage> {
     })
 }
 
-/// A [`Class`] as the matching `MediusClass` arm.
 fn class_kind(class: Class) -> MediusClass {
     match class {
         Class::Button => MediusClass::Button,
@@ -185,7 +175,6 @@ fn class_kind(class: Class) -> MediusClass {
     }
 }
 
-/// A `MediusClass` as the matching [`Class`].
 fn kind_class(kind: MediusClass) -> Class {
     match kind {
         MediusClass::Button => Class::Button,
@@ -194,7 +183,6 @@ fn kind_class(kind: MediusClass) -> Class {
     }
 }
 
-/// A [`Usage`] as its flat C mirror.
 fn usage_to_c(u: Usage) -> MediusUsage {
     MediusUsage {
         kind: class_kind(u.class),
@@ -202,7 +190,6 @@ fn usage_to_c(u: Usage) -> MediusUsage {
     }
 }
 
-/// A [`LockTarget`] as its flat C mirror.
 fn lock_target_to_c(t: LockTarget) -> MediusLockTarget {
     match t {
         LockTarget::Axis(Axis::X) => axis_target(MediusLockTargetKind::X),
@@ -215,7 +202,6 @@ fn lock_target_to_c(t: LockTarget) -> MediusLockTarget {
     }
 }
 
-/// An axis lock target of the given kind (its `usage` field is unused).
 fn axis_target(kind: MediusLockTargetKind) -> MediusLockTarget {
     MediusLockTarget {
         kind,
@@ -226,7 +212,7 @@ fn axis_target(kind: MediusLockTargetKind) -> MediusLockTarget {
     }
 }
 
-/// `(MediusEmitMode, hz)` -> `EmitPace`. `hz` matters only for `Fixed`.
+/// `(MediusEmitMode, hz)` to `EmitPace`; `hz` matters only for `Fixed`.
 pub(crate) fn emit_pace_to_medius(mode: MediusEmitMode, hz: u16) -> EmitPace {
     match mode {
         MediusEmitMode::Learned => EmitPace::Learned,
@@ -234,8 +220,6 @@ pub(crate) fn emit_pace_to_medius(mode: MediusEmitMode, hz: u16) -> EmitPace {
         MediusEmitMode::Fixed => EmitPace::Fixed(hz),
     }
 }
-
-// --- query results: medius -> Medius ---
 
 impl From<Version> for MediusVersion {
     fn from(v: Version) -> Self {
@@ -510,8 +494,6 @@ impl From<LogLevel> for MediusLogLevel {
     }
 }
 
-// --- stream events: medius -> Medius ---
-
 impl From<CatchEvent> for MediusCatchEvent {
     fn from(e: CatchEvent) -> Self {
         match e {
@@ -558,8 +540,6 @@ impl From<&LogLine> for MediusLogLine {
         }
     }
 }
-
-// --- mock config + pushed events: Medius -> medius ---
 
 #[inline]
 fn nz(v: u8) -> bool {
@@ -712,8 +692,7 @@ impl From<MediusImperfectStatus> for ImperfectStatus {
     }
 }
 
-/// The held usages of a `MediusUsageEvent` as a `Usage` list (for mock injection). Invalid entries (an
-/// out-of-range button id) are dropped.
+/// The held usages of a `MediusUsageEvent` as a `Usage` list; invalid entries are dropped.
 pub(crate) fn usage_event_to_medius(e: &MediusUsageEvent) -> Vec<Usage> {
     let n = (e.n as usize).min(MEDIUS_MAX_USAGES);
     e.usages[..n]
@@ -721,8 +700,6 @@ pub(crate) fn usage_event_to_medius(e: &MediusUsageEvent) -> Vec<Usage> {
         .filter_map(|&u| input_to_medius(u))
         .collect()
 }
-
-// --- frame types (mock recorder) ---
 
 #[cfg(feature = "mock")]
 impl From<medius::FrameType> for MediusFrameType {
@@ -748,13 +725,13 @@ impl From<medius::FrameType> for MediusFrameType {
     }
 }
 
-/// `MediusFrameType` -> `medius::FrameType`; `None` if the value is out of range.
+/// `MediusFrameType` to `medius::FrameType`; `None` if the value is out of range.
 #[cfg(feature = "mock")]
 pub(crate) fn frame_type_to_native(t: MediusFrameType) -> Option<medius::FrameType> {
     medius::FrameType::try_from(t as u8).ok()
 }
 
-/// `PortInfo` -> `MediusPortInfo`. `None` if the path would not fit (never a half-written string).
+/// `PortInfo` to `MediusPortInfo`; `None` if the path would not fit (never a half-written string).
 pub(crate) fn port_to_medius(p: &PortInfo) -> Option<MediusPortInfo> {
     if p.path.len() >= MEDIUS_MAX_PATH {
         return None;
@@ -774,11 +751,11 @@ pub(crate) fn port_to_medius(p: &PortInfo) -> Option<MediusPortInfo> {
     })
 }
 
-/// `BoxInfo` -> `MediusBoxInfo`. `None` if the port path would not fit.
+/// `BoxInfo` to `MediusBoxInfo`; `None` if the port path would not fit.
 pub(crate) fn box_to_medius(b: &BoxInfo) -> Option<MediusBoxInfo> {
     Some(MediusBoxInfo {
         port: port_to_medius(&b.port)?,
-        version: b.version.clone().into(), // Version is no longer Copy (it carries the name String)
+        version: b.version.clone().into(),
         device: b.device.clone().into(),
     })
 }

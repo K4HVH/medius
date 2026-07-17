@@ -1,13 +1,4 @@
-"""Hatchling build hook: bundle the medius_capi cdylib into the wheel.
-
-Two layouts are supported. In the dev tree the Rust workspace is two levels up
-(`../..`). In an sdist the workspace is vendored under `_rust/` so the wheel can
-build with no access to the rest of the repo (this is what makes cibuildwheel
-work from the sdist). The sdist build vendors those sources; the wheel build
-runs `cargo build --release -p medius-capi` in whichever workspace it finds and
-copies the cdylib into the package. Set MEDIUS_SKIP_CARGO=1 to reuse a lib
-already in the target dir.
-"""
+"""Hatchling build hook: bundle the medius_capi cdylib into the wheel."""
 
 import os
 import shutil
@@ -23,8 +14,6 @@ _LIB_NAMES = {
     "win32": "medius_capi.dll",
 }
 
-# Workspace entries the C ABI build needs. Directories are copied recursively
-# (minus target/); files are copied if present.
 _VENDOR_DIRS = ["src", "examples", "medius-capi/src", "medius-capi/include"]
 _VENDOR_FILES = [
     "Cargo.toml",
@@ -56,11 +45,8 @@ class CustomBuildHook(BuildHookInterface):
         # CPython ABI, so one py3-none-<platform> wheel serves every Python 3.x.
         build_data["pure_python"] = False
 
-        # On macOS, cibuildwheel builds one wheel per arch (the arm64 runner
-        # cross-builds x86_64) and exports _PYTHON_HOST_PLATFORM + the pinned
-        # MACOSX_DEPLOYMENT_TARGET (see pyproject). Pick the cargo target from the
-        # arch and tag the wheel at that deployment target, so the dylib's min and
-        # the tag agree — delocate checks the dylib against MACOSX_DEPLOYMENT_TARGET.
+        # cibuildwheel builds one wheel per arch and exports _PYTHON_HOST_PLATFORM;
+        # tag it at MACOSX_DEPLOYMENT_TARGET so it matches the dylib's min (delocate checks this).
         cargo_target = None
         host_platform = os.environ.get("_PYTHON_HOST_PLATFORM")
         if sys.platform == "darwin" and host_platform:

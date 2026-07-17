@@ -6,9 +6,7 @@ use crate::types::{Action, Motion, Usage};
 use super::Device;
 
 impl Device {
-    /// `INJECT` — set a momentary-usage override for any input class (button, key, or media). One verb
-    /// for every class; [`press`](Device::press) / [`release`](Device::release) /
-    /// [`force_release`](Device::force_release) are thin wrappers over it.
+    /// `INJECT`: set a momentary-usage override for any input class (button, key, or media).
     pub fn inject(&self, usage: impl Into<Usage>, action: Action) -> Result<()> {
         let u = usage.into();
         self.link.desired().lock().apply(u, action);
@@ -19,23 +17,22 @@ impl Device {
         )
     }
 
-    /// Press (force down) any usage — a button, key, or media usage.
+    /// Press (force down) any usage: a button, key, or media usage.
     pub fn press(&self, usage: impl Into<Usage>) -> Result<()> {
         self.inject(usage, Action::Press)
     }
 
-    /// Soft-release any usage — clears our injected press; a physical hold is left intact.
+    /// Soft-release any usage; clears our injected press, a physical hold is left intact.
     pub fn release(&self, usage: impl Into<Usage>) -> Result<()> {
         self.inject(usage, Action::SoftRelease)
     }
 
-    /// Force-release any usage — forces it inactive, masking a physical hold too.
+    /// Force-release any usage; forces it inactive, masking a physical hold too.
     pub fn force_release(&self, usage: impl Into<Usage>) -> Result<()> {
         self.inject(usage, Action::ForceRelease)
     }
 
-    /// `MOVE` — drive a relative axis (cursor or wheel). The field-generic verb;
-    /// [`move_rel`](Device::move_rel) and [`wheel`](Device::wheel) are thin wrappers over it.
+    /// `MOVE`: drive a relative axis (cursor or wheel).
     pub fn move_axis(&self, motion: Motion) -> Result<()> {
         match motion {
             Motion::Cursor { dx, dy } => self.move_rel(dx, dy),
@@ -43,9 +40,7 @@ impl Device {
         }
     }
 
-    /// `RESET` — return to pure passthrough immediately. Clears injection and ends any open catch stream
-    /// (its [`EventStream`](crate::EventStream) `recv()` returns `Err`), matching the firmware, which drops
-    /// every PC-owned state on the same `RESET`.
+    /// `RESET`: return to pure passthrough, clearing injection and ending any open catch stream.
     pub fn reset(&self) -> Result<()> {
         self.link.desired().lock().clear();
         self.link.catch_disconnect_all();

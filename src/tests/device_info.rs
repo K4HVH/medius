@@ -1,15 +1,10 @@
-//! Device-info request decoding (§4.3–4.6) + the HEALTH `rate_confident` bit (§4.2).
-//!
-//! The byte vectors here are the EXACT wire bytes the firmware emits (mirrored from the firmware's
-//! own packer test, medius-fw `tests/host/test_ctrl_proto.c`), so these tests pin the decoder to the
-//! firmware wire format, not merely to our own encoder.
+//! Device-info request decoding (§4.3-4.6) and the HEALTH `rate_confident` bit (§4.2); byte vectors mirror the firmware wire format.
 
 use crate::protocol::{Resp, parse_resp};
 use crate::types::{DeviceKind, Health};
 
 #[test]
 fn decode_version_with_mac() {
-    // [what=0][proto=2][maj=2][min=3][patch=0][mac 6B] — header only, no name tail (empty name).
     let p = [0u8, 2, 2, 3, 0, 0x5A, 0x4E, 0x11, 0x22, 0x1e, 0x28];
     let Some(Resp::Version(v)) = parse_resp(&p) else {
         panic!("expected Version");
@@ -20,14 +15,12 @@ fn decode_version_with_mac() {
     );
     assert_eq!(v.mac, [0x5A, 0x4E, 0x11, 0x22, 0x1e, 0x28]);
     assert_eq!(v.mac_hex(), "5a4e11221e28");
-    assert_eq!(v.name, ""); // an 11-byte (header-only) VERSION decodes to an empty name (older box)
-    // A pre-mac (5-byte) VERSION no longer parses.
+    assert_eq!(v.name, ""); // header-only VERSION means an empty name (older box)
     assert!(parse_resp(&[0u8, 2, 2, 3, 0]).is_none());
 }
 
 #[test]
 fn decode_version_with_name_tail() {
-    // Header + a "Left PC" ASCII name tail after the MAC (offset 11..), LEN-delimited like DEVICE_INFO.
     let mut p = vec![0u8, 2, 2, 4, 0, 0x5A, 0x4E, 0x11, 0x22, 0x1e, 0x28];
     p.extend_from_slice(b"Left PC");
     let Some(Resp::Version(v)) = parse_resp(&p) else {
@@ -39,14 +32,12 @@ fn decode_version_with_name_tail() {
 
 #[test]
 fn rate_decodes_continuous_vs_change_driven() {
-    // [what=4][native u16][poll u16][flags]. Continuous mouse: 1000us, confident, not change-driven.
     let Some(Resp::Rate(r)) = parse_resp(&[4, 0xE8, 0x03, 0xE8, 0x03, 0x01]) else {
         panic!("expected Rate");
     };
     assert_eq!(r.native_period_us, 1000);
     assert!(r.confident && !r.change_driven);
     assert_eq!(r.native_hz(), Some(1000.0));
-    // Change-driven keyboard: native N/A (0), poll floor 1000us, CHANGE_DRIVEN set.
     let Some(Resp::Rate(k)) = parse_resp(&[4, 0x00, 0x00, 0xE8, 0x03, 0x02]) else {
         panic!("expected Rate");
     };
@@ -58,8 +49,6 @@ fn rate_decodes_continuous_vs_change_driven() {
 
 #[test]
 fn decode_device_info_exact_bytes() {
-    // vid 0x046D, pid 0xC08B, bcdDevice 0x0110, bcdUSB 0x0200, flags HAS_SERIAL|HAS_BOS,
-    // primary_kind MOUSE(2), product "Mamba".
     let mut p = vec![
         2u8, 0x6D, 0x04, 0x8B, 0xC0, 0x10, 0x01, 0x00, 0x02, 0x03, 0x02,
     ];
@@ -75,7 +64,6 @@ fn decode_device_info_exact_bytes() {
     assert_eq!(m.kind, DeviceKind::Mouse);
     assert_eq!(m.product, "Mamba");
     assert_eq!(format!("{m}"), "046D:C08B Mamba");
-    // Header-only (no product tail) still decodes; product is empty and Display omits it.
     let Some(Resp::DeviceInfo(h)) = parse_resp(&p[..11]) else {
         panic!("expected DeviceInfo");
     };
@@ -86,7 +74,6 @@ fn decode_device_info_exact_bytes() {
 
 #[test]
 fn decode_caps_exact_bytes() {
-    // unified CAPS: 5 buttons, X|Y|WHEEL (0x07), 2 HID interfaces; no keyboard; not change-driven
     let p = [3u8, 5, 0x07, 2, 0, 0, 0];
     let Some(Resp::Caps(c)) = parse_resp(&p) else {
         panic!("expected Caps");
@@ -102,7 +89,6 @@ fn decode_caps_exact_bytes() {
 
 #[test]
 fn decode_rate_exact_bytes() {
-    // native 1000us, poll 1000us, CONFIDENT
     let p = [4u8, 0xE8, 0x03, 0xE8, 0x03, 0x01];
     let Some(Resp::Rate(r)) = parse_resp(&p) else {
         panic!("expected Rate");
@@ -126,7 +112,7 @@ fn rate_unlearned_period_is_none() {
 
 #[test]
 fn decode_stats_exact_bytes_with_saturation() {
-    // Same vector as the firmware packer test: tx_drops/wakeups saturated to 0xFFFF, maxdepth to 0xFF.
+    // Same vector as the firmware packer test.
     let p = [
         5u8, 0x04, 0x03, 0x02, 0x01, 0xFF, 0xFF, 0x0A, 0x00, 0xFF, 0x02, 0xFF, 0xFF, 0x07, 0x00,
         0x09, 0x00,
@@ -150,7 +136,6 @@ fn health_rate_confident_bit_roundtrips() {
     assert!(h.rate_confident);
     assert!(!h.link_up && !h.mouse_attached && !h.clone_configured && !h.injection_active);
     assert_eq!(h.to_flags(), 0x10);
-    // and it survives a full round-trip with the other bits set
     assert_eq!(Health::from_flags(0x1F).to_flags(), 0x1F);
 }
 

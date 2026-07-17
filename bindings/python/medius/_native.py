@@ -1,10 +1,4 @@
-"""ctypes layer over the medius_capi C ABI.
-
-Loads the shared library and declares every function signature plus a `ctypes`
-mirror of every `Medius*` type, field for field with the generated header. The
-rest of the package builds the Pythonic API on top of this module; nothing here
-imports the rest of the package.
-"""
+"""ctypes layer over the medius_capi C ABI."""
 
 from __future__ import annotations
 
@@ -32,9 +26,6 @@ usize = ctypes.c_size_t
 c_bool = ctypes.c_bool
 HANDLE = ctypes.c_void_p
 PHANDLE = ctypes.POINTER(ctypes.c_void_p)
-
-
-# --- value types (field layouts mirror medius.h exactly) ---
 
 
 class MediusPortInfo(ctypes.Structure):
@@ -228,9 +219,6 @@ class MediusLogLine(ctypes.Structure):
     _fields_ = [("level", u8), ("text", ctypes.c_char * MEDIUS_MAX_LOG_TEXT)]
 
 
-# --- library loading ---
-
-
 def _candidate_names():
     if sys.platform == "darwin":
         return ["libmedius_capi.dylib"]
@@ -281,7 +269,6 @@ def _decl(name, restype, argtypes, optional=False):
     return fn
 
 
-# --- lifecycle ---
 _decl("medius_device_open", i32, [ctypes.c_char_p, PHANDLE])
 _decl("medius_device_find", i32, [PHANDLE])
 _decl("medius_device_open_by_id", i32, [ctypes.c_char_p, PHANDLE])
@@ -292,7 +279,6 @@ _decl("medius_device_free", None, [HANDLE])
 _decl("medius_find_ports", usize, [ctypes.POINTER(MediusPortInfo), usize, ctypes.POINTER(usize)])
 _decl("medius_list", usize, [ctypes.POINTER(MediusBoxInfo), usize, ctypes.POINTER(usize)])
 
-# --- commands ---
 _decl("medius_device_move_rel", i32, [HANDLE, i16, i16])
 _decl("medius_device_wheel", i32, [HANDLE, i16])
 _decl("medius_device_move_axis", i32, [HANDLE, MediusMotion])
@@ -315,7 +301,6 @@ _decl("medius_device_set_emit_pace", i32, [HANDLE, u8, u16])
 _decl("medius_device_set_name", i32, [HANDLE, ctypes.c_char_p])
 _decl("medius_device_clear_name", i32, [HANDLE])
 
-# --- queries ---
 _decl("medius_device_query_version", i32, [HANDLE, ctypes.POINTER(MediusVersion)])
 _decl("medius_device_query_health", i32, [HANDLE, ctypes.POINTER(MediusHealth)])
 _decl("medius_device_device_info", i32, [HANDLE, ctypes.POINTER(MediusDeviceInfo)])
@@ -333,7 +318,6 @@ _decl(
 _decl("medius_device_query_emit_pace", i32, [HANDLE, ctypes.POINTER(MediusEmitPaceStatus)])
 _decl("medius_device_counters", i32, [HANDLE, ctypes.POINTER(MediusCountersSnapshot)])
 
-# --- meta ---
 _decl("medius_default_query_timeout_ms", u32, [])
 _decl("medius_default_keepalive_cadence_ms", u32, [])
 _decl("medius_abi_version", u32, [])
@@ -341,7 +325,6 @@ _decl("medius_version_string", ctypes.c_char_p, [])
 _decl("medius_last_error_message", usize, [ctypes.c_char_p, usize])
 _decl("medius_last_error_proto_ver", u8, [])
 
-# --- pure helpers ---
 _decl("medius_usage_button", MediusUsage, [u8])
 _decl("medius_usage_key", MediusUsage, [u8])
 _decl("medius_usage_media", MediusUsage, [u16])
@@ -357,7 +340,6 @@ _decl("medius_caps_has_mouse", c_bool, [MediusCaps])
 _decl("medius_caps_has_keyboard", c_bool, [MediusCaps])
 _decl("medius_caps_is_composite", c_bool, [MediusCaps])
 
-# --- streams ---
 _decl("medius_device_catch_events", i32, [HANDLE, u8, PHANDLE])
 _decl("medius_event_stream_clone", HANDLE, [HANDLE])
 _decl("medius_event_stream_free", None, [HANDLE])
@@ -372,7 +354,6 @@ _decl("medius_log_stream_recv", i32, [HANDLE, ctypes.POINTER(MediusLogLine)])
 _decl("medius_log_stream_try_recv", c_bool, [HANDLE, ctypes.POINTER(MediusLogLine)])
 _decl("medius_log_stream_recv_timeout", c_bool, [HANDLE, u64, ctypes.POINTER(MediusLogLine)])
 
-# --- clip: builder + handle ---
 _decl("medius_clip_builder_new", HANDLE, [])
 _decl("medius_clip_builder_free", None, [HANDLE])
 _decl("medius_clip_builder_clear", i32, [HANDLE])
@@ -394,10 +375,8 @@ _decl("medius_clip_arm_catch_any", i32, [HANDLE, MediusClipConfig])
 _decl("medius_clip_disarm", i32, [HANDLE])
 _decl("medius_clip_status", i32, [HANDLE, ctypes.POINTER(MediusClipStatus)])
 
-# --- flash (feature-gated, optional) ---
 HAS_FLASH = _decl("medius_flash", i32, [ctypes.c_char_p, ctypes.c_char_p, c_bool], optional=True) is not None
 
-# --- mock (feature-gated, optional) ---
 HAS_MOCK = _decl("medius_mock_new", HANDLE, [], optional=True) is not None
 if HAS_MOCK:
     _decl("medius_mock_clone", HANDLE, [HANDLE])

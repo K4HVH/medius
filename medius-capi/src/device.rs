@@ -10,8 +10,7 @@ use crate::convert::{emit_pace_to_medius, input_to_medius, lock_target_to_medius
 use crate::ctypes::*;
 use crate::error::{MediusStatus, clear_error, fail, guard, guard_status, record, status_of};
 
-/// An open connection to one medius box. Opaque; create with `medius_device_open`/`_find`/`_with_mock`
-/// and release with `medius_device_free`.
+/// An open connection to one medius box; create with `medius_device_open`/`_find` and free with `medius_device_free`.
 pub struct MediusDevice {
     pub(crate) inner: Device,
 }
@@ -22,7 +21,6 @@ impl MediusDevice {
     }
 }
 
-/// Run `f` with the borrowed device, mapping its `Result` to a status. Null handle -> `ErrInvalidArg`.
 fn with_device(
     dev: *mut MediusDevice,
     f: impl FnOnce(&Device) -> Result<(), medius::Error>,
@@ -36,7 +34,6 @@ fn with_device(
     })
 }
 
-/// Run a query and write its converted result to `out`. Null handle/out -> `ErrInvalidArg`.
 fn query<T, M: From<T>>(
     dev: *mut MediusDevice,
     out: *mut M,
@@ -58,10 +55,7 @@ fn query<T, M: From<T>>(
     })
 }
 
-// --- lifecycle ---
-
-/// Open the box at serial `path` (a NUL-terminated UTF-8 string), handshake, and write the handle to
-/// `*out`. The caller owns the handle and must free it with `medius_device_free`.
+/// Open the box at serial `path` (NUL-terminated UTF-8), handshake, and write the owned handle to `*out`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_device_open(
     path: *const c_char,
@@ -103,8 +97,7 @@ pub unsafe extern "C" fn medius_device_find(out: *mut *mut MediusDevice) -> Medi
     })
 }
 
-/// Clone a device handle: another owner of the same underlying connection (the link is shared and
-/// reference-counted, like `Device::clone` in Rust). Each clone must be freed. Null in -> null out.
+/// Clone a device handle into another owner of the same reference-counted connection; each clone must be freed.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_device_clone(dev: *const MediusDevice) -> *mut MediusDevice {
     guard(std::ptr::null_mut(), || {
@@ -115,8 +108,7 @@ pub unsafe extern "C" fn medius_device_clone(dev: *const MediusDevice) -> *mut M
     })
 }
 
-/// Free a device handle (joins the background reader/keepalive threads when the last clone drops).
-/// Null is a no-op.
+/// Free a device handle; joins the background threads when the last clone drops, null is a no-op.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_device_free(dev: *mut MediusDevice) {
     guard((), || {
@@ -126,8 +118,7 @@ pub unsafe extern "C" fn medius_device_free(dev: *mut MediusDevice) {
     });
 }
 
-/// Enumerate medius serial ports into `out` (up to `cap`). Writes the total found to `*out_total`
-/// (may exceed `cap`) and returns the number written. Ports with an unrepresentable path are omitted.
+/// Enumerate medius serial ports into `out` (up to `cap`); writes the total to `*out_total` and returns the number written.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_find_ports(
     out: *mut MediusPortInfo,
@@ -154,9 +145,7 @@ pub unsafe extern "C" fn medius_find_ports(
     })
 }
 
-/// Enumerate every connected box into `out` (up to `cap`): each opens, handshakes, and reads its
-/// version + cloned-device info. Writes the total found to `*out_total` (may exceed `cap`) and returns
-/// the number written. This opens and closes each box in turn.
+/// Enumerate every connected box into `out` (up to `cap`), opening each in turn; writes the total to `*out_total` and returns the number written.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_list(
     out: *mut MediusBoxInfo,
@@ -183,8 +172,7 @@ pub unsafe extern "C" fn medius_list(
     })
 }
 
-/// Open the box whose identity matches `id` (device MAC hex or CH343 serial), handshake, and write the
-/// handle to `*out`.
+/// Open the box whose identity matches `id` (device MAC hex or CH343 serial), handshake, and write the handle to `*out`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_device_open_by_id(
     id: *const c_char,
@@ -246,8 +234,6 @@ pub unsafe extern "C" fn medius_device_find_keyboard_box(
     })
 }
 
-// --- movement ---
-
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_device_move_rel(
     dev: *mut MediusDevice,
@@ -270,9 +256,6 @@ pub unsafe extern "C" fn medius_device_move_axis(
     with_device(dev, |d| d.move_axis(motion.into()))
 }
 
-// --- injection ---
-
-/// Run `f` with the converted usage; `ErrInvalidArg` on a null handle or an invalid input value.
 fn with_input(
     dev: *mut MediusDevice,
     input: MediusUsage,
@@ -327,9 +310,6 @@ pub unsafe extern "C" fn medius_device_force_release(
     with_input(dev, input, |d, u| d.force_release(u))
 }
 
-// --- locks ---
-
-/// Run `f` with the converted lock target; `ErrInvalidArg` on a null handle or an invalid usage target.
 fn with_lock_target(
     dev: *mut MediusDevice,
     target: MediusLockTarget,
@@ -387,8 +367,6 @@ pub unsafe extern "C" fn medius_device_unlock_all(
     with_device(dev, |d| d.unlock_all(what.into(), dir.into()))
 }
 
-// --- led ---
-
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_device_led(
     dev: *mut MediusDevice,
@@ -398,8 +376,6 @@ pub unsafe extern "C" fn medius_device_led(
 ) -> MediusStatus {
     with_device(dev, |d| d.led(target.into(), mode.into(), level))
 }
-
-// --- admin ---
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_device_reset(dev: *mut MediusDevice) -> MediusStatus {
@@ -424,8 +400,6 @@ pub unsafe extern "C" fn medius_device_reboot(
     with_device(dev, |d| d.reboot(target.into()))
 }
 
-// --- options ---
-
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_device_allow_imperfect_clones(
     dev: *mut MediusDevice,
@@ -434,8 +408,7 @@ pub unsafe extern "C" fn medius_device_allow_imperfect_clones(
     with_device(dev, |d| d.allow_imperfect_clones(allow))
 }
 
-/// Set movement riding. When `enabled` is false the window is cleared (off); otherwise the injected
-/// motion rides a native cursor report seen within `window_ms` (rounded to whole ms by the firmware).
+/// Set movement riding; when `enabled`, injected motion rides a native cursor report seen within `window_ms`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_device_set_movement_riding(
     dev: *mut MediusDevice,
@@ -446,8 +419,7 @@ pub unsafe extern "C" fn medius_device_set_movement_riding(
     with_device(dev, |d| d.set_movement_riding(window))
 }
 
-/// Set what paces injected motion. `hz` is the target rate for `Fixed` (snapped to `1000/n`, capped
-/// 1 kHz); it is ignored for `Learned` and `Interval`.
+/// Set what paces injected motion; `hz` is the target rate for `Fixed` and ignored otherwise.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_device_set_emit_pace(
     dev: *mut MediusDevice,
@@ -457,10 +429,7 @@ pub unsafe extern "C" fn medius_device_set_emit_pace(
     with_device(dev, |d| d.set_emit_pace(emit_pace_to_medius(mode, hz)))
 }
 
-/// Set the box's persistent human-readable name (`name`, a NUL-terminated UTF-8 string). The firmware
-/// keeps the leading printable-ASCII run, capped at `MEDIUS_MAX_NAME - 1` bytes; an empty string clears
-/// the name. Read it back from `medius_device_query_version` (`MediusVersion.name`). Returns
-/// `ErrInvalidArg` only for a null handle/name or non-UTF-8 input.
+/// Set the box's persistent name (`name`, NUL-terminated UTF-8); an empty string clears it.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_device_set_name(
     dev: *mut MediusDevice,
@@ -483,8 +452,6 @@ pub unsafe extern "C" fn medius_device_set_name(
 pub unsafe extern "C" fn medius_device_clear_name(dev: *mut MediusDevice) -> MediusStatus {
     with_device(dev, |d| d.clear_name())
 }
-
-// --- queries ---
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_device_query_version(
@@ -558,8 +525,7 @@ pub unsafe extern "C" fn medius_device_query_imperfect(
     query(dev, out, |d| d.query_imperfect())
 }
 
-/// Query the movement-riding window. Writes whether it is on to `*out_enabled` and, when on, the
-/// window in whole ms to `*out_window_ms` (0 when off).
+/// Query the movement-riding window into `*out_enabled` and `*out_window_ms` (0 when off).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_device_query_movement_riding(
     dev: *mut MediusDevice,
@@ -613,8 +579,6 @@ pub unsafe extern "C" fn medius_device_counters(
     })
 }
 
-// --- meta ---
-
 fn dur_ms(d: Duration) -> u32 {
     d.as_millis().min(u32::MAX as u128) as u32
 }
@@ -631,14 +595,7 @@ pub extern "C" fn medius_default_keepalive_cadence_ms() -> u32 {
     dur_ms(medius::DEFAULT_KEEPALIVE_CADENCE)
 }
 
-/// The C ABI version. Bumped on any breaking change to this header.
-/// 2: `MediusVersion` grew a `name` field and `medius_device_set_name`/`_clear_name` were added, and
-/// buffered clip playback (`medius_device_clip`, the `medius_clip_*` handle/builder calls) landed (v2.4.0).
-/// 3: unified input taxonomy — one `MediusUsage` usage vocabulary for buttons, keys, and media across
-/// inject/lock/catch. The class-specific `medius_device_button`/`_key*`/`_media*`/`_lock_key`/`_lock_media`
-/// verbs collapsed into `medius_device_inject`/`_press`/`_soft_release`/`_force_release` and
-/// `medius_device_lock`/`_unlock` over a `MediusLockTarget`; catch events became `Motion`/`Usages`
-/// (`medius_usage_event_is_held`); `MediusLocks` became an entry list (v3.0.0).
+/// The C ABI version, bumped on any breaking change to this header.
 #[unsafe(no_mangle)]
 pub extern "C" fn medius_abi_version() -> u32 {
     3

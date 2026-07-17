@@ -1,7 +1,4 @@
-//! The unified input vocabulary: a momentary [`Usage`] (`(class, id)` — a button, key, or media usage,
-//! all one shape) and a relative [`Axis`]. `INJECT`, `LOCK`, `CATCH`, and clip playback all speak these,
-//! so a mouse button is addressed exactly like a key or a media usage. The friendly [`Button`], [`Key`],
-//! and [`MediaKey`] types are constructors that convert into a `Usage`.
+//! The unified input vocabulary: a momentary [`Usage`] (`(class, id)`) and a relative [`Axis`].
 
 use crate::protocol::opcode::{
     INJ_BTN, INJ_KEY, INJ_MEDIA, LOCK_AXIS_WHEEL, LOCK_AXIS_X, LOCK_AXIS_Y,
@@ -37,9 +34,7 @@ impl Class {
     }
 }
 
-/// A momentary input usage: a `(class, id)` pair. A button, a key (modifiers are ids `0xE0..=0xE7`), and
-/// a media usage are all one shape, so every verb that drives a momentary input takes a `Usage`. Build one
-/// from a [`Button`], [`Key`], or [`MediaKey`] (they all `impl Into<Usage>`), or directly with [`Usage::new`].
+/// A momentary input usage: a `(class, id)` pair (button, key, or media usage).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Usage {
     /// The input class.
@@ -65,9 +60,7 @@ impl Usage {
         out.extend_from_slice(&self.id.to_le_bytes());
     }
 
-    /// Decode a length-prefixed usage list: `[n u8]` then `n × [class u8][id u16 LE]`, `None` on a short
-    /// or malformed buffer. Shared by the `USAGE_EVENT` and `RESP(CLIP)` held-snapshot decoders so the one
-    /// held-usage wire format lives in a single place.
+    /// Decode a length-prefixed usage list `[n u8]` then `n × [class u8][id u16 LE]`, `None` on a malformed buffer.
     pub(crate) fn decode_list(p: &[u8]) -> Option<Vec<Usage>> {
         let n = *p.first()? as usize;
         let mut out = Vec::with_capacity(n);
@@ -97,9 +90,7 @@ impl From<MediaKey> for Usage {
     }
 }
 
-/// A relative axis — the one genuinely mouse-hardware-specific input kind (continuous, signed, no
-/// press/release edge). Driven by [`move_axis`](crate::Device::move_axis) and lockable by
-/// [`lock_axis`](crate::Device::lock_axis).
+/// A relative axis: continuous, signed, no press/release edge.
 #[repr(u16)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Axis {

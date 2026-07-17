@@ -1,9 +1,4 @@
-"""Mock-backed tests for the Python bindings.
-
-These drive the Pythonic API through a MockBox and assert command recording,
-query round-trips (which also catch ctypes layout bugs), stream delivery, error
-mapping, and handle lifecycle.
-"""
+"""Mock-backed tests for the Python bindings."""
 
 import gc
 
@@ -62,9 +57,6 @@ def test_meta_functions():
     assert medius.default_keepalive_cadence_ms() > 0
 
 
-# --- handshake + version ---
-
-
 def test_configure_version_then_open_mock_matches():
     mock = MockBox()
     # The handshake checks proto_ver, so reuse the default proto and only change
@@ -109,9 +101,6 @@ def test_bad_proto_version_reports_status_and_proto_ver():
     mock.close()
 
 
-# --- commands recorded ---
-
-
 def test_recorded_frame_payload_readable():
     with MockBox() as mock, Device.with_mock(mock) as d:
         d.move_rel(1, 2)
@@ -120,9 +109,6 @@ def test_recorded_frame_payload_readable():
         assert frame.type == FrameType.MOVE
         assert len(frame.payload) > 0
         assert mock.recorded_frame(99) is None
-
-
-# --- query round-trips (these catch ctypes layout bugs) ---
 
 
 def test_caps_roundtrip():
@@ -275,9 +261,6 @@ def test_counters_readable():
         assert c.frames_tx >= 1
 
 
-# --- streams ---
-
-
 def test_catch_delivers_motion_event():
     with MockBox() as mock, Device.with_mock(mock) as d:
         with d.catch_events(CatchMask.ALL) as stream:
@@ -328,16 +311,13 @@ def test_log_stream_delivers_line():
             assert line.text == "hello world"
 
 
-# --- lifecycle / safety ---
-
-
 def test_clone_shares_state():
     with MockBox() as mock:
         d = Device.with_mock(mock)
-        d2 = d.clone()  # second owner of the same connection
+        d2 = d.clone()
         d.move_rel(1, 0)
         d2.move_rel(2, 0)
-        mock2 = mock.clone()  # shares the recorded state
+        mock2 = mock.clone()
         assert mock2.recorded() == 2
         d.close()
         d2.close()
@@ -358,7 +338,7 @@ def test_double_close_is_safe():
     mock = MockBox()
     d = Device.with_mock(mock)
     d.close()
-    d.close()  # idempotent
+    d.close()
     mock.close()
     mock.close()
 
@@ -370,7 +350,7 @@ def test_gc_frees_cleanly():
     del stream
     del d
     del mock
-    gc.collect()  # must not crash
+    gc.collect()
 
 
 def test_usage_snapshot_is_held_matches_any_class():
@@ -383,9 +363,6 @@ def test_usage_snapshot_is_held_matches_any_class():
     assert snap.is_held(Usage.key(Key.A))
     assert not snap.is_held(Usage.button(Button.LEFT))
     assert not snap.is_held(Usage.key(Key.B))
-
-
-# --- buffered clip playback (§3.11 / §4.15) ---
 
 
 def _clip_frames(d, mock, ty):
@@ -480,7 +457,7 @@ def test_clip_status_roundtrip():
 def test_clip_builder_gap_zero_is_noop():
     with MockBox() as mock, Device.with_mock(mock) as d:
         b = ClipBuilder()
-        b.gap(0)  # no-op
+        b.gap(0)
         clip = d.clip()
         clip.append(b)
         appends = _clip_frames(d, mock, FrameType.CLIP_APPEND)

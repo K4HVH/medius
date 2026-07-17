@@ -7,14 +7,12 @@ use crate::ctypes::*;
 use crate::device::MediusDevice;
 use crate::error::{MediusStatus, clear_error, fail, guard, guard_status, record, status_of};
 
-/// An opaque builder for a clip entry stream. Create with `medius_clip_builder_new`, fill with the
-/// `medius_clip_builder_*` calls, append with `medius_clip_append`, and free with `medius_clip_builder_free`.
+/// An opaque builder for a clip entry stream.
 pub struct MediusClipBuilder {
     pub(crate) inner: ClipBuilder,
 }
 
-/// A handle to one box's buffered-clip playback. Create with `medius_device_clip`, release with
-/// `medius_clip_free`. It owns the append-sequence counter, so keep one handle per clip session.
+/// A handle to one box's buffered-clip playback (owns the append-sequence counter, one per session).
 pub struct MediusClip {
     pub(crate) inner: ClipHandle,
 }
@@ -42,8 +40,6 @@ fn with_clip(
     })
 }
 
-// --- builder lifecycle ---
-
 /// A new empty clip-entry builder. The caller owns it and must free it with `medius_clip_builder_free`.
 #[unsafe(no_mangle)]
 pub extern "C" fn medius_clip_builder_new() -> *mut MediusClipBuilder {
@@ -67,8 +63,6 @@ pub unsafe extern "C" fn medius_clip_builder_free(b: *mut MediusClipBuilder) {
 pub unsafe extern "C" fn medius_clip_builder_clear(b: *mut MediusClipBuilder) -> MediusStatus {
     with_builder(b, |cb| cb.clear())
 }
-
-// --- builder entries ---
 
 /// A gap run: emit nothing for `frames` native frames (a zero count is a no-op).
 #[unsafe(no_mangle)]
@@ -150,8 +144,7 @@ pub unsafe extern "C" fn medius_clip_builder_force_release(
     builder_edge(b, usage, medius::Action::ForceRelease)
 }
 
-/// A one-edge frame for any usage (a button, key, or media usage) with an explicit `action`. Build the
-/// usage with `medius_usage_button`/`_key`/`_media`.
+/// A one-edge frame for any usage with an explicit `action`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_clip_builder_edge(
     b: *mut MediusClipBuilder,
@@ -161,9 +154,7 @@ pub unsafe extern "C" fn medius_clip_builder_edge(
     builder_edge(b, usage, action.into())
 }
 
-/// A general content frame: a motion delta (`dx`/`dy` cursor, `wheel`) plus `n` edges, each a
-/// (`MediusUsage`, `MediusAction`) pair from the parallel `inputs`/`actions` arrays (null when `n` is 0).
-/// Build the inputs with `medius_usage_button`/`_key`/`_media`.
+/// A general content frame: a motion delta (`dx`/`dy`, `wheel`) plus `n` edges from parallel `inputs`/`actions` arrays.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_clip_builder_frame(
     b: *mut MediusClipBuilder,
@@ -209,10 +200,7 @@ pub unsafe extern "C" fn medius_clip_builder_frame(
     })
 }
 
-// --- clip handle ---
-
-/// A handle to this box's buffered-clip playback. The caller owns it and must free it with
-/// `medius_clip_free`.
+/// A handle to this box's buffered-clip playback; free it with `medius_clip_free`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_device_clip(
     dev: *mut MediusDevice,
@@ -265,8 +253,7 @@ unsafe fn clip_config_from(config: MediusClipConfig) -> medius::ClipConfig {
     medius::ClipConfig::new().autolock(&groups)
 }
 
-/// Begin playback from the ring head with `config` (the auto-lock scope, extensible). A config with an
-/// empty `autolock` plays with no auto-lock.
+/// Begin playback from the ring head with `config` (an empty `autolock` plays with no auto-lock).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_clip_start(
     clip: *mut MediusClip,
@@ -282,9 +269,7 @@ pub unsafe extern "C" fn medius_clip_stop(clip: *mut MediusClip) -> MediusStatus
     with_clip(clip, |c| c.stop())
 }
 
-/// Arm an on-device catch-trigger on a physical press of `input` (a button, key, or media usage), starting
-/// with `config` when it fires. Build the input with `medius_usage_button`/`_key`/`_media`; or use
-/// `medius_clip_arm_catch_any` for any input.
+/// Arm an on-device catch-trigger on a physical press of `input`, starting with `config` when it fires.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_clip_arm_catch(
     clip: *mut MediusClip,

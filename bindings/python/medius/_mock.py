@@ -1,5 +1,4 @@
-"""The scriptable mock box (feature = mock). Degrades to a clear error if the
-loaded library was built without the mock feature."""
+"""The scriptable mock box (feature = mock); errors clearly if the library lacks it."""
 
 from __future__ import annotations
 
@@ -56,8 +55,6 @@ class MockBox:
         if not self._handle:
             raise RuntimeError("medius_mock_new returned null")
 
-    # --- open a device over this mock ---
-
     def open(self) -> Device:
         """Open a `Device` over this mock and run the handshake."""
         return Device.open_mock(self)
@@ -74,8 +71,6 @@ class MockBox:
         other = MockBox.__new__(MockBox)
         other._handle = handle
         return other
-
-    # --- query answers ---
 
     def set_version(self, version: Version):
         _native.lib.medius_mock_set_version(self._handle, version_to_c(version))
@@ -127,8 +122,6 @@ class MockBox:
         """Make the mock stop answering queries (one-way, for timeout tests)."""
         _native.lib.medius_mock_silent(self._handle)
 
-    # --- push inbound traffic ---
-
     def push_raw(self, data: bytes):
         if not data:
             return
@@ -144,8 +137,6 @@ class MockBox:
     def push_usages(self, seq: int, event: UsageSnapshot):
         c = usage_snapshot_to_c(event)
         _native.lib.medius_mock_push_usages(self._handle, seq, ctypes.byref(c))
-
-    # --- recorded commands ---
 
     def recorded(self) -> int:
         return int(_native.lib.medius_mock_recorded(self._handle))
@@ -172,8 +163,6 @@ class MockBox:
         except ValueError:
             ty = out_ty.value
         return RecordedFrame(ty, out_seq.value, payload)
-
-    # --- lifecycle ---
 
     def close(self):
         if self._handle is not None:

@@ -31,7 +31,6 @@ impl LogStream {
     }
 
     /// Await the next `LOG` line. Runtime-agnostic (the same `flume` channel as the sync methods).
-    /// Available with the `async` feature.
     #[cfg(feature = "async")]
     pub async fn recv_async(&self) -> Result<LogLine> {
         self.0.recv_async().await.map_err(|_| Error::Disconnected)

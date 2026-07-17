@@ -16,13 +16,13 @@ pub fn move_wheel_payload(dz: i16) -> [u8; 3] {
     [INJ_MOTION_WHEEL, d[0], d[1]]
 }
 
-/// `INJECT` (§3.2): `[class u8][id u16 LE][action u8]` — class 0 button / 1 key / 2 media; tri-state action.
+/// `INJECT` (§3.2): `[class u8][id u16 LE][action u8]`; class 0 button / 1 key / 2 media; tri-state action.
 pub fn inject_payload(class: u8, id: u16, action: u8) -> [u8; 4] {
     let u = id.to_le_bytes();
     [class, u[0], u[1], action]
 }
 
-/// `QUERY` (§3.5): `[what u8]` — 0 = VERSION, 1 = HEALTH.
+/// `QUERY` (§3.5): `[what u8]`; 0 = VERSION, 1 = HEALTH.
 pub fn query_payload(what: u8) -> [u8; 1] {
     [what]
 }
@@ -32,44 +32,39 @@ pub fn led_payload(target: u8, mode: u8, level: u8) -> [u8; 3] {
     [target, mode, level]
 }
 
-/// `LOCK` (§3.8): `[class u8][usage u16 LE][direction u8][state u8]` — state 0 unlock / 1 lock.
-/// `usage` is class-specific (mouse target, keyboard usage, or media usage; ignored for blanket classes).
+/// `LOCK` (§3.8): `[class u8][usage u16 LE][direction u8][state u8]`; state 0 unlock / 1 lock.
 pub fn lock_payload(class: u8, usage: u16, direction: u8, state: u8) -> [u8; 5] {
     let u = usage.to_le_bytes();
     [class, u[0], u[1], direction, state]
 }
 
-/// `CATCH` (§3.9): `[mask u8]` — subscribe to physical-input event classes (0 = unsubscribe).
+/// `CATCH` (§3.9): `[mask u8]`; subscribe to physical-input event classes (0 = unsubscribe).
 pub fn catch_payload(mask: u8) -> [u8; 1] {
     [mask]
 }
 
-/// `OPTION(IMPERFECT)` (§3.10): `[id=0][allow u8]` — 1 = opt into cloning over-capacity devices, 0 = faithful-only.
+/// `OPTION(IMPERFECT)` (§3.10): `[id=0][allow u8]`; 1 = opt into cloning over-capacity devices, 0 = faithful-only.
 pub fn imperfect_payload(allow: bool) -> [u8; 2] {
     [OPT_IMPERFECT, allow as u8]
 }
 
-/// `OPTION(MOVE_RIDE)` (§3.10): `[id=1][timeout u16 LE ms]` — 0 = off, N = ride window in milliseconds.
+/// `OPTION(MOVE_RIDE)` (§3.10): `[id=1][timeout u16 LE ms]`; 0 = off, N = ride window in milliseconds.
 pub fn move_ride_payload(timeout_ms: u16) -> [u8; 3] {
     let t = timeout_ms.to_le_bytes();
     [OPT_MOVE_RIDE, t[0], t[1]]
 }
 
-/// `OPTION(EMIT)` (§3.10): `[id=2][mode u8][rate_hz u16 LE]` — mode 0 learnt / 1 bInterval / 2 fixed
-/// (`rate_hz` is read only for mode 2).
+/// `OPTION(EMIT)` (§3.10): `[id=2][mode u8][rate_hz u16 LE]`; mode 0 learnt / 1 bInterval / 2 fixed.
 pub fn emit_pace_payload(mode: u8, hz: u16) -> [u8; 4] {
     let h = hz.to_le_bytes();
     [OPT_EMIT, mode, h[0], h[1]]
 }
-/// `CLIP_CTRL(START)` (§3.11): `[op=START][scope u8]`. `scope` is a `CLIP_LOCK_*` bitmask of the
-/// physical-input classes to auto-lock while playing (0 = none).
+/// `CLIP_CTRL(START)` (§3.11): `[op=START][scope u8]`; `scope` is a `CLIP_LOCK_*` auto-lock bitmask (0 = none).
 pub fn clip_start_payload(scope: u8) -> [u8; 2] {
     [CLIP_OP_START, scope]
 }
 
-/// `CLIP_CTRL(ARM_CATCH)` (§3.11): `[op][cond_class u8][cond_id u16 LE][scope u8]` — fire START on a physical
-/// press of the given class/id (`cond_class` = INJECT class or `CLIP_COND_ANY_CLASS`; `cond_id` = usage or
-/// `CLIP_COND_ANY_ID`), auto-locking `scope` on that triggered start.
+/// `CLIP_CTRL(ARM_CATCH)` (§3.11): `[op][cond_class u8][cond_id u16 LE][scope u8]`; fire START on a physical press of the given class/id, auto-locking `scope`.
 pub fn clip_arm_payload(cond_class: u8, cond_id: u16, scope: u8) -> [u8; 5] {
     let id = cond_id.to_le_bytes();
     [CLIP_OP_ARM_CATCH, cond_class, id[0], id[1], scope]
@@ -80,9 +75,7 @@ pub fn clip_op_payload(op: u8) -> [u8; 1] {
     [op]
 }
 
-/// `OPTION(NAME)` set value: the id byte followed by the name's ASCII bytes (variable-length, unlike the
-/// fixed-size siblings). An empty `name` sends just the id — the box reads that as "clear to the default".
-/// The caller validates the name; the firmware also keeps only the leading printable run, capped at 32.
+/// `OPTION(NAME)` set value: the id byte followed by the name's ASCII bytes; empty `name` clears to the default.
 pub fn name_payload(name: &str) -> Vec<u8> {
     let mut v = Vec::with_capacity(1 + name.len());
     v.push(OPT_NAME);

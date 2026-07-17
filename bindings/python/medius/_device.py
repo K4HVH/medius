@@ -110,8 +110,6 @@ class Device:
             raise MediusError(Status.ERR_UNKNOWN, "device clone failed")
         return Device(handle)
 
-    # --- movement ---
-
     def move_rel(self, dx, dy):
         check(_native.lib.medius_device_move_rel(self._handle, dx, dy))
 
@@ -120,10 +118,6 @@ class Device:
 
     def move_axis(self, motion: Motion):
         check(_native.lib.medius_device_move_axis(self._handle, motion._c))
-
-    # --- injection ---
-    # One usage vocabulary (button / key / media) drives every verb. Build an `Usage` with
-    # `Usage.button/key/media`.
 
     def inject(self, input: Usage, action: Action):
         check(_native.lib.medius_device_inject(self._handle, input._c, int(action)))
@@ -137,8 +131,6 @@ class Device:
     def force_release(self, input: Usage):
         check(_native.lib.medius_device_force_release(self._handle, input._c))
 
-    # --- locks ---
-
     def lock(self, target: LockTarget, direction: LockDirection):
         check(_native.lib.medius_device_lock(self._handle, target._c, int(direction)))
 
@@ -150,8 +142,6 @@ class Device:
 
     def unlock_all(self, what: Blanket, direction: LockDirection):
         check(_native.lib.medius_device_unlock_all(self._handle, int(what), int(direction)))
-
-    # --- led / admin ---
 
     def led(self, target: LedTarget, mode: LedMode, level):
         check(_native.lib.medius_device_led(self._handle, int(target), int(mode), int(level)))
@@ -185,15 +175,12 @@ class Device:
         check(_native.lib.medius_device_set_emit_pace(self._handle, int(pace.mode), int(pace.hz)))
 
     def set_name(self, name: str):
-        """Set the box's persistent human-readable name. The firmware keeps the leading printable-ASCII
-        run, capped at 32 bytes; an empty string clears it. Read it back from `query_version().name`."""
+        """Set the box's persistent human-readable name; an empty string clears it."""
         check(_native.lib.medius_device_set_name(self._handle, name.encode("utf-8")))
 
     def clear_name(self):
         """Clear the custom name, reverting the box to its synthesized `Medius-XXXX` default."""
         check(_native.lib.medius_device_clear_name(self._handle))
-
-    # --- queries ---
 
     def query_version(self) -> Version:
         out = _native.MediusVersion()
@@ -261,17 +248,11 @@ class Device:
         check(_native.lib.medius_device_counters(self._handle, ctypes.byref(out)))
         return counters_from_c(out)
 
-    # --- clip playback ---
-
     def clip(self) -> ClipHandle:
-        """A handle to this box's buffered-clip playback (§3.11): preload per-frame input into a
-        device-side ring, then let the box drain it one entry per native frame (box-clocked). Keep one
-        handle per clip session and top it up with `ClipHandle.append`."""
+        """A handle to this box's buffered-clip playback (§3.11)."""
         out = ctypes.c_void_p()
         check(_native.lib.medius_device_clip(self._handle, ctypes.byref(out)))
         return ClipHandle(out.value, self)
-
-    # --- streams ---
 
     def catch_events(self, mask: CatchMask = CatchMask.ALL) -> EventStream:
         out = ctypes.c_void_p()
@@ -282,8 +263,6 @@ class Device:
         out = ctypes.c_void_p()
         check(_native.lib.medius_device_logs(self._handle, ctypes.byref(out)))
         return LogStream(out.value, self)
-
-    # --- lifecycle ---
 
     def close(self):
         if self._handle is not None:

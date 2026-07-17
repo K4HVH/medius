@@ -1,5 +1,4 @@
-//! `LOCK` control vocabulary (§3.8): what a lock addresses, its edge, blanket groups, and the decoded
-//! `RESP(LOCKS)` list.
+//! `LOCK` control vocabulary (§3.8): what a lock addresses, its edge, blanket groups, and decoded locks.
 
 use crate::protocol::opcode::{
     LOCK_AXIS_WHEEL, LOCK_AXIS_X, LOCK_AXIS_Y, LOCK_CLS_AXIS, LOCK_DIR_BOTH, LOCK_DIR_NEG,
@@ -7,9 +6,7 @@ use crate::protocol::opcode::{
 };
 use crate::types::{Axis, Class, Usage};
 
-/// A whole-group blanket: the cursor aim (X+Y), the wheel, every mouse button, every key, or every media
-/// usage. Used by [`lock_all`](crate::Device::lock_all) and as the clip
-/// [`ClipConfig::autolock`](crate::ClipConfig::autolock) scope.
+/// A whole-group blanket: the cursor aim (X+Y), the wheel, every mouse button, every key, or every media usage.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Blanket {
     /// The X and Y cursor axes.
@@ -25,8 +22,7 @@ pub enum Blanket {
 }
 
 impl Blanket {
-    /// Every input group, for a clip auto-lock over all physical input:
-    /// [`ClipConfig::new()`](crate::ClipConfig::new)`.autolock(Blanket::ALL)`.
+    /// Every input group, for a clip auto-lock over all physical input.
     pub const ALL: &'static [Blanket] = &[
         Blanket::Aim,
         Blanket::Wheel,
@@ -53,8 +49,7 @@ pub(crate) fn blanket_scope(scope: &[Blanket]) -> u8 {
     scope.iter().fold(0, |m, b| m | b.clip_lock_bit())
 }
 
-/// Which edge a `LOCK` covers; for a usage `Positive` is the press edge and `Negative` the release; for an
-/// axis they are the `+`/`-` sign.
+/// Which edge a `LOCK` covers: press/release for a usage, `+`/`-` sign for an axis.
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum LockDirection {
@@ -80,8 +75,7 @@ impl LockDirection {
     }
 }
 
-/// What a lock addresses: a relative axis or a momentary usage (button/key/media). Both `INJECT` and `LOCK`
-/// speak this one vocabulary, so a button is locked exactly like a key.
+/// What a lock addresses: a relative axis or a momentary usage (button/key/media).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum LockTarget {
     /// A relative axis (X/Y/wheel), locked by sign.
@@ -101,8 +95,7 @@ impl<T: Into<Usage>> From<T> for LockTarget {
     }
 }
 
-/// What a `RESP(LOCKS)` entry addresses: a specific [`LockTarget`] (an axis or one usage), or a whole-class
-/// blanket that locks every usage of a [`Class`] at once (`id == 0xFFFF` on the wire).
+/// What a `RESP(LOCKS)` entry addresses: a specific [`LockTarget`], or a whole-class blanket over a [`Class`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum LockScope {
     /// A specific axis or usage.
@@ -122,17 +115,14 @@ pub struct LockEntry {
     pub negative: bool,
 }
 
-/// Decoded `RESP(LOCKS)` (§4.8) — every active lock across every class, so keyboard and media locks are
-/// reported the same as mouse ones.
+/// Decoded `RESP(LOCKS)` (§4.8): every active lock across every class.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Locks {
     entries: Vec<LockEntry>,
 }
 
 impl Locks {
-    /// Decode a `RESP(LOCKS)` payload: `[what][n u8]` then `n × [class u8][id u16 LE][dirbits u8]`. An entry
-    /// whose class/id is unknown (a malformed wire the firmware never sends) is skipped rather than kept as a
-    /// garbage entry.
+    /// Decode a `RESP(LOCKS)` payload: `[what][n]` then `n × [class][id u16 LE][dirbits]`; unknown entries skip.
     pub(crate) fn from_payload(p: &[u8]) -> Option<Locks> {
         let n = *p.get(1)? as usize;
         let mut entries = Vec::with_capacity(n);
@@ -153,8 +143,7 @@ impl Locks {
         Some(Locks { entries })
     }
 
-    /// Build a [`Locks`] from decoded entries; useful for tests and for configuring a
-    /// [`MockBox`](crate::MockBox).
+    /// Build a [`Locks`] from decoded entries; useful for tests and [`MockBox`](crate::MockBox).
     pub fn from_entries(entries: Vec<LockEntry>) -> Locks {
         Locks { entries }
     }
@@ -164,8 +153,7 @@ impl Locks {
         &self.entries
     }
 
-    /// Whether the given target is locked on the given edge — by a specific entry OR by a whole-class blanket
-    /// that covers it (so `is_locked(Button::Left, ..)` is true after `lock_all(Blanket::Buttons, ..)`).
+    /// Whether the given target is locked on the given edge, by a specific entry or a covering blanket.
     pub fn is_locked(&self, target: impl Into<LockTarget>, dir: LockDirection) -> bool {
         let target = target.into();
         self.entries.iter().any(|e| {

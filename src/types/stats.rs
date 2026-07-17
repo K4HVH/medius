@@ -1,9 +1,6 @@
-//! Decoded `RESP(STATS)` — delivery and telemetry counters (§4.6).
+//! Decoded `RESP(STATS)`: delivery and telemetry counters (§4.6).
 
-/// Delivery/telemetry counters the firmware maintains. Under the fire-and-forget model (§2.1) these
-/// are the host's only window into whether commands were actually delivered: a nonzero
-/// [`Stats::tx_drops`] or [`Stats::tx_wedges`] is the actionable signal that delivery degraded under
-/// load. Narrowed fields are saturated by the box (a maxed counter reads as max, never wrapped).
+/// Delivery and telemetry counters the firmware maintains (§4.6).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Stats {
     /// Pure-injection reports emitted (the no-halving / 1 kHz path).
@@ -25,8 +22,7 @@ pub struct Stats {
 }
 
 impl Stats {
-    /// Decode a `RESP(STATS)` payload (§4.6): `[what][inject_emits u32][tx_drops u16][tx_merges u16]
-    /// [tx_maxdepth u8][tx_wedges u8][wakeups u16][reset_count u16][config_count u16]`.
+    /// Decode a `RESP(STATS)` payload (§4.6).
     pub(crate) fn from_payload(p: &[u8]) -> Option<Self> {
         if p.len() < 17 {
             return None;

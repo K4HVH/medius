@@ -1,7 +1,6 @@
-//! Decoded `RESP(IMPERFECT)` — the imperfect-clone opt-in and over-capacity status (§4.14).
+//! Decoded `RESP(IMPERFECT)`: the imperfect-clone opt-in and over-capacity status (§4.14).
 
-/// The imperfect-clone opt-in plus whether the attached device is over-capacity (needs more interrupt-IN
-/// endpoints than the box has) and whether the live clone went ahead anyway with one interface dead.
+/// The imperfect-clone opt-in plus the attached device's over-capacity status (§4.14).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct ImperfectStatus {
     /// The opt-in toggle: cloning over-capacity devices is allowed.

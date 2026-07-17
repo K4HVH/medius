@@ -1,4 +1,4 @@
-//! Decoded `RESP(CAPS)` — unified capabilities of the whole cloned device (§4.4).
+//! Decoded `RESP(CAPS)`: unified capabilities of the whole cloned device (§4.4).
 
 use super::{KbdCaps, MouseCaps};
 use crate::protocol::opcode::{
@@ -6,22 +6,16 @@ use crate::protocol::opcode::{
     KBC_REPORT_ID, KBC_SYSTEM,
 };
 
-/// A semantic capability summary of the whole cloned device, mouse and keyboard, from one
-/// [`caps()`](crate::Device::caps) query. Counts and booleans only — never raw HID bit offsets. A class
-/// that is not present reads all-zero/false. Use it for feature detection: an `inject` for a usage the
-/// device lacks is a silent no-op, so the counts tell you what is real.
+/// A semantic capability summary of the whole cloned device, mouse and keyboard, from one [`caps()`](crate::Device::caps) query.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct Caps {
     /// Mouse capabilities (all-zero when no mouse is bound).
     pub mouse: MouseCaps,
     /// Keyboard capabilities (all-zero when no keyboard is bound).
     pub keyboard: KbdCaps,
-    /// The mouse class is change-driven. Always `false`: mouse motion is continuous, so its
-    /// [`Rate`](crate::Rate) carries a learned native cadence.
+    /// The mouse class is change-driven; always `false` because mouse motion is continuous.
     pub mouse_change_driven: bool,
-    /// The keyboard/media class is change-driven. `true` when a keyboard is bound: it reports only on a
-    /// key change, so its [`Rate`](crate::Rate) has no continuous cadence (`native_hz` is structurally
-    /// `None`, not not-yet-learned).
+    /// The keyboard/media class is change-driven; `true` when a keyboard is bound, since it reports only on a key change.
     pub kbd_change_driven: bool,
 }
 
@@ -41,8 +35,7 @@ impl Caps {
         self.mouse.n_hid > 1
     }
 
-    /// Decode a `RESP(CAPS)` payload (§4.4):
-    /// `[what][n_buttons][axis_flags][n_hid][n_keys][kbd_flags][change_driven]`.
+    /// Decode a `RESP(CAPS)` payload (§4.4): `[what][n_buttons][axis_flags][n_hid][n_keys][kbd_flags][change_driven]`.
     pub(crate) fn from_payload(p: &[u8]) -> Option<Caps> {
         if p.len() < 7 {
             return None;
