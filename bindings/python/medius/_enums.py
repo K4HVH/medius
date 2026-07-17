@@ -46,9 +46,28 @@ class ClipState(IntEnum):
     """The device-side clip lifecycle state (`ClipStatus.state`)."""
 
     IDLE = 0
-    ARMED = 1
-    PLAYING = 2
+    PLAYING = 1
+    PAUSED = 2
     FAULTED = 3
+
+
+class Edge(IntEnum):
+    """Which edge of a trigger usage fires its `ClipTrigger`."""
+
+    BOTH = 0
+    PRESS = 1
+    RELEASE = 2
+
+
+class ClipAction(IntEnum):
+    """The engine action a `ClipTrigger` drives."""
+
+    START = 0
+    STOP = 1
+    PAUSE = 2
+    RESUME = 3
+    RESTART = 4
+    TOGGLE = 5
 
 
 class RebootTarget(IntEnum):
@@ -139,6 +158,8 @@ class FrameType(IntEnum):
     OPTION = 17
     CLIP_APPEND = 18
     CLIP_CTRL = 19
+    CLIP_SET = 20
+    CLIP_TRIGGER = 21
 
 
 class CatchMask(IntFlag):

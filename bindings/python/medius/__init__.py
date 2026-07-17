@@ -11,8 +11,10 @@ from ._enums import (
     Button,
     CatchEventKind,
     CatchMask,
+    ClipAction,
     ClipState,
     DeviceKind,
+    Edge,
     EmitMode,
     FrameType,
     Class,
@@ -41,7 +43,7 @@ from ._errors import (
     QueryTimeoutError,
 )
 from ._device import Device
-from ._clip import ClipBuilder, ClipConfig, ClipHandle
+from ._clip import ClipBuilder, ClipHandle
 from ._streams import EventStream, LogStream
 from ._mock import MockBox
 from ._types import (
@@ -49,7 +51,9 @@ from ._types import (
     Caps,
     CatchEvent,
     CatchState,
+    ClipSettings,
     ClipStatus,
+    ClipTrigger,
     Counters,
     DeviceInfo,
     EmitPace,
@@ -134,8 +138,10 @@ __all__ = [
     "Button",
     "CatchEventKind",
     "CatchMask",
+    "ClipAction",
     "ClipState",
     "DeviceKind",
+    "Edge",
     "EmitMode",
     "FrameType",
     "Class",
@@ -162,7 +168,6 @@ __all__ = [
     "PanicError",
     "Device",
     "ClipBuilder",
-    "ClipConfig",
     "ClipHandle",
     "EventStream",
     "LogStream",
@@ -171,7 +176,9 @@ __all__ = [
     "Caps",
     "CatchEvent",
     "CatchState",
+    "ClipSettings",
     "ClipStatus",
+    "ClipTrigger",
     "Counters",
     "DeviceInfo",
     "EmitPace",

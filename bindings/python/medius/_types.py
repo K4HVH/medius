@@ -8,9 +8,12 @@ from typing import List, Optional, Union
 
 from . import _native
 from ._enums import (
+    Blanket,
     CatchEventKind,
+    ClipAction,
     ClipState,
     DeviceKind,
+    Edge,
     EmitMode,
     Class,
     LockTargetKind,
@@ -558,11 +561,12 @@ def emit_pace_status_from_c(c) -> EmitPaceStatus:
 
 @dataclass
 class ClipStatus:
-    """The device-side clip ring and playback status."""
+    """The device-side clip ring and playback status (the runtime view of RESP(CLIP))."""
 
     state: ClipState
     free: int
-    used: int
+    total: int
+    played: int
     ticks: int
     underruns: int
     overruns: int
@@ -579,7 +583,8 @@ def clip_status_from_c(c) -> ClipStatus:
     return ClipStatus(
         ClipState(c.state),
         c.free,
-        c.used,
+        c.total,
+        c.played,
         c.ticks,
         c.underruns,
         c.overruns,
@@ -592,7 +597,8 @@ def clip_status_to_c(s) -> "_native.MediusClipStatus":
     c = _native.MediusClipStatus()
     c.state = int(s.state)
     c.free = s.free
-    c.used = s.used
+    c.total = s.total
+    c.played = s.played
     c.ticks = s.ticks
     c.underruns = s.underruns
     c.overruns = s.overruns
@@ -601,6 +607,74 @@ def clip_status_to_c(s) -> "_native.MediusClipStatus":
     c.held_n = n
     for i in range(n):
         c.held[i] = s.held[i]._c
+    return c
+
+
+@dataclass
+class ClipTrigger:
+    """One clip trigger binding: `on`'s `edge` drives `action`; `consume` suppresses the input from the game."""
+
+    on: "Usage"
+    edge: Edge
+    action: ClipAction
+    consume: bool = False
+
+
+@dataclass
+class ClipSettings:
+    """The clip configuration read back from RESP(CLIP): autolock, loop/retain, finalized, and the trigger set."""
+
+    autolock: List[Blanket] = field(default_factory=list)
+    loop: bool = False
+    retain: bool = False
+    finalized: bool = False
+    triggers: List[ClipTrigger] = field(default_factory=list)
+
+
+_BLANKET_BITS = [
+    (0x01, Blanket.AIM),
+    (0x02, Blanket.WHEEL),
+    (0x04, Blanket.BUTTONS),
+    (0x08, Blanket.KEYS),
+    (0x10, Blanket.MEDIA),
+]
+
+
+def clip_settings_from_c(c) -> ClipSettings:
+    n = min(int(c.n), _native.MEDIUS_CLIP_TRIG_MAX)
+    triggers = [
+        ClipTrigger(
+            _input_copy(c.triggers[i].on),
+            Edge(c.triggers[i].edge),
+            ClipAction(c.triggers[i].action),
+            bool(c.triggers[i].consume),
+        )
+        for i in range(n)
+    ]
+    autolock = [b for (m, b) in _BLANKET_BITS if c.autolock_bits & m]
+    return ClipSettings(
+        autolock,
+        bool(c.loop_),
+        bool(c.retain),
+        bool(c.finalized),
+        triggers,
+    )
+
+
+def clip_settings_to_c(s) -> "_native.MediusClipSettings":
+    c = _native.MediusClipSettings()
+    bit = {b: m for (m, b) in _BLANKET_BITS}
+    c.autolock_bits = sum(bit[b] for b in s.autolock)
+    c.loop_ = 1 if s.loop else 0
+    c.retain = 1 if s.retain else 0
+    c.finalized = 1 if s.finalized else 0
+    n = min(len(s.triggers), _native.MEDIUS_CLIP_TRIG_MAX)
+    c.n = n
+    for i in range(n):
+        t = s.triggers[i]
+        c.triggers[i] = _native.MediusClipTrigger(
+            t.on._c, int(t.edge), int(t.action), 1 if t.consume else 0
+        )
     return c
 
 

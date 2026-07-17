@@ -14,10 +14,13 @@ from medius import (
     CatchState,
     Action,
     Blanket,
+    ClipAction,
     ClipBuilder,
-    ClipConfig,
+    ClipSettings,
     ClipState,
     ClipStatus,
+    ClipTrigger,
+    Edge,
     Usage,
     Device,
     EmitPace,
@@ -377,28 +380,32 @@ def _clip_frames(d, mock, ty):
 def test_clip_control_frames():
     with MockBox() as mock, Device.with_mock(mock) as d:
         clip = d.clip()
-        all_cfg = ClipConfig(autolock=list(Blanket))
-        clip.start()  # no config = no autolock
-        clip.start(all_cfg)
-        clip.start(ClipConfig(autolock=[Blanket.AIM, Blanket.BUTTONS]))
-        clip.arm_catch(Usage.button(Button.RIGHT))
-        clip.arm_catch(Usage.key(0x04), ClipConfig(autolock=[Blanket.KEYS]))
-        clip.arm_catch(Usage.media(0xCD))
-        clip.arm_catch_any(all_cfg)
-        clip.disarm()
+        clip.set_retain(True)
+        clip.set_autolock([Blanket.AIM, Blanket.BUTTONS])
+        clip.set_loop(True)
+        clip.start()
+        clip.pause()
+        clip.resume()
+        clip.restart()
+        clip.toggle()
         clip.stop()
+        clip.clear()
+        clip.finalize()
+        clip.bind(ClipTrigger(Usage.key(0x3A), Edge.PRESS, ClipAction.START))
+        clip.bind(ClipTrigger(Usage.button(Button.RIGHT), Edge.RELEASE, ClipAction.TOGGLE, consume=True))
+        clip.unbind(Usage.key(0x3A), Edge.PRESS)
+        clip.clear_triggers()
         clip.close()
+        clip_set = _clip_frames(d, mock, FrameType.CLIP_SET)
         ctrl = _clip_frames(d, mock, FrameType.CLIP_CTRL)
-    assert ctrl == [
-        bytes([0, 0]),                       # start, no autolock
-        bytes([0, 0x1F]),                    # start ClipConfig(all)
-        bytes([0, 0x05]),                    # start autolock aim|buttons
-        bytes([2, 0, 1, 0, 0]),              # arm button Right, no autolock
-        bytes([2, 1, 0x04, 0, 0x08]),        # arm key A, autolock keys
-        bytes([2, 2, 0xCD, 0, 0]),           # arm media Play/Pause, no autolock
-        bytes([2, 0xFF, 0xFF, 0xFF, 0x1F]),  # arm any input, autolock all
-        bytes([3]),                          # disarm
-        bytes([1]),                          # stop
+        trig = _clip_frames(d, mock, FrameType.CLIP_TRIGGER)
+    assert clip_set == [bytes([2, 1]), bytes([0, 0x05]), bytes([1, 1])]
+    assert ctrl == [bytes([n]) for n in (0, 2, 3, 4, 5, 1, 6, 7)]
+    assert trig == [
+        bytes([1, 0x3A, 0x00, 1, 0, 1]),       # bind KEY 0x3A Press Start (present)
+        bytes([0, 0x01, 0x00, 2, 5, 3]),       # bind Button Right Release Toggle (present|consume)
+        bytes([1, 0x3A, 0x00, 1, 0, 0]),       # unbind KEY 0x3A Press (present=0)
+        bytes([0xFF, 0xFF, 0xFF, 0, 0, 0]),    # clear-all sentinel
     ]
 
 
@@ -438,20 +445,33 @@ def test_clip_builder_frame_edges():
     )
 
 
-def test_clip_status_roundtrip():
+def test_clip_status_and_config_roundtrip():
     status = ClipStatus(
-        ClipState.PLAYING, free=512, used=40, ticks=99, underruns=2, overruns=0, seq_gaps=1,
-        held=[Usage.button(Button.SIDE1), Usage.key(Key.A)],
+        ClipState.PLAYING, free=512, total=40, played=8, ticks=99, underruns=2, overruns=0,
+        seq_gaps=1, held=[Usage.button(Button.SIDE1), Usage.key(Key.A)],
+    )
+    settings = ClipSettings(
+        autolock=[Blanket.AIM, Blanket.KEYS],
+        loop=True,
+        retain=True,
+        finalized=False,
+        triggers=[
+            ClipTrigger(Usage.button(Button.RIGHT), Edge.BOTH, ClipAction.TOGGLE),
+            ClipTrigger(Usage.key(0x3A), Edge.RELEASE, ClipAction.STOP, consume=True),
+        ],
     )
     with MockBox() as mock:
         mock.set_clip_status(status)
+        mock.set_clip_settings(settings)
         with Device.with_mock(mock) as d:
-            got = d.clip().status()
+            got = d.clip().query_status()
+            cfg = d.clip().query_config()
     assert got == status
     assert got.state == ClipState.PLAYING
     assert got.is_held(Usage.button(Button.SIDE1))
     assert got.is_held(Usage.key(Key.A))
     assert not got.is_held(Usage.button(Button.LEFT))
+    assert cfg == settings
 
 
 def test_clip_builder_gap_zero_is_noop():

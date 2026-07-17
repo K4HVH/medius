@@ -183,13 +183,24 @@ pub unsafe extern "C" fn medius_mock_set_emit_pace(
     });
 }
 
-/// Set the [`ClipStatus`](medius::ClipStatus) the mock answers to `medius_clip_status`.
+/// Set the [`ClipStatus`](medius::ClipStatus) the mock answers to `medius_clip_query_status`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_mock_set_clip_status(
     mock: *mut MediusMockBox,
     value: MediusClipStatus,
 ) {
     with_mock(mock, |m| m.set_clip_status(value.into()));
+}
+
+/// Set the [`ClipSettings`](medius::ClipSettings) the mock answers to `medius_clip_query_config`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn medius_mock_set_clip_settings(
+    mock: *mut MediusMockBox,
+    value: MediusClipSettings,
+) {
+    with_mock(mock, |m| {
+        m.set_clip_settings(crate::convert::clip_settings_from_c(&value))
+    });
 }
 
 /// Make the mock unresponsive to queries (it still records commands). One-way, for testing timeouts.

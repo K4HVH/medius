@@ -1295,8 +1295,13 @@ void medius_mock_set_emit_pace(struct MediusMockBox *mock,
 #endif
 
 #if defined(MEDIUS_FEATURE_MOCK)
-// Set the [`ClipStatus`](medius::ClipStatus) the mock answers to `medius_clip_status`.
+// Set the [`ClipStatus`](medius::ClipStatus) the mock answers to `medius_clip_query_status`.
 void medius_mock_set_clip_status(struct MediusMockBox *mock, struct MediusClipStatus value);
+#endif
+
+#if defined(MEDIUS_FEATURE_MOCK)
+// Set the [`ClipSettings`](medius::ClipSettings) the mock answers to `medius_clip_query_config`.
+void medius_mock_set_clip_settings(struct MediusMockBox *mock, struct MediusClipSettings value);
 #endif
 
 #if defined(MEDIUS_FEATURE_MOCK)
