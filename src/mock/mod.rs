@@ -11,10 +11,12 @@ use crate::protocol::opcode::{
 };
 use crate::protocol::{DecodedFrame, FrameType, encode};
 use crate::transport::mock::MockTransport;
+use crate::types::lock::blanket_scope;
 use crate::types::{
-    Caps, CatchState, ClipState, ClipStatus, DeviceInfo, DeviceKind, EmitPace, Health,
+    Caps, CatchState, ClipSettings, ClipState, ClipStatus, DeviceInfo, DeviceKind, EmitPace, Health,
     ImperfectStatus, KbdCaps, Locks, LogLevel, MouseCaps, Rate, Stats, Usage, Version,
 };
+use crate::protocol::opcode::{CLIP_CFG_F_FINALIZED, CLIP_CFG_F_LOOP, CLIP_CFG_F_RETAIN};
 
 #[derive(Debug)]
 struct State {
@@ -30,6 +32,7 @@ struct State {
     move_ride_ms: u16,
     emit_pace: EmitPace,
     clip: ClipStatus,
+    clip_settings: ClipSettings,
     recorded: Vec<DecodedFrame>,
     respond: bool,
 }
@@ -57,6 +60,7 @@ impl Default for State {
             move_ride_ms: 0,
             emit_pace: EmitPace::Learned,
             clip: ClipStatus::default(),
+            clip_settings: ClipSettings::default(),
             recorded: Vec::new(),
             respond: true,
         }
@@ -214,16 +218,17 @@ fn options_emit_payload(pace: EmitPace) -> Vec<u8> {
     p
 }
 
-fn clip_status_payload(c: &ClipStatus) -> Vec<u8> {
+fn clip_status_payload(c: &ClipStatus, cfg: &ClipSettings) -> Vec<u8> {
     let state = match c.state {
         ClipState::Idle => 0u8,
-        ClipState::Armed => 1,
-        ClipState::Playing => 2,
+        ClipState::Playing => 1,
+        ClipState::Paused => 2,
         ClipState::Faulted => 3,
     };
     let mut p = vec![10u8, state];
     p.extend_from_slice(&c.free.to_le_bytes());
-    p.extend_from_slice(&c.used.to_le_bytes());
+    p.extend_from_slice(&c.total.to_le_bytes());
+    p.extend_from_slice(&c.played.to_le_bytes());
     p.extend_from_slice(&c.ticks.to_le_bytes());
     p.extend_from_slice(&c.underruns.to_le_bytes());
     p.extend_from_slice(&c.overruns.to_le_bytes());
@@ -231,6 +236,20 @@ fn clip_status_payload(c: &ClipStatus) -> Vec<u8> {
     p.push(c.held.len() as u8);
     for u in &c.held {
         u.push_le(&mut p);
+    }
+    p.push(blanket_scope(&cfg.autolock));
+    let flags = (if cfg.loop_ { CLIP_CFG_F_LOOP } else { 0 })
+        | (if cfg.retain { CLIP_CFG_F_RETAIN } else { 0 })
+        | (if cfg.finalized { CLIP_CFG_F_FINALIZED } else { 0 });
+    p.push(flags);
+    p.push(cfg.triggers.len() as u8);
+    for t in &cfg.triggers {
+        let (class, id) = t.on.class_id();
+        p.push(class);
+        p.extend_from_slice(&id.to_le_bytes());
+        p.push(t.edge.as_u8());
+        p.push(t.action.as_u8());
+        p.push(t.consume as u8);
     }
     p
 }
@@ -325,7 +344,7 @@ impl MockBox {
                         }
                         _ => Vec::new(),
                     },
-                    Some(10) => encode(FrameType::Resp, seq, &clip_status_payload(&st.clip))
+                    Some(10) => encode(FrameType::Resp, seq, &clip_status_payload(&st.clip, &st.clip_settings))
                         .expect("resp fits"),
                     _ => Vec::new(),
                 }
@@ -466,6 +485,18 @@ impl MockBox {
     /// Update the [`ClipStatus`] answered to `QUERY(CLIP)` in place (e.g. to simulate the ring draining).
     pub fn set_clip_status(&self, clip: ClipStatus) {
         self.state.lock().clip = clip;
+    }
+
+    /// Set the [`ClipSettings`] answered to `QUERY(CLIP)` (builder style).
+    #[must_use]
+    pub fn with_clip_settings(self, settings: ClipSettings) -> Self {
+        self.state.lock().clip_settings = settings;
+        self
+    }
+
+    /// Update the [`ClipSettings`] answered to `QUERY(CLIP)` in place.
+    pub fn set_clip_settings(&self, settings: ClipSettings) {
+        self.state.lock().clip_settings = settings;
     }
 
     /// Make the box unresponsive (builder style): it records commands but never answers a `QUERY`.

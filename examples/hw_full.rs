@@ -19,8 +19,8 @@ mod linux {
     use std::time::{Duration, Instant};
 
     use medius::{
-        Action, Axis, Blanket, Button, CatchMask, ClipBuilder, ClipConfig, ClipState, Device,
-        EmitPace, Key, LedMode, LedTarget, LockDirection, MediaKey, RebootTarget,
+        Action, Axis, Blanket, Button, CatchMask, ClipAction, ClipBuilder, ClipState, ClipTrigger,
+        Device, Edge, EmitPace, Key, LedMode, LedTarget, LockDirection, MediaKey, RebootTarget,
     };
 
     const EVIOCGRAB: libc::c_ulong = 0x4004_4590;
@@ -656,30 +656,29 @@ mod linux {
             }
             b.release(Key::A);
             let appended = clip.append(&b).is_ok();
-            let armed = clip.status().map(|s| s.used > 0).unwrap_or(false);
+            let loaded = clip.query_status().map(|s| s.total > 0).unwrap_or(false);
             // Selective auto-lock: only the aim axes and buttons, leaving the keyboard free (the clip still
             // drives KEY_A; only physical input is scoped-locked).
-            let started = clip
-                .start(&ClipConfig::new().autolock(&[Blanket::Aim, Blanket::Buttons]))
-                .is_ok();
+            let scoped = clip.set_autolock(&[Blanket::Aim, Blanket::Buttons]).is_ok();
+            let started = scoped && clip.start().is_ok();
             std::thread::sleep(Duration::from_millis(150));
             let key_down = acc.key_a.load(Ordering::Relaxed) == 1; // set if the grabbed node is the keyboard
             // While the clip still holds KEY_A (before its release entry), status reports it as held.
             let keys_held = clip
-                .status()
+                .query_status()
                 .map(|s| s.is_held(medius::Key::A))
                 .unwrap_or(false);
             std::thread::sleep(Duration::from_millis(500));
             let x = acc.rel_x.load(Ordering::Relaxed); // set if the grabbed node is the mouse
-            let played = clip.status().map(|s| s.ticks >= 200).unwrap_or(false);
+            let played = clip.query_status().map(|s| s.ticks >= 200).unwrap_or(false);
             let stopped = clip.stop().is_ok();
             std::thread::sleep(Duration::from_millis(60));
-            let idle = matches!(clip.status(), Ok(s) if s.state == ClipState::Idle);
+            let idle = matches!(clip.query_status(), Ok(s) if s.state == ClipState::Idle);
             let drove_grabbed = x == 2000 || key_down;
             check(
                 "clip playback (field-generic)",
                 appended
-                    && armed
+                    && loaded
                     && started
                     && drove_grabbed
                     && keys_held
@@ -687,25 +686,51 @@ mod linux {
                     && stopped
                     && idle,
                 format!(
-                    "appended={appended} armed={armed} started={started} REL_X={x} key_down={key_down} keys_held={keys_held} played={played} stopped={stopped} idle={idle}"
+                    "appended={appended} loaded={loaded} started={started} REL_X={x} key_down={key_down} keys_held={keys_held} played={played} stopped={stopped} idle={idle}"
                 ),
             );
 
-            // Field-generic catch-trigger controls: arming on a key, on any input, and disarm all succeed
-            // (the actual firing needs a physical press, exercised in the physical-hand suite).
-            let arm_key = clip.arm_catch(Key::A, &ClipConfig::new()).is_ok();
-            let arm_any = clip
-                .arm_catch_any(&ClipConfig::new().autolock(Blanket::ALL))
+            // Trigger set + config readback (the actual firing needs a physical press, exercised in the
+            // physical-hand suite): bind two bindings, read them back, unbind, and clear.
+            let _ = clip.clear();
+            let bound_key = clip
+                .bind(ClipTrigger::new(Key::A, Edge::Press, ClipAction::Start))
                 .is_ok();
-            let armed_state = matches!(clip.status(), Ok(s) if s.state == ClipState::Armed);
-            let disarmed = clip.disarm().is_ok();
-            let disarmed_idle = matches!(clip.status(), Ok(s) if s.state == ClipState::Idle);
-            let _ = clip.stop();
+            let bound_btn = clip
+                .bind(ClipTrigger::new(Button::Side1, Edge::Release, ClipAction::Stop).consume())
+                .is_ok();
+            let loop_set = clip.set_loop(true).is_ok();
+            let cfg_ok = clip
+                .query_config()
+                .map(|c| {
+                    c.loop_
+                        && c.triggers.len() == 2
+                        && c.triggers.iter().any(|t| {
+                            t.on == Key::A.into()
+                                && t.edge == Edge::Press
+                                && t.action == ClipAction::Start
+                        })
+                        && c.triggers
+                            .iter()
+                            .any(|t| t.action == ClipAction::Stop && t.consume)
+                })
+                .unwrap_or(false);
+            let unbound = clip.unbind(Key::A, Edge::Press).is_ok();
+            let after_unbind = clip
+                .query_config()
+                .map(|c| c.triggers.len() == 1)
+                .unwrap_or(false);
+            let cleared = clip.clear_triggers().is_ok();
+            let no_triggers = clip
+                .query_config()
+                .map(|c| c.triggers.is_empty())
+                .unwrap_or(false);
+            let _ = clip.set_loop(false);
             check(
-                "clip catch-trigger controls (field-generic)",
-                arm_key && arm_any && armed_state && disarmed && disarmed_idle,
+                "clip trigger set + config readback",
+                bound_key && bound_btn && loop_set && cfg_ok && unbound && after_unbind && cleared && no_triggers,
                 format!(
-                    "arm_key={arm_key} arm_any={arm_any} armed_state={armed_state} disarmed={disarmed} disarmed_idle={disarmed_idle}"
+                    "bound_key={bound_key} bound_btn={bound_btn} loop_set={loop_set} cfg_ok={cfg_ok} unbound={unbound} after_unbind={after_unbind} cleared={cleared} no_triggers={no_triggers}"
                 ),
             );
         }

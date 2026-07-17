@@ -8,9 +8,10 @@ use crate::protocol::opcode::{
 };
 use crate::protocol::{Resp, parse_resp};
 use crate::types::{
-    Action, Axis, Blanket, Caps, CatchMask, CatchState, ClipBuilder, ClipConfig, ClipStatus,
-    CountersSnapshot, DeviceInfo, EmitPace, EmitPaceStatus, Health, ImperfectStatus, LedMode,
-    LedTarget, LockDirection, LockTarget, Locks, Motion, Rate, RebootTarget, Stats, Usage, Version,
+    Action, Axis, Blanket, Caps, CatchMask, CatchState, ClipBuilder, ClipSettings, ClipStatus,
+    ClipTrigger, CountersSnapshot, DeviceInfo, Edge, EmitPace, EmitPaceStatus, Health,
+    ImperfectStatus, LedMode, LedTarget, LockDirection, LockTarget, Locks, Motion, Rate,
+    RebootTarget, Stats, Usage, Version,
 };
 
 use super::Device;
@@ -362,33 +363,78 @@ impl AsyncClipHandle {
         self.inner.append(clip)
     }
 
-    /// Begin playback with a [`ClipConfig`]. Instant; see [`ClipHandle::start`](crate::ClipHandle::start).
-    pub fn start(&self, config: &ClipConfig) -> Result<()> {
-        self.inner.start(config)
+    /// Set the autolock scope. Instant; see [`ClipHandle::set_autolock`](crate::ClipHandle::set_autolock).
+    pub fn set_autolock(&self, scope: &[Blanket]) -> Result<()> {
+        self.inner.set_autolock(scope)
     }
 
-    /// Stop playback, flush the ring, release the auto-lock. Instant; see [`ClipHandle::stop`](crate::ClipHandle::stop).
+    /// Set loop mode. Instant; see [`ClipHandle::set_loop`](crate::ClipHandle::set_loop).
+    pub fn set_loop(&self, on: bool) -> Result<()> {
+        self.inner.set_loop(on)
+    }
+
+    /// Set retained mode. Instant; see [`ClipHandle::set_retain`](crate::ClipHandle::set_retain).
+    pub fn set_retain(&self, on: bool) -> Result<()> {
+        self.inner.set_retain(on)
+    }
+
+    /// Add or overwrite a trigger binding. Instant; see [`ClipHandle::bind`](crate::ClipHandle::bind).
+    pub fn bind(&self, trigger: ClipTrigger) -> Result<()> {
+        self.inner.bind(trigger)
+    }
+
+    /// Remove a trigger binding. Instant; see [`ClipHandle::unbind`](crate::ClipHandle::unbind).
+    pub fn unbind(&self, usage: impl Into<Usage>, edge: Edge) -> Result<()> {
+        self.inner.unbind(usage, edge)
+    }
+
+    /// Remove every trigger binding. Instant; see [`ClipHandle::clear_triggers`](crate::ClipHandle::clear_triggers).
+    pub fn clear_triggers(&self) -> Result<()> {
+        self.inner.clear_triggers()
+    }
+
+    /// Rewind and play. Instant; see [`ClipHandle::start`](crate::ClipHandle::start).
+    pub fn start(&self) -> Result<()> {
+        self.inner.start()
+    }
+
+    /// Stop playback. Instant; see [`ClipHandle::stop`](crate::ClipHandle::stop).
     pub fn stop(&self) -> Result<()> {
         self.inner.stop()
     }
 
-    /// Arm an on-device catch-trigger on any [`Usage`] with a [`ClipConfig`]. Instant; see [`ClipHandle::arm_catch`](crate::ClipHandle::arm_catch).
-    pub fn arm_catch(&self, trigger: impl Into<Usage>, config: &ClipConfig) -> Result<()> {
-        self.inner.arm_catch(trigger, config)
+    /// Halt mid-clip. Instant; see [`ClipHandle::pause`](crate::ClipHandle::pause).
+    pub fn pause(&self) -> Result<()> {
+        self.inner.pause()
     }
 
-    /// Arm a catch-trigger on any physical input with a [`ClipConfig`]. Instant; see [`ClipHandle::arm_catch_any`](crate::ClipHandle::arm_catch_any).
-    pub fn arm_catch_any(&self, config: &ClipConfig) -> Result<()> {
-        self.inner.arm_catch_any(config)
+    /// Continue from the paused cursor. Instant; see [`ClipHandle::resume`](crate::ClipHandle::resume).
+    pub fn resume(&self) -> Result<()> {
+        self.inner.resume()
     }
 
-    /// Clear a pending catch-arm. Instant; see [`ClipHandle::disarm`](crate::ClipHandle::disarm).
-    pub fn disarm(&self) -> Result<()> {
-        self.inner.disarm()
+    /// Force a rewind and play. Instant; see [`ClipHandle::restart`](crate::ClipHandle::restart).
+    pub fn restart(&self) -> Result<()> {
+        self.inner.restart()
     }
 
-    /// `QUERY(CLIP)`: the ring depth and playback counters, awaiting the correlated `RESP`. See [`ClipHandle::status`](crate::ClipHandle::status).
-    pub async fn status(&self) -> Result<ClipStatus> {
+    /// Toggle play/stop. Instant; see [`ClipHandle::toggle`](crate::ClipHandle::toggle).
+    pub fn toggle(&self) -> Result<()> {
+        self.inner.toggle()
+    }
+
+    /// Discard the loaded clip. Instant; see [`ClipHandle::clear`](crate::ClipHandle::clear).
+    pub fn clear(&self) -> Result<()> {
+        self.inner.clear()
+    }
+
+    /// Finalize a retained clip. Instant; see [`ClipHandle::finalize`](crate::ClipHandle::finalize).
+    pub fn finalize(&self) -> Result<()> {
+        self.inner.finalize()
+    }
+
+    /// `QUERY(CLIP)`: the ring depth, progress, and playback counters, awaiting the correlated `RESP`. See [`ClipHandle::query_status`](crate::ClipHandle::query_status).
+    pub async fn query_status(&self) -> Result<ClipStatus> {
         let link = self.inner.link();
         let payload = link
             .query_async(Q_CLIP, link.query_timeout_default())
@@ -397,5 +443,14 @@ impl AsyncClipHandle {
             Some(Resp::Clip(s)) => Ok(s),
             _ => Err(Error::NoReply),
         }
+    }
+
+    /// `QUERY(CLIP)`: the clip configuration, awaiting the correlated `RESP`. See [`ClipHandle::query_config`](crate::ClipHandle::query_config).
+    pub async fn query_config(&self) -> Result<ClipSettings> {
+        let link = self.inner.link();
+        let payload = link
+            .query_async(Q_CLIP, link.query_timeout_default())
+            .await?;
+        ClipSettings::from_payload(&payload).ok_or(Error::NoReply)
     }
 }

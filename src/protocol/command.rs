@@ -1,6 +1,5 @@
 use super::opcode::{
-    CLIP_OP_ARM_CATCH, CLIP_OP_START, INJ_MOTION_CURSOR, INJ_MOTION_WHEEL, OPT_EMIT, OPT_IMPERFECT,
-    OPT_MOVE_RIDE, OPT_NAME,
+    INJ_MOTION_CURSOR, INJ_MOTION_WHEEL, OPT_EMIT, OPT_IMPERFECT, OPT_MOVE_RIDE, OPT_NAME,
 };
 
 /// `MOVE` cursor (§3.1): `[motion=0][dx i16 LE][dy i16 LE]`, no clamp (firmware clamps with carry).
@@ -59,20 +58,20 @@ pub fn emit_pace_payload(mode: u8, hz: u16) -> [u8; 4] {
     let h = hz.to_le_bytes();
     [OPT_EMIT, mode, h[0], h[1]]
 }
-/// `CLIP_CTRL(START)` (§3.11): `[op=START][scope u8]`; `scope` is a `CLIP_LOCK_*` auto-lock bitmask (0 = none).
-pub fn clip_start_payload(scope: u8) -> [u8; 2] {
-    [CLIP_OP_START, scope]
-}
-
-/// `CLIP_CTRL(ARM_CATCH)` (§3.11): `[op][cond_class u8][cond_id u16 LE][scope u8]`; fire START on a physical press of the given class/id, auto-locking `scope`.
-pub fn clip_arm_payload(cond_class: u8, cond_id: u16, scope: u8) -> [u8; 5] {
-    let id = cond_id.to_le_bytes();
-    [CLIP_OP_ARM_CATCH, cond_class, id[0], id[1], scope]
-}
-
-/// `CLIP_CTRL` single-byte op (STOP / DISARM) (§3.11): `[op]`.
+/// `CLIP_CTRL` engine verb (§3.11): `[op]` (`CLIP_OP_*`).
 pub fn clip_op_payload(op: u8) -> [u8; 1] {
     [op]
+}
+
+/// `CLIP_SET` (§3.11): `[id u8][value u8]`; an OPTION-shaped clip scalar setting (`CLIP_SET_*`).
+pub fn clip_set_payload(id: u8, value: u8) -> [u8; 2] {
+    [id, value]
+}
+
+/// `CLIP_TRIGGER` (§3.11): `[class u8][id u16 LE][edge u8][action u8][flags u8]`; add/remove one binding.
+pub fn clip_trigger_payload(class: u8, id: u16, edge: u8, action: u8, flags: u8) -> [u8; 6] {
+    let u = id.to_le_bytes();
+    [class, u[0], u[1], edge, action, flags]
 }
 
 /// `OPTION(NAME)` set value: the id byte followed by the name's ASCII bytes; empty `name` clears to the default.
