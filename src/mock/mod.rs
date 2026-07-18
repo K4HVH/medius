@@ -9,14 +9,14 @@ use crate::protocol::opcode::{
     KBC_CONSUMER, KBC_NKRO, KBC_REPORT_ID, KBC_SYSTEM, OPT_EMIT, OPT_IMPERFECT, OPT_MOVE_RIDE,
     RATE_CONFIDENT,
 };
+use crate::protocol::opcode::{CLIP_CFG_F_FINALIZED, CLIP_CFG_F_LOOP, CLIP_CFG_F_RETAIN};
 use crate::protocol::{DecodedFrame, FrameType, encode};
 use crate::transport::mock::MockTransport;
 use crate::types::lock::blanket_scope;
 use crate::types::{
-    Caps, CatchState, ClipSettings, ClipState, ClipStatus, DeviceInfo, DeviceKind, EmitPace, Health,
-    ImperfectStatus, KbdCaps, Locks, LogLevel, MouseCaps, Rate, Stats, Usage, Version,
+    Caps, CatchState, ClipSettings, ClipState, ClipStatus, DeviceInfo, DeviceKind, EmitPace,
+    Health, ImperfectStatus, KbdCaps, Locks, LogLevel, MouseCaps, Rate, Stats, Usage, Version,
 };
-use crate::protocol::opcode::{CLIP_CFG_F_FINALIZED, CLIP_CFG_F_LOOP, CLIP_CFG_F_RETAIN};
 
 #[derive(Debug)]
 struct State {
@@ -240,7 +240,11 @@ fn clip_status_payload(c: &ClipStatus, cfg: &ClipSettings) -> Vec<u8> {
     p.push(blanket_scope(&cfg.autolock));
     let flags = (if cfg.loop_ { CLIP_CFG_F_LOOP } else { 0 })
         | (if cfg.retain { CLIP_CFG_F_RETAIN } else { 0 })
-        | (if cfg.finalized { CLIP_CFG_F_FINALIZED } else { 0 });
+        | (if cfg.finalized {
+            CLIP_CFG_F_FINALIZED
+        } else {
+            0
+        });
     p.push(flags);
     p.push(cfg.triggers.len() as u8);
     for t in &cfg.triggers {
@@ -344,8 +348,12 @@ impl MockBox {
                         }
                         _ => Vec::new(),
                     },
-                    Some(10) => encode(FrameType::Resp, seq, &clip_status_payload(&st.clip, &st.clip_settings))
-                        .expect("resp fits"),
+                    Some(10) => encode(
+                        FrameType::Resp,
+                        seq,
+                        &clip_status_payload(&st.clip, &st.clip_settings),
+                    )
+                    .expect("resp fits"),
                     _ => Vec::new(),
                 }
             } else {

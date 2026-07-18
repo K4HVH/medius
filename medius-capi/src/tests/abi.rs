@@ -686,58 +686,93 @@ fn clip_control_parity() {
     assert_parity(
         |d| {
             let clip = d.clip();
-            let none = medius::ClipConfig::new();
-            let all = medius::ClipConfig::new().autolock(medius::Blanket::ALL);
-            let keys = medius::ClipConfig::new().autolock(&[medius::Blanket::Keys]);
-            clip.start(&none).unwrap();
-            clip.start(&all).unwrap();
-            clip.arm_catch(medius::Button::Right, &none).unwrap();
-            clip.arm_catch(medius::Key::new(MEDIUS_KEY_A), &keys)
+            clip.set_autolock(&[medius::Blanket::Aim, medius::Blanket::Buttons])
                 .unwrap();
-            clip.arm_catch(medius::MediaKey::new(0xCD), &none).unwrap();
-            clip.arm_catch_any(&all).unwrap();
-            clip.disarm().unwrap();
+            clip.set_loop(true).unwrap();
+            clip.set_retain(true).unwrap();
+            clip.bind(medius::ClipTrigger::new(
+                medius::Button::Right,
+                medius::Edge::Press,
+                medius::ClipAction::Start,
+            ))
+            .unwrap();
+            clip.bind(
+                medius::ClipTrigger::new(
+                    medius::Key::new(MEDIUS_KEY_A),
+                    medius::Edge::Release,
+                    medius::ClipAction::Stop,
+                )
+                .consume(),
+            )
+            .unwrap();
+            clip.bind(medius::ClipTrigger::new(
+                medius::MediaKey::new(0xCD),
+                medius::Edge::Both,
+                medius::ClipAction::Toggle,
+            ))
+            .unwrap();
+            clip.unbind(medius::Button::Right, medius::Edge::Press)
+                .unwrap();
+            clip.clear_triggers().unwrap();
+            clip.start().unwrap();
             clip.stop().unwrap();
         },
         |dev| unsafe {
             let mut clip: *mut MediusClip = ptr::null_mut();
             assert_eq!(medius_device_clip(dev, &mut clip), MediusStatus::Ok);
-            let none = MediusClipConfig {
-                autolock: ptr::null(),
-                autolock_len: 0,
-            };
-            let all_groups = [
-                MediusBlanket::Aim,
-                MediusBlanket::Wheel,
-                MediusBlanket::Buttons,
-                MediusBlanket::Keys,
-                MediusBlanket::Media,
-            ];
-            let all = MediusClipConfig {
-                autolock: all_groups.as_ptr(),
-                autolock_len: all_groups.len(),
-            };
-            let key_group = [MediusBlanket::Keys];
-            let keys = MediusClipConfig {
-                autolock: key_group.as_ptr(),
-                autolock_len: key_group.len(),
-            };
-            assert_eq!(medius_clip_start(clip, none), MediusStatus::Ok);
-            assert_eq!(medius_clip_start(clip, all), MediusStatus::Ok);
+            let scope = [MediusBlanket::Aim, MediusBlanket::Buttons];
             assert_eq!(
-                medius_clip_arm_catch(clip, medius_usage_button(MediusButton::Right), none),
+                medius_clip_set_autolock(clip, scope.as_ptr(), scope.len()),
+                MediusStatus::Ok
+            );
+            assert_eq!(medius_clip_set_loop(clip, 1), MediusStatus::Ok);
+            assert_eq!(medius_clip_set_retain(clip, 1), MediusStatus::Ok);
+            assert_eq!(
+                medius_clip_bind(
+                    clip,
+                    MediusClipTrigger {
+                        on: medius_usage_button(MediusButton::Right),
+                        edge: MediusEdge::Press,
+                        action: MediusClipAction::Start,
+                        consume: 0,
+                    }
+                ),
                 MediusStatus::Ok
             );
             assert_eq!(
-                medius_clip_arm_catch(clip, medius_usage_key(MEDIUS_KEY_A), keys),
+                medius_clip_bind(
+                    clip,
+                    MediusClipTrigger {
+                        on: medius_usage_key(MEDIUS_KEY_A),
+                        edge: MediusEdge::Release,
+                        action: MediusClipAction::Stop,
+                        consume: 1,
+                    }
+                ),
                 MediusStatus::Ok
             );
             assert_eq!(
-                medius_clip_arm_catch(clip, medius_usage_media(0xCD), none),
+                medius_clip_bind(
+                    clip,
+                    MediusClipTrigger {
+                        on: medius_usage_media(0xCD),
+                        edge: MediusEdge::Both,
+                        action: MediusClipAction::Toggle,
+                        consume: 0,
+                    }
+                ),
                 MediusStatus::Ok
             );
-            assert_eq!(medius_clip_arm_catch_any(clip, all), MediusStatus::Ok);
-            assert_eq!(medius_clip_disarm(clip), MediusStatus::Ok);
+            assert_eq!(
+                medius_clip_unbind(
+                    clip,
+                    medius_usage_button(MediusButton::Right),
+                    MediusEdge::Press
+                ),
+                MediusStatus::Ok
+            );
+            assert_eq!(medius_clip_clear_triggers(clip), MediusStatus::Ok);
+            assert_eq!(medius_clip_start(clip), MediusStatus::Ok);
             assert_eq!(medius_clip_stop(clip), MediusStatus::Ok);
             medius_clip_free(clip);
         },
@@ -831,7 +866,8 @@ fn clip_status_query_returns_configured_value() {
     let mut status: MediusClipStatus = unsafe { std::mem::zeroed() };
     status.state = MediusClipState::Playing;
     status.free = 512;
-    status.used = 40;
+    status.total = 40;
+    status.played = 16;
     status.ticks = 99;
     status.underruns = 2;
     status.seq_gaps = 1;
@@ -851,14 +887,13 @@ fn clip_status_query_returns_configured_value() {
     );
     let mut out: MediusClipStatus = unsafe { std::mem::zeroed() };
     assert_eq!(
-        unsafe { medius_clip_status(clip, &mut out) },
+        unsafe { medius_clip_query_status(clip, &mut out) },
         MediusStatus::Ok
     );
     assert_eq!(out, status);
     assert_eq!(out.held_n, 2);
-    assert!(unsafe { medius_clip_status_is_held(&out, medius_usage_button(MediusButton::Side1)) });
-    assert!(unsafe { medius_clip_status_is_held(&out, medius_usage_key(MEDIUS_KEY_A)) });
-    assert!(!unsafe { medius_clip_status_is_held(&out, medius_usage_button(MediusButton::Left)) });
+    assert_eq!(out.held[0], medius_usage_button(MediusButton::Side1));
+    assert_eq!(out.held[1], medius_usage_key(MEDIUS_KEY_A));
     unsafe {
         medius_clip_free(clip);
         medius_device_free(dev);

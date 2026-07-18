@@ -792,6 +792,7 @@ impl From<MediusImperfectStatus> for ImperfectStatus {
 }
 
 /// The held usages of a `MediusUsageEvent` as a `Usage` list; invalid entries are dropped.
+#[cfg(feature = "mock")]
 pub(crate) fn usage_event_to_medius(e: &MediusUsageEvent) -> Vec<Usage> {
     let n = (e.n as usize).min(MEDIUS_MAX_USAGES);
     e.usages[..n]

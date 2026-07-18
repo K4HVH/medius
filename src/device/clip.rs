@@ -6,9 +6,9 @@ use crate::link::Link;
 use crate::protocol::command::{clip_op_payload, clip_set_payload, clip_trigger_payload};
 use crate::protocol::opcode::{
     CLIP_COND_ANY_CLASS, CLIP_COND_ANY_ID, CLIP_OP_CLEAR, CLIP_OP_FINALIZE, CLIP_OP_PAUSE,
-    CLIP_OP_RESTART, CLIP_OP_RESUME, CLIP_OP_START, CLIP_OP_STOP, CLIP_OP_TOGGLE, CLIP_SET_AUTOLOCK,
-    CLIP_SET_LOOP, CLIP_SET_RETAIN, CLIP_TRIG_F_CONSUME, CLIP_TRIG_F_PRESENT, LOCK_DIR_BOTH,
-    MAX_PAYLOAD, Q_CLIP,
+    CLIP_OP_RESTART, CLIP_OP_RESUME, CLIP_OP_START, CLIP_OP_STOP, CLIP_OP_TOGGLE,
+    CLIP_SET_AUTOLOCK, CLIP_SET_LOOP, CLIP_SET_RETAIN, CLIP_TRIG_F_CONSUME, CLIP_TRIG_F_PRESENT,
+    LOCK_DIR_BOTH, MAX_PAYLOAD, Q_CLIP,
 };
 use crate::protocol::{FrameType, Resp, parse_resp};
 use crate::types::lock::blanket_scope;
@@ -70,7 +70,8 @@ impl ClipHandle {
     }
 
     fn set(&self, id: u8, value: u8) -> Result<()> {
-        self.link.send(FrameType::ClipSet, &clip_set_payload(id, value))
+        self.link
+            .send(FrameType::ClipSet, &clip_set_payload(id, value))
     }
 
     // --- Scalar settings (`CLIP_SET`). Set `retain` before the first `append`. ---
@@ -95,10 +96,21 @@ impl ClipHandle {
     /// Add or overwrite a trigger binding: `trigger`'s edge fires its action on the box, no host round-trip. Fire-and-forget.
     pub fn bind(&self, trigger: ClipTrigger) -> Result<()> {
         let (class, id) = trigger.on.class_id();
-        let flags = CLIP_TRIG_F_PRESENT | if trigger.consume { CLIP_TRIG_F_CONSUME } else { 0 };
+        let flags = CLIP_TRIG_F_PRESENT
+            | if trigger.consume {
+                CLIP_TRIG_F_CONSUME
+            } else {
+                0
+            };
         self.link.send(
             FrameType::ClipTrigger,
-            &clip_trigger_payload(class, id, trigger.edge.as_u8(), trigger.action.as_u8(), flags),
+            &clip_trigger_payload(
+                class,
+                id,
+                trigger.edge.as_u8(),
+                trigger.action.as_u8(),
+                flags,
+            ),
         )
     }
 
