@@ -1,4 +1,4 @@
-//! The medius wire protocol — pure, no-I/O codec.
+//! The medius wire protocol: pure, no-I/O codec.
 
 pub mod command;
 pub mod crc;

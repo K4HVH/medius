@@ -3,22 +3,24 @@ use std::time::Duration;
 use crate::error::{Error, Result};
 use crate::link::Link;
 use crate::protocol::opcode::{
-    OPT_EMIT, OPT_IMPERFECT, OPT_MOVE_RIDE, Q_CAPS, Q_CATCH, Q_DEVICE_INFO, Q_HEALTH, Q_LOCKS,
-    Q_RATE, Q_STATS, Q_VERSION,
+    OPT_EMIT, OPT_IMPERFECT, OPT_MOVE_RIDE, Q_CAPS, Q_CATCH, Q_CLIP, Q_DEVICE_INFO, Q_HEALTH,
+    Q_LOCKS, Q_RATE, Q_STATS, Q_VERSION,
 };
 use crate::protocol::{Resp, parse_resp};
 use crate::types::{
-    Action, Blanket, Button, Caps, CatchMask, CatchState, CountersSnapshot, DeviceInfo, EmitPace,
-    EmitPaceStatus, Health, ImperfectStatus, Input, Key, LedMode, LedTarget, LockDirection,
-    LockTarget, Locks, MediaKey, Motion, Rate, RebootTarget, Stats, Version,
+    Action, Axis, Blanket, Caps, CatchMask, CatchState, ClipBuilder, ClipSettings, ClipStatus,
+    ClipTrigger, CountersSnapshot, DeviceInfo, Edge, EmitPace, EmitPaceStatus, Health,
+    ImperfectStatus, LedMode, LedTarget, LockDirection, LockTarget, Locks, Motion, Rate,
+    RebootTarget, Stats, Usage, Version,
 };
 
 use super::Device;
 use super::catch::EventStream;
+use super::clip::ClipHandle;
 use super::discover::BoxInfo;
 use super::logs::LogStream;
 
-/// An async view over a [`Device`] — the same `Link` core, with `async` queries.
+/// An async view over a [`Device`]: the same `Link` core, with `async` queries.
 #[derive(Clone, Debug)]
 pub struct AsyncDevice {
     link: Link,
@@ -49,87 +51,42 @@ impl AsyncDevice {
         Device { link: self.link }
     }
 
-    /// `MOVE` — relative cursor movement. Instant; see [`Device::move_rel`].
+    /// `MOVE`: relative cursor movement. Instant; see [`Device::move_rel`].
     pub fn move_rel(&self, dx: i16, dy: i16) -> Result<()> {
         self.dev().move_rel(dx, dy)
     }
 
-    /// `WHEEL` — vertical scroll. Instant; see [`Device::wheel`].
+    /// `WHEEL`: vertical scroll. Instant; see [`Device::wheel`].
     pub fn wheel(&self, delta: i16) -> Result<()> {
         self.dev().wheel(delta)
     }
 
-    /// `MOVE` — field-generic relative axis (cursor or wheel). Instant; see [`Device::move_axis`].
+    /// `MOVE`: field-generic relative axis (cursor or wheel). Instant; see [`Device::move_axis`].
     pub fn move_axis(&self, motion: Motion) -> Result<()> {
         self.dev().move_axis(motion)
     }
 
-    /// `INJECT` — field-generic momentary override (button, key, or media). Instant; see [`Device::inject`].
-    pub fn inject(&self, input: impl Into<Input>, action: Action) -> Result<()> {
-        self.dev().inject(input, action)
+    /// `INJECT`: momentary override for any usage (button, key, or media). Instant; see [`Device::inject`].
+    pub fn inject(&self, usage: impl Into<Usage>, action: Action) -> Result<()> {
+        self.dev().inject(usage, action)
     }
 
-    /// `BUTTON` — set an injection override. Instant; see [`Device::button`].
-    pub fn button(&self, button: Button, action: Action) -> Result<()> {
-        self.dev().button(button, action)
+    /// Press (force down) any usage. Instant; see [`Device::press`].
+    pub fn press(&self, usage: impl Into<Usage>) -> Result<()> {
+        self.dev().press(usage)
     }
 
-    /// Press (hold) a button. Instant; see [`Device::press`].
-    pub fn press(&self, button: Button) -> Result<()> {
-        self.dev().press(button)
+    /// Soft-release any usage. Instant; see [`Device::release`].
+    pub fn release(&self, usage: impl Into<Usage>) -> Result<()> {
+        self.dev().release(usage)
     }
 
-    /// Soft-release a button. Instant; see [`Device::soft_release`].
-    pub fn soft_release(&self, button: Button) -> Result<()> {
-        self.dev().soft_release(button)
+    /// Force-release any usage. Instant; see [`Device::force_release`].
+    pub fn force_release(&self, usage: impl Into<Usage>) -> Result<()> {
+        self.dev().force_release(usage)
     }
 
-    /// Force-release a button. Instant; see [`Device::force_release`].
-    pub fn force_release(&self, button: Button) -> Result<()> {
-        self.dev().force_release(button)
-    }
-
-    /// `KEY` — set a keyboard key/modifier override. Instant; see [`Device::key`].
-    pub fn key(&self, key: Key, action: Action) -> Result<()> {
-        self.dev().key(key, action)
-    }
-
-    /// Press (hold) a key. Instant; see [`Device::key_down`].
-    pub fn key_down(&self, key: Key) -> Result<()> {
-        self.dev().key_down(key)
-    }
-
-    /// Soft-release a key. Instant; see [`Device::key_up`].
-    pub fn key_up(&self, key: Key) -> Result<()> {
-        self.dev().key_up(key)
-    }
-
-    /// Force-release a key. Instant; see [`Device::key_force_release`].
-    pub fn key_force_release(&self, key: Key) -> Result<()> {
-        self.dev().key_force_release(key)
-    }
-
-    /// `CONSUMER` — set a media-key override. Instant; see [`Device::media`].
-    pub fn media(&self, key: MediaKey, action: Action) -> Result<()> {
-        self.dev().media(key, action)
-    }
-
-    /// Press (hold) a media key. Instant; see [`Device::media_down`].
-    pub fn media_down(&self, key: MediaKey) -> Result<()> {
-        self.dev().media_down(key)
-    }
-
-    /// Soft-release a media key. Instant; see [`Device::media_up`].
-    pub fn media_up(&self, key: MediaKey) -> Result<()> {
-        self.dev().media_up(key)
-    }
-
-    /// Force-release a media key. Instant; see [`Device::media_force_release`].
-    pub fn media_force_release(&self, key: MediaKey) -> Result<()> {
-        self.dev().media_force_release(key)
-    }
-
-    /// `RESET` — return to passthrough. Instant; see [`Device::reset`].
+    /// `RESET`: return to passthrough. Instant; see [`Device::reset`].
     pub fn reset(&self) -> Result<()> {
         self.dev().reset()
     }
@@ -144,7 +101,7 @@ impl AsyncDevice {
         self.dev().reapply()
     }
 
-    /// Best-effort reconnect over the shared core; blocks the calling thread (serial rescan + reopen). See [`Device::reconnect`].
+    /// Best-effort reconnect over the shared core; blocks the calling thread. See [`Device::reconnect`].
     pub fn reconnect(&self) -> Result<()> {
         self.dev().reconnect()
     }
@@ -159,70 +116,69 @@ impl AsyncDevice {
         self.dev().logs()
     }
 
-    /// `LED` — override a status LED. Instant; see [`Device::led`].
+    /// `LED`: override a status LED. Instant; see [`Device::led`].
     pub fn led(&self, target: LedTarget, mode: LedMode, level: u8) -> Result<()> {
         self.dev().led(target, mode, level)
     }
 
-    /// `LOCK` — lock an axis or button edge. Instant; see [`Device::lock`].
-    pub fn lock(&self, target: LockTarget, direction: LockDirection) -> Result<()> {
+    /// `LOCK`: block a usage (button/key/media) or axis. Instant; see [`Device::lock`].
+    pub fn lock(&self, target: impl Into<LockTarget>, direction: LockDirection) -> Result<()> {
         self.dev().lock(target, direction)
     }
 
-    /// `LOCK` — release a locked axis or button edge. Instant; see [`Device::unlock`].
-    pub fn unlock(&self, target: LockTarget, direction: LockDirection) -> Result<()> {
+    /// `LOCK`: release a locked usage or axis. Instant; see [`Device::unlock`].
+    pub fn unlock(&self, target: impl Into<LockTarget>, direction: LockDirection) -> Result<()> {
         self.dev().unlock(target, direction)
     }
 
-    /// `LOCK` — block a keyboard key or modifier. Instant; see [`Device::lock_key`].
-    pub fn lock_key(&self, key: Key, direction: LockDirection) -> Result<()> {
-        self.dev().lock_key(key, direction)
+    /// `LOCK`: block a relative axis by sign. Instant; see [`Device::lock_axis`].
+    pub fn lock_axis(&self, axis: Axis, direction: LockDirection) -> Result<()> {
+        self.dev().lock_axis(axis, direction)
     }
 
-    /// `LOCK` — release a locked keyboard key or modifier. Instant; see [`Device::unlock_key`].
-    pub fn unlock_key(&self, key: Key, direction: LockDirection) -> Result<()> {
-        self.dev().unlock_key(key, direction)
+    /// `LOCK`: release an axis lock. Instant; see [`Device::unlock_axis`].
+    pub fn unlock_axis(&self, axis: Axis, direction: LockDirection) -> Result<()> {
+        self.dev().unlock_axis(axis, direction)
     }
 
-    /// `LOCK` — block a media usage. Instant; see [`Device::lock_media`].
-    pub fn lock_media(&self, key: MediaKey) -> Result<()> {
-        self.dev().lock_media(key)
+    /// `LOCK`: blanket-block a whole group. Instant; see [`Device::lock_all`].
+    pub fn lock_all(&self, what: Blanket, direction: LockDirection) -> Result<()> {
+        self.dev().lock_all(what, direction)
     }
 
-    /// `LOCK` — release a locked media usage. Instant; see [`Device::unlock_media`].
-    pub fn unlock_media(&self, key: MediaKey) -> Result<()> {
-        self.dev().unlock_media(key)
+    /// `LOCK`: release a blanket lock. Instant; see [`Device::unlock_all`].
+    pub fn unlock_all(&self, what: Blanket, direction: LockDirection) -> Result<()> {
+        self.dev().unlock_all(what, direction)
     }
 
-    /// `LOCK` — blanket-block a whole input class. Instant; see [`Device::lock_all`].
-    pub fn lock_all(&self, what: Blanket) -> Result<()> {
-        self.dev().lock_all(what)
-    }
-
-    /// `LOCK` — release a blanket whole-class lock. Instant; see [`Device::unlock_all`].
-    pub fn unlock_all(&self, what: Blanket) -> Result<()> {
-        self.dev().unlock_all(what)
-    }
-
-    /// Subscribe to the physical-input event stream. Instant; the returned [`EventStream`] offers
-    /// `recv_async`. See [`Device::catch_events`].
+    /// Subscribe to the physical-input event stream. Instant; see [`Device::catch_events`].
     pub fn catch_events(&self, mask: CatchMask) -> Result<EventStream> {
         self.dev().catch_events(mask)
     }
 
-    /// `OPTION(IMPERFECT)` — opt into cloning an over-capacity device. Instant; see [`Device::allow_imperfect_clones`].
+    /// `OPTION(IMPERFECT)`: opt into cloning an over-capacity device. Instant; see [`Device::allow_imperfect_clones`].
     pub fn allow_imperfect_clones(&self, allow: bool) -> Result<()> {
         self.dev().allow_imperfect_clones(allow)
     }
 
-    /// `OPTION(MOVE_RIDE)` — movement riding. Instant; see [`Device::set_movement_riding`].
+    /// `OPTION(MOVE_RIDE)`: movement riding. Instant; see [`Device::set_movement_riding`].
     pub fn set_movement_riding(&self, window: Option<Duration>) -> Result<()> {
         self.dev().set_movement_riding(window)
     }
 
-    /// `OPTION(EMIT)` — emit-rate pacing. Instant; see [`Device::set_emit_pace`].
+    /// `OPTION(EMIT)`: emit-rate pacing. Instant; see [`Device::set_emit_pace`].
     pub fn set_emit_pace(&self, pace: EmitPace) -> Result<()> {
         self.dev().set_emit_pace(pace)
+    }
+
+    /// `OPTION(NAME)`: set the box's persistent name. Instant; see [`Device::set_name`].
+    pub fn set_name(&self, name: &str) -> Result<()> {
+        self.dev().set_name(name)
+    }
+
+    /// `OPTION(NAME)` clear: revert to the synthesized default. Instant; see [`Device::clear_name`].
+    pub fn clear_name(&self) -> Result<()> {
+        self.dev().clear_name()
     }
 
     /// Query the box version, awaiting the correlated `RESP` with the default timeout.
@@ -357,12 +313,19 @@ impl AsyncDevice {
         }
     }
 
+    /// Buffered-clip playback over the async view (§3.11); see [`Device::clip`].
+    pub fn clip(&self) -> AsyncClipHandle {
+        AsyncClipHandle {
+            inner: self.dev().clip(),
+        }
+    }
+
     /// Open a device at `path` and wrap it as an [`AsyncDevice`].
     pub fn open(path: impl AsRef<std::path::Path>) -> Result<AsyncDevice> {
         Ok(Device::open(path)?.into_async())
     }
 
-    /// Discover the first medius box, open it, and wrap as an [`AsyncDevice`]; blocks (scan + handshake). See [`Device::find`].
+    /// Discover the first medius box, open it, and wrap as an [`AsyncDevice`]; blocks. See [`Device::find`].
     pub fn find() -> Result<AsyncDevice> {
         Ok(Device::find()?.into_async())
     }
@@ -385,5 +348,109 @@ impl AsyncDevice {
     /// Open the first box whose clone is a keyboard. See [`Device::find_keyboard_box`].
     pub fn find_keyboard_box() -> Result<AsyncDevice> {
         Ok(Device::find_keyboard_box()?.into_async())
+    }
+}
+
+/// An async view over a [`ClipHandle`](crate::ClipHandle) (§3.11); see [`AsyncDevice::clip`].
+#[derive(Clone, Debug)]
+pub struct AsyncClipHandle {
+    inner: ClipHandle,
+}
+
+impl AsyncClipHandle {
+    /// Append entries to the ring. Instant; see [`ClipHandle::append`](crate::ClipHandle::append).
+    pub fn append(&self, clip: &ClipBuilder) -> Result<()> {
+        self.inner.append(clip)
+    }
+
+    /// Set the autolock scope. Instant; see [`ClipHandle::set_autolock`](crate::ClipHandle::set_autolock).
+    pub fn set_autolock(&self, scope: &[Blanket]) -> Result<()> {
+        self.inner.set_autolock(scope)
+    }
+
+    /// Set loop mode. Instant; see [`ClipHandle::set_loop`](crate::ClipHandle::set_loop).
+    pub fn set_loop(&self, on: bool) -> Result<()> {
+        self.inner.set_loop(on)
+    }
+
+    /// Set retained mode. Instant; see [`ClipHandle::set_retain`](crate::ClipHandle::set_retain).
+    pub fn set_retain(&self, on: bool) -> Result<()> {
+        self.inner.set_retain(on)
+    }
+
+    /// Add or overwrite a trigger binding. Instant; see [`ClipHandle::bind`](crate::ClipHandle::bind).
+    pub fn bind(&self, trigger: ClipTrigger) -> Result<()> {
+        self.inner.bind(trigger)
+    }
+
+    /// Remove a trigger binding. Instant; see [`ClipHandle::unbind`](crate::ClipHandle::unbind).
+    pub fn unbind(&self, usage: impl Into<Usage>, edge: Edge) -> Result<()> {
+        self.inner.unbind(usage, edge)
+    }
+
+    /// Remove every trigger binding. Instant; see [`ClipHandle::clear_triggers`](crate::ClipHandle::clear_triggers).
+    pub fn clear_triggers(&self) -> Result<()> {
+        self.inner.clear_triggers()
+    }
+
+    /// Rewind and play. Instant; see [`ClipHandle::start`](crate::ClipHandle::start).
+    pub fn start(&self) -> Result<()> {
+        self.inner.start()
+    }
+
+    /// Stop playback. Instant; see [`ClipHandle::stop`](crate::ClipHandle::stop).
+    pub fn stop(&self) -> Result<()> {
+        self.inner.stop()
+    }
+
+    /// Halt mid-clip. Instant; see [`ClipHandle::pause`](crate::ClipHandle::pause).
+    pub fn pause(&self) -> Result<()> {
+        self.inner.pause()
+    }
+
+    /// Continue from the paused cursor. Instant; see [`ClipHandle::resume`](crate::ClipHandle::resume).
+    pub fn resume(&self) -> Result<()> {
+        self.inner.resume()
+    }
+
+    /// Force a rewind and play. Instant; see [`ClipHandle::restart`](crate::ClipHandle::restart).
+    pub fn restart(&self) -> Result<()> {
+        self.inner.restart()
+    }
+
+    /// Toggle play/stop. Instant; see [`ClipHandle::toggle`](crate::ClipHandle::toggle).
+    pub fn toggle(&self) -> Result<()> {
+        self.inner.toggle()
+    }
+
+    /// Discard the loaded clip. Instant; see [`ClipHandle::clear`](crate::ClipHandle::clear).
+    pub fn clear(&self) -> Result<()> {
+        self.inner.clear()
+    }
+
+    /// Finalize a retained clip. Instant; see [`ClipHandle::finalize`](crate::ClipHandle::finalize).
+    pub fn finalize(&self) -> Result<()> {
+        self.inner.finalize()
+    }
+
+    /// `QUERY(CLIP)`: the ring depth, progress, and playback counters, awaiting the correlated `RESP`. See [`ClipHandle::query_status`](crate::ClipHandle::query_status).
+    pub async fn query_status(&self) -> Result<ClipStatus> {
+        let link = self.inner.link();
+        let payload = link
+            .query_async(Q_CLIP, link.query_timeout_default())
+            .await?;
+        match parse_resp(&payload) {
+            Some(Resp::Clip(s)) => Ok(s),
+            _ => Err(Error::NoReply),
+        }
+    }
+
+    /// `QUERY(CLIP)`: the clip configuration, awaiting the correlated `RESP`. See [`ClipHandle::query_config`](crate::ClipHandle::query_config).
+    pub async fn query_config(&self) -> Result<ClipSettings> {
+        let link = self.inner.link();
+        let payload = link
+            .query_async(Q_CLIP, link.query_timeout_default())
+            .await?;
+        ClipSettings::from_payload(&payload).ok_or(Error::NoReply)
     }
 }

@@ -32,8 +32,7 @@ impl Device {
         }
     }
 
-    /// Query the cloned device's USB identity: vid/pid/bcd, serial/BOS flags, primary kind, and
-    /// product string (§4.3).
+    /// Query the cloned device's USB identity (§4.3).
     pub fn device_info(&self) -> Result<DeviceInfo> {
         let payload = self.link.query(Q_DEVICE_INFO)?;
         match parse_resp(&payload) {
@@ -42,8 +41,7 @@ impl Device {
         }
     }
 
-    /// Query the whole cloned device's semantic capabilities in one request: mouse + keyboard + the
-    /// per-class change_driven flags (§4.4). A class that is not present reads all-zero/false.
+    /// Query the cloned device's semantic capabilities (§4.4).
     pub fn caps(&self) -> Result<Caps> {
         let payload = self.link.query(Q_CAPS)?;
         match parse_resp(&payload) {

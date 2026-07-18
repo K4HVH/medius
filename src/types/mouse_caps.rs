@@ -1,10 +1,6 @@
-//! Mouse capabilities — the mouse half of the unified `RESP(CAPS)` (§4.4).
+//! Mouse capabilities: the mouse half of the unified `RESP(CAPS)` (§4.4).
 
-/// A semantic capability summary of the emulated mouse, parsed from its HID report descriptor. Counts
-/// and booleans only — never raw HID bit offsets or field widths. All fields are zero/false when no
-/// relative-axis mouse interface is bound; the mouse half of [`Caps`](crate::Caps). Use it for feature
-/// detection: an `inject` for a button the mouse lacks is a silent no-op, so [`MouseCaps::n_buttons`]
-/// tells you which ids are real.
+/// Semantic capability summary of the emulated mouse, parsed from its HID report descriptor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct MouseCaps {
     /// Number of buttons the mouse report carries.

@@ -12,7 +12,6 @@ use crate::device::MediusDevice;
 use crate::error::{MediusStatus, clear_error, fail, guard, guard_status, record};
 
 /// A scriptable fake box. Opaque; create with `medius_mock_new`, free with `medius_mock_free`.
-/// Cloning (via `medius_device_with_mock`) shares state, so a configured mock drives a real `Device`.
 pub struct MediusMockBox {
     pub(crate) inner: MockBox,
 }
@@ -28,7 +27,6 @@ pub extern "C" fn medius_mock_new() -> *mut MediusMockBox {
 }
 
 /// Clone a mock handle: another handle sharing the same recorded state (like `MockBox::clone`).
-/// Null in -> null out.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_mock_clone(mock: *const MediusMockBox) -> *mut MediusMockBox {
     guard(std::ptr::null_mut(), || {
@@ -173,8 +171,7 @@ pub unsafe extern "C" fn medius_mock_set_movement_riding(
     });
 }
 
-/// Set the emit-rate pacing mode the mock answers to an OPTION(EMIT) query; `hz` matters only for
-/// `Fixed`.
+/// Set the emit-rate pacing mode the mock answers to an OPTION(EMIT) query; `hz` matters only for `Fixed`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_mock_set_emit_pace(
     mock: *mut MediusMockBox,
@@ -183,6 +180,26 @@ pub unsafe extern "C" fn medius_mock_set_emit_pace(
 ) {
     with_mock(mock, |m| {
         let _ = m.clone().with_emit_pace(emit_pace_to_medius(mode, hz));
+    });
+}
+
+/// Set the [`ClipStatus`](medius::ClipStatus) the mock answers to `medius_clip_query_status`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn medius_mock_set_clip_status(
+    mock: *mut MediusMockBox,
+    value: MediusClipStatus,
+) {
+    with_mock(mock, |m| m.set_clip_status(value.into()));
+}
+
+/// Set the [`ClipSettings`](medius::ClipSettings) the mock answers to `medius_clip_query_config`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn medius_mock_set_clip_settings(
+    mock: *mut MediusMockBox,
+    value: MediusClipSettings,
+) {
+    with_mock(mock, |m| {
+        m.set_clip_settings(crate::convert::clip_settings_from_c(&value))
     });
 }
 
@@ -226,43 +243,29 @@ pub unsafe extern "C" fn medius_mock_push_log(
     });
 }
 
-/// Push a MOUSE_EVENT as if the box emitted it (surfaces as a `Mouse` catch event).
+/// Push a MOTION_EVENT as if the box emitted it (surfaces as a `Motion` catch event).
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn medius_mock_push_event(
+pub unsafe extern "C" fn medius_mock_push_motion(
     mock: *mut MediusMockBox,
     seq: u8,
-    report: MediusMouseEvent,
+    event: MediusMotionEvent,
 ) {
-    with_mock(mock, |m| m.push_event(seq, report.into()));
+    with_mock(mock, |m| m.push_motion(seq, event.dx, event.dy, event.dz));
 }
 
-/// Push a KB_EVENT as if the box emitted it (surfaces as a `Keyboard` catch event).
+/// Push a USAGE_EVENT as if the box emitted it (surfaces as a `Usages` catch event).
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn medius_mock_push_kb_event(
+pub unsafe extern "C" fn medius_mock_push_usages(
     mock: *mut MediusMockBox,
     seq: u8,
-    event: *const MediusKeyboardEvent,
+    event: *const MediusUsageEvent,
 ) {
     with_mock(mock, |m| {
         if event.is_null() {
             return;
         }
-        m.push_kb_event(seq, &(unsafe { &*event }).into());
-    });
-}
-
-/// Push a CONS_EVENT as if the box emitted it (surfaces as a `Media` catch event).
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn medius_mock_push_cons_event(
-    mock: *mut MediusMockBox,
-    seq: u8,
-    event: *const MediusMediaEvent,
-) {
-    with_mock(mock, |m| {
-        if event.is_null() {
-            return;
-        }
-        m.push_cons_event(seq, &(unsafe { &*event }).into());
+        let usages = crate::convert::usage_event_to_medius(unsafe { &*event });
+        m.push_usages(seq, &usages);
     });
 }
 
@@ -297,9 +300,7 @@ pub unsafe extern "C" fn medius_mock_clear_recorded(mock: *mut MediusMockBox) {
     with_mock(mock, |m| m.clear_recorded());
 }
 
-/// Read recorded frame `idx`: its type to `*out_ty`, its SEQ to `*out_seq`, and up to `cap` payload
-/// bytes to `payload_buf`. Returns the full payload length (may exceed `cap`), or 0 if `idx` is out
-/// of range. Out-pointers may be null to skip them.
+/// Read recorded frame `idx`: type to `*out_ty`, SEQ to `*out_seq`, up to `cap` payload bytes to `payload_buf`; returns the full payload length, or 0 if `idx` is out of range.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_mock_recorded_frame(
     mock: *mut MediusMockBox,

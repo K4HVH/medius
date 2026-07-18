@@ -1,4 +1,4 @@
-//! Device `LOG` frame value types — severity level and the decoded line.
+//! Device `LOG` frame value types: severity level and the decoded line.
 
 use crate::protocol::opcode::{LOG_DEBUG, LOG_ERROR, LOG_INFO, LOG_VERBOSE, LOG_WARN};
 

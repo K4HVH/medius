@@ -2,17 +2,18 @@
 
 use std::os::raw::c_char;
 
-/// Largest number of pressed keys / active media usages in one catch snapshot. The wire format
-/// length-prefixes both lists with a `u8`, so 256 can never truncate.
-pub const MEDIUS_MAX_KEYS: usize = 256;
-/// See [`MEDIUS_MAX_KEYS`].
-pub const MEDIUS_MAX_MEDIA_KEYS: usize = 256;
+/// Largest number of held usages in one catch snapshot.
+pub const MEDIUS_MAX_USAGES: usize = 256;
+/// Largest number of entries in a decoded `RESP(LOCKS)`.
+pub const MEDIUS_MAX_LOCKS: usize = 256;
 /// Capacity for a log line's text (the wire payload is at most 512 bytes).
 pub const MEDIUS_MAX_LOG_TEXT: usize = 512;
 /// Capacity for a discovered serial-port path.
 pub const MEDIUS_MAX_PATH: usize = 512;
 /// Capacity for a cloned device's product string (the wire caps it at 127 bytes).
 pub const MEDIUS_MAX_PRODUCT: usize = 128;
+/// Capacity for the box name string (the wire caps it at 32 bytes; +1 for the NUL terminator).
+pub const MEDIUS_MAX_NAME: usize = 33;
 /// Capacity for a control adapter's serial string.
 pub const MEDIUS_MAX_SERIAL: usize = 128;
 
@@ -21,7 +22,8 @@ pub const MEDIUS_CATCH_MASK_MOTION: u8 = 0x01;
 pub const MEDIUS_CATCH_MASK_WHEEL: u8 = 0x02;
 pub const MEDIUS_CATCH_MASK_BUTTONS: u8 = 0x04;
 pub const MEDIUS_CATCH_MASK_KEYS: u8 = 0x08;
-pub const MEDIUS_CATCH_MASK_ALL: u8 = 0x0F;
+pub const MEDIUS_CATCH_MASK_MEDIA: u8 = 0x10;
+pub const MEDIUS_CATCH_MASK_ALL: u8 = 0x1F;
 
 /// A keyboard key, addressed by HID Keyboard/Keypad usage. Modifiers are `0xE0..=0xE7`.
 pub type MediusKey = u8;
@@ -29,8 +31,6 @@ pub type MediusKey = u8;
 pub type MediusMediaKey = u16;
 /// A CATCH subscription mask, an OR of the `MEDIUS_CATCH_MASK_*` bits.
 pub type MediusCatchMask = u8;
-
-// --- parameter enums (repr(u8); discriminants are the wire bytes) ---
 
 /// A mouse button. Values match the firmware button id.
 #[repr(u8)]
@@ -99,13 +99,15 @@ pub enum MediusLockDirection {
     Negative = 2,
 }
 
-/// A whole input class for a blanket lock.
+/// A whole input group for a blanket lock or a clip auto-lock scope.
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MediusBlanket {
-    Keys = 0,
-    Media = 1,
+    Aim = 0,
+    Wheel = 1,
     Buttons = 2,
+    Keys = 3,
+    Media = 4,
 }
 
 /// A device log line's severity.
@@ -133,25 +135,29 @@ pub enum MediusFrameType {
     Led = 0x09,
     Lock = 0x0A,
     Catch = 0x0B,
-    MouseEvent = 0x0C,
-    KbEvent = 0x0F,
-    ConsEvent = 0x10,
+    MotionEvent = 0x0C,
+    UsageEvent = 0x0F,
     Option = 0x11,
+    ClipAppend = 0x12,
+    ClipCtrl = 0x13,
+    ClipSet = 0x14,
+    ClipTrigger = 0x15,
 }
 
 /// Which arm of a [`MediusCatchEvent`] is populated.
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MediusCatchEventKind {
-    Mouse = 0,
-    Keyboard = 1,
-    Media = 2,
+    /// A relative-axis event (`data.motion`).
+    Motion = 0,
+    /// A held-usage snapshot for one class (`data.usages`).
+    Usages = 1,
 }
 
-/// Which arm of a [`MediusInput`] is populated.
+/// The class of a [`MediusUsage`] (button / key / media).
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum MediusInputKind {
+pub enum MediusClass {
     Button = 0,
     Key = 1,
     Media = 2,
@@ -165,29 +171,60 @@ pub enum MediusMotionKind {
     Wheel = 1,
 }
 
-/// Which axis/button a lock targets.
+/// What a lock addresses: a relative axis, or a momentary usage (button/key/media).
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MediusLockTargetKind {
+    /// The X cursor axis.
     X = 0,
+    /// The Y cursor axis.
     Y = 1,
+    /// The wheel.
     Wheel = 2,
-    Button = 3,
+    /// A momentary usage; read `usage`.
+    Usage = 3,
 }
 
-// --- data-carrying parameter structs ---
-
-/// A momentary usage for `medius_device_inject`. `value` holds the button id, key usage, or media
-/// usage depending on `kind`. Build with the `medius_input_*` helpers.
+/// A momentary usage for `medius_device_inject`; build with the `medius_usage_*` helpers.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct MediusInput {
-    pub kind: MediusInputKind,
-    pub value: u16,
+pub struct MediusUsage {
+    pub kind: MediusClass,
+    pub id: u16,
 }
 
-/// A relative-axis drive for `medius_device_move_axis`. For `Cursor`, `dx`/`dy` apply; for `Wheel`,
-/// `wheel` applies. Build with the `medius_motion_*` helpers.
+/// Which edge of a trigger usage fires its binding (matches the lock direction wire values).
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MediusEdge {
+    Both = 0,
+    Press = 1,
+    Release = 2,
+}
+
+/// The engine action a trigger binding drives.
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MediusClipAction {
+    Start = 0,
+    Stop = 1,
+    Pause = 2,
+    Resume = 3,
+    Restart = 4,
+    Toggle = 5,
+}
+
+/// One clip trigger binding: `on`'s `edge` drives `action`; `consume` suppresses the input from the game.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MediusClipTrigger {
+    pub on: MediusUsage,
+    pub edge: MediusEdge,
+    pub action: MediusClipAction,
+    pub consume: u8,
+}
+
+/// A relative-axis drive for `medius_device_move_axis`; build with the `medius_motion_*` helpers.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MediusMotion {
@@ -197,15 +234,13 @@ pub struct MediusMotion {
     pub wheel: i16,
 }
 
-/// A lock target. `button` is meaningful only when `kind` is `Button`.
+/// A lock target: an axis (`kind` is `X`/`Y`/`Wheel`) or a momentary usage (`kind` is `Usage`, read `usage`).
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MediusLockTarget {
     pub kind: MediusLockTargetKind,
-    pub button: MediusButton,
+    pub usage: MediusUsage,
 }
-
-// --- value (query result) structs ---
 
 /// The cloned device's primary kind, from its Boot-interface protocol.
 #[repr(u8)]
@@ -216,7 +251,7 @@ pub enum MediusDeviceKind {
     Mouse = 2,
 }
 
-/// Decoded firmware version. `mac` is the device chip's base MAC — a stable per-box identity.
+/// Decoded firmware version; `mac` is the device chip's base MAC, a stable per-box identity.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MediusVersion {
@@ -225,6 +260,7 @@ pub struct MediusVersion {
     pub fw_minor: u8,
     pub fw_patch: u8,
     pub mac: [u8; 6],
+    pub name: [c_char; MEDIUS_MAX_NAME],
 }
 
 /// Box health flags (each field is 0 or 1).
@@ -274,8 +310,7 @@ pub struct MediusCaps {
     pub kbd_change_driven: u8,
 }
 
-/// The cloned device's USB identity, primary kind, and product string. `product` is a NUL-terminated
-/// UTF-8 C string (empty when the device serves none).
+/// The cloned device's USB identity, primary kind, and product string.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct MediusDeviceInfo {
@@ -313,11 +348,22 @@ pub struct MediusStats {
     pub config_count: u16,
 }
 
-/// The active lock bitmask. Use `medius_locks_is_locked` to test a target/direction.
+/// One entry in a decoded `RESP(LOCKS)`: the locked target and which edges are locked.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MediusLockEntry {
+    pub target: MediusLockTarget,
+    pub is_blanket: bool,
+    pub positive: bool,
+    pub negative: bool,
+}
+
+/// The active locks: `entries[0..n]`. Use `medius_locks_is_locked` to test a target/direction.
+#[repr(C)]
+#[derive(Clone, Copy)]
 pub struct MediusLocks {
-    pub mask: u16,
+    pub n: u16,
+    pub entries: [MediusLockEntry; MEDIUS_MAX_LOCKS],
 }
 
 /// The active catch subscription mask plus the box-side dropped-event count.
@@ -337,14 +383,62 @@ pub struct MediusImperfectStatus {
     pub clone_imperfect: u8,
 }
 
-/// Emit-rate pacing mode plus the rate in effect. `fixed_hz` is the rate requested for `Fixed` (0
-/// otherwise); `resolved_hz` is the ceiling actually in effect (0 = learnt/adaptive).
+/// Emit-rate pacing mode plus the rate in effect.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MediusEmitPaceStatus {
     pub mode: MediusEmitMode,
     pub fixed_hz: u16,
     pub resolved_hz: u16,
+}
+
+/// The device-side clip lifecycle state (`medius_clip_query_status`).
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MediusClipState {
+    /// No clip playing (empty, or a loaded clip parked at its start).
+    Idle = 0,
+    /// Draining the ring, one entry per native frame.
+    Playing = 1,
+    /// Halted mid-clip; the cursor and any held usages are retained.
+    Paused = 2,
+    /// An append was dropped or the ring overflowed; recover with `medius_clip_clear`.
+    Faulted = 3,
+}
+
+/// A snapshot of the device-side clip ring and playback counters (the runtime view of `RESP(CLIP)`).
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MediusClipStatus {
+    pub state: MediusClipState,
+    pub free: u32,
+    /// The retained clip size in bytes (streaming: buffered-but-undrained bytes).
+    pub total: u32,
+    /// Bytes played from the clip start (retained progress; ~0 while streaming).
+    pub played: u32,
+    pub ticks: u32,
+    pub underruns: u16,
+    pub overruns: u16,
+    pub seq_gaps: u16,
+    pub held_n: u16,
+    pub held: [MediusUsage; MEDIUS_MAX_USAGES],
+}
+
+/// The max clip trigger bindings in a `MediusClipSettings` (matches the firmware `CLIP_TRIG_MAX`).
+pub const MEDIUS_CLIP_TRIG_MAX: usize = 8;
+
+/// The clip configuration read back from `RESP(CLIP)`: autolock scope, loop/retain scalars, and triggers.
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct MediusClipSettings {
+    /// The autolock scope as `CLIP_LOCK_*` bits (`medius_clip_set_autolock`).
+    pub autolock_bits: u8,
+    pub loop_: u8,
+    pub retain: u8,
+    pub finalized: u8,
+    pub triggers: [MediusClipTrigger; MEDIUS_CLIP_TRIG_MAX],
+    /// The number of valid entries in `triggers`.
+    pub n: u8,
 }
 
 /// Host-side always-on counters.
@@ -378,46 +472,35 @@ pub struct MediusBoxInfo {
     pub device: MediusDeviceInfo,
 }
 
-// --- catch-stream snapshots ---
-
-/// One physical mouse report. `buttons` is a bitmask by button id.
+/// One relative-axis catch event: the user's real motion at the merge point, before lock suppression or injection.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct MediusMouseEvent {
-    pub buttons: u8,
+pub struct MediusMotionEvent {
+    /// Relative X this report (right positive).
     pub dx: i16,
+    /// Relative Y this report (down positive).
     pub dy: i16,
-    pub wheel: i16,
+    /// Wheel delta this report (up positive).
+    pub dz: i16,
 }
 
-/// One physical keyboard snapshot: a modifier bitmap plus the pressed non-modifier keycodes in
-/// `keys[0..n_keys]`.
+/// One held-usage snapshot: every held usage of one class in `usages[0..n]`.
 #[repr(C)]
 #[derive(Clone, Copy)]
-pub struct MediusKeyboardEvent {
-    pub modifiers: u8,
-    pub n_keys: u8,
-    pub keys: [u8; MEDIUS_MAX_KEYS],
-}
-
-/// One physical media snapshot: the active Consumer usages in `keys[0..n_keys]`.
-#[repr(C)]
-#[derive(Clone, Copy)]
-pub struct MediusMediaEvent {
-    pub n_keys: u8,
-    pub keys: [u16; MEDIUS_MAX_MEDIA_KEYS],
+pub struct MediusUsageEvent {
+    pub n: u16,
+    pub usages: [MediusUsage; MEDIUS_MAX_USAGES],
 }
 
 /// The populated arm of a [`MediusCatchEvent`]; read the field matching the event's `kind`.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub union MediusCatchEventData {
-    pub mouse: MediusMouseEvent,
-    pub keyboard: MediusKeyboardEvent,
-    pub media: MediusMediaEvent,
+    pub motion: MediusMotionEvent,
+    pub usages: MediusUsageEvent,
 }
 
-/// One catch-stream event. Read `data.mouse` / `data.keyboard` / `data.media` per `kind`.
+/// One catch-stream event. Read `data.motion` / `data.usages` per `kind`.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct MediusCatchEvent {

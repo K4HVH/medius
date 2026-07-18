@@ -42,6 +42,34 @@ class Action(IntEnum):
     FORCE_RELEASE = 2
 
 
+class ClipState(IntEnum):
+    """The device-side clip lifecycle state (`ClipStatus.state`)."""
+
+    IDLE = 0
+    PLAYING = 1
+    PAUSED = 2
+    FAULTED = 3
+
+
+class Edge(IntEnum):
+    """Which edge of a trigger usage fires its `ClipTrigger`."""
+
+    BOTH = 0
+    PRESS = 1
+    RELEASE = 2
+
+
+class ClipAction(IntEnum):
+    """The engine action a `ClipTrigger` drives."""
+
+    START = 0
+    STOP = 1
+    PAUSE = 2
+    RESUME = 3
+    RESTART = 4
+    TOGGLE = 5
+
+
 class RebootTarget(IntEnum):
     DEVICE_DOWNLOAD = 0
     HOST_DOWNLOAD = 1
@@ -78,13 +106,16 @@ class LockTargetKind(IntEnum):
     X = 0
     Y = 1
     WHEEL = 2
-    BUTTON = 3
+    USAGE = 3
 
 
 class Blanket(IntEnum):
-    KEYS = 0
-    MEDIA = 1
+    # ABI-local ordinals matching the Rust MediusBlanket, not the CLIP_LOCK_* wire bits.
+    AIM = 0
+    WHEEL = 1
     BUTTONS = 2
+    KEYS = 3
+    MEDIA = 4
 
 
 class LogLevel(IntEnum):
@@ -96,9 +127,8 @@ class LogLevel(IntEnum):
 
 
 class CatchEventKind(IntEnum):
-    MOUSE = 0
-    KEYBOARD = 1
-    MEDIA = 2
+    MOTION = 0
+    USAGES = 1
 
 
 class MotionKind(IntEnum):
@@ -106,7 +136,7 @@ class MotionKind(IntEnum):
     WHEEL = 1
 
 
-class InputKind(IntEnum):
+class Class(IntEnum):
     BUTTON = 0
     KEY = 1
     MEDIA = 2
@@ -123,10 +153,13 @@ class FrameType(IntEnum):
     LED = 9
     LOCK = 10
     CATCH = 11
-    MOUSE_EVENT = 12
-    KB_EVENT = 15
-    CONS_EVENT = 16
+    MOTION_EVENT = 12
+    USAGE_EVENT = 15
     OPTION = 17
+    CLIP_APPEND = 18
+    CLIP_CTRL = 19
+    CLIP_SET = 20
+    CLIP_TRIGGER = 21
 
 
 class CatchMask(IntFlag):
@@ -134,7 +167,8 @@ class CatchMask(IntFlag):
     WHEEL = 2
     BUTTONS = 4
     KEYS = 8
-    ALL = 15
+    MEDIA = 16
+    ALL = 31
 
 
 class Key(IntEnum):

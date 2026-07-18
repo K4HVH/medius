@@ -1,17 +1,15 @@
-//! CATCH command (§3.9): payload bytes, the `CatchMask` / `MouseEvent` / `CatchState` types, the
-//! `EVENT` decode through `parse_resp` and the reader, the HEALTH `catch_on` bit, and the
-//! `EventStream` lifecycle. Bytes are pinned to the firmware wire format in `ctrl_proto.h`.
+//! CATCH command (§3.9): payload bytes, the mask/event/snapshot/state decode, the HEALTH catch_on bit, and EventStream lifecycle; bytes pinned to the firmware wire format in ctrl_proto.h.
 
 #[cfg(feature = "mock")]
 use crate::protocol::FrameType;
 use crate::protocol::command::catch_payload;
-use crate::protocol::opcode::{CATCH_BUTTONS, CATCH_KEYS, CATCH_MOTION, CATCH_WHEEL};
+use crate::protocol::opcode::{CATCH_BUTTONS, CATCH_KEYS, CATCH_MEDIA, CATCH_MOTION, CATCH_WHEEL};
 use crate::protocol::{Resp, parse_resp};
-use crate::types::{Button, CatchMask, CatchState, Health, MouseEvent};
+use crate::types::{CatchMask, CatchState, Class, Health, MotionEvent, UsageSnapshot};
 
 #[test]
 fn catch_payload_bytes() {
-    assert_eq!(catch_payload(CatchMask::all().bits()), [0x0F]);
+    assert_eq!(catch_payload(CatchMask::all().bits()), [0x1F]);
     assert_eq!(catch_payload(0), [0x00]);
 }
 
@@ -21,7 +19,8 @@ fn catch_mask_class_bits_and_ops() {
     assert_eq!(CatchMask::WHEEL.bits(), CATCH_WHEEL);
     assert_eq!(CatchMask::BUTTONS.bits(), CATCH_BUTTONS);
     assert_eq!(CatchMask::KEYS.bits(), CATCH_KEYS);
-    assert_eq!(CatchMask::all().bits(), 0x0F);
+    assert_eq!(CatchMask::MEDIA.bits(), CATCH_MEDIA);
+    assert_eq!(CatchMask::all().bits(), 0x1F);
     assert!(CatchMask::empty().is_empty());
 
     let m = CatchMask::MOTION | CatchMask::BUTTONS;
@@ -30,37 +29,37 @@ fn catch_mask_class_bits_and_ops() {
     assert!(m.contains(CatchMask::BUTTONS));
     assert!(!m.contains(CatchMask::WHEEL));
     assert_eq!(
-        CatchMask::MOTION | CatchMask::WHEEL | CatchMask::BUTTONS | CatchMask::KEYS,
+        CatchMask::MOTION
+            | CatchMask::WHEEL
+            | CatchMask::BUTTONS
+            | CatchMask::KEYS
+            | CatchMask::MEDIA,
         CatchMask::all()
     );
 
-    // Bits outside the valid mask are dropped.
     assert_eq!(CatchMask::from_bits_truncate(0xFF), CatchMask::all());
-    assert_eq!(CatchMask::from_bits_truncate(0xF0), CatchMask::empty());
+    assert_eq!(CatchMask::from_bits_truncate(0xE0), CatchMask::empty());
 }
 
 #[test]
-fn input_report_decodes_snapshot() {
-    // buttons left+side1 (0x09), dx=+300, dy=-50, wheel=-1
-    let r = MouseEvent::from_payload(&[0x09, 0x2C, 0x01, 0xCE, 0xFF, 0xFF, 0xFF]).unwrap();
-    assert_eq!(r.buttons, 0x09);
-    assert_eq!(r.dx, 300);
-    assert_eq!(r.dy, -50);
-    assert_eq!(r.wheel, -1);
-    assert!(r.is_pressed(Button::Left));
-    assert!(r.is_pressed(Button::Side1));
-    assert!(!r.is_pressed(Button::Right));
-    assert!(!r.is_pressed(Button::Side2));
+fn motion_event_decodes() {
+    let r = MotionEvent::from_payload(&[0x2C, 0x01, 0xCE, 0xFF, 0xFF, 0xFF]).unwrap();
+    assert_eq!((r.dx, r.dy, r.dz), (300, -50, -1));
+    assert!(MotionEvent::from_payload(&[0, 0, 0, 0, 0]).is_none()); // needs 6
 }
 
 #[test]
-fn input_report_truncated_is_none() {
-    assert!(MouseEvent::from_payload(&[0, 0, 0, 0, 0, 0]).is_none()); // needs 7
+fn usage_snapshot_decodes() {
+    let s = UsageSnapshot::from_payload(&[2, 0, 0, 0, 1, 0x04, 0x00]).unwrap();
+    assert_eq!(s.usages.len(), 2);
+    assert_eq!(s.class(), Some(Class::Button));
+    assert!(s.is_held(crate::Button::Left));
+    assert!(s.is_held(crate::Key::A));
+    assert!(!s.is_held(crate::Button::Right));
 }
 
 #[test]
 fn catch_state_decodes_mask_and_drops() {
-    // what=7, mask=BUTTONS (0x04), dropped=0x01020304 (LE)
     let c = CatchState::from_payload(&[7, 0x04, 0x04, 0x03, 0x02, 0x01]).unwrap();
     assert_eq!(c.mask, CatchMask::BUTTONS);
     assert_eq!(c.dropped, 0x01020304);
@@ -69,7 +68,7 @@ fn catch_state_decodes_mask_and_drops() {
 
 #[test]
 fn decode_catch_through_parse_resp() {
-    let Some(Resp::Catch(c)) = parse_resp(&[7, 0x0F, 0, 0, 0, 0]) else {
+    let Some(Resp::Catch(c)) = parse_resp(&[7, 0x1F, 0, 0, 0, 0]) else {
         panic!("expected Catch");
     };
     assert_eq!(c.mask, CatchMask::all());
@@ -82,7 +81,6 @@ fn health_catch_on_bit_roundtrips() {
     assert!(h.catch_on);
     assert!(!h.lock_on && !h.link_up);
     assert_eq!(h.to_flags(), 0x40);
-    // survives a full round-trip with every defined bit set
     assert_eq!(Health::from_flags(0x7F).to_flags(), 0x7F);
 }
 
@@ -100,41 +98,36 @@ fn dropping_the_stream_unsubscribes() {
         .into_iter()
         .filter(|f| f.ty == FrameType::Catch)
         .collect();
-    assert_eq!(catch_frames.first().unwrap().payload, vec![0x0F]); // subscribe (all classes)
-    assert_eq!(catch_frames.last().unwrap().payload, vec![0x00]); // unsubscribe
+    assert_eq!(catch_frames.first().unwrap().payload, vec![0x1F]);
+    assert_eq!(catch_frames.last().unwrap().payload, vec![0x00]);
 }
 
 #[cfg(feature = "mock")]
 #[test]
-fn pushed_event_arrives_on_the_stream() {
-    use crate::{Button, CatchEvent, CatchMask, Device, MockBox, MouseEvent};
+fn pushed_events_arrive_on_the_stream() {
+    use crate::{Button, CatchEvent, CatchMask, Device, MockBox, Usage};
     use std::time::Duration;
     let mock = MockBox::new();
     let device = Device::with_mock(mock.clone());
     let stream = device.catch_events(CatchMask::all()).unwrap();
-    mock.push_event(
-        0,
-        MouseEvent {
-            buttons: 0x08,
-            dx: 5,
-            dy: -7,
-            wheel: 1,
-        },
-    );
-    let event = stream
-        .recv_timeout(Duration::from_secs(1))
-        .expect("event delivered");
-    let CatchEvent::Mouse(r) = event else {
-        panic!("expected a mouse event, got {event:?}");
+    mock.push_motion(0, 5, -7, 1);
+    mock.push_usages(1, &[Usage::from(Button::Side1)]);
+
+    let CatchEvent::Motion(r) = stream.recv_timeout(Duration::from_secs(1)).expect("motion") else {
+        panic!("expected a motion event");
     };
-    assert_eq!((r.dx, r.dy, r.wheel), (5, -7, 1));
-    assert!(r.is_pressed(Button::Side1));
+    assert_eq!((r.dx, r.dy, r.dz), (5, -7, 1));
+
+    let CatchEvent::Usages(u) = stream.recv_timeout(Duration::from_secs(1)).expect("usages") else {
+        panic!("expected a usage event");
+    };
+    assert!(u.is_held(Button::Side1));
 }
 
 #[cfg(feature = "mock")]
 #[test]
 fn catch_buffer_drops_oldest_on_overflow() {
-    use crate::{Button, CatchEvent, CatchMask, Device, MockBox, MouseEvent};
+    use crate::{CatchEvent, CatchMask, Device, MockBox};
     use std::time::{Duration, Instant};
     let mock = MockBox::new();
     let device = Device::with_mock(mock.clone());
@@ -143,17 +136,8 @@ fn catch_buffer_drops_oldest_on_overflow() {
     const TOTAL: u16 = 300;
     const KEPT: u16 = 256; // CATCH_CAPACITY
     for i in 0..TOTAL {
-        mock.push_event(
-            (i & 0xff) as u8,
-            MouseEvent {
-                buttons: 0,
-                dx: i as i16, // a monotonic marker so we can tell oldest from newest
-                dy: 0,
-                wheel: 0,
-            },
-        );
+        mock.push_motion((i & 0xff) as u8, i as i16, 0, 0); // dx is a monotonic marker
     }
-    // Wait until the reader has processed every push (drop count reaches the overflow).
     let want_dropped = (TOTAL - KEPT) as u64;
     let deadline = Instant::now() + Duration::from_secs(2);
     while stream.dropped() < want_dropped && Instant::now() < deadline {
@@ -164,17 +148,15 @@ fn catch_buffer_drops_oldest_on_overflow() {
         want_dropped,
         "exactly the overflow count was dropped"
     );
-    // The freshest survive: the oldest readable event is the first one NOT evicted, not dx=0.
-    let event = stream
+    let CatchEvent::Motion(first) = stream
         .recv_timeout(Duration::from_secs(1))
-        .expect("an event survived");
-    let CatchEvent::Mouse(first) = event else {
-        panic!("expected a mouse event, got {event:?}");
+        .expect("survived")
+    else {
+        panic!("expected a motion event");
     };
     assert_eq!(
         first.dx,
         (TOTAL - KEPT) as i16,
         "the oldest events were dropped, the newest kept"
     );
-    assert!(!first.is_pressed(Button::Left));
 }

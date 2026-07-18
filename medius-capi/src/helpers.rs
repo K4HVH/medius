@@ -1,33 +1,32 @@
-//! Pure, device-free helpers: parameter constructors and inspectors over the value types. These
-//! mirror the equivalent `medius` methods so a C caller has the same vocabulary.
+//! Pure, device-free helpers: parameter constructors and inspectors mirroring the `medius` value-type methods.
 
 use crate::ctypes::*;
 use crate::error::guard;
 
-/// Build an [`MediusInput`] addressing a mouse button.
+/// Build an [`MediusUsage`] addressing a mouse button.
 #[unsafe(no_mangle)]
-pub extern "C" fn medius_input_button(button: MediusButton) -> MediusInput {
-    MediusInput {
-        kind: MediusInputKind::Button,
-        value: button as u16,
+pub extern "C" fn medius_usage_button(button: MediusButton) -> MediusUsage {
+    MediusUsage {
+        kind: MediusClass::Button,
+        id: button as u16,
     }
 }
 
-/// Build an [`MediusInput`] addressing a keyboard key.
+/// Build an [`MediusUsage`] addressing a keyboard key.
 #[unsafe(no_mangle)]
-pub extern "C" fn medius_input_key(key: MediusKey) -> MediusInput {
-    MediusInput {
-        kind: MediusInputKind::Key,
-        value: key as u16,
+pub extern "C" fn medius_usage_key(key: MediusKey) -> MediusUsage {
+    MediusUsage {
+        kind: MediusClass::Key,
+        id: key as u16,
     }
 }
 
-/// Build an [`MediusInput`] addressing a media key.
+/// Build an [`MediusUsage`] addressing a media key.
 #[unsafe(no_mangle)]
-pub extern "C" fn medius_input_media(media: MediusMediaKey) -> MediusInput {
-    MediusInput {
-        kind: MediusInputKind::Media,
-        value: media,
+pub extern "C" fn medius_usage_media(media: MediusMediaKey) -> MediusUsage {
+    MediusUsage {
+        kind: MediusClass::Media,
+        id: media,
     }
 }
 
@@ -53,38 +52,62 @@ pub extern "C" fn medius_motion_wheel(delta: i16) -> MediusMotion {
     }
 }
 
-/// The wire `target` byte for a lock target (X=0, Y=1, Wheel=2, Button = 3 + button id).
-fn lock_target_wire(t: MediusLockTarget) -> u8 {
-    match t.kind {
-        MediusLockTargetKind::X => 0,
-        MediusLockTargetKind::Y => 1,
-        MediusLockTargetKind::Wheel => 2,
-        MediusLockTargetKind::Button => 3 + (t.button as u8),
+/// Build a [`MediusLockTarget`] addressing an axis (`kind` must be `X`, `Y`, or `Wheel`).
+#[unsafe(no_mangle)]
+pub extern "C" fn medius_lock_target_axis(kind: MediusLockTargetKind) -> MediusLockTarget {
+    MediusLockTarget {
+        kind,
+        usage: MediusUsage {
+            kind: MediusClass::Button,
+            id: 0,
+        },
     }
 }
 
-/// Whether `target`/`dir` is locked in `locks` (`Both` requires both edges). Mirrors
-/// `medius::Locks::is_locked`; `Locks` has no public constructor, so the bit logic is replicated here.
+/// Build a [`MediusLockTarget`] addressing a momentary usage (button, key, or media).
 #[unsafe(no_mangle)]
-pub extern "C" fn medius_locks_is_locked(
-    locks: MediusLocks,
+pub extern "C" fn medius_lock_target_usage(usage: MediusUsage) -> MediusLockTarget {
+    MediusLockTarget {
+        kind: MediusLockTargetKind::Usage,
+        usage,
+    }
+}
+
+/// Whether `target`/`dir` is locked in `locks` (`Both` requires both edges). Mirrors `medius::Locks::is_locked`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn medius_locks_is_locked(
+    locks: *const MediusLocks,
     target: MediusLockTarget,
     dir: MediusLockDirection,
 ) -> bool {
     guard(false, || {
-        let base = lock_target_wire(target) * 2;
-        let pos = locks.mask & (1 << base) != 0;
-        let neg = locks.mask & (1 << (base + 1)) != 0;
-        match dir {
-            MediusLockDirection::Both => pos && neg,
-            MediusLockDirection::Positive => pos,
-            MediusLockDirection::Negative => neg,
+        if locks.is_null() {
+            return false;
         }
+        let locks = unsafe { &*locks };
+        let n = (locks.n as usize).min(MEDIUS_MAX_LOCKS);
+        let is_usage = target.kind == MediusLockTargetKind::Usage;
+        locks.entries[..n].iter().any(|e| {
+            // A blanket covers any usage of its class; a specific entry matches its exact target. For an
+            // axis target only the kind is significant (the usage field is an unused sentinel).
+            let covers = if e.is_blanket {
+                is_usage
+                    && e.target.kind == MediusLockTargetKind::Usage
+                    && e.target.usage.kind == target.usage.kind
+            } else {
+                e.target.kind == target.kind && (!is_usage || e.target.usage == target.usage)
+            };
+            covers
+                && match dir {
+                    MediusLockDirection::Both => e.positive && e.negative,
+                    MediusLockDirection::Positive => e.positive,
+                    MediusLockDirection::Negative => e.negative,
+                }
+        })
     })
 }
 
-/// The native report rate in Hz, written to `out_hz`. Returns false (and leaves `out_hz` untouched)
-/// when there is no continuous cadence. Delegates to `medius::Rate::native_hz`.
+/// The native report rate in Hz written to `out_hz`, false when there is no continuous cadence. Delegates to `medius::Rate::native_hz`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_rate_native_hz(rate: MediusRate, out_hz: *mut f32) -> bool {
     guard(false, || {
@@ -101,55 +124,35 @@ pub unsafe extern "C" fn medius_rate_native_hz(rate: MediusRate, out_hz: *mut f3
     })
 }
 
-/// Whether `button` is held in a mouse snapshot. Delegates to `medius::MouseEvent::is_pressed`.
+/// Whether `usage` is held in a usage snapshot. Mirrors `medius::UsageSnapshot::is_held`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn medius_mouse_event_is_pressed(
-    event: *const MediusMouseEvent,
-    button: MediusButton,
-) -> bool {
-    guard(false, || {
-        if event.is_null() {
-            return false;
-        }
-        let native: medius::MouseEvent = (*unsafe { &*event }).into();
-        native.is_pressed(button.into())
-    })
-}
-
-/// Whether `key` is held in a keyboard snapshot (modifier from the bitmap, else searched in the
-/// keycode list). Mirrors `medius::KeyboardEvent::is_pressed` without allocating.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn medius_keyboard_event_is_pressed(
-    event: *const MediusKeyboardEvent,
-    key: MediusKey,
+pub unsafe extern "C" fn medius_usage_event_is_held(
+    event: *const MediusUsageEvent,
+    usage: MediusUsage,
 ) -> bool {
     guard(false, || {
         if event.is_null() {
             return false;
         }
         let e = unsafe { &*event };
-        if (0xE0..=0xE7).contains(&key) {
-            e.modifiers & (1 << (key - 0xE0)) != 0
-        } else {
-            let n = (e.n_keys as usize).min(MEDIUS_MAX_KEYS);
-            e.keys[..n].contains(&key)
-        }
+        let n = (e.n as usize).min(MEDIUS_MAX_USAGES);
+        e.usages[..n].contains(&usage)
     })
 }
 
-/// Whether `media` is active in a media snapshot. Mirrors `medius::MediaEvent::is_pressed`.
+/// Whether the clip is currently holding `usage` down. Mirrors `medius::ClipStatus::is_held`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn medius_media_event_is_pressed(
-    event: *const MediusMediaEvent,
-    media: MediusMediaKey,
+pub unsafe extern "C" fn medius_clip_status_is_held(
+    status: *const MediusClipStatus,
+    usage: MediusUsage,
 ) -> bool {
     guard(false, || {
-        if event.is_null() {
+        if status.is_null() {
             return false;
         }
-        let e = unsafe { &*event };
-        let n = (e.n_keys as usize).min(MEDIUS_MAX_MEDIA_KEYS);
-        e.keys[..n].contains(&media)
+        let s = unsafe { &*status };
+        let n = (s.held_n as usize).min(MEDIUS_MAX_USAGES);
+        s.held[..n].contains(&usage)
     })
 }
 

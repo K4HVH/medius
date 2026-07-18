@@ -1,5 +1,4 @@
-//! Multi-box discovery: enumerate every connected medius box, then open one by identity or by the
-//! kind of device it clones.
+//! Multi-box discovery: enumerate connected medius boxes and open one by identity or clone kind.
 
 use crate::error::{Error, Result};
 use crate::types::{DeviceInfo, DeviceKind, PortInfo, Version};
@@ -7,8 +6,6 @@ use crate::types::{DeviceInfo, DeviceKind, PortInfo, Version};
 use super::Device;
 
 /// One discovered medius box: its serial port, firmware version, and the device it currently clones.
-/// The stable identity is the device MAC ([`BoxInfo::id`]); the CH343 [`serial`](PortInfo::serial) is
-/// a faster scan-time key when the adapter serves one.
 #[derive(Debug, Clone)]
 pub struct BoxInfo {
     /// The control serial port (path + USB ids + serial).
@@ -29,6 +26,11 @@ impl BoxInfo {
     pub fn serial(&self) -> Option<&str> {
         self.port.serial.as_deref()
     }
+
+    /// The box's human-readable name (its readable partner to [`id`](Self::id)), from `RESP(VERSION)`.
+    pub fn name(&self) -> &str {
+        &self.version.name
+    }
 }
 
 fn probe(port: &PortInfo) -> Option<BoxInfo> {
@@ -43,10 +45,7 @@ fn probe(port: &PortInfo) -> Option<BoxInfo> {
 }
 
 impl Device {
-    /// Enumerate every connected medius box: for each CH343 control port, open it, handshake, and
-    /// read its version + cloned-device info. Ports that don't answer a valid handshake are skipped.
-    /// Each box is opened and closed in turn, so this does not disturb a box another handle is driving
-    /// beyond the brief probe.
+    /// Enumerate every connected medius box, reading each one's version and cloned-device info.
     pub fn list() -> Vec<BoxInfo> {
         crate::transport::scan::find_medius()
             .iter()
@@ -54,8 +53,7 @@ impl Device {
             .collect()
     }
 
-    /// Open the box whose identity matches `id` — either its device MAC (hex, separators and case
-    /// ignored) or its CH343 serial. [`Error::NotFound`] if no connected box matches.
+    /// Open the box whose identity matches `id`, either its device MAC or its CH343 serial.
     pub fn open_by_id(id: &str) -> Result<Device> {
         let want: String = id
             .chars()

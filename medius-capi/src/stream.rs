@@ -8,8 +8,7 @@ use crate::ctypes::*;
 use crate::device::MediusDevice;
 use crate::error::{MediusStatus, clear_error, fail, guard, guard_status, record};
 
-/// A live CATCH event stream. Opaque; create with `medius_device_catch_events`, release with
-/// `medius_event_stream_free` (which unsubscribes when the last handle drops).
+/// A live CATCH event stream; create with `medius_device_catch_events`, free with `medius_event_stream_free`.
 pub struct MediusEventStream {
     pub(crate) inner: medius::EventStream,
 }
@@ -19,8 +18,7 @@ pub struct MediusLogStream {
     pub(crate) inner: medius::LogStream,
 }
 
-/// Subscribe to the physical-input event stream for the given class `mask` (the `MEDIUS_CATCH_MASK_*`
-/// bits). Writes the stream handle to `*out`.
+/// Subscribe to the physical-input event stream for class `mask` (`MEDIUS_CATCH_MASK_*` bits); writes the handle to `*out`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_device_catch_events(
     dev: *mut MediusDevice,
@@ -43,8 +41,7 @@ pub unsafe extern "C" fn medius_device_catch_events(
     })
 }
 
-/// Clone an event-stream handle: another handle to the SAME subscription (shared queue, like
-/// `EventStream::clone` in Rust). The subscription ends when the last clone is freed. Null in -> null out.
+/// Clone an event-stream handle onto the same subscription (shared queue); null in returns null out.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_event_stream_clone(
     stream: *const MediusEventStream,
@@ -69,8 +66,7 @@ pub unsafe extern "C" fn medius_event_stream_free(stream: *mut MediusEventStream
     });
 }
 
-/// Block until the next physical-input event, writing it to `*out`. Returns `ErrDisconnected` when the
-/// stream closes (after reset or link loss).
+/// Block until the next physical-input event, writing it to `*out`; `ErrDisconnected` on close.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_event_stream_recv(
     stream: *mut MediusEventStream,

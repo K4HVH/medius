@@ -6,8 +6,9 @@ import ctypes
 from typing import Optional
 
 from . import _native
-from ._enums import Action, Blanket, Button, CatchMask, LedMode, LedTarget, LockDirection, RebootTarget, Status
+from ._enums import Action, Blanket, CatchMask, LedMode, LedTarget, LockDirection, RebootTarget, Status
 from ._errors import MediusError, check
+from ._clip import ClipHandle
 from ._streams import EventStream, LogStream
 from ._types import (
     Caps,
@@ -17,7 +18,7 @@ from ._types import (
     EmitPaceStatus,
     Health,
     ImperfectStatus,
-    Input,
+    Usage,
     Locks,
     LockTarget,
     DeviceInfo,
@@ -32,6 +33,7 @@ from ._types import (
     emit_pace_status_from_c,
     health_from_c,
     imperfect_from_c,
+    locks_from_c,
     rate_from_c,
     stats_from_c,
     version_from_c,
@@ -108,8 +110,6 @@ class Device:
             raise MediusError(Status.ERR_UNKNOWN, "device clone failed")
         return Device(handle)
 
-    # --- movement ---
-
     def move_rel(self, dx, dy):
         check(_native.lib.medius_device_move_rel(self._handle, dx, dy))
 
@@ -119,48 +119,17 @@ class Device:
     def move_axis(self, motion: Motion):
         check(_native.lib.medius_device_move_axis(self._handle, motion._c))
 
-    # --- injection ---
-
-    def inject(self, input: Input, action: Action):
+    def inject(self, input: Usage, action: Action):
         check(_native.lib.medius_device_inject(self._handle, input._c, int(action)))
 
-    def button(self, button: Button, action: Action):
-        check(_native.lib.medius_device_button(self._handle, int(button), int(action)))
+    def press(self, input: Usage):
+        check(_native.lib.medius_device_press(self._handle, input._c))
 
-    def press(self, button: Button):
-        check(_native.lib.medius_device_press(self._handle, int(button)))
+    def soft_release(self, input: Usage):
+        check(_native.lib.medius_device_soft_release(self._handle, input._c))
 
-    def soft_release(self, button: Button):
-        check(_native.lib.medius_device_soft_release(self._handle, int(button)))
-
-    def force_release(self, button: Button):
-        check(_native.lib.medius_device_force_release(self._handle, int(button)))
-
-    def key(self, key, action: Action):
-        check(_native.lib.medius_device_key(self._handle, int(key), int(action)))
-
-    def key_down(self, key):
-        check(_native.lib.medius_device_key_down(self._handle, int(key)))
-
-    def key_up(self, key):
-        check(_native.lib.medius_device_key_up(self._handle, int(key)))
-
-    def key_force_release(self, key):
-        check(_native.lib.medius_device_key_force_release(self._handle, int(key)))
-
-    def media(self, media, action: Action):
-        check(_native.lib.medius_device_media(self._handle, int(media), int(action)))
-
-    def media_down(self, media):
-        check(_native.lib.medius_device_media_down(self._handle, int(media)))
-
-    def media_up(self, media):
-        check(_native.lib.medius_device_media_up(self._handle, int(media)))
-
-    def media_force_release(self, media):
-        check(_native.lib.medius_device_media_force_release(self._handle, int(media)))
-
-    # --- locks ---
+    def force_release(self, input: Usage):
+        check(_native.lib.medius_device_force_release(self._handle, input._c))
 
     def lock(self, target: LockTarget, direction: LockDirection):
         check(_native.lib.medius_device_lock(self._handle, target._c, int(direction)))
@@ -168,25 +137,11 @@ class Device:
     def unlock(self, target: LockTarget, direction: LockDirection):
         check(_native.lib.medius_device_unlock(self._handle, target._c, int(direction)))
 
-    def lock_key(self, key, direction: LockDirection):
-        check(_native.lib.medius_device_lock_key(self._handle, int(key), int(direction)))
+    def lock_all(self, what: Blanket, direction: LockDirection):
+        check(_native.lib.medius_device_lock_all(self._handle, int(what), int(direction)))
 
-    def unlock_key(self, key, direction: LockDirection):
-        check(_native.lib.medius_device_unlock_key(self._handle, int(key), int(direction)))
-
-    def lock_media(self, media):
-        check(_native.lib.medius_device_lock_media(self._handle, int(media)))
-
-    def unlock_media(self, media):
-        check(_native.lib.medius_device_unlock_media(self._handle, int(media)))
-
-    def lock_all(self, what: Blanket):
-        check(_native.lib.medius_device_lock_all(self._handle, int(what)))
-
-    def unlock_all(self, what: Blanket):
-        check(_native.lib.medius_device_unlock_all(self._handle, int(what)))
-
-    # --- led / admin ---
+    def unlock_all(self, what: Blanket, direction: LockDirection):
+        check(_native.lib.medius_device_unlock_all(self._handle, int(what), int(direction)))
 
     def led(self, target: LedTarget, mode: LedMode, level):
         check(_native.lib.medius_device_led(self._handle, int(target), int(mode), int(level)))
@@ -219,7 +174,13 @@ class Device:
         """Set what paces injected motion (`hz` matters only for `EmitPace.fixed`)."""
         check(_native.lib.medius_device_set_emit_pace(self._handle, int(pace.mode), int(pace.hz)))
 
-    # --- queries ---
+    def set_name(self, name: str):
+        """Set the box's persistent human-readable name; an empty string clears it."""
+        check(_native.lib.medius_device_set_name(self._handle, name.encode("utf-8")))
+
+    def clear_name(self):
+        """Clear the custom name, reverting the box to its synthesized `Medius-XXXX` default."""
+        check(_native.lib.medius_device_clear_name(self._handle))
 
     def query_version(self) -> Version:
         out = _native.MediusVersion()
@@ -254,7 +215,7 @@ class Device:
     def query_locks(self) -> Locks:
         out = _native.MediusLocks()
         check(_native.lib.medius_device_query_locks(self._handle, ctypes.byref(out)))
-        return Locks(out.mask)
+        return locks_from_c(out)
 
     def query_catch(self) -> CatchState:
         out = _native.MediusCatchState()
@@ -287,7 +248,11 @@ class Device:
         check(_native.lib.medius_device_counters(self._handle, ctypes.byref(out)))
         return counters_from_c(out)
 
-    # --- streams ---
+    def clip(self) -> ClipHandle:
+        """A handle to this box's buffered-clip playback (§3.11)."""
+        out = ctypes.c_void_p()
+        check(_native.lib.medius_device_clip(self._handle, ctypes.byref(out)))
+        return ClipHandle(out.value, self)
 
     def catch_events(self, mask: CatchMask = CatchMask.ALL) -> EventStream:
         out = ctypes.c_void_p()
@@ -298,8 +263,6 @@ class Device:
         out = ctypes.c_void_p()
         check(_native.lib.medius_device_logs(self._handle, ctypes.byref(out)))
         return LogStream(out.value, self)
-
-    # --- lifecycle ---
 
     def close(self):
         if self._handle is not None:

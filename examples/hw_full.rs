@@ -1,4 +1,4 @@
-//! Comprehensive hardware validation (Linux only).
+//! Hardware validation (Linux only).
 
 #[cfg(not(target_os = "linux"))]
 fn main() {
@@ -19,8 +19,8 @@ mod linux {
     use std::time::{Duration, Instant};
 
     use medius::{
-        Action, Blanket, Button, CatchMask, Device, EmitPace, Key, LedMode, LedTarget,
-        LockDirection, LockTarget, MediaKey, RebootTarget,
+        Action, Axis, Blanket, Button, CatchMask, ClipAction, ClipBuilder, ClipState, ClipTrigger,
+        Device, Edge, EmitPace, Key, LedMode, LedTarget, LockDirection, MediaKey, RebootTarget,
     };
 
     const EVIOCGRAB: libc::c_ulong = 0x4004_4590;
@@ -162,25 +162,41 @@ mod linux {
 
     pub fn run() -> ExitCode {
         let args: Vec<String> = std::env::args().collect();
-        let event = args
-            .get(1)
-            .cloned()
-            .unwrap_or_else(|| "/dev/input/event11".to_string());
+        // args[1]: one or more comma-separated evdev nodes. A cloned mouse is composite (mouse and keyboard
+        // interfaces on separate event nodes), so grab BOTH by default; injected input on an ungrabbed node
+        // would otherwise leak to the desktop and escape verification here.
+        let events: Vec<String> = match args.get(1) {
+            Some(s) => s.split(',').map(|p| p.trim().to_string()).filter(|p| !p.is_empty()).collect(),
+            None => vec![
+                "/dev/input/event11".to_string(),
+                "/dev/input/event12".to_string(),
+            ],
+        };
         let soak_secs: u64 = args.get(3).and_then(|s| s.parse().ok()).unwrap_or(20);
 
-        let grab = match EvdevGrab::open(&event) {
-            Ok(g) => g,
-            Err(e) => {
-                eprintln!("cannot grab {event}: {e} (try a different event node, or run as root)");
-                return ExitCode::FAILURE;
+        let mut grabs = Vec::new();
+        for ev in &events {
+            match EvdevGrab::open(ev) {
+                Ok(g) => grabs.push(g),
+                Err(e) => {
+                    eprintln!("cannot grab {ev}: {e} (try a different event node, or run as root)");
+                    return ExitCode::FAILURE;
+                }
             }
-        };
+        }
         let acc = Arc::new(Acc::new());
         let stop = Arc::new(AtomicBool::new(false));
-        let rfd = grab.fd;
-        let racc = Arc::clone(&acc);
-        let rstop = Arc::clone(&stop);
-        let reader = std::thread::spawn(move || reader(rfd, racc, rstop));
+        // One reader per grabbed node, all feeding the same accumulator (mouse node reports REL/buttons,
+        // keyboard node reports KEY_*), so a composite clone is verified in full.
+        let readers: Vec<_> = grabs
+            .iter()
+            .map(|g| {
+                let rfd = g.fd;
+                let racc = Arc::clone(&acc);
+                let rstop = Arc::clone(&stop);
+                std::thread::spawn(move || reader(rfd, racc, rstop))
+            })
+            .collect();
         std::thread::sleep(Duration::from_millis(300));
 
         let device = match args.get(2) {
@@ -192,11 +208,16 @@ mod linux {
             Err(e) => {
                 eprintln!("cannot open medius box: {e}");
                 stop.store(true, Ordering::Relaxed);
-                let _ = reader.join();
+                for r in readers {
+                    let _ = r.join();
+                }
                 return ExitCode::FAILURE;
             }
         };
-        println!("grabbed {event} — injected input is captured here, NOT sent to the desktop\n");
+        println!(
+            "grabbed {}: injected input is captured here, NOT sent to the desktop\n",
+            events.join(", ")
+        );
 
         let mut ok = true;
         let mut check = |name: &str, pass: bool, detail: String| {
@@ -211,7 +232,7 @@ mod linux {
             let dev = device.as_ref().unwrap();
             let ver = dev.query_version();
             let health = dev.query_health();
-            let ver_ok = ver.as_ref().map(|v| v.proto_ver == 2).unwrap_or(false);
+            let ver_ok = ver.as_ref().map(|v| v.proto_ver == 3).unwrap_or(false);
             let h_ok = health
                 .as_ref()
                 .map(|h| h.link_up && h.mouse_attached && h.clone_configured)
@@ -223,7 +244,7 @@ mod linux {
             check(
                 "handshake",
                 ver_ok && h_ok,
-                format!("proto_ver==2 ({fw})  health={health:?}"),
+                format!("proto_ver==3 ({fw})  health={health:?}"),
             );
         }
 
@@ -299,9 +320,8 @@ mod linux {
         }
 
         {
-            // MOVE_RIDE option: set a 5ms ride window, read it back, then turn it off again — a
-            // round-trip + NVS-persistence-path check. The riding behaviour itself (inject only on
-            // native motion, stale-drop) needs the rig; this leaves the box back at the default (off).
+            // Wire round-trip + NVS-persistence check for the MOVE_RIDE option; the riding behaviour
+            // itself needs the rig. Leaves the box back at the default (off).
             let dev = device.as_ref().unwrap();
             let want = Duration::from_millis(5);
             let set_ok = dev.set_movement_riding(Some(want)).is_ok();
@@ -320,9 +340,8 @@ mod linux {
         }
 
         {
-            // EMIT option: a round-trip + NVS-persistence-path check. Set FIXED 500 Hz, read back the
-            // mode + the resolved ceiling, then restore LEARNED (the default). The pacing behaviour
-            // itself (the box emitting at the chosen rate) needs the rig; this exercises the wire only.
+            // Wire round-trip + NVS-persistence check for the EMIT option; the pacing behaviour itself
+            // needs the rig. Restores LEARNED (the default) afterward.
             let dev = device.as_ref().unwrap();
             let set_ok = dev.set_emit_pace(EmitPace::Fixed(500)).is_ok();
             std::thread::sleep(Duration::from_millis(60));
@@ -342,6 +361,24 @@ mod linux {
                 "emit pace",
                 set_ok && matched && off_ok && off_matched,
                 format!("set Fixed(500) -> {read:?}, off -> {read_off:?}"),
+            );
+        }
+
+        {
+            // The name rides RESP(VERSION) like the MAC; clearing reverts to the synthesized
+            // "Medius-XXXX" default.
+            let dev = device.as_ref().unwrap();
+            let set_ok = dev.set_name("hw-full box").is_ok();
+            std::thread::sleep(Duration::from_millis(250)); // the name is a persisted OPTION write
+            let named = matches!(dev.query_version(), Ok(v) if v.name == "hw-full box");
+            let clear_ok = dev.clear_name().is_ok();
+            std::thread::sleep(Duration::from_millis(250));
+            let after = dev.query_version().map(|v| v.name).unwrap_or_default();
+            let reverted = after.starts_with("Medius-");
+            check(
+                "box name",
+                set_ok && named && clear_ok && reverted,
+                format!("set 'hw-full box' -> read back, clear -> {after:?}"),
             );
         }
 
@@ -372,7 +409,7 @@ mod linux {
             // mouse only). The 3 ms inject cadence doubles as the keepalive that holds the lock.
             let dev = device.as_ref().unwrap();
             let _ = dev.reset();
-            let _ = dev.lock(LockTarget::X, LockDirection::Both);
+            let _ = dev.lock(Axis::X, LockDirection::Both);
             reset_motion(&acc);
             for _ in 0..50 {
                 let _ = dev.move_rel(40, 0);
@@ -393,24 +430,24 @@ mod linux {
             // mask matches the wire layout (X+ = bit0, Left press = bit6 => 0x0041). LOCK_ON is set.
             let dev = device.as_ref().unwrap();
             let _ = dev.reset();
-            let _ = dev.lock(LockTarget::X, LockDirection::Positive);
-            let _ = dev.lock(LockTarget::Button(Button::Left), LockDirection::Positive);
+            let _ = dev.lock(Axis::X, LockDirection::Positive);
+            let _ = dev.lock(Button::Left, LockDirection::Positive);
             let locks = dev.query_locks();
             let lock_on = dev.query_health().map(|h| h.lock_on).unwrap_or(false);
-            let mask = locks.as_ref().map(|l| l.mask()).unwrap_or(0);
+            let n = locks.as_ref().map(|l| l.entries().len()).unwrap_or(0);
             let q_ok = locks
                 .as_ref()
                 .map(|l| {
-                    l.is_locked(LockTarget::X, LockDirection::Positive)
-                        && !l.is_locked(LockTarget::X, LockDirection::Negative)
-                        && l.is_locked(LockTarget::Button(Button::Left), LockDirection::Positive)
-                        && l.mask() == 0x0041
+                    l.is_locked(Axis::X, LockDirection::Positive)
+                        && !l.is_locked(Axis::X, LockDirection::Negative)
+                        && l.is_locked(Button::Left, LockDirection::Positive)
+                        && l.entries().len() == 2
                 })
                 .unwrap_or(false);
             check(
                 "lock: query + health",
                 q_ok && lock_on,
-                format!("mask=0x{mask:04X} lock_on={lock_on}"),
+                format!("{n} locks q_ok={q_ok} lock_on={lock_on}"),
             );
             let _ = dev.reset();
         }
@@ -419,7 +456,7 @@ mod linux {
             // LOCK: injection overrides a hand-locked button (block-press, but a forced press wins).
             let dev = device.as_ref().unwrap();
             let _ = dev.reset();
-            let _ = dev.lock(LockTarget::Button(Button::Left), LockDirection::Positive);
+            let _ = dev.lock(Button::Left, LockDirection::Positive);
             let _ = dev.press(Button::Left);
             std::thread::sleep(Duration::from_millis(200));
             let down = btn_val(&acc, Button::Left);
@@ -433,37 +470,37 @@ mod linux {
         }
 
         {
-            // LOCK safety: RESET clears every lock, and a lock-only state self-clears after ~1 s of
-            // control-PC silence so a locked mouse is never stranded.
+            // LOCK safety: RESET clears every lock; the keepalive holds a lock alive while the client
+            // runs, and the firmware self-clears only on true control-PC silence (a crash stops it).
             let dev = device.as_ref().unwrap();
-            let _ = dev.lock(LockTarget::Y, LockDirection::Both);
+            let _ = dev.lock(Axis::Y, LockDirection::Both);
             let _ = dev.reset();
-            let after_reset = dev.query_locks().map(|l| l.mask()).unwrap_or(0xFFFF);
+            let after_reset = dev.query_locks().map(|l| l.entries().len()).unwrap_or(99);
 
-            let _ = dev.lock(LockTarget::Y, LockDirection::Both);
-            let before = dev.query_locks().map(|l| l.mask()).unwrap_or(0);
-            std::thread::sleep(Duration::from_millis(1400)); // silent: no frames sent
-            let after_silence = dev.query_locks().map(|l| l.mask()).unwrap_or(0xFFFF);
+            let _ = dev.lock(Axis::Y, LockDirection::Both);
+            let before = dev.query_locks().map(|l| l.entries().len()).unwrap_or(0);
+            std::thread::sleep(Duration::from_millis(1400)); // longer than the box silence window
+            let after_hold = dev.query_locks().map(|l| l.entries().len()).unwrap_or(99);
+            let _ = dev.reset();
             check(
-                "lock: safety clear",
-                after_reset == 0 && before == 0x000C && after_silence == 0,
+                "lock: reset + keepalive holds",
+                after_reset == 0 && before == 1 && after_hold == 1,
                 format!(
-                    "reset->0x{after_reset:04X}; y-lock 0x{before:04X} after 1.4s silence 0x{after_silence:04X}"
+                    "reset->{after_reset} locks; y-lock {before}, held across 1.4s {after_hold}"
                 ),
             );
         }
 
         {
-            // LOCK (keyboard/blanket): a key lock and a blanket all-keys lock both register on HEALTH's
-            // lock_on, and RESET clears them. The physical block needs a hand on the keyboard (run
-            // `medius.py` and type); here we confirm the box accepts and reflects the generic classes.
+            // LOCK (keyboard/blanket): key-lock and all-keys blanket both register on HEALTH lock_on and
+            // RESET clears them; the physical block needs a hand on the keyboard (run `medius.py`).
             let dev = device.as_ref().unwrap();
             let has_kbd = dev.query_health().map(|h| h.kbd_attached).unwrap_or(false);
             if has_kbd {
-                let _ = dev.lock_key(Key::A, LockDirection::Both);
+                let _ = dev.lock(Key::A, LockDirection::Both);
                 let on1 = dev.query_health().map(|h| h.lock_on).unwrap_or(false);
-                let _ = dev.unlock_key(Key::A, LockDirection::Both);
-                let _ = dev.lock_all(Blanket::Keys);
+                let _ = dev.unlock(Key::A, LockDirection::Both);
+                let _ = dev.lock_all(Blanket::Keys, LockDirection::Both);
                 let on2 = dev.query_health().map(|h| h.lock_on).unwrap_or(false);
                 let _ = dev.reset();
                 let off = dev.query_health().map(|h| !h.lock_on).unwrap_or(false);
@@ -482,10 +519,8 @@ mod linux {
         }
 
         {
-            // CATCH: subscribe and confirm the box reports it (CATCH_ON + the mask via query_catch),
-            // no events while the mouse is idle, and that a RESET clears catch like injection AND
-            // disconnects the host stream (recv -> Err, not a silent hang). Live physical-input delivery
-            // needs a hand on the mouse — watch it with `medius.py watch`.
+            // CATCH: subscribe, confirm CATCH_ON + mask via query_catch, idle stays quiet, and RESET
+            // clears catch AND disconnects the host stream (recv -> Err). Live delivery needs a hand.
             let dev = device.as_ref().unwrap();
             let stream = dev.catch_events(CatchMask::all());
             std::thread::sleep(Duration::from_millis(100));
@@ -498,7 +533,7 @@ mod linux {
                 .as_ref()
                 .map(|s| s.try_recv().is_none())
                 .unwrap_or(false);
-            let _ = dev.reset(); // clears catch like injection + disconnects the host stream
+            let _ = dev.reset();
             std::thread::sleep(Duration::from_millis(100));
             let off = dev.query_health().map(|h| !h.catch_on).unwrap_or(false);
             let cleared = dev
@@ -516,13 +551,8 @@ mod linux {
         }
 
         {
-            // KEYBOARD + MEDIA (v2.0.0): query CAPS; if a keyboard is bound, inject KEY_A and verify it
-            // is REALLY delivered to the grabbed evdev (key_a goes 1 then 0), not just that injection_active
-            // toggled. This catches a key injected onto the wrong interface: the game reads typing from the
-            // active keyboard interface, so an injected key landing elsewhere never reaches it. For this
-            // check the grabbed event node must be the KEYBOARD's node (the standard/boot keyboard interface
-            // the OS types on). Media injection verifies injection_active only (its Consumer reports land on
-            // a different evdev node than the grabbed one).
+            // KEYBOARD + MEDIA: verify an injected KEY_A really reaches the grabbed evdev (key_a 1 then 0),
+            // which catches a key landing on the wrong interface; the grabbed node must be the keyboard's.
             let dev = device.as_ref().unwrap();
             let caps = dev.caps().map(|c| c.keyboard);
             let attached = dev.query_health().map(|h| h.kbd_attached).unwrap_or(false);
@@ -530,14 +560,14 @@ mod linux {
             let mut detail = format!("kbd_caps={caps:?} attached={attached}");
             if attached {
                 acc.key_a.store(0, Ordering::Relaxed);
-                let _ = dev.key_down(Key::A);
+                let _ = dev.press(Key::A);
                 let key_on = dev
                     .query_health()
                     .map(|h| h.injection_active)
                     .unwrap_or(false);
                 std::thread::sleep(Duration::from_millis(200));
                 let evdev_down = acc.key_a.load(Ordering::Relaxed) == 1;
-                let _ = dev.key_up(Key::A);
+                let _ = dev.release(Key::A);
                 std::thread::sleep(Duration::from_millis(200));
                 let evdev_up = acc.key_a.load(Ordering::Relaxed) == 0;
                 let _ = dev.reset();
@@ -550,12 +580,12 @@ mod linux {
                     "{detail} key[on={key_on} off={key_off} evdev_down={evdev_down} evdev_up={evdev_up}]"
                 );
                 if caps.as_ref().map(|c| c.has_consumer).unwrap_or(false) {
-                    let _ = dev.media_down(MediaKey::VOLUME_UP);
+                    let _ = dev.press(MediaKey::VOLUME_UP);
                     let med_on = dev
                         .query_health()
                         .map(|h| h.injection_active)
                         .unwrap_or(false);
-                    let _ = dev.media_up(MediaKey::VOLUME_UP);
+                    let _ = dev.release(MediaKey::VOLUME_UP);
                     let _ = dev.reset();
                     inject_ok = inject_ok && med_on;
                     detail = format!("{detail} media[on={med_on}]");
@@ -632,6 +662,101 @@ mod linux {
         }
 
         {
+            // Buffered clip playback: a clip of 200 mouse moves plus a KEY_A hold drives both the mouse and
+            // keyboard interfaces; the grabbed node reports whichever it is. Also covers auto-lock and counters.
+            let dev = device.as_ref().unwrap();
+            let _ = dev.reset();
+            reset_motion(&acc);
+            acc.key_a.store(0, Ordering::Relaxed);
+            let clip = dev.clip();
+            let mut b = ClipBuilder::new();
+            // Hold KEY_A across the whole motion run so the held-usage snapshot is sampled mid-hold.
+            b.press(Key::A);
+            for _ in 0..200 {
+                b.move_by(10, 0);
+            }
+            b.release(Key::A);
+            let appended = clip.append(&b).is_ok();
+            let loaded = clip.query_status().map(|s| s.total > 0).unwrap_or(false);
+            // Selective auto-lock: only the aim axes and buttons, leaving the keyboard free (the clip still
+            // drives KEY_A; only physical input is scoped-locked).
+            let scoped = clip.set_autolock(&[Blanket::Aim, Blanket::Buttons]).is_ok();
+            let started = scoped && clip.start().is_ok();
+            std::thread::sleep(Duration::from_millis(150));
+            let key_down = acc.key_a.load(Ordering::Relaxed) == 1; // set if the grabbed node is the keyboard
+            // While the clip still holds KEY_A (before its release entry), status reports it as held.
+            let keys_held = clip
+                .query_status()
+                .map(|s| s.is_held(medius::Key::A))
+                .unwrap_or(false);
+            std::thread::sleep(Duration::from_millis(500));
+            let x = acc.rel_x.load(Ordering::Relaxed); // set if the grabbed node is the mouse
+            let played = clip.query_status().map(|s| s.ticks >= 200).unwrap_or(false);
+            let stopped = clip.stop().is_ok();
+            std::thread::sleep(Duration::from_millis(60));
+            let idle = matches!(clip.query_status(), Ok(s) if s.state == ClipState::Idle);
+            let drove_grabbed = x == 2000 || key_down;
+            check(
+                "clip playback (field-generic)",
+                appended
+                    && loaded
+                    && started
+                    && drove_grabbed
+                    && keys_held
+                    && played
+                    && stopped
+                    && idle,
+                format!(
+                    "appended={appended} loaded={loaded} started={started} REL_X={x} key_down={key_down} keys_held={keys_held} played={played} stopped={stopped} idle={idle}"
+                ),
+            );
+
+            // Trigger set + config readback (the actual firing needs a physical press, exercised in the
+            // physical-hand suite): bind two bindings, read them back, unbind, and clear.
+            let _ = clip.clear();
+            let bound_key = clip
+                .bind(ClipTrigger::new(Key::A, Edge::Press, ClipAction::Start))
+                .is_ok();
+            let bound_btn = clip
+                .bind(ClipTrigger::new(Button::Side1, Edge::Release, ClipAction::Stop).consume())
+                .is_ok();
+            let loop_set = clip.set_loop(true).is_ok();
+            let cfg_ok = clip
+                .query_config()
+                .map(|c| {
+                    c.loop_
+                        && c.triggers.len() == 2
+                        && c.triggers.iter().any(|t| {
+                            t.on == Key::A.into()
+                                && t.edge == Edge::Press
+                                && t.action == ClipAction::Start
+                        })
+                        && c.triggers
+                            .iter()
+                            .any(|t| t.action == ClipAction::Stop && t.consume)
+                })
+                .unwrap_or(false);
+            let unbound = clip.unbind(Key::A, Edge::Press).is_ok();
+            let after_unbind = clip
+                .query_config()
+                .map(|c| c.triggers.len() == 1)
+                .unwrap_or(false);
+            let cleared = clip.clear_triggers().is_ok();
+            let no_triggers = clip
+                .query_config()
+                .map(|c| c.triggers.is_empty())
+                .unwrap_or(false);
+            let _ = clip.set_loop(false);
+            check(
+                "clip trigger set + config readback",
+                bound_key && bound_btn && loop_set && cfg_ok && unbound && after_unbind && cleared && no_triggers,
+                format!(
+                    "bound_key={bound_key} bound_btn={bound_btn} loop_set={loop_set} cfg_ok={cfg_ok} unbound={unbound} after_unbind={after_unbind} cleared={cleared} no_triggers={no_triggers}"
+                ),
+            );
+        }
+
+        {
             let dev = device.as_ref().unwrap();
             reset_motion(&acc);
             let _ = dev.move_rel(2000, 0);
@@ -680,7 +805,7 @@ mod linux {
                 let _ = dev.press(button);
                 std::thread::sleep(Duration::from_millis(200));
                 let down = btn_val(&acc, button);
-                let _ = dev.soft_release(button);
+                let _ = dev.release(button);
                 std::thread::sleep(Duration::from_millis(200));
                 let up = btn_val(&acc, button);
 
@@ -710,7 +835,7 @@ mod linux {
             let _ = dev.force_release(Button::Left);
             std::thread::sleep(Duration::from_millis(200));
             let up = acc.btn_left.load(Ordering::Relaxed);
-            let _ = dev.soft_release(Button::Left);
+            let _ = dev.release(Button::Left);
             check(
                 "force_release",
                 down == 1 && up == 0,
@@ -720,7 +845,7 @@ mod linux {
 
         {
             let dev = device.as_ref().unwrap();
-            let _ = dev.button(Button::Right, Action::Press);
+            let _ = dev.inject(Button::Right, Action::Press);
             std::thread::sleep(Duration::from_millis(200));
             let down = acc.btn_right.load(Ordering::Relaxed);
             let _ = dev.reset();
@@ -808,7 +933,7 @@ mod linux {
             let down = acc.btn_right.load(Ordering::Relaxed);
             std::thread::sleep(Duration::from_millis(1600));
             let still = acc.btn_right.load(Ordering::Relaxed);
-            let _ = dev.soft_release(Button::Right);
+            let _ = dev.release(Button::Right);
             std::thread::sleep(Duration::from_millis(150));
             check(
                 "keepalive holds",
@@ -874,14 +999,14 @@ mod linux {
             let dev = device.as_ref().unwrap();
             let _ = dev.reboot(RebootTarget::HostRun);
             std::thread::sleep(Duration::from_secs(2));
-            let mut recovered = matches!(dev.query_version(), Ok(v) if v.proto_ver == 2);
+            let mut recovered = matches!(dev.query_version(), Ok(v) if v.proto_ver == 3);
             for _ in 0..10 {
                 if recovered {
                     break;
                 }
                 let _ = dev.reconnect();
                 std::thread::sleep(Duration::from_millis(500));
-                recovered = matches!(dev.query_version(), Ok(v) if v.proto_ver == 2);
+                recovered = matches!(dev.query_version(), Ok(v) if v.proto_ver == 3);
             }
             reset_motion(&acc);
             let _ = dev.move_rel(10, 0);
@@ -911,7 +1036,7 @@ mod linux {
             use futures::executor::block_on;
             let adev = device.as_ref().unwrap().clone().into_async();
             let av_ok = block_on(adev.query_version())
-                .map(|v| v.proto_ver == 2)
+                .map(|v| v.proto_ver == 3)
                 .unwrap_or(false);
             let ah_ok = block_on(adev.query_health())
                 .map(|h| h.link_up)
@@ -920,22 +1045,23 @@ mod linux {
             let aopt_ok = block_on(adev.query_movement_riding()).is_ok()
                 && block_on(adev.query_imperfect()).is_ok()
                 && block_on(adev.query_emit_pace()).is_ok();
+            // async name setter parity: set then clear (leaves the box on its synth default)
+            let aname_ok = adev.set_name("async box").is_ok() && adev.clear_name().is_ok();
             reset_motion(&acc);
             let _ = adev.move_rel(12, 0);
             std::thread::sleep(Duration::from_millis(200));
             let amoved = acc.rel_x.load(Ordering::Relaxed);
             let _ = adev.reset();
-            // async parity: observers + reconnect mirror the sync Device over the shared link. Run
-            // LAST — reconnect() swaps the serial transport, so a reopen blip can't pollute the
-            // version/health/move checks above.
+            // async parity: observers + reconnect mirror the sync Device. Run LAST because reconnect()
+            // swaps the serial transport, so a reopen blip can't pollute the checks above.
             let alog_n = adev.logs().try_iter().count();
             let arecon_base = adev.counters().reconnects;
             let arecon_ok = adev.reconnect().is_ok() && adev.counters().reconnects > arecon_base;
             check(
                 "async",
-                av_ok && ah_ok && aopt_ok && amoved == 12 && arecon_ok,
+                av_ok && ah_ok && aopt_ok && aname_ok && amoved == 12 && arecon_ok,
                 format!(
-                    "AsyncDevice: version_ok={av_ok}, health_ok={ah_ok}, option_queries_ok={aopt_ok}, reconnect_ok={arecon_ok}, async_logs_drained={alog_n}, async move REL_X={amoved}"
+                    "AsyncDevice: version_ok={av_ok}, health_ok={ah_ok}, option_queries_ok={aopt_ok}, name_ok={aname_ok}, reconnect_ok={arecon_ok}, async_logs_drained={alog_n}, async move REL_X={amoved}"
                 ),
             );
         }
@@ -958,8 +1084,10 @@ mod linux {
         }
 
         stop.store(true, Ordering::Relaxed);
-        let _ = reader.join();
-        drop(grab);
+        for r in readers {
+            let _ = r.join();
+        }
+        drop(grabs);
 
         if std::env::var_os("MEDIUS_UNPLUG_TEST").is_some() {
             let reopened = match args.get(2) {
@@ -969,10 +1097,10 @@ mod linux {
             match reopened {
                 Ok(dev) => {
                     let base = dev.counters().reconnects;
-                    let up0 = matches!(dev.query_version(), Ok(v) if v.proto_ver == 2);
+                    let up0 = matches!(dev.query_version(), Ok(v) if v.proto_ver == 3);
                     println!(
                         "\n>>> AUTO-RECONNECT: physically UNPLUG the box's control USB, wait ~2s, then \
-                         replug.\n    Waiting up to 60s for the reader to self-heal — NO reconnect() is \
+                         replug.\n    Waiting up to 60s for the reader to self-heal; NO reconnect() is \
                          called by this test."
                     );
                     let deadline = Instant::now() + Duration::from_secs(60);
@@ -980,7 +1108,7 @@ mod linux {
                     while Instant::now() < deadline {
                         std::thread::sleep(Duration::from_millis(500));
                         if dev.counters().reconnects > base
-                            && matches!(dev.query_version(), Ok(v) if v.proto_ver == 2)
+                            && matches!(dev.query_version(), Ok(v) if v.proto_ver == 3)
                         {
                             healed = true;
                             break;

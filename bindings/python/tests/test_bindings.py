@@ -1,9 +1,4 @@
-"""Mock-backed tests for the Python bindings.
-
-These drive the Pythonic API through a MockBox and assert command recording,
-query round-trips (which also catch ctypes layout bugs), stream delivery, error
-mapping, and handle lifecycle.
-"""
+"""Mock-backed tests for the Python bindings."""
 
 import gc
 
@@ -17,28 +12,39 @@ from medius import (
     CatchEventKind,
     CatchMask,
     CatchState,
+    Action,
+    Blanket,
+    ClipAction,
+    ClipBuilder,
+    ClipSettings,
+    ClipState,
+    ClipStatus,
+    ClipTrigger,
+    Edge,
+    Usage,
     Device,
     EmitPace,
     FrameType,
     Health,
     ImperfectStatus,
     KbdCaps,
-    KeyboardEvent,
     Key,
     LockDirection,
+    LockEntry,
+    Locks,
     LockTarget,
     DeviceInfo,
     DeviceKind,
     LogLevel,
-    MediaEvent,
     MediaKey,
     MediusError,
     MockBox,
+    MotionEvent,
     MouseCaps,
-    MouseEvent,
     Rate,
     Stats,
     Status,
+    UsageSnapshot,
     Version,
 )
 
@@ -54,9 +60,6 @@ def test_meta_functions():
     assert medius.default_keepalive_cadence_ms() > 0
 
 
-# --- handshake + version ---
-
-
 def test_configure_version_then_open_mock_matches():
     mock = MockBox()
     # The handshake checks proto_ver, so reuse the default proto and only change
@@ -64,11 +67,22 @@ def test_configure_version_then_open_mock_matches():
     with Device.with_mock(mock) as d:
         proto = d.query_version().proto_ver
     mac = bytes([0x5A, 0x4E, 0x00, 0x11, 0x1E, 0x28])
-    mock.set_version(Version(proto, 9, 8, 7, mac))
+    mock.set_version(Version(proto, 9, 8, 7, mac, "Left PC"))
     with mock.open() as d:
         v = d.query_version()
-    assert v == Version(proto, 9, 8, 7, mac)
+    assert v == Version(proto, 9, 8, 7, mac, "Left PC")
     assert v.mac_hex == "5a4e00111e28"
+    assert v.name == "Left PC"  # the name rides the version readback beside the MAC
+    mock.close()
+
+
+def test_set_name_and_clear_name():
+    mock = MockBox()
+    with mock.open() as d:
+        # No host-side validation (like the other setters): the box sanitizes. These all just send.
+        d.set_name("Left PC")
+        d.set_name("x" * 40)  # over-length: the firmware caps it, the host does not error
+        d.clear_name()
     mock.close()
 
 
@@ -90,9 +104,6 @@ def test_bad_proto_version_reports_status_and_proto_ver():
     mock.close()
 
 
-# --- commands recorded ---
-
-
 def test_recorded_frame_payload_readable():
     with MockBox() as mock, Device.with_mock(mock) as d:
         d.move_rel(1, 2)
@@ -101,9 +112,6 @@ def test_recorded_frame_payload_readable():
         assert frame.type == FrameType.MOVE
         assert len(frame.payload) > 0
         assert mock.recorded_frame(99) is None
-
-
-# --- query round-trips (these catch ctypes layout bugs) ---
 
 
 def test_caps_roundtrip():
@@ -140,12 +148,13 @@ def test_rate_roundtrip_and_native_hz():
 
 
 def test_locks_roundtrip_and_is_locked():
+    x = LockTarget.x()
     with MockBox() as mock:
-        mock.set_locks(0b11)  # X positive + negative
+        mock.set_locks(Locks([LockEntry(x, is_blanket=False, positive=True, negative=True)]))
         with Device.with_mock(mock) as d:
             locks = d.query_locks()
-    assert locks.mask == 0b11
-    assert locks.is_locked(LockTarget.x(), LockDirection.BOTH)
+    assert len(locks.entries) == 1
+    assert locks.is_locked(x, LockDirection.BOTH)
     assert not locks.is_locked(LockTarget.y(), LockDirection.BOTH)
 
 
@@ -255,43 +264,37 @@ def test_counters_readable():
         assert c.frames_tx >= 1
 
 
-# --- streams ---
-
-
-def test_catch_delivers_mouse_event():
+def test_catch_delivers_motion_event():
     with MockBox() as mock, Device.with_mock(mock) as d:
         with d.catch_events(CatchMask.ALL) as stream:
-            mock.push_event(1, MouseEvent(buttons=1 << Button.SIDE1, dx=12, dy=-34, wheel=1))
+            mock.push_motion(1, MotionEvent(dx=12, dy=-34, dz=1))
             ev = stream.recv_timeout(2000)
             assert ev is not None
-            assert ev.kind == CatchEventKind.MOUSE
-            assert ev.mouse.dx == 12
-            assert ev.mouse.dy == -34
-            assert ev.mouse.wheel == 1
-            assert ev.is_pressed(Button.SIDE1)
-            assert not ev.is_pressed(Button.LEFT)
+            assert ev.kind == CatchEventKind.MOTION
+            assert ev.motion.dx == 12
+            assert ev.motion.dy == -34
+            assert ev.motion.dz == 1
 
 
-def test_catch_delivers_keyboard_event():
+def test_catch_delivers_usage_event_for_a_key():
     with MockBox() as mock, Device.with_mock(mock) as d:
         with d.catch_events(CatchMask.KEYS) as stream:
-            mock.push_kb_event(1, KeyboardEvent(modifiers=0, keys=[int(Key.ESCAPE)]))
+            mock.push_usages(1, UsageSnapshot([Usage.key(Key.ESCAPE)]))
             ev = stream.recv_timeout(2000)
             assert ev is not None
-            assert ev.kind == CatchEventKind.KEYBOARD
-            assert ev.keyboard.keys == [int(Key.ESCAPE)]
-            assert ev.is_pressed(Key.ESCAPE)
-            assert not ev.is_pressed(Key.A)
+            assert ev.kind == CatchEventKind.USAGES
+            assert ev.usages.is_held(Usage.key(Key.ESCAPE))
+            assert not ev.usages.is_held(Usage.key(Key.A))
 
 
-def test_catch_delivers_media_event():
+def test_catch_delivers_usage_event_for_media():
     with MockBox() as mock, Device.with_mock(mock) as d:
         with d.catch_events(CatchMask.ALL) as stream:
-            mock.push_cons_event(1, MediaEvent(keys=[int(MediaKey.VOLUME_UP)]))
+            mock.push_usages(1, UsageSnapshot([Usage.media(MediaKey.VOLUME_UP)]))
             ev = stream.recv_timeout(2000)
             assert ev is not None
-            assert ev.kind == CatchEventKind.MEDIA
-            assert ev.is_pressed(MediaKey.VOLUME_UP)
+            assert ev.kind == CatchEventKind.USAGES
+            assert ev.usages.is_held(Usage.media(MediaKey.VOLUME_UP))
 
 
 def test_try_recv_returns_none_when_empty():
@@ -311,16 +314,13 @@ def test_log_stream_delivers_line():
             assert line.text == "hello world"
 
 
-# --- lifecycle / safety ---
-
-
 def test_clone_shares_state():
     with MockBox() as mock:
         d = Device.with_mock(mock)
-        d2 = d.clone()  # second owner of the same connection
+        d2 = d.clone()
         d.move_rel(1, 0)
         d2.move_rel(2, 0)
-        mock2 = mock.clone()  # shares the recorded state
+        mock2 = mock.clone()
         assert mock2.recorded() == 2
         d.close()
         d2.close()
@@ -331,9 +331,9 @@ def test_event_stream_clone_shares_subscription():
     with MockBox() as mock, Device.with_mock(mock) as d:
         with d.catch_events(CatchMask.ALL) as stream:
             stream2 = stream.clone()
-            mock.push_event(1, MouseEvent(buttons=0, dx=9, dy=0, wheel=0))
+            mock.push_motion(1, MotionEvent(dx=9, dy=0, dz=0))
             ev = stream2.recv_timeout(2000)
-            assert ev is not None and ev.kind == CatchEventKind.MOUSE and ev.mouse.dx == 9
+            assert ev is not None and ev.kind == CatchEventKind.MOTION and ev.motion.dx == 9
             stream2.close()
 
 
@@ -341,7 +341,7 @@ def test_double_close_is_safe():
     mock = MockBox()
     d = Device.with_mock(mock)
     d.close()
-    d.close()  # idempotent
+    d.close()
     mock.close()
     mock.close()
 
@@ -353,16 +353,132 @@ def test_gc_frees_cleanly():
     del stream
     del d
     del mock
-    gc.collect()  # must not crash
+    gc.collect()
 
 
-def test_event_is_pressed_helpers_match_logic():
-    e = MouseEvent(buttons=0b1010, dx=0, dy=0, wheel=0)
-    assert e.is_pressed(Button.RIGHT)
-    assert e.is_pressed(Button.SIDE1)
-    assert not e.is_pressed(Button.LEFT)
+def test_usage_snapshot_is_held_matches_any_class():
+    # Buttons, keys, and modifiers live in one snapshot, keyed the same way.
+    snap = UsageSnapshot(
+        [Usage.button(Button.RIGHT), Usage.key(Key.LEFT_CTRL), Usage.key(Key.A)]
+    )
+    assert snap.is_held(Usage.button(Button.RIGHT))
+    assert snap.is_held(Usage.key(Key.LEFT_CTRL))
+    assert snap.is_held(Usage.key(Key.A))
+    assert not snap.is_held(Usage.button(Button.LEFT))
+    assert not snap.is_held(Usage.key(Key.B))
 
-    k = KeyboardEvent(modifiers=1 << 0, keys=[int(Key.A)])  # left ctrl held
-    assert k.is_pressed(Key.LEFT_CTRL)
-    assert k.is_pressed(Key.A)
-    assert not k.is_pressed(Key.B)
+
+def _clip_frames(d, mock, ty):
+    """The payloads of the recorded frames of a given FrameType, in order."""
+    return [
+        mock.recorded_frame(i).payload
+        for i in range(mock.recorded())
+        if mock.recorded_frame(i).type == ty
+    ]
+
+
+def test_clip_control_frames():
+    with MockBox() as mock, Device.with_mock(mock) as d:
+        clip = d.clip()
+        clip.set_retain(True)
+        clip.set_autolock([Blanket.AIM, Blanket.BUTTONS])
+        clip.set_loop(True)
+        clip.start()
+        clip.pause()
+        clip.resume()
+        clip.restart()
+        clip.toggle()
+        clip.stop()
+        clip.clear()
+        clip.finalize()
+        clip.bind(ClipTrigger(Usage.key(0x3A), Edge.PRESS, ClipAction.START))
+        clip.bind(ClipTrigger(Usage.button(Button.RIGHT), Edge.RELEASE, ClipAction.TOGGLE, consume=True))
+        clip.unbind(Usage.key(0x3A), Edge.PRESS)
+        clip.clear_triggers()
+        clip.close()
+        clip_set = _clip_frames(d, mock, FrameType.CLIP_SET)
+        ctrl = _clip_frames(d, mock, FrameType.CLIP_CTRL)
+        trig = _clip_frames(d, mock, FrameType.CLIP_TRIGGER)
+    assert clip_set == [bytes([2, 1]), bytes([0, 0x05]), bytes([1, 1])]
+    assert ctrl == [bytes([n]) for n in (0, 2, 3, 4, 5, 1, 6, 7)]
+    assert trig == [
+        bytes([1, 0x3A, 0x00, 1, 0, 1]),       # bind KEY 0x3A Press Start (present)
+        bytes([0, 0x01, 0x00, 2, 5, 3]),       # bind Button Right Release Toggle (present|consume)
+        bytes([1, 0x3A, 0x00, 1, 0, 0]),       # unbind KEY 0x3A Press (present=0)
+        bytes([0xFF, 0xFF, 0xFF, 0, 0, 0]),    # clear-all sentinel
+    ]
+
+
+def test_clip_append_encodes_and_chunks():
+    with MockBox() as mock, Device.with_mock(mock) as d:
+        b = ClipBuilder()
+        for _ in range(150):
+            b.move(3, -2)  # 150 * 5 = 750 bytes > 512: must split
+        left = Usage.button(Button.LEFT)
+        b.press(left).gap(4).release(left)
+        clip = d.clip()
+        clip.append(b)
+        b.close()
+        clip.close()
+        appends = _clip_frames(d, mock, FrameType.CLIP_APPEND)
+    assert len(appends) >= 2, "a >512-byte clip must chunk"
+    joined = b"".join(appends)
+    # 150 move(3,-2): flags=0x01, dx=3 LE, dy=-2 LE = 01 03 00 FE FF
+    assert joined[:5] == bytes([0x01, 0x03, 0x00, 0xFE, 0xFF])
+    # ... then press left (04 01 00 00 00 01), gap 4 (00 04 00), release left (04 01 00 00 00 00)
+    assert joined.endswith(
+        bytes([0x04, 0x01, 0x00, 0x00, 0x00, 0x01, 0x00, 0x04, 0x00, 0x04, 0x01, 0x00, 0x00, 0x00, 0x00])
+    )
+    assert all(len(p) <= 512 for p in appends)
+
+
+def test_clip_builder_frame_edges():
+    with MockBox() as mock, Device.with_mock(mock) as d:
+        b = ClipBuilder()
+        b.frame(1, 2, -1, [(Usage.button(Button.LEFT), Action.PRESS), (Usage.key(0x04), Action.PRESS)])
+        d.clip().append(b)
+        b.close()
+        appends = _clip_frames(d, mock, FrameType.CLIP_APPEND)
+    # flags XY|WHEEL|EDGES=0x07, dx=1 dy=2, wheel=-1, n=2, [btn left press][key 0x04 press]
+    assert appends[0] == bytes(
+        [0x07, 0x01, 0x00, 0x02, 0x00, 0xFF, 0xFF, 0x02, 0x00, 0x00, 0x00, 0x01, 0x01, 0x04, 0x00, 0x01]
+    )
+
+
+def test_clip_status_and_config_roundtrip():
+    status = ClipStatus(
+        ClipState.PLAYING, free=512, total=40, played=8, ticks=99, underruns=2, overruns=0,
+        seq_gaps=1, held=[Usage.button(Button.SIDE1), Usage.key(Key.A)],
+    )
+    settings = ClipSettings(
+        autolock=[Blanket.AIM, Blanket.KEYS],
+        loop=True,
+        retain=True,
+        finalized=False,
+        triggers=[
+            ClipTrigger(Usage.button(Button.RIGHT), Edge.BOTH, ClipAction.TOGGLE),
+            ClipTrigger(Usage.key(0x3A), Edge.RELEASE, ClipAction.STOP, consume=True),
+        ],
+    )
+    with MockBox() as mock:
+        mock.set_clip_status(status)
+        mock.set_clip_settings(settings)
+        with Device.with_mock(mock) as d:
+            got = d.clip().query_status()
+            cfg = d.clip().query_config()
+    assert got == status
+    assert got.state == ClipState.PLAYING
+    assert got.is_held(Usage.button(Button.SIDE1))
+    assert got.is_held(Usage.key(Key.A))
+    assert not got.is_held(Usage.button(Button.LEFT))
+    assert cfg == settings
+
+
+def test_clip_builder_gap_zero_is_noop():
+    with MockBox() as mock, Device.with_mock(mock) as d:
+        b = ClipBuilder()
+        b.gap(0)
+        clip = d.clip()
+        clip.append(b)
+        appends = _clip_frames(d, mock, FrameType.CLIP_APPEND)
+    assert appends == [], "an empty clip appends nothing"

@@ -9,8 +9,7 @@ from ._enums import Status
 
 
 class MediusError(Exception):
-    """A failed medius_capi call. Carries the `Status`, the box's last error text,
-    and, for a bad-proto-version failure, the offending `proto_ver` byte."""
+    """A failed medius_capi call carrying the Status, last error text, and proto_ver byte."""
 
     def __init__(self, status, message="", proto_ver=0):
         self.status = status

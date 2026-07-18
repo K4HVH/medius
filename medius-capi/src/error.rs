@@ -103,8 +103,7 @@ pub(crate) fn guard<T>(default: T, f: impl FnOnce() -> T) -> T {
     catch_unwind(AssertUnwindSafe(f)).unwrap_or(default)
 }
 
-/// Copy the last error's display text into `buf` (NUL-terminated, truncated to `cap`). Returns the
-/// full message length in bytes, excluding the NUL, so a caller can size a buffer and retry.
+/// Copy the last error text into `buf` (NUL-terminated, truncated to `cap`); returns the full byte length excluding the NUL.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_last_error_message(buf: *mut c_char, cap: usize) -> usize {
     guard(0, || {

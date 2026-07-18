@@ -46,9 +46,8 @@ fn keepalive_loop(ctx: KeepaliveCtx) {
             continue;
         }
         let seq = ctx.seq.fetch_add(1, Ordering::Relaxed);
-        // Both frames feed the firmware silence timer (§5.4) to keep a held override / subscription
-        // alive. When catch is active we re-send CATCH instead of a bare QUERY: that also restores the
-        // mask if a device-side blip (mouse detach / inter-chip link loss) made the box clear it.
+        // Both frames feed the firmware silence timer (§5.4) to keep a held override/subscription alive.
+        // Re-sending CATCH (not a bare QUERY) also restores the mask if a device blip cleared it box-side.
         let (ty, payload): (FrameType, Vec<u8>) = if catch.is_empty() {
             (FrameType::Query, query_payload(Q_HEALTH).to_vec())
         } else {

@@ -1,10 +1,4 @@
-"""Python bindings for the medius transparent mouse passthrough box.
-
-A thin ctypes wrapper over the medius_capi C ABI. Open a box with
-`Device.find()` or `Device.open(path)`, drive it with the command methods, read
-state with the `query_*` methods, and consume physical input with
-`catch_events()`.
-"""
+"""Python bindings for the medius transparent mouse passthrough box."""
 
 from __future__ import annotations
 
@@ -17,10 +11,13 @@ from ._enums import (
     Button,
     CatchEventKind,
     CatchMask,
+    ClipAction,
+    ClipState,
     DeviceKind,
+    Edge,
     EmitMode,
     FrameType,
-    InputKind,
+    Class,
     Key,
     LedMode,
     LedTarget,
@@ -46,6 +43,7 @@ from ._errors import (
     QueryTimeoutError,
 )
 from ._device import Device
+from ._clip import ClipBuilder, ClipHandle
 from ._streams import EventStream, LogStream
 from ._mock import MockBox
 from ._types import (
@@ -53,26 +51,29 @@ from ._types import (
     Caps,
     CatchEvent,
     CatchState,
+    ClipSettings,
+    ClipStatus,
+    ClipTrigger,
     Counters,
     DeviceInfo,
     EmitPace,
     EmitPaceStatus,
     Health,
     ImperfectStatus,
-    Input,
+    Usage,
     KbdCaps,
-    KeyboardEvent,
     Locks,
+    LockEntry,
     LockTarget,
     LogLine,
-    MediaEvent,
     Motion,
+    MotionEvent,
     MouseCaps,
-    MouseEvent,
     PortInfo,
     Rate,
     RecordedFrame,
     Stats,
+    UsageSnapshot,
     Version,
     box_from_c,
 )
@@ -120,8 +121,7 @@ def version_string() -> str:
 
 
 def flash(port: str, bin_path: str, host: bool = False) -> None:
-    """Reboot a chip to ROM download and flash a firmware binary via esptool.
-    Linux and Windows only. Requires a library built with the flash feature."""
+    """Reboot a chip to ROM download and flash a firmware binary via esptool (Linux/Windows only)."""
     if not HAS_FLASH:
         raise RuntimeError(
             "the loaded medius_capi library was built without the flash feature "
@@ -138,10 +138,13 @@ __all__ = [
     "Button",
     "CatchEventKind",
     "CatchMask",
+    "ClipAction",
+    "ClipState",
     "DeviceKind",
+    "Edge",
     "EmitMode",
     "FrameType",
-    "InputKind",
+    "Class",
     "Key",
     "LedMode",
     "LedTarget",
@@ -164,6 +167,8 @@ __all__ = [
     "InvalidArgError",
     "PanicError",
     "Device",
+    "ClipBuilder",
+    "ClipHandle",
     "EventStream",
     "LogStream",
     "MockBox",
@@ -171,26 +176,29 @@ __all__ = [
     "Caps",
     "CatchEvent",
     "CatchState",
+    "ClipSettings",
+    "ClipStatus",
+    "ClipTrigger",
     "Counters",
     "DeviceInfo",
     "EmitPace",
     "EmitPaceStatus",
     "Health",
     "ImperfectStatus",
-    "Input",
+    "Usage",
     "KbdCaps",
-    "KeyboardEvent",
     "Locks",
+    "LockEntry",
     "LockTarget",
     "LogLine",
-    "MediaEvent",
     "Motion",
+    "MotionEvent",
     "MouseCaps",
-    "MouseEvent",
     "PortInfo",
     "Rate",
     "RecordedFrame",
     "Stats",
+    "UsageSnapshot",
     "Version",
     "find_ports",
     "list_boxes",

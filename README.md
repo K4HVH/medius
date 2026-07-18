@@ -76,7 +76,7 @@ let device = Device::open("/dev/ttyACM0")?;   // a specific port
 
 ```rust
 for b in Device::list() {                     // every connected box
-    println!("{} {} {}", b.id(), b.device.kind, b.device);  // MAC, kind, vid:pid + product
+    println!("{} {:?} {} {}", b.id(), b.name(), b.device.kind, b.device);  // MAC, name, kind, vid:pid + product
 }
 let m = Device::find_mouse_box()?;            // the box cloning a mouse
 let k = Device::find_keyboard_box()?;         // the box cloning a keyboard
@@ -115,7 +115,7 @@ device.media_down(MediaKey::VOLUME_UP)?; // a media key by 16-bit Consumer usage
 device.media_up(MediaKey::VOLUME_UP)?;
 ```
 
-Keys are HID keycodes (`Key::A`, `Key::ENTER`, the eight modifiers, F-keys, arrows…) or any usage via `Key::new(0x04)`; media keys are Consumer usages (`MediaKey::VOLUME_UP`, `PLAY_PAUSE`, `MUTE`…). The tri-state `Action` (press / soft-release / force-release) is shared with buttons. Held keys and media survive a reconnect, like buttons. Both are present-gated — a key the board can't report is a silent no-op; see `query_kbd_caps()`.
+Keys are HID keycodes (`Key::A`, `Key::ENTER`, the eight modifiers, F-keys, arrows…) or any usage via `Key::new(0x04)`; media keys are Consumer usages (`MediaKey::VOLUME_UP`, `PLAY_PAUSE`, `MUTE`…). The tri-state `Action` (press / soft-release / force-release) is shared with buttons. Held keys and media survive a reconnect, like buttons. Both are present-gated: a key the board can't report is a silent no-op; see `query_kbd_caps()`.
 
 ### Sustained motion
 
@@ -126,6 +126,22 @@ for _ in 0..1000 {
     device.move_rel(1, 0)?;
     std::thread::sleep(Duration::from_millis(1));
 }
+```
+
+### Buffered clip playback
+
+For jitter-free playback, preload per-frame input into a device-side ring and let the box drain one entry per native frame, box-clocked, so it carries none of the host's scheduling jitter and none of the per-command send floor. Motion is a per-frame delta, edges (buttons/keys/media) are sticky until changed, and a gap run emits nothing for N frames. Pace top-ups off `status().free`.
+
+```rust
+use medius::{ClipBuilder, Button};
+
+let mut b = ClipBuilder::new();
+for _ in 0..1000 { b.move_by(1, 0); }  // 1000 frames of +1 dx, box-timed
+b.press(Button::Left).gap(20).release(Button::Left);
+
+let clip = device.clip();
+clip.append(&b)?;
+clip.start()?;                          // or clip.arm_catch(None)? to fire on a physical press
 ```
 
 ### Queries
@@ -145,7 +161,7 @@ let catch = device.query_catch()?;      // active catch mask + box-side dropped 
 
 ### Catch (physical input events)
 
-Subscribe to the user's real input — mouse buttons/wheel/motion, keyboard keys, and media keys — as it happens. The box reports each physical report *before* any lock suppression or injection, so you can intercept an input (lock it) and rebind it (catch it) in one loop. One device-class-generic stream yields a `CatchEvent`; match on the variant. Dropping the stream unsubscribes.
+Subscribe to the user's real input (mouse buttons/wheel/motion, keyboard keys, and media keys) as it happens. The box reports each physical report *before* any lock suppression or injection, so you can intercept an input (lock it) and rebind it (catch it) in one loop. One device-class-generic stream yields a `CatchEvent`; match on the variant. Dropping the stream unsubscribes.
 
 ```rust
 use medius::{Button, CatchEvent, CatchMask, Key};
@@ -161,7 +177,7 @@ while let Ok(event) = events.recv() {
 }
 ```
 
-The mask picks which classes stream; each `CatchEvent` is a full snapshot — `Mouse` (buttons + dx/dy/wheel), `Keyboard` (modifier bitmap + pressed keys), or `Media` (active Consumer usages) — so diff successive snapshots for edges. The stream is bounded and lossy under back-pressure (`events.dropped()`), and the subscription is held alive by the keepalive and re-asserted across a reconnect. Under `async`, `events.recv_async().await`.
+The mask picks which classes stream; each `CatchEvent` is a full snapshot: `Mouse` (buttons + dx/dy/wheel), `Keyboard` (modifier bitmap + pressed keys), or `Media` (active Consumer usages); so diff successive snapshots for edges. The stream is bounded and lossy under back-pressure (`events.dropped()`), and the subscription is held alive by the keepalive and re-asserted across a reconnect. Under `async`, `events.recv_async().await`.
 
 ### Box management
 
@@ -201,7 +217,7 @@ It uses `flume`'s async recv, so there's no runtime dependency and it runs on an
 use medius::{Button, Device, FrameType, Health, MockBox, Rate, Version};
 
 let mock = MockBox::new()
-    .with_version(Version { proto_ver: 1, fw_major: 1, fw_minor: 2, fw_patch: 3 })
+    .with_version(Version { proto_ver: 2, fw_major: 1, fw_minor: 2, fw_patch: 3, mac: [0; 6], name: "my-box".into() })
     .with_health(Health::from_flags(0x0F))
     .with_rate(Rate { native_period_us: 1000, poll_period_us: 1000, confident: true });
 
