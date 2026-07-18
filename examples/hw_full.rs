@@ -162,25 +162,41 @@ mod linux {
 
     pub fn run() -> ExitCode {
         let args: Vec<String> = std::env::args().collect();
-        let event = args
-            .get(1)
-            .cloned()
-            .unwrap_or_else(|| "/dev/input/event11".to_string());
+        // args[1]: one or more comma-separated evdev nodes. A cloned mouse is composite (mouse and keyboard
+        // interfaces on separate event nodes), so grab BOTH by default; injected input on an ungrabbed node
+        // would otherwise leak to the desktop and escape verification here.
+        let events: Vec<String> = match args.get(1) {
+            Some(s) => s.split(',').map(|p| p.trim().to_string()).filter(|p| !p.is_empty()).collect(),
+            None => vec![
+                "/dev/input/event11".to_string(),
+                "/dev/input/event12".to_string(),
+            ],
+        };
         let soak_secs: u64 = args.get(3).and_then(|s| s.parse().ok()).unwrap_or(20);
 
-        let grab = match EvdevGrab::open(&event) {
-            Ok(g) => g,
-            Err(e) => {
-                eprintln!("cannot grab {event}: {e} (try a different event node, or run as root)");
-                return ExitCode::FAILURE;
+        let mut grabs = Vec::new();
+        for ev in &events {
+            match EvdevGrab::open(ev) {
+                Ok(g) => grabs.push(g),
+                Err(e) => {
+                    eprintln!("cannot grab {ev}: {e} (try a different event node, or run as root)");
+                    return ExitCode::FAILURE;
+                }
             }
-        };
+        }
         let acc = Arc::new(Acc::new());
         let stop = Arc::new(AtomicBool::new(false));
-        let rfd = grab.fd;
-        let racc = Arc::clone(&acc);
-        let rstop = Arc::clone(&stop);
-        let reader = std::thread::spawn(move || reader(rfd, racc, rstop));
+        // One reader per grabbed node, all feeding the same accumulator (mouse node reports REL/buttons,
+        // keyboard node reports KEY_*), so a composite clone is verified in full.
+        let readers: Vec<_> = grabs
+            .iter()
+            .map(|g| {
+                let rfd = g.fd;
+                let racc = Arc::clone(&acc);
+                let rstop = Arc::clone(&stop);
+                std::thread::spawn(move || reader(rfd, racc, rstop))
+            })
+            .collect();
         std::thread::sleep(Duration::from_millis(300));
 
         let device = match args.get(2) {
@@ -192,11 +208,16 @@ mod linux {
             Err(e) => {
                 eprintln!("cannot open medius box: {e}");
                 stop.store(true, Ordering::Relaxed);
-                let _ = reader.join();
+                for r in readers {
+                    let _ = r.join();
+                }
                 return ExitCode::FAILURE;
             }
         };
-        println!("grabbed {event}: injected input is captured here, NOT sent to the desktop\n");
+        println!(
+            "grabbed {}: injected input is captured here, NOT sent to the desktop\n",
+            events.join(", ")
+        );
 
         let mut ok = true;
         let mut check = |name: &str, pass: bool, detail: String| {
@@ -985,7 +1006,7 @@ mod linux {
                 }
                 let _ = dev.reconnect();
                 std::thread::sleep(Duration::from_millis(500));
-                recovered = matches!(dev.query_version(), Ok(v) if v.proto_ver == 2);
+                recovered = matches!(dev.query_version(), Ok(v) if v.proto_ver == 3);
             }
             reset_motion(&acc);
             let _ = dev.move_rel(10, 0);
@@ -1015,7 +1036,7 @@ mod linux {
             use futures::executor::block_on;
             let adev = device.as_ref().unwrap().clone().into_async();
             let av_ok = block_on(adev.query_version())
-                .map(|v| v.proto_ver == 2)
+                .map(|v| v.proto_ver == 3)
                 .unwrap_or(false);
             let ah_ok = block_on(adev.query_health())
                 .map(|h| h.link_up)
@@ -1063,8 +1084,10 @@ mod linux {
         }
 
         stop.store(true, Ordering::Relaxed);
-        let _ = reader.join();
-        drop(grab);
+        for r in readers {
+            let _ = r.join();
+        }
+        drop(grabs);
 
         if std::env::var_os("MEDIUS_UNPLUG_TEST").is_some() {
             let reopened = match args.get(2) {
@@ -1074,7 +1097,7 @@ mod linux {
             match reopened {
                 Ok(dev) => {
                     let base = dev.counters().reconnects;
-                    let up0 = matches!(dev.query_version(), Ok(v) if v.proto_ver == 2);
+                    let up0 = matches!(dev.query_version(), Ok(v) if v.proto_ver == 3);
                     println!(
                         "\n>>> AUTO-RECONNECT: physically UNPLUG the box's control USB, wait ~2s, then \
                          replug.\n    Waiting up to 60s for the reader to self-heal; NO reconnect() is \
@@ -1085,7 +1108,7 @@ mod linux {
                     while Instant::now() < deadline {
                         std::thread::sleep(Duration::from_millis(500));
                         if dev.counters().reconnects > base
-                            && matches!(dev.query_version(), Ok(v) if v.proto_ver == 2)
+                            && matches!(dev.query_version(), Ok(v) if v.proto_ver == 3)
                         {
                             healed = true;
                             break;
