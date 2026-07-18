@@ -52,12 +52,8 @@ fn clip_builder_encodes_entries_to_the_firmware_wire() {
     assert_eq!(
         f.as_bytes(),
         &[
-            0x07,
-            0x01, 0x00, 0x02, 0x00,
-            0xFF, 0xFF,
-            0x02,
-            0x00, 0x00, 0x00, 0x01,
-            0x00, 0x00, 0x00, 0x02,
+            0x07, 0x01, 0x00, 0x02, 0x00, 0xFF, 0xFF, 0x02, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00,
+            0x00, 0x02,
         ]
     );
 
@@ -75,15 +71,20 @@ fn clip_command_payload_bytes() {
     assert_eq!(clip_set_payload(CLIP_SET_LOOP, 1), [1, 1]);
     // CLIP_TRIGGER: [class][id u16 LE][edge][action][flags]
     let flags = CLIP_TRIG_F_PRESENT | CLIP_TRIG_F_CONSUME;
-    assert_eq!(clip_trigger_payload(1, 0x3A, 1, 0, flags), [1, 0x3A, 0x00, 1, 0, 3]);
-    assert_eq!(clip_trigger_payload(0xFF, 0xFFFF, 0, 0, 0), [0xFF, 0xFF, 0xFF, 0, 0, 0]);
+    assert_eq!(
+        clip_trigger_payload(1, 0x3A, 1, 0, flags),
+        [1, 0x3A, 0x00, 1, 0, 3]
+    );
+    assert_eq!(
+        clip_trigger_payload(0xFF, 0xFFFF, 0, 0, 0),
+        [0xFF, 0xFF, 0xFF, 0, 0, 0]
+    );
 }
 
 #[test]
 fn decode_clip_status_and_settings_from_one_frame() {
     let p = [
-        10u8, 1,
-        0x00, 0x01, 0x00, 0x00, // free 256
+        10u8, 1, 0x00, 0x01, 0x00, 0x00, // free 256
         0x0A, 0x00, 0x00, 0x00, // total 10
         0x05, 0x00, 0x00, 0x00, // played 5
         0xC8, 0x00, 0x00, 0x00, // ticks 200
@@ -172,7 +173,8 @@ fn clip_command_frames_carry_the_right_bytes() {
     let clip = device.clip();
 
     clip.set_retain(true).unwrap();
-    clip.set_autolock(&[Blanket::Aim, Blanket::Buttons]).unwrap();
+    clip.set_autolock(&[Blanket::Aim, Blanket::Buttons])
+        .unwrap();
     clip.set_loop(true).unwrap();
     clip.start().unwrap();
     clip.pause().unwrap();
@@ -182,8 +184,12 @@ fn clip_command_frames_carry_the_right_bytes() {
     clip.stop().unwrap();
     clip.clear().unwrap();
     clip.finalize().unwrap();
-    clip.bind(ClipTrigger::new(Key::new(0x3A), Edge::Press, ClipAction::Start))
-        .unwrap();
+    clip.bind(ClipTrigger::new(
+        Key::new(0x3A),
+        Edge::Press,
+        ClipAction::Start,
+    ))
+    .unwrap();
     clip.bind(ClipTrigger::new(Button::Right, Edge::Release, ClipAction::Toggle).consume())
         .unwrap();
     clip.unbind(Key::new(0x3A), Edge::Press).unwrap();
@@ -202,15 +208,24 @@ fn clip_command_frames_carry_the_right_bytes() {
     );
     assert_eq!(
         by(FrameType::ClipCtrl),
-        vec![vec![0], vec![2], vec![3], vec![4], vec![5], vec![1], vec![6], vec![7]]
+        vec![
+            vec![0],
+            vec![2],
+            vec![3],
+            vec![4],
+            vec![5],
+            vec![1],
+            vec![6],
+            vec![7]
+        ]
     );
     assert_eq!(
         by(FrameType::ClipTrigger),
         vec![
-            vec![1, 0x3A, 0x00, 1, 0, 1],       // bind KEY 0x3A Press Start (present)
-            vec![0, 0x01, 0x00, 2, 5, 3],       // bind Button::Right Release Toggle (present|consume)
-            vec![1, 0x3A, 0x00, 1, 0, 0],       // unbind KEY 0x3A Press (present=0)
-            vec![0xFF, 0xFF, 0xFF, 0, 0, 0],    // clear-all sentinel
+            vec![1, 0x3A, 0x00, 1, 0, 1],    // bind KEY 0x3A Press Start (present)
+            vec![0, 0x01, 0x00, 2, 5, 3],    // bind Button::Right Release Toggle (present|consume)
+            vec![1, 0x3A, 0x00, 1, 0, 0],    // unbind KEY 0x3A Press (present=0)
+            vec![0xFF, 0xFF, 0xFF, 0, 0, 0], // clear-all sentinel
         ]
     );
 }
@@ -245,7 +260,11 @@ fn clip_append_chunks_on_entry_boundaries_with_incrementing_seq() {
     for (i, (seq, payload)) in frames.iter().enumerate() {
         assert_eq!(*seq, i as u8, "append seq increments contiguously");
         assert!(payload.len() <= MAX_PAYLOAD, "each frame fits the wire");
-        assert_eq!(payload.len() % 5, 0, "each frame holds whole 5-byte entries");
+        assert_eq!(
+            payload.len() % 5,
+            0,
+            "each frame holds whole 5-byte entries"
+        );
         reassembled.extend_from_slice(payload);
     }
     assert_eq!(reassembled, b.as_bytes(), "no bytes lost or reordered");
@@ -265,7 +284,10 @@ fn clip_status_and_config_roundtrip_through_the_mock() {
         underruns: 1,
         overruns: 2,
         seq_gaps: 1,
-        held: vec![Usage::from(Button::Left), Usage::from(MediaKey::new(0x00E9))],
+        held: vec![
+            Usage::from(Button::Left),
+            Usage::from(MediaKey::new(0x00E9)),
+        ],
     };
     let settings = ClipSettings {
         autolock: vec![Blanket::Aim],

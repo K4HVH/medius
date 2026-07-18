@@ -166,7 +166,11 @@ mod linux {
         // interfaces on separate event nodes), so grab BOTH by default; injected input on an ungrabbed node
         // would otherwise leak to the desktop and escape verification here.
         let events: Vec<String> = match args.get(1) {
-            Some(s) => s.split(',').map(|p| p.trim().to_string()).filter(|p| !p.is_empty()).collect(),
+            Some(s) => s
+                .split(',')
+                .map(|p| p.trim().to_string())
+                .filter(|p| !p.is_empty())
+                .collect(),
             None => vec![
                 "/dev/input/event11".to_string(),
                 "/dev/input/event12".to_string(),
@@ -749,7 +753,14 @@ mod linux {
             let _ = clip.set_loop(false);
             check(
                 "clip trigger set + config readback",
-                bound_key && bound_btn && loop_set && cfg_ok && unbound && after_unbind && cleared && no_triggers,
+                bound_key
+                    && bound_btn
+                    && loop_set
+                    && cfg_ok
+                    && unbound
+                    && after_unbind
+                    && cleared
+                    && no_triggers,
                 format!(
                     "bound_key={bound_key} bound_btn={bound_btn} loop_set={loop_set} cfg_ok={cfg_ok} unbound={unbound} after_unbind={after_unbind} cleared={cleared} no_triggers={no_triggers}"
                 ),

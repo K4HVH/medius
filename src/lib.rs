@@ -34,10 +34,10 @@ pub use transport::scan::find_medius;
 pub use types::{
     Action, Axis, Blanket, Button, CLIP_EDGES_MAX, Caps, CatchEvent, CatchMask, CatchState, Class,
     ClipAction, ClipBuilder, ClipSettings, ClipState, ClipStatus, ClipTrigger, CountersSnapshot,
-    DeviceInfo, DeviceKind, Edge,
-    EmitPace, EmitPaceStatus, Health, ImperfectStatus, KbdCaps, Key, LedMode, LedTarget,
-    LockDirection, LockEntry, LockScope, LockTarget, Locks, LogLevel, LogLine, MediaKey, Motion,
-    MotionEvent, MouseCaps, PortInfo, Rate, RebootTarget, Stats, Usage, UsageSnapshot, Version,
+    DeviceInfo, DeviceKind, Edge, EmitPace, EmitPaceStatus, Health, ImperfectStatus, KbdCaps, Key,
+    LedMode, LedTarget, LockDirection, LockEntry, LockScope, LockTarget, Locks, LogLevel, LogLine,
+    MediaKey, Motion, MotionEvent, MouseCaps, PortInfo, Rate, RebootTarget, Stats, Usage,
+    UsageSnapshot, Version,
 };
 
 #[cfg(feature = "async")]

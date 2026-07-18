@@ -1,9 +1,9 @@
 //! Buffered clip playback (§3.11 / §4.15): the per-frame entry stream a host preloads into the device-side ring, the trigger/config surface, and the ring/playback status.
 
 use crate::protocol::opcode::{
-    CLIP_CFG_F_FINALIZED, CLIP_CFG_F_LOOP, CLIP_CFG_F_RETAIN, CLIP_F_EDGES, CLIP_F_WHEEL, CLIP_F_XY,
-    CLIP_OP_PAUSE, CLIP_OP_RESTART, CLIP_OP_RESUME, CLIP_OP_START, CLIP_OP_STOP, CLIP_OP_TOGGLE,
-    CLIP_TAG_GAP, CLIP_TRIG_MAX, LOCK_DIR_BOTH, LOCK_DIR_NEG, LOCK_DIR_POS,
+    CLIP_CFG_F_FINALIZED, CLIP_CFG_F_LOOP, CLIP_CFG_F_RETAIN, CLIP_F_EDGES, CLIP_F_WHEEL,
+    CLIP_F_XY, CLIP_OP_PAUSE, CLIP_OP_RESTART, CLIP_OP_RESUME, CLIP_OP_START, CLIP_OP_STOP,
+    CLIP_OP_TOGGLE, CLIP_TAG_GAP, CLIP_TRIG_MAX, LOCK_DIR_BOTH, LOCK_DIR_NEG, LOCK_DIR_POS,
 };
 use crate::types::lock::blanket_from_scope;
 use crate::types::{Action, Blanket, Class, LockDirection, Usage};
@@ -97,7 +97,12 @@ pub struct ClipTrigger {
 impl ClipTrigger {
     /// A pass-through binding: `on`'s `edge` drives `action`, and the input still reaches the game.
     pub fn new(on: impl Into<Usage>, edge: Edge, action: ClipAction) -> ClipTrigger {
-        ClipTrigger { on: on.into(), edge, action, consume: false }
+        ClipTrigger {
+            on: on.into(),
+            edge,
+            action,
+            consume: false,
+        }
     }
 
     /// Consume the trigger input: suppress it from the game while the trigger usage is held.
@@ -220,11 +225,18 @@ impl ClipSettings {
             if p.len() < off + 6 {
                 return None;
             }
-            if let (Some(class), Some(edge), Some(action)) =
-                (Class::from_u8(p[off]), Edge::from_u8(p[off + 3]), ClipAction::from_u8(p[off + 4]))
-            {
+            if let (Some(class), Some(edge), Some(action)) = (
+                Class::from_u8(p[off]),
+                Edge::from_u8(p[off + 3]),
+                ClipAction::from_u8(p[off + 4]),
+            ) {
                 let id = u16::from_le_bytes([p[off + 1], p[off + 2]]);
-                triggers.push(ClipTrigger { on: Usage::new(class, id), edge, action, consume: p[off + 5] != 0 });
+                triggers.push(ClipTrigger {
+                    on: Usage::new(class, id),
+                    edge,
+                    action,
+                    consume: p[off + 5] != 0,
+                });
             }
             off += 6;
         }

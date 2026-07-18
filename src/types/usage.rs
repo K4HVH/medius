@@ -55,6 +55,7 @@ impl Usage {
     }
 
     /// Append this usage's wire bytes `[class u8][id u16 LE]` to `out`.
+    #[cfg(feature = "mock")]
     pub(crate) fn push_le(self, out: &mut Vec<u8>) {
         out.push(self.class as u8);
         out.extend_from_slice(&self.id.to_le_bytes());
