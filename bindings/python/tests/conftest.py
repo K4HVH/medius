@@ -1,5 +1,4 @@
-"""Build the mock-enabled cdylib, point MEDIUS_LIB at it, and put the package on
-the path before anything imports `medius`."""
+"""Build the mock-enabled cdylib, point MEDIUS_LIB at it, and put the package on the path before anything imports `medius`."""
 
 import os
 import subprocess
@@ -7,8 +6,8 @@ import sys
 from pathlib import Path
 
 _HERE = Path(__file__).resolve()
-_PKG_ROOT = _HERE.parents[1]      # bindings/python
-_WORKSPACE = _HERE.parents[3]     # medius workspace root
+_PKG_ROOT = _HERE.parents[1]
+_WORKSPACE = _HERE.parents[3]
 
 _LIB_NAMES = {
     "linux": "libmedius_capi.so",

@@ -3,19 +3,21 @@
 use core::fmt;
 
 /// The decoded `RESP(VERSION)` payload.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Version {
     /// Protocol version, expected to be `2`.
     pub proto_ver: u8,
     pub fw_major: u8,
     pub fw_minor: u8,
     pub fw_patch: u8,
-    /// The device chip's factory base MAC — a stable per-box identity that survives port renumbering.
+    /// The device chip's factory base MAC, a stable per-box identity that survives port renumbering.
     pub mac: [u8; 6],
+    /// The box's human-readable name, never empty (firmware synthesizes a `Medius-XXXX` default from the MAC).
+    pub name: String,
 }
 
 impl Version {
-    /// The base MAC as 12 lowercase hex digits, no separators — the canonical box id.
+    /// The base MAC as 12 lowercase hex digits, no separators; the canonical box id.
     pub fn mac_hex(&self) -> String {
         let mut s = String::with_capacity(12);
         for b in self.mac {

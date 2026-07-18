@@ -8,10 +8,14 @@ from typing import List, Optional, Union
 
 from . import _native
 from ._enums import (
-    Button,
+    Blanket,
     CatchEventKind,
+    ClipAction,
+    ClipState,
     DeviceKind,
+    Edge,
     EmitMode,
+    Class,
     LockTargetKind,
     LogLevel,
 )
@@ -22,9 +26,6 @@ def _cstr(buf) -> str:
     return raw.split(b"\x00", 1)[0].decode("utf-8", "replace")
 
 
-# --- query results ---
-
-
 @dataclass
 class Version:
     proto_ver: int
@@ -32,10 +33,11 @@ class Version:
     fw_minor: int
     fw_patch: int
     mac: bytes = b"\x00" * 6
+    name: str = ""
 
     @property
     def mac_hex(self) -> str:
-        """The base MAC as 12 lowercase hex digits — the canonical box id."""
+        """The base MAC as 12 lowercase hex digits, the canonical box id."""
         return self.mac.hex()
 
 
@@ -126,14 +128,23 @@ class Stats:
 
 
 @dataclass
+class LockEntry:
+    """One active lock: what is locked and which edges."""
+
+    target: "LockTarget"
+    is_blanket: bool
+    positive: bool
+    negative: bool
+
+
+@dataclass
 class Locks:
-    mask: int
+    entries: List[LockEntry] = field(default_factory=list)
 
     def is_locked(self, target: "LockTarget", direction) -> bool:
+        c = locks_to_c(self)
         return bool(
-            _native.lib.medius_locks_is_locked(
-                _native.MediusLocks(mask=self.mask), target._c, int(direction)
-            )
+            _native.lib.medius_locks_is_locked(ctypes.byref(c), target._c, int(direction))
         )
 
 
@@ -204,63 +215,46 @@ class BoxInfo:
         return self.version.mac_hex
 
     @property
+    def name(self) -> str:
+        """The box's human-readable name (its readable partner to `id`); a synthesized default when unset."""
+        return self.version.name
+
+    @property
     def serial(self) -> Optional[str]:
         return self.port.serial
 
 
-# --- catch / log payloads ---
-
-
 @dataclass
-class MouseEvent:
-    buttons: int
+class MotionEvent:
+    """A relative-axis catch event: the user's real motion at the merge point."""
+
     dx: int
     dy: int
-    wheel: int
-
-    def is_pressed(self, button) -> bool:
-        return self.buttons & (1 << int(button)) != 0
+    dz: int
 
 
 @dataclass
-class KeyboardEvent:
-    modifiers: int = 0
-    keys: List[int] = field(default_factory=list)
+class UsageSnapshot:
+    """A held-usage snapshot for one class: every held usage (button, key, or media)."""
 
-    def is_pressed(self, key) -> bool:
-        key = int(key)
-        if 0xE0 <= key <= 0xE7:
-            return self.modifiers & (1 << (key - 0xE0)) != 0
-        return key in self.keys
+    usages: List["Usage"] = field(default_factory=list)
 
-
-@dataclass
-class MediaEvent:
-    keys: List[int] = field(default_factory=list)
-
-    def is_pressed(self, media) -> bool:
-        return int(media) in self.keys
+    def is_held(self, usage: "Usage") -> bool:
+        return any(u == usage for u in self.usages)
 
 
 @dataclass
 class CatchEvent:
     kind: CatchEventKind
-    payload: Union[MouseEvent, KeyboardEvent, MediaEvent]
+    payload: Union[MotionEvent, UsageSnapshot]
 
     @property
-    def mouse(self) -> Optional[MouseEvent]:
-        return self.payload if self.kind == CatchEventKind.MOUSE else None
+    def motion(self) -> Optional[MotionEvent]:
+        return self.payload if self.kind == CatchEventKind.MOTION else None
 
     @property
-    def keyboard(self) -> Optional[KeyboardEvent]:
-        return self.payload if self.kind == CatchEventKind.KEYBOARD else None
-
-    @property
-    def media(self) -> Optional[MediaEvent]:
-        return self.payload if self.kind == CatchEventKind.MEDIA else None
-
-    def is_pressed(self, target) -> bool:
-        return self.payload.is_pressed(target)
+    def usages(self) -> Optional[UsageSnapshot]:
+        return self.payload if self.kind == CatchEventKind.USAGES else None
 
 
 @dataclass
@@ -276,26 +270,45 @@ class RecordedFrame:
     payload: bytes
 
 
-# --- parameter helpers (wrap a ctypes struct built by the C constructors) ---
-
-
-class Input:
-    """An injection target. Build with `Input.button` / `key` / `media`."""
+class Usage:
+    """A momentary usage (button, key, or media), all one shape. Build with `Usage.button`/`key`/`media`."""
 
     def __init__(self, c):
         self._c = c
 
     @classmethod
-    def button(cls, button) -> "Input":
-        return cls(_native.lib.medius_input_button(int(button)))
+    def button(cls, button) -> "Usage":
+        return cls(_native.lib.medius_usage_button(int(button)))
 
     @classmethod
-    def key(cls, key) -> "Input":
-        return cls(_native.lib.medius_input_key(int(key)))
+    def key(cls, key) -> "Usage":
+        return cls(_native.lib.medius_usage_key(int(key)))
 
     @classmethod
-    def media(cls, media) -> "Input":
-        return cls(_native.lib.medius_input_media(int(media)))
+    def media(cls, media) -> "Usage":
+        return cls(_native.lib.medius_usage_media(int(media)))
+
+    @property
+    def kind(self) -> Class:
+        return Class(self._c.kind)
+
+    @property
+    def id(self) -> int:
+        """The class-specific id: button id, HID keycode, or 16-bit Consumer usage."""
+        return int(self._c.id)
+
+    def __eq__(self, other) -> bool:
+        return (
+            isinstance(other, Usage)
+            and self._c.kind == other._c.kind
+            and self._c.id == other._c.id
+        )
+
+    def __hash__(self) -> int:
+        return hash((int(self._c.kind), int(self._c.id)))
+
+    def __repr__(self) -> str:
+        return f"Usage(kind={self.kind.name}, id={self.id})"
 
 
 class Motion:
@@ -314,41 +327,66 @@ class Motion:
 
 
 class LockTarget:
-    """A lock target. Build with `LockTarget.x/y/wheel/button`."""
+    """A lock target: an axis (`LockTarget.x/y/wheel`) or a momentary usage (`LockTarget.usage`)."""
 
     def __init__(self, c):
         self._c = c
 
     @classmethod
     def x(cls) -> "LockTarget":
-        return cls(_native.MediusLockTarget(kind=int(LockTargetKind.X), button=int(Button.LEFT)))
+        return cls(_native.lib.medius_lock_target_axis(int(LockTargetKind.X)))
 
     @classmethod
     def y(cls) -> "LockTarget":
-        return cls(_native.MediusLockTarget(kind=int(LockTargetKind.Y), button=int(Button.LEFT)))
+        return cls(_native.lib.medius_lock_target_axis(int(LockTargetKind.Y)))
 
     @classmethod
     def wheel(cls) -> "LockTarget":
-        return cls(
-            _native.MediusLockTarget(kind=int(LockTargetKind.WHEEL), button=int(Button.LEFT))
-        )
+        return cls(_native.lib.medius_lock_target_axis(int(LockTargetKind.WHEEL)))
+
+    @classmethod
+    def usage(cls, usage: "Usage") -> "LockTarget":
+        return cls(_native.lib.medius_lock_target_usage(usage._c))
 
     @classmethod
     def button(cls, button) -> "LockTarget":
-        return cls(_native.MediusLockTarget(kind=int(LockTargetKind.BUTTON), button=int(button)))
+        return cls.usage(Usage.button(button))
 
+    @classmethod
+    def key(cls, key) -> "LockTarget":
+        return cls.usage(Usage.key(key))
 
-# --- ctypes <-> dataclass conversion ---
+    @classmethod
+    def media(cls, media) -> "LockTarget":
+        return cls.usage(Usage.media(media))
+
+    @property
+    def kind(self) -> LockTargetKind:
+        return LockTargetKind(self._c.kind)
+
+    @property
+    def input(self) -> Optional["Usage"]:
+        """The locked usage, when `kind` is `USAGE`; `None` for an axis."""
+        if self._c.kind == int(LockTargetKind.USAGE):
+            return Usage(_native.MediusUsage(kind=self._c.usage.kind, id=self._c.usage.id))
+        return None
 
 
 def version_from_c(c) -> Version:
-    return Version(c.proto_ver, c.fw_major, c.fw_minor, c.fw_patch, bytes(c.mac))
+    return Version(
+        c.proto_ver, c.fw_major, c.fw_minor, c.fw_patch, bytes(c.mac), _cstr(c.name)
+    )
 
 
 def version_to_c(v) -> "_native.MediusVersion":
     mac = bytes(v.mac).ljust(6, b"\x00")[:6]
     return _native.MediusVersion(
-        v.proto_ver, v.fw_major, v.fw_minor, v.fw_patch, (_native.u8 * 6)(*mac)
+        v.proto_ver,
+        v.fw_major,
+        v.fw_minor,
+        v.fw_patch,
+        (_native.u8 * 6)(*mac),
+        v.name.encode("utf-8")[: _native.MEDIUS_MAX_NAME - 1],
     )
 
 
@@ -521,45 +559,189 @@ def emit_pace_status_from_c(c) -> EmitPaceStatus:
     return EmitPaceStatus(EmitPace(mode, c.fixed_hz), c.resolved_hz)
 
 
+@dataclass
+class ClipStatus:
+    """The device-side clip ring and playback status (the runtime view of RESP(CLIP))."""
+
+    state: ClipState
+    free: int
+    total: int
+    played: int
+    ticks: int
+    underruns: int
+    overruns: int
+    seq_gaps: int
+    held: List["Usage"] = field(default_factory=list)
+
+    def is_held(self, usage: "Usage") -> bool:
+        return any(u == usage for u in self.held)
+
+
+def clip_status_from_c(c) -> ClipStatus:
+    n = min(int(c.held_n), _native.MEDIUS_MAX_USAGES)
+    held = [_input_copy(c.held[i]) for i in range(n)]
+    return ClipStatus(
+        ClipState(c.state),
+        c.free,
+        c.total,
+        c.played,
+        c.ticks,
+        c.underruns,
+        c.overruns,
+        c.seq_gaps,
+        held,
+    )
+
+
+def clip_status_to_c(s) -> "_native.MediusClipStatus":
+    c = _native.MediusClipStatus()
+    c.state = int(s.state)
+    c.free = s.free
+    c.total = s.total
+    c.played = s.played
+    c.ticks = s.ticks
+    c.underruns = s.underruns
+    c.overruns = s.overruns
+    c.seq_gaps = s.seq_gaps
+    n = min(len(s.held), _native.MEDIUS_MAX_USAGES)
+    c.held_n = n
+    for i in range(n):
+        c.held[i] = s.held[i]._c
+    return c
+
+
+@dataclass
+class ClipTrigger:
+    """One clip trigger binding: `on`'s `edge` drives `action`; `consume` suppresses the input from the game."""
+
+    on: "Usage"
+    edge: Edge
+    action: ClipAction
+    consume: bool = False
+
+
+@dataclass
+class ClipSettings:
+    """The clip configuration read back from RESP(CLIP): autolock, loop/retain, finalized, and the trigger set."""
+
+    autolock: List[Blanket] = field(default_factory=list)
+    loop: bool = False
+    retain: bool = False
+    finalized: bool = False
+    triggers: List[ClipTrigger] = field(default_factory=list)
+
+
+_BLANKET_BITS = [
+    (0x01, Blanket.AIM),
+    (0x02, Blanket.WHEEL),
+    (0x04, Blanket.BUTTONS),
+    (0x08, Blanket.KEYS),
+    (0x10, Blanket.MEDIA),
+]
+
+
+def clip_settings_from_c(c) -> ClipSettings:
+    n = min(int(c.n), _native.MEDIUS_CLIP_TRIG_MAX)
+    triggers = [
+        ClipTrigger(
+            _input_copy(c.triggers[i].on),
+            Edge(c.triggers[i].edge),
+            ClipAction(c.triggers[i].action),
+            bool(c.triggers[i].consume),
+        )
+        for i in range(n)
+    ]
+    autolock = [b for (m, b) in _BLANKET_BITS if c.autolock_bits & m]
+    return ClipSettings(
+        autolock,
+        bool(c.loop_),
+        bool(c.retain),
+        bool(c.finalized),
+        triggers,
+    )
+
+
+def clip_settings_to_c(s) -> "_native.MediusClipSettings":
+    c = _native.MediusClipSettings()
+    bit = {b: m for (m, b) in _BLANKET_BITS}
+    c.autolock_bits = sum(bit[b] for b in s.autolock)
+    c.loop_ = 1 if s.loop else 0
+    c.retain = 1 if s.retain else 0
+    c.finalized = 1 if s.finalized else 0
+    n = min(len(s.triggers), _native.MEDIUS_CLIP_TRIG_MAX)
+    c.n = n
+    for i in range(n):
+        t = s.triggers[i]
+        c.triggers[i] = _native.MediusClipTrigger(
+            t.on._c, int(t.edge), int(t.action), 1 if t.consume else 0
+        )
+    return c
+
+
 def counters_from_c(c) -> Counters:
     return Counters(c.frames_tx, c.frames_rx, c.crc_drops, c.reconnects)
 
 
-def mouse_event_to_c(e) -> "_native.MediusMouseEvent":
-    return _native.MediusMouseEvent(e.buttons, e.dx, e.dy, e.wheel)
+def _input_copy(c) -> Usage:
+    return Usage(_native.MediusUsage(kind=c.kind, id=c.id))
 
 
-def keyboard_event_to_c(e) -> "_native.MediusKeyboardEvent":
-    c = _native.MediusKeyboardEvent()
-    c.modifiers = e.modifiers
-    n = min(len(e.keys), 0xFF)  # the count is a u8, so cap at 255
-    c.n_keys = n
-    for idx in range(n):
-        c.keys[idx] = int(e.keys[idx]) & 0xFF
+def lock_target_from_c(c) -> LockTarget:
+    return LockTarget(
+        _native.MediusLockTarget(
+            kind=c.kind, usage=_native.MediusUsage(kind=c.usage.kind, id=c.usage.id)
+        )
+    )
+
+
+def lock_entry_from_c(c) -> LockEntry:
+    return LockEntry(
+        lock_target_from_c(c.target), bool(c.is_blanket), bool(c.positive), bool(c.negative)
+    )
+
+
+def locks_from_c(c) -> Locks:
+    n = min(int(c.n), _native.MEDIUS_MAX_LOCKS)
+    return Locks([lock_entry_from_c(c.entries[i]) for i in range(n)])
+
+
+def locks_to_c(locks) -> "_native.MediusLocks":
+    c = _native.MediusLocks()
+    n = min(len(locks.entries), _native.MEDIUS_MAX_LOCKS)
+    c.n = n
+    for i in range(n):
+        e = locks.entries[i]
+        c.entries[i] = _native.MediusLockEntry(
+            target=e.target._c,
+            is_blanket=bool(e.is_blanket),
+            positive=bool(e.positive),
+            negative=bool(e.negative),
+        )
     return c
 
 
-def media_event_to_c(e) -> "_native.MediusMediaEvent":
-    c = _native.MediusMediaEvent()
-    n = min(len(e.keys), 0xFF)
-    c.n_keys = n
+def motion_event_to_c(e) -> "_native.MediusMotionEvent":
+    return _native.MediusMotionEvent(e.dx, e.dy, e.dz)
+
+
+def usage_snapshot_to_c(s) -> "_native.MediusUsageEvent":
+    c = _native.MediusUsageEvent()
+    n = min(len(s.usages), _native.MEDIUS_MAX_USAGES)
+    c.n = n
     for idx in range(n):
-        c.keys[idx] = int(e.keys[idx]) & 0xFFFF
+        c.usages[idx] = s.usages[idx]._c
     return c
 
 
 def decode_catch_event(c) -> CatchEvent:
     kind = CatchEventKind(c.kind)
-    if kind == CatchEventKind.MOUSE:
-        m = c.data.mouse
-        return CatchEvent(kind, MouseEvent(m.buttons, m.dx, m.dy, m.wheel))
-    if kind == CatchEventKind.KEYBOARD:
-        k = c.data.keyboard
-        n = min(k.n_keys, _native.MEDIUS_MAX_KEYS)
-        return CatchEvent(kind, KeyboardEvent(k.modifiers, list(k.keys[:n])))
-    md = c.data.media
-    n = min(md.n_keys, _native.MEDIUS_MAX_MEDIA_KEYS)
-    return CatchEvent(kind, MediaEvent(list(md.keys[:n])))
+    if kind == CatchEventKind.MOTION:
+        m = c.data.motion
+        return CatchEvent(kind, MotionEvent(m.dx, m.dy, m.dz))
+    u = c.data.usages
+    n = min(int(u.n), _native.MEDIUS_MAX_USAGES)
+    usages = [_input_copy(u.usages[i]) for i in range(n)]
+    return CatchEvent(kind, UsageSnapshot(usages))
 
 
 def decode_log_line(c) -> LogLine:

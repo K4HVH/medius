@@ -1,41 +1,37 @@
-//! LOCK command (§3.8): payload bytes, enum wire values, `RESP(LOCKS)` decoding, and the HEALTH
-//! `lock_on` bit (§4.2). Bytes are pinned to the firmware wire format in `ctrl_proto.h`.
+//! LOCK command (§3.8): payload bytes, target/direction wire, `RESP(LOCKS)` decode, and the HEALTH `lock_on` bit.
 
 use crate::protocol::command::lock_payload;
+use crate::protocol::opcode::{
+    LOCK_CLS_AXIS, LOCK_CLS_KEY, LOCK_CLS_MEDIA, LOCK_DIRBIT_NEG, LOCK_DIRBIT_POS, LOCK_ID_ALL,
+};
 use crate::protocol::{Resp, parse_resp};
-use crate::types::{Button, Health, LockDirection, LockTarget, Locks};
+use crate::types::{
+    Axis, Button, Class, Health, Key, LockDirection, LockScope, LockTarget, Locks, Usage,
+};
 
 #[test]
 fn lock_payload_bytes() {
-    // [class][usage u16 LE][direction][state]. Mouse wheel / Negative / lock.
-    assert_eq!(lock_payload(0, 2, 2, 1), [0, 2, 0, 2, 1]);
-    // Media usage round-trips its 16 bits (VolumeUp 0x00E9).
-    assert_eq!(lock_payload(2, 0x00E9, 0, 1), [2, 0xE9, 0x00, 0, 1]);
-    // Blanket all-keys (class 3), usage/direction ignored.
-    assert_eq!(lock_payload(3, 0, 0, 1), [3, 0, 0, 0, 1]);
+    assert_eq!(lock_payload(LOCK_CLS_AXIS, 2, 2, 1), [3, 2, 0, 2, 1]);
+    assert_eq!(
+        lock_payload(LOCK_CLS_MEDIA, 0x00E9, 0, 1),
+        [2, 0xE9, 0x00, 0, 1]
+    );
+    assert_eq!(
+        lock_payload(LOCK_CLS_KEY, LOCK_ID_ALL, 0, 1),
+        [1, 0xFF, 0xFF, 0, 1]
+    );
 }
 
 #[test]
-fn lock_enums_pin_wire_values_and_roundtrip() {
-    // Targets: X=0, Y=1, Wheel=2, buttons = 3 + button id (Left=0..Side2=4).
-    assert_eq!(LockTarget::X.as_u8(), 0);
-    assert_eq!(LockTarget::Y.as_u8(), 1);
-    assert_eq!(LockTarget::Wheel.as_u8(), 2);
-    assert_eq!(LockTarget::Button(Button::Left).as_u8(), 3);
-    assert_eq!(LockTarget::Button(Button::Side2).as_u8(), 7);
-    for t in [
-        LockTarget::X,
-        LockTarget::Y,
-        LockTarget::Wheel,
-        LockTarget::Button(Button::Left),
-        LockTarget::Button(Button::Right),
-        LockTarget::Button(Button::Middle),
-        LockTarget::Button(Button::Side1),
-        LockTarget::Button(Button::Side2),
-    ] {
-        assert_eq!(LockTarget::from_u8(t.as_u8()), Some(t));
-    }
-    assert_eq!(LockTarget::from_u8(8), None);
+fn lock_target_and_direction_wire() {
+    assert_eq!(
+        (Axis::X.as_u16(), Axis::Y.as_u16(), Axis::Wheel.as_u16()),
+        (0, 1, 2)
+    );
+    let bt: LockTarget = Button::Left.into();
+    assert_eq!(bt, LockTarget::Usage(Usage::new(Class::Button, 0)));
+    let at: LockTarget = Axis::Wheel.into();
+    assert_eq!(at, LockTarget::Axis(Axis::Wheel));
 
     assert_eq!(
         (
@@ -56,42 +52,81 @@ fn lock_enums_pin_wire_values_and_roundtrip() {
 }
 
 #[test]
-fn locks_mask_bit_layout() {
-    // X+ = bit0, Side2.release = bit15 (target*2 + edge).
-    let xpos = Locks::from_payload(&[6, 0x01, 0x00]).unwrap();
-    assert!(xpos.is_locked(LockTarget::X, LockDirection::Positive));
-    assert!(!xpos.is_locked(LockTarget::X, LockDirection::Negative));
-
-    let side2_rel = Locks::from_payload(&[6, 0x00, 0x80]).unwrap();
-    assert_eq!(side2_rel.mask(), 0x8000);
-    assert!(side2_rel.is_locked(LockTarget::Button(Button::Side2), LockDirection::Negative));
-    assert!(!side2_rel.is_locked(LockTarget::Button(Button::Side2), LockDirection::Positive));
+fn locks_list_decode() {
+    let l = Locks::from_payload(&[
+        6,
+        2,
+        3,
+        0,
+        0,
+        LOCK_DIRBIT_POS,
+        1,
+        0x04,
+        0x00,
+        LOCK_DIRBIT_NEG,
+    ])
+    .unwrap();
+    assert_eq!(l.entries().len(), 2);
+    assert!(l.is_locked(Axis::X, LockDirection::Positive));
+    assert!(!l.is_locked(Axis::X, LockDirection::Negative));
+    assert!(l.is_locked(Key::A, LockDirection::Negative));
 }
 
 #[test]
 fn locks_is_locked_both_needs_both_edges() {
-    // X+ and X- both set (bits 0 and 1).
-    let both = Locks::from_payload(&[6, 0x03, 0x00]).unwrap();
-    assert!(both.is_locked(LockTarget::X, LockDirection::Both));
-    // Only X+ set.
-    let one = Locks::from_payload(&[6, 0x01, 0x00]).unwrap();
-    assert!(!one.is_locked(LockTarget::X, LockDirection::Both));
+    let both = Locks::from_payload(&[6, 1, 3, 0, 0, LOCK_DIRBIT_POS | LOCK_DIRBIT_NEG]).unwrap();
+    assert!(both.is_locked(Axis::X, LockDirection::Both));
+    let one = Locks::from_payload(&[6, 1, 3, 0, 0, LOCK_DIRBIT_POS]).unwrap();
+    assert!(!one.is_locked(Axis::X, LockDirection::Both));
 }
 
 #[test]
 fn decode_locks_through_parse_resp() {
-    // Y- (bit3) + Side2.release (bit15) = mask 0x8008.
-    let Some(Resp::Locks(l)) = parse_resp(&[6, 0x08, 0x80]) else {
+    let Some(Resp::Locks(l)) =
+        parse_resp(&[6, 2, 3, 1, 0, LOCK_DIRBIT_NEG, 0, 4, 0, LOCK_DIRBIT_NEG])
+    else {
         panic!("expected Locks");
     };
-    assert_eq!(l.mask(), 0x8008);
-    assert!(l.is_locked(LockTarget::Y, LockDirection::Negative));
-    assert!(l.is_locked(LockTarget::Button(Button::Side2), LockDirection::Negative));
+    assert!(l.is_locked(Axis::Y, LockDirection::Negative));
+    assert!(l.is_locked(Button::Side2, LockDirection::Negative));
+}
+
+#[test]
+fn locks_blanket_entry_decodes() {
+    let l = Locks::from_payload(&[6, 1, 1, 0xFF, 0xFF, LOCK_DIRBIT_POS]).unwrap();
+    let e = l.entries()[0];
+    assert_eq!(e.scope, LockScope::Blanket(Class::Key));
+    assert!(e.positive && !e.negative);
+    assert!(l.is_locked(crate::Key::A, LockDirection::Positive));
+    assert!(!l.is_locked(crate::Key::A, LockDirection::Negative));
+    assert!(!l.is_locked(Button::Left, LockDirection::Positive));
+}
+
+#[test]
+fn locks_unknown_entry_is_skipped() {
+    let l = Locks::from_payload(&[
+        6,
+        2,
+        0x09,
+        0x00,
+        0x00,
+        LOCK_DIRBIT_POS,
+        1,
+        4,
+        0,
+        LOCK_DIRBIT_POS,
+    ])
+    .unwrap();
+    assert_eq!(l.entries().len(), 1);
+    assert_eq!(
+        l.entries()[0].scope,
+        LockScope::Target(crate::Key::new(4).into())
+    );
 }
 
 #[test]
 fn locks_truncated_payload_is_none() {
-    assert!(parse_resp(&[6, 0x00]).is_none()); // LOCKS needs 3
+    assert!(parse_resp(&[6]).is_none());
 }
 
 #[test]
@@ -101,6 +136,5 @@ fn health_lock_on_bit_roundtrips() {
     assert!(!h.link_up && !h.mouse_attached && !h.clone_configured && !h.injection_active);
     assert!(!h.rate_confident);
     assert_eq!(h.to_flags(), 0x20);
-    // and it survives a full round-trip with the other bits set
     assert_eq!(Health::from_flags(0x3F).to_flags(), 0x3F);
 }

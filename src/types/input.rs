@@ -1,16 +1,11 @@
-//! `CATCH` event-stream vocabulary (§3.9): the subscription mask, the per-report snapshot, and the
-//! decoded `RESP(CATCH)`. Bytes are pinned to the firmware wire format in `ctrl_proto.h`.
+//! `CATCH` event-stream vocabulary (§3.9): subscription mask, catch events, decoded `RESP(CATCH)`.
 
 use crate::protocol::opcode::{
-    CATCH_ALL, CATCH_BUTTONS, CATCH_KEYS, CATCH_MASK, CATCH_MOTION, CATCH_WHEEL,
+    CATCH_ALL, CATCH_BUTTONS, CATCH_KEYS, CATCH_MASK, CATCH_MEDIA, CATCH_MOTION, CATCH_WHEEL,
 };
-use crate::types::{Button, KeyboardEvent, MediaEvent};
+use crate::types::{Class, Usage};
 
-/// Which classes of physical input the box streams as `EVENT` frames (§3.9).
-///
-/// The event payload is always the full snapshot ([`MouseEvent`]); the mask only gates which report
-/// changes trigger an emission — so [`CatchMask::BUTTONS`] alone stays sparse even though the mouse
-/// reports at roughly 1 kHz. Combine classes with `|`.
+/// Which classes of physical input the box streams as catch events (§3.9).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct CatchMask(u8);
 
@@ -19,22 +14,24 @@ impl CatchMask {
     pub const MOTION: CatchMask = CatchMask(CATCH_MOTION);
     /// Reports whose wheel delta is non-zero.
     pub const WHEEL: CatchMask = CatchMask(CATCH_WHEEL);
-    /// Reports with a button edge (press or release).
+    /// A mouse-button edge (press or release).
     pub const BUTTONS: CatchMask = CatchMask(CATCH_BUTTONS);
-    /// Keyboard and media changes — yields [`CatchEvent::Keyboard`] and [`CatchEvent::Media`].
+    /// A keyboard change (modifier or pressed-key set).
     pub const KEYS: CatchMask = CatchMask(CATCH_KEYS);
+    /// A media (Consumer) usage change.
+    pub const MEDIA: CatchMask = CatchMask(CATCH_MEDIA);
 
     /// The empty mask (unsubscribe).
     pub const fn empty() -> CatchMask {
         CatchMask(0)
     }
 
-    /// Every class — the full physical-input mirror.
+    /// Every class, the full physical-input mirror.
     pub const fn all() -> CatchMask {
         CatchMask(CATCH_ALL)
     }
 
-    /// Build a mask from raw bits, dropping any outside the valid set (motion / wheel / buttons / keys).
+    /// Build a mask from raw bits, dropping any outside the valid set.
     pub const fn from_bits_truncate(bits: u8) -> CatchMask {
         CatchMask(bits & CATCH_MASK)
     }
@@ -73,61 +70,68 @@ impl core::ops::BitOrAssign for CatchMask {
     }
 }
 
-/// One physical-input snapshot from the `CATCH` stream — an `EVENT` frame payload (§3.9).
-///
-/// It mirrors the user's real mouse report at the merge point, BEFORE any lock suppression or
-/// injection, so a locked or injected target still reports the genuine hand input here. Each field is
-/// this report's value; diff [`buttons`](Self::buttons) across two reports to detect press/release
-/// edges, or use [`is_pressed`](Self::is_pressed) for the current state.
+/// A relative-axis catch event, a `MOTION_EVENT` frame (§4.10).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct MouseEvent {
-    /// Pressed-button bitmask: bit `b.as_id()` set means button `b` is held (`Left`=0 .. `Side2`=4).
-    pub buttons: u8,
+pub struct MotionEvent {
     /// Relative X this report (right positive).
     pub dx: i16,
     /// Relative Y this report (down positive).
     pub dy: i16,
     /// Wheel delta this report (up positive).
-    pub wheel: i16,
+    pub dz: i16,
 }
 
-impl MouseEvent {
-    /// Decode an `EVENT` payload (§4.10): `[buttons u8][dx i16 LE][dy i16 LE][wheel i16 LE]`.
-    pub(crate) fn from_payload(p: &[u8]) -> Option<MouseEvent> {
-        if p.len() < 7 {
+impl MotionEvent {
+    /// Decode a `MOTION_EVENT` payload (§4.10): `[dx i16 LE][dy i16 LE][dz i16 LE]`.
+    pub(crate) fn from_payload(p: &[u8]) -> Option<MotionEvent> {
+        if p.len() < 6 {
             return None;
         }
-        Some(MouseEvent {
-            buttons: p[0],
-            dx: i16::from_le_bytes([p[1], p[2]]),
-            dy: i16::from_le_bytes([p[3], p[4]]),
-            wheel: i16::from_le_bytes([p[5], p[6]]),
+        Some(MotionEvent {
+            dx: i16::from_le_bytes([p[0], p[1]]),
+            dy: i16::from_le_bytes([p[2], p[3]]),
+            dz: i16::from_le_bytes([p[4], p[5]]),
+        })
+    }
+}
+
+/// A held-usage snapshot catch event, a `USAGE_EVENT` frame (§4.10).
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct UsageSnapshot {
+    /// The currently-held usages (all of one class per event).
+    pub usages: Vec<Usage>,
+}
+
+impl UsageSnapshot {
+    /// Decode a `USAGE_EVENT` payload (§4.10): `[n u8]` then `n × [class u8][id u16 LE]`.
+    pub(crate) fn from_payload(p: &[u8]) -> Option<UsageSnapshot> {
+        Some(UsageSnapshot {
+            usages: Usage::decode_list(p)?,
         })
     }
 
-    /// Whether `button` is held in this snapshot.
-    pub fn is_pressed(self, button: Button) -> bool {
-        self.buttons & (1 << button.as_id()) != 0
+    /// The class of this snapshot's usages (from the first entry), or `None` if empty.
+    pub fn class(&self) -> Option<Class> {
+        self.usages.first().map(|u| u.class)
+    }
+
+    /// Whether `usage` is held in this snapshot.
+    pub fn is_held(&self, usage: impl Into<Usage>) -> bool {
+        let u = usage.into();
+        self.usages.contains(&u)
     }
 }
 
-/// One event from the catch stream. The class is set by the subscription mask: a [`CatchMask`] that
-/// covers several classes yields a single heterogeneous stream, so match on the variant. Mouse classes
-/// (motion/wheel/buttons) arrive as [`CatchEvent::Mouse`]; the [`CatchMask::KEYS`] class arrives as
-/// [`CatchEvent::Keyboard`] (typing) and [`CatchEvent::Media`] (media keys).
+/// One event from the catch stream. Match on the variant: relative motion, or a held-usage snapshot.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum CatchEvent {
-    /// A mouse report — buttons + relative motion + wheel.
-    Mouse(MouseEvent),
-    /// A keyboard snapshot — the modifier bitmap + currently-pressed keys.
-    Keyboard(KeyboardEvent),
-    /// A media snapshot — the currently-active Consumer usages.
-    Media(MediaEvent),
+    /// A relative-axis event: cursor motion and/or wheel.
+    Motion(MotionEvent),
+    /// A held-usage snapshot for one class (buttons, keys, or media).
+    Usages(UsageSnapshot),
 }
 
-/// Decoded `RESP(CATCH)` (§4.9): the active subscription mask + the firmware-side dropped-event count
-/// (events the box could not queue under back-pressure; distinct from host-side
-/// [`EventStream::dropped`](crate::EventStream::dropped)).
+/// Decoded `RESP(CATCH)` (§4.9): active subscription mask + firmware-side dropped-event count.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct CatchState {
     /// The classes the box is currently streaming.

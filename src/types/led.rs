@@ -27,7 +27,6 @@ impl LedTarget {
 }
 
 /// What a `LED` command drives the LED to; `Auto` hands it back to the box's status display.
-/// Discriminants are the wire `mode` byte.
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum LedMode {

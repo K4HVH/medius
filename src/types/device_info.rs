@@ -1,4 +1,4 @@
-//! Decoded `RESP(DEVICE_INFO)` — the cloned device's USB identity, kind, and product (§4.3).
+//! Decoded `RESP(DEVICE_INFO)`: the cloned device's USB identity, kind, and product (§4.3).
 
 use core::fmt;
 
@@ -34,9 +34,7 @@ impl fmt::Display for DeviceKind {
     }
 }
 
-/// The cloned device's USB identity, read from its descriptors. All numeric fields are zero, both
-/// flags false, `kind` [`DeviceKind::Unknown`] and `product` empty when nothing is cloned. The
-/// control host cannot otherwise see this — the clone sits on the game PC's bus, not the control link.
+/// The cloned device's USB identity, read from its descriptors.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
 pub struct DeviceInfo {
     /// `idVendor`.
@@ -58,8 +56,7 @@ pub struct DeviceInfo {
 }
 
 impl DeviceInfo {
-    /// Decode a `RESP(DEVICE_INFO)` payload (§4.3):
-    /// `[what][vid u16][pid u16][bcd_device u16][bcd_usb u16][flags u8][primary_kind u8][product UTF-8…]`.
+    /// Decode a `RESP(DEVICE_INFO)` payload (§4.3).
     pub(crate) fn from_payload(p: &[u8]) -> Option<Self> {
         if p.len() < 11 {
             return None;

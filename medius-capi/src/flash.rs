@@ -5,9 +5,7 @@ use std::os::raw::c_char;
 
 use crate::error::{MediusStatus, fail, guard_status};
 
-/// Reboot a chip to ROM download and flash `bin_path` via esptool on PATH. `host` selects the host
-/// chip (otherwise the device chip). Blocking (~2 s settle + subprocess). Platform-gated to Linux and
-/// Windows; returns `ErrUnknown` elsewhere.
+/// Reboot a chip to ROM download and flash `bin_path` via esptool; `host` selects the host chip.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_flash(
     port: *const c_char,

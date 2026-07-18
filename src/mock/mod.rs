@@ -11,10 +11,12 @@ use crate::protocol::opcode::{
 };
 use crate::protocol::{DecodedFrame, FrameType, encode};
 use crate::transport::mock::MockTransport;
+use crate::types::lock::blanket_scope;
 use crate::types::{
-    Caps, CatchState, DeviceInfo, DeviceKind, EmitPace, Health, ImperfectStatus, KbdCaps,
-    KeyboardEvent, Locks, LogLevel, MediaEvent, MouseCaps, MouseEvent, Rate, Stats, Version,
+    Caps, CatchState, ClipSettings, ClipState, ClipStatus, DeviceInfo, DeviceKind, EmitPace, Health,
+    ImperfectStatus, KbdCaps, Locks, LogLevel, MouseCaps, Rate, Stats, Usage, Version,
 };
+use crate::protocol::opcode::{CLIP_CFG_F_FINALIZED, CLIP_CFG_F_LOOP, CLIP_CFG_F_RETAIN};
 
 #[derive(Debug)]
 struct State {
@@ -29,6 +31,8 @@ struct State {
     imperfect: ImperfectStatus,
     move_ride_ms: u16,
     emit_pace: EmitPace,
+    clip: ClipStatus,
+    clip_settings: ClipSettings,
     recorded: Vec<DecodedFrame>,
     respond: bool,
 }
@@ -42,6 +46,7 @@ impl Default for State {
                 fw_minor: 0,
                 fw_patch: 0,
                 mac: [0; 6],
+                name: String::new(),
             },
             health: Health::from_flags(0),
             device_info: DeviceInfo::default(),
@@ -54,6 +59,8 @@ impl Default for State {
             imperfect: ImperfectStatus::default(),
             move_ride_ms: 0,
             emit_pace: EmitPace::Learned,
+            clip: ClipStatus::default(),
+            clip_settings: ClipSettings::default(),
             recorded: Vec::new(),
             respond: true,
         }
@@ -151,9 +158,23 @@ fn stats_payload(s: Stats) -> Vec<u8> {
     p
 }
 
-fn locks_payload(l: Locks) -> Vec<u8> {
-    let mut p = vec![6u8];
-    p.extend_from_slice(&l.mask().to_le_bytes());
+fn locks_payload(l: &Locks) -> Vec<u8> {
+    use crate::protocol::opcode::{LOCK_CLS_AXIS, LOCK_DIRBIT_NEG, LOCK_DIRBIT_POS, LOCK_ID_ALL};
+    use crate::types::{LockScope, LockTarget};
+    let entries = l.entries();
+    let mut p = vec![6u8, entries.len() as u8];
+    for e in entries {
+        let (class, id) = match e.scope {
+            LockScope::Blanket(class) => (class.as_u8(), LOCK_ID_ALL),
+            LockScope::Target(LockTarget::Axis(a)) => (LOCK_CLS_AXIS, a.as_u16()),
+            LockScope::Target(LockTarget::Usage(u)) => u.class_id(),
+        };
+        let dirbits = (if e.positive { LOCK_DIRBIT_POS } else { 0 })
+            | (if e.negative { LOCK_DIRBIT_NEG } else { 0 });
+        p.push(class);
+        p.extend_from_slice(&id.to_le_bytes());
+        p.push(dirbits);
+    }
     p
 }
 
@@ -164,7 +185,6 @@ fn catch_resp_payload(c: CatchState) -> Vec<u8> {
 }
 
 fn options_imperfect_payload(i: ImperfectStatus) -> Vec<u8> {
-    // RESP(OPTIONS, IMPERFECT): [what=9][id=0][allowed][over_capacity][clone_imperfect]
     vec![
         9u8,
         OPT_IMPERFECT,
@@ -175,16 +195,14 @@ fn options_imperfect_payload(i: ImperfectStatus) -> Vec<u8> {
 }
 
 fn options_move_ride_payload(ms: u16) -> Vec<u8> {
-    // RESP(OPTIONS, MOVE_RIDE): [what=9][id=1][timeout u16 LE ms]
     let mut p = vec![9u8, OPT_MOVE_RIDE];
     p.extend_from_slice(&ms.to_le_bytes());
     p
 }
 
 fn options_emit_payload(pace: EmitPace) -> Vec<u8> {
-    // RESP(OPTIONS, EMIT): [what=9][id=2][mode][fixed_hz u16 LE][resolved_hz u16 LE]. Mirror the
-    // firmware exactly: Fixed clamps the echoed rate to 1..=1000 (0 -> 1000) and snaps resolved to the
-    // 1 ms frame clock (1000/n); Learned/Interval echo 0 (the mock has no real device to resolve).
+    // Mirror the firmware: Fixed clamps the echoed rate to 1..=1000 (0 -> 1000) and snaps resolved
+    // to the 1 ms frame clock (1000/n); Learned/Interval echo 0 (no real device to resolve).
     let (mode, fixed_hz, resolved) = match pace {
         EmitPace::Learned => (0u8, 0u16, 0u16),
         EmitPace::Interval => (1, 0, 0),
@@ -200,26 +218,56 @@ fn options_emit_payload(pace: EmitPace) -> Vec<u8> {
     p
 }
 
-fn kb_event_payload(e: &KeyboardEvent) -> Vec<u8> {
-    let mut p = vec![e.modifiers, e.keys.len() as u8];
-    p.extend(e.keys.iter().map(|k| k.usage()));
-    p
-}
-
-fn cons_event_payload(e: &MediaEvent) -> Vec<u8> {
-    let mut p = vec![e.keys.len() as u8];
-    for k in &e.keys {
-        p.extend_from_slice(&k.usage().to_le_bytes());
+fn clip_status_payload(c: &ClipStatus, cfg: &ClipSettings) -> Vec<u8> {
+    let state = match c.state {
+        ClipState::Idle => 0u8,
+        ClipState::Playing => 1,
+        ClipState::Paused => 2,
+        ClipState::Faulted => 3,
+    };
+    let mut p = vec![10u8, state];
+    p.extend_from_slice(&c.free.to_le_bytes());
+    p.extend_from_slice(&c.total.to_le_bytes());
+    p.extend_from_slice(&c.played.to_le_bytes());
+    p.extend_from_slice(&c.ticks.to_le_bytes());
+    p.extend_from_slice(&c.underruns.to_le_bytes());
+    p.extend_from_slice(&c.overruns.to_le_bytes());
+    p.extend_from_slice(&c.seq_gaps.to_le_bytes());
+    p.push(c.held.len() as u8);
+    for u in &c.held {
+        u.push_le(&mut p);
+    }
+    p.push(blanket_scope(&cfg.autolock));
+    let flags = (if cfg.loop_ { CLIP_CFG_F_LOOP } else { 0 })
+        | (if cfg.retain { CLIP_CFG_F_RETAIN } else { 0 })
+        | (if cfg.finalized { CLIP_CFG_F_FINALIZED } else { 0 });
+    p.push(flags);
+    p.push(cfg.triggers.len() as u8);
+    for t in &cfg.triggers {
+        let (class, id) = t.on.class_id();
+        p.push(class);
+        p.extend_from_slice(&id.to_le_bytes());
+        p.push(t.edge.as_u8());
+        p.push(t.action.as_u8());
+        p.push(t.consume as u8);
     }
     p
 }
 
-fn event_payload(r: MouseEvent) -> Vec<u8> {
-    let mut p = Vec::with_capacity(7);
-    p.push(r.buttons);
-    p.extend_from_slice(&r.dx.to_le_bytes());
-    p.extend_from_slice(&r.dy.to_le_bytes());
-    p.extend_from_slice(&r.wheel.to_le_bytes());
+fn motion_event_payload(dx: i16, dy: i16, dz: i16) -> Vec<u8> {
+    let mut p = Vec::with_capacity(6);
+    p.extend_from_slice(&dx.to_le_bytes());
+    p.extend_from_slice(&dy.to_le_bytes());
+    p.extend_from_slice(&dz.to_le_bytes());
+    p
+}
+
+fn usage_event_payload(usages: &[Usage]) -> Vec<u8> {
+    let mut p = Vec::with_capacity(1 + 3 * usages.len());
+    p.push(usages.len() as u8);
+    for u in usages {
+        u.push_le(&mut p);
+    }
     p
 }
 
@@ -252,9 +300,10 @@ impl MockBox {
             if ty == FrameType::Query && st.respond {
                 match payload.first().copied() {
                     Some(0) => {
-                        let v = st.version;
+                        let v = &st.version;
                         let mut p = vec![0, v.proto_ver, v.fw_major, v.fw_minor, v.fw_patch];
                         p.extend_from_slice(&v.mac);
+                        p.extend_from_slice(v.name.as_bytes());
                         encode(FrameType::Resp, seq, &p).expect("resp fits")
                     }
                     Some(1) => {
@@ -272,7 +321,7 @@ impl MockBox {
                         encode(FrameType::Resp, seq, &stats_payload(st.stats)).expect("resp fits")
                     }
                     Some(6) => {
-                        encode(FrameType::Resp, seq, &locks_payload(st.locks)).expect("resp fits")
+                        encode(FrameType::Resp, seq, &locks_payload(&st.locks)).expect("resp fits")
                     }
                     Some(7) => encode(FrameType::Resp, seq, &catch_resp_payload(st.catch))
                         .expect("resp fits"),
@@ -295,6 +344,8 @@ impl MockBox {
                         }
                         _ => Vec::new(),
                     },
+                    Some(10) => encode(FrameType::Resp, seq, &clip_status_payload(&st.clip, &st.clip_settings))
+                        .expect("resp fits"),
                     _ => Vec::new(),
                 }
             } else {
@@ -340,8 +391,7 @@ impl MockBox {
         self
     }
 
-    /// Set the keyboard half of the [`Caps`] answered to `QUERY(CAPS)` (builder style). Also marks the
-    /// keyboard class change-driven, since a keyboard reports only on a key change.
+    /// Set the keyboard half of the [`Caps`] answered to `QUERY(CAPS)`, marking the keyboard class change-driven.
     #[must_use]
     pub fn with_kbd_caps(self, keyboard: KbdCaps) -> Self {
         let mut st = self.state.lock();
@@ -425,6 +475,30 @@ impl MockBox {
         self.state.lock().emit_pace = pace;
     }
 
+    /// Set the [`ClipStatus`] answered to `QUERY(CLIP)` (builder style).
+    #[must_use]
+    pub fn with_clip_status(self, clip: ClipStatus) -> Self {
+        self.state.lock().clip = clip;
+        self
+    }
+
+    /// Update the [`ClipStatus`] answered to `QUERY(CLIP)` in place (e.g. to simulate the ring draining).
+    pub fn set_clip_status(&self, clip: ClipStatus) {
+        self.state.lock().clip = clip;
+    }
+
+    /// Set the [`ClipSettings`] answered to `QUERY(CLIP)` (builder style).
+    #[must_use]
+    pub fn with_clip_settings(self, settings: ClipSettings) -> Self {
+        self.state.lock().clip_settings = settings;
+        self
+    }
+
+    /// Update the [`ClipSettings`] answered to `QUERY(CLIP)` in place.
+    pub fn set_clip_settings(&self, settings: ClipSettings) {
+        self.state.lock().clip_settings = settings;
+    }
+
     /// Make the box unresponsive (builder style): it records commands but never answers a `QUERY`.
     #[must_use]
     pub fn silent(self) -> Self {
@@ -445,24 +519,19 @@ impl MockBox {
         self.transport.push_frame(FrameType::Log, 0, &payload);
     }
 
-    /// Push an `EVENT` (mouse snapshot) as if the box emitted it; it surfaces on a subscribed
-    /// [`EventStream`](crate::EventStream) as [`CatchEvent::Mouse`](crate::CatchEvent). `seq` is the
-    /// rolling event counter the host sees as the frame `SEQ`.
-    pub fn push_event(&self, seq: u8, report: MouseEvent) {
-        self.transport
-            .push_frame(FrameType::MouseEvent, seq, &event_payload(report));
+    /// Push a `MOTION_EVENT` as if the box emitted it; surfaces as [`CatchEvent::Motion`](crate::CatchEvent).
+    pub fn push_motion(&self, seq: u8, dx: i16, dy: i16, dz: i16) {
+        self.transport.push_frame(
+            FrameType::MotionEvent,
+            seq,
+            &motion_event_payload(dx, dy, dz),
+        );
     }
 
-    /// Push a `KB_EVENT` (keyboard snapshot); surfaces as [`CatchEvent::Keyboard`](crate::CatchEvent).
-    pub fn push_kb_event(&self, seq: u8, event: &KeyboardEvent) {
+    /// Push a `USAGE_EVENT` (a held-usage snapshot); surfaces as [`CatchEvent::Usages`](crate::CatchEvent).
+    pub fn push_usages(&self, seq: u8, usages: &[Usage]) {
         self.transport
-            .push_frame(FrameType::KbEvent, seq, &kb_event_payload(event));
-    }
-
-    /// Push a `CONS_EVENT` (media snapshot); surfaces as [`CatchEvent::Media`](crate::CatchEvent).
-    pub fn push_cons_event(&self, seq: u8, event: &MediaEvent) {
-        self.transport
-            .push_frame(FrameType::ConsEvent, seq, &cons_event_payload(event));
+            .push_frame(FrameType::UsageEvent, seq, &usage_event_payload(usages));
     }
 
     /// A snapshot copy of every command the host has sent so far, decoded, in order.

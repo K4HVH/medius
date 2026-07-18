@@ -5,24 +5,24 @@ use crate::*;
 #[test]
 fn input_constructors_tag_and_value() {
     assert_eq!(
-        medius_input_button(MediusButton::Side1),
-        MediusInput {
-            kind: MediusInputKind::Button,
-            value: 3
+        medius_usage_button(MediusButton::Side1),
+        MediusUsage {
+            kind: MediusClass::Button,
+            id: 3
         }
     );
     assert_eq!(
-        medius_input_key(MEDIUS_KEY_A),
-        MediusInput {
-            kind: MediusInputKind::Key,
-            value: 0x04
+        medius_usage_key(MEDIUS_KEY_A),
+        MediusUsage {
+            kind: MediusClass::Key,
+            id: 0x04
         }
     );
     assert_eq!(
-        medius_input_media(MEDIUS_MEDIA_VOLUME_UP),
-        MediusInput {
-            kind: MediusInputKind::Media,
-            value: 0xE9
+        medius_usage_media(MEDIUS_MEDIA_VOLUME_UP),
+        MediusUsage {
+            kind: MediusClass::Media,
+            id: 0xE9
         }
     );
 }
@@ -49,47 +49,61 @@ fn motion_constructors_select_the_right_arm() {
     );
 }
 
-fn target(kind: MediusLockTargetKind, button: MediusButton) -> MediusLockTarget {
-    MediusLockTarget { kind, button }
+fn locks_with(entries: &[MediusLockEntry]) -> MediusLocks {
+    let blank = MediusLockEntry {
+        target: medius_lock_target_axis(MediusLockTargetKind::X),
+        is_blanket: false,
+        positive: false,
+        negative: false,
+    };
+    let mut l = MediusLocks {
+        n: entries.len() as u16,
+        entries: [blank; MEDIUS_MAX_LOCKS],
+    };
+    for (slot, e) in l.entries.iter_mut().zip(entries.iter()) {
+        *slot = *e;
+    }
+    l
 }
 
 #[test]
-fn is_locked_matches_the_bit_layout() {
-    // X is target 0: positive at bit 0, negative at bit 1.
-    let x = target(MediusLockTargetKind::X, MediusButton::Left);
-    let pos_only = MediusLocks { mask: 0b01 };
-    assert!(medius_locks_is_locked(
-        pos_only,
-        x,
-        MediusLockDirection::Positive
-    ));
-    assert!(!medius_locks_is_locked(
-        pos_only,
-        x,
-        MediusLockDirection::Negative
-    ));
-    assert!(!medius_locks_is_locked(
-        pos_only,
-        x,
-        MediusLockDirection::Both
-    ));
+fn is_locked_matches_entries() {
+    let locked = |l: *const MediusLocks, t: MediusLockTarget, d: MediusLockDirection| unsafe {
+        medius_locks_is_locked(l, t, d)
+    };
+    let x = medius_lock_target_axis(MediusLockTargetKind::X);
+    let side2 = medius_lock_target_usage(medius_usage_button(MediusButton::Side2));
+    let locks = locks_with(&[
+        MediusLockEntry {
+            target: x,
+            is_blanket: false,
+            positive: true,
+            negative: false,
+        },
+        MediusLockEntry {
+            target: side2,
+            is_blanket: false,
+            positive: false,
+            negative: true,
+        },
+    ]);
+    assert!(locked(&locks, x, MediusLockDirection::Positive));
+    assert!(!locked(&locks, x, MediusLockDirection::Negative));
+    assert!(!locked(&locks, x, MediusLockDirection::Both));
+    assert!(locked(&locks, side2, MediusLockDirection::Negative));
+    assert!(!locked(&locks, side2, MediusLockDirection::Positive));
+    assert!(!locked(std::ptr::null(), x, MediusLockDirection::Positive));
 
-    let both = MediusLocks { mask: 0b11 };
-    assert!(medius_locks_is_locked(both, x, MediusLockDirection::Both));
-
-    // Side2 is button id 4 -> target byte 3+4 = 7 -> base bit 14.
-    let side2 = target(MediusLockTargetKind::Button, MediusButton::Side2);
-    let side2_neg = MediusLocks { mask: 1 << 15 };
-    assert!(medius_locks_is_locked(
-        side2_neg,
-        side2,
-        MediusLockDirection::Negative
-    ));
-    assert!(!medius_locks_is_locked(
-        side2_neg,
-        side2,
-        MediusLockDirection::Positive
-    ));
+    let blanket = locks_with(&[MediusLockEntry {
+        target: medius_lock_target_usage(medius_usage_button(MediusButton::Left)),
+        is_blanket: true,
+        positive: true,
+        negative: true,
+    }]);
+    let key_a = medius_lock_target_usage(medius_usage_key(MEDIUS_KEY_A));
+    assert!(locked(&blanket, side2, MediusLockDirection::Positive));
+    assert!(!locked(&blanket, key_a, MediusLockDirection::Positive));
+    assert!(!locked(&blanket, x, MediusLockDirection::Positive));
 }
 
 #[test]
@@ -113,43 +127,32 @@ fn rate_native_hz_divides_the_period() {
     assert!(!unsafe { medius_rate_native_hz(no_cadence, &mut hz) });
 }
 
-#[test]
-fn mouse_event_is_pressed_reads_the_bitmask() {
-    let e = MediusMouseEvent {
-        buttons: 1 << 3, // Side1
-        dx: 0,
-        dy: 0,
-        wheel: 0,
+fn usage_event(usages: &[MediusUsage]) -> MediusUsageEvent {
+    let mut e = MediusUsageEvent {
+        n: usages.len() as u16,
+        usages: [MediusUsage {
+            kind: MediusClass::Button,
+            id: 0,
+        }; MEDIUS_MAX_USAGES],
     };
-    assert!(unsafe { medius_mouse_event_is_pressed(&e, MediusButton::Side1) });
-    assert!(!unsafe { medius_mouse_event_is_pressed(&e, MediusButton::Left) });
-    assert!(!unsafe { medius_mouse_event_is_pressed(std::ptr::null(), MediusButton::Left) });
+    for (slot, u) in e.usages.iter_mut().zip(usages.iter()) {
+        *slot = *u;
+    }
+    e
 }
 
 #[test]
-fn keyboard_event_is_pressed_handles_modifiers_and_keys() {
-    let mut keys = [0u8; MEDIUS_MAX_KEYS];
-    keys[0] = MEDIUS_KEY_A;
-    keys[1] = MEDIUS_KEY_B;
-    let e = MediusKeyboardEvent {
-        modifiers: 1 << 1, // LEFT_SHIFT is 0xE1 -> bit 1
-        n_keys: 2,
-        keys,
-    };
-    assert!(unsafe { medius_keyboard_event_is_pressed(&e, MEDIUS_KEY_A) });
-    assert!(unsafe { medius_keyboard_event_is_pressed(&e, MEDIUS_KEY_B) });
-    assert!(!unsafe { medius_keyboard_event_is_pressed(&e, MEDIUS_KEY_C) });
-    assert!(unsafe { medius_keyboard_event_is_pressed(&e, MEDIUS_KEY_LEFT_SHIFT) });
-    assert!(!unsafe { medius_keyboard_event_is_pressed(&e, MEDIUS_KEY_LEFT_CTRL) });
-}
-
-#[test]
-fn media_event_is_pressed_searches_the_list() {
-    let mut keys = [0u16; MEDIUS_MAX_MEDIA_KEYS];
-    keys[0] = MEDIUS_MEDIA_VOLUME_UP;
-    let e = MediusMediaEvent { n_keys: 1, keys };
-    assert!(unsafe { medius_media_event_is_pressed(&e, MEDIUS_MEDIA_VOLUME_UP) });
-    assert!(!unsafe { medius_media_event_is_pressed(&e, MEDIUS_MEDIA_MUTE) });
+fn usage_event_is_held_matches_any_class() {
+    let a = medius_usage_key(MEDIUS_KEY_A);
+    let shift = medius_usage_key(MEDIUS_KEY_LEFT_SHIFT);
+    let side1 = medius_usage_button(MediusButton::Side1);
+    let e = usage_event(&[a, shift, side1]);
+    assert!(unsafe { medius_usage_event_is_held(&e, a) });
+    assert!(unsafe { medius_usage_event_is_held(&e, shift) });
+    assert!(unsafe { medius_usage_event_is_held(&e, side1) });
+    assert!(!unsafe { medius_usage_event_is_held(&e, medius_usage_key(MEDIUS_KEY_B)) });
+    assert!(!unsafe { medius_usage_event_is_held(&e, medius_usage_button(MediusButton::Left)) });
+    assert!(!unsafe { medius_usage_event_is_held(std::ptr::null(), a) });
 }
 
 #[test]
@@ -193,26 +196,20 @@ fn caps_predicates() {
 }
 
 #[test]
-fn keyboard_event_count_caps_at_u8_max_without_wrapping() {
-    // A snapshot larger than the u8 count must cap at 255, never wrap to 0.
-    let kb = medius::KeyboardEvent {
-        modifiers: 0,
-        keys: (0..300u16).map(|i| medius::Key::new(i as u8)).collect(),
+fn usage_snapshot_count_caps_at_capacity_without_wrapping() {
+    let snap = medius::UsageSnapshot {
+        usages: (0..(MEDIUS_MAX_USAGES as u16 + 44))
+            .map(|i| medius::Usage::new(medius::Class::Key, i))
+            .collect(),
     };
-    let c = MediusKeyboardEvent::from(&kb);
-    assert_eq!(c.n_keys, 255);
-    let md = medius::MediaEvent {
-        keys: (0..300u16).map(medius::MediaKey::new).collect(),
-    };
-    let c = MediusMediaEvent::from(&md);
-    assert_eq!(c.n_keys, 255);
+    let ev = MediusCatchEvent::from(medius::CatchEvent::Usages(snap));
+    assert_eq!(ev.kind, MediusCatchEventKind::Usages);
+    assert_eq!(unsafe { ev.data.usages.n } as usize, MEDIUS_MAX_USAGES);
 }
 
 #[test]
 fn last_error_message_truncates_and_reports_full_length() {
-    // No call has failed on this thread yet, but a short buffer must still NUL-terminate safely.
     let mut buf = [0i8; 8];
     let _ = unsafe { medius_last_error_message(buf.as_mut_ptr(), buf.len()) };
-    // The last byte we may have written is a NUL; the call must not overrun.
     assert_eq!(buf[7], 0);
 }

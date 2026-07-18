@@ -1,5 +1,4 @@
-"""The scriptable mock box (feature = mock). Degrades to a clear error if the
-loaded library was built without the mock feature."""
+"""The scriptable mock box (feature = mock); errors clearly if the library lacks it."""
 
 from __future__ import annotations
 
@@ -12,31 +11,35 @@ from ._enums import FrameType, LogLevel
 from ._types import (
     Caps,
     CatchState,
+    ClipSettings,
+    ClipStatus,
     EmitPace,
     Health,
     ImperfectStatus,
     DeviceInfo,
     KbdCaps,
-    KeyboardEvent,
-    MediaEvent,
+    Locks,
+    MotionEvent,
     MouseCaps,
-    MouseEvent,
     Rate,
     RecordedFrame,
     Stats,
+    UsageSnapshot,
     Version,
     caps_to_c,
     catch_state_to_c,
+    clip_settings_to_c,
+    clip_status_to_c,
     device_info_to_c,
     health_to_c,
     imperfect_to_c,
     kbd_caps_to_c,
-    keyboard_event_to_c,
-    media_event_to_c,
+    locks_to_c,
+    motion_event_to_c,
     mouse_caps_to_c,
-    mouse_event_to_c,
     rate_to_c,
     stats_to_c,
+    usage_snapshot_to_c,
     version_to_c,
 )
 
@@ -54,8 +57,6 @@ class MockBox:
         if not self._handle:
             raise RuntimeError("medius_mock_new returned null")
 
-    # --- open a device over this mock ---
-
     def open(self) -> Device:
         """Open a `Device` over this mock and run the handshake."""
         return Device.open_mock(self)
@@ -72,8 +73,6 @@ class MockBox:
         other = MockBox.__new__(MockBox)
         other._handle = handle
         return other
-
-    # --- query answers ---
 
     def set_version(self, version: Version):
         _native.lib.medius_mock_set_version(self._handle, version_to_c(version))
@@ -99,8 +98,8 @@ class MockBox:
     def set_stats(self, stats: Stats):
         _native.lib.medius_mock_set_stats(self._handle, stats_to_c(stats))
 
-    def set_locks(self, mask: int):
-        _native.lib.medius_mock_set_locks(self._handle, _native.MediusLocks(mask=mask))
+    def set_locks(self, locks: Locks):
+        _native.lib.medius_mock_set_locks(self._handle, locks_to_c(locks))
 
     def set_catch_state(self, state: CatchState):
         _native.lib.medius_mock_set_catch_state(self._handle, catch_state_to_c(state))
@@ -117,11 +116,17 @@ class MockBox:
     def set_emit_pace(self, pace: EmitPace):
         _native.lib.medius_mock_set_emit_pace(self._handle, int(pace.mode), int(pace.hz))
 
+    def set_clip_status(self, status: ClipStatus):
+        """Set the `ClipStatus` the mock answers to `ClipHandle.query_status`."""
+        _native.lib.medius_mock_set_clip_status(self._handle, clip_status_to_c(status))
+
+    def set_clip_settings(self, settings: "ClipSettings"):
+        """Set the `ClipSettings` the mock answers to `ClipHandle.query_config`."""
+        _native.lib.medius_mock_set_clip_settings(self._handle, clip_settings_to_c(settings))
+
     def silent(self):
         """Make the mock stop answering queries (one-way, for timeout tests)."""
         _native.lib.medius_mock_silent(self._handle)
-
-    # --- push inbound traffic ---
 
     def push_raw(self, data: bytes):
         if not data:
@@ -132,18 +137,12 @@ class MockBox:
     def push_log(self, level: LogLevel, text: str):
         _native.lib.medius_mock_push_log(self._handle, int(level), text.encode("utf-8"))
 
-    def push_event(self, seq: int, event: MouseEvent):
-        _native.lib.medius_mock_push_event(self._handle, seq, mouse_event_to_c(event))
+    def push_motion(self, seq: int, event: MotionEvent):
+        _native.lib.medius_mock_push_motion(self._handle, seq, motion_event_to_c(event))
 
-    def push_kb_event(self, seq: int, event: KeyboardEvent):
-        c = keyboard_event_to_c(event)
-        _native.lib.medius_mock_push_kb_event(self._handle, seq, ctypes.byref(c))
-
-    def push_cons_event(self, seq: int, event: MediaEvent):
-        c = media_event_to_c(event)
-        _native.lib.medius_mock_push_cons_event(self._handle, seq, ctypes.byref(c))
-
-    # --- recorded commands ---
+    def push_usages(self, seq: int, event: UsageSnapshot):
+        c = usage_snapshot_to_c(event)
+        _native.lib.medius_mock_push_usages(self._handle, seq, ctypes.byref(c))
 
     def recorded(self) -> int:
         return int(_native.lib.medius_mock_recorded(self._handle))
@@ -170,8 +169,6 @@ class MockBox:
         except ValueError:
             ty = out_ty.value
         return RecordedFrame(ty, out_seq.value, payload)
-
-    # --- lifecycle ---
 
     def close(self):
         if self._handle is not None:

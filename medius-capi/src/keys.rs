@@ -1,9 +1,7 @@
-//! HID keyboard and Consumer usage constants, mirroring `medius::Key` / `medius::MediaKey`. Any raw
-//! usage is also valid; these are the common ones.
+//! HID keyboard and Consumer usage constants, mirroring `medius::Key` / `medius::MediaKey`.
 
 use crate::ctypes::{MediusKey, MediusMediaKey};
 
-// Letters.
 pub const MEDIUS_KEY_A: MediusKey = 0x04;
 pub const MEDIUS_KEY_B: MediusKey = 0x05;
 pub const MEDIUS_KEY_C: MediusKey = 0x06;
@@ -31,7 +29,6 @@ pub const MEDIUS_KEY_X: MediusKey = 0x1B;
 pub const MEDIUS_KEY_Y: MediusKey = 0x1C;
 pub const MEDIUS_KEY_Z: MediusKey = 0x1D;
 
-// Digit row, 1 through 0.
 pub const MEDIUS_KEY_1: MediusKey = 0x1E;
 pub const MEDIUS_KEY_2: MediusKey = 0x1F;
 pub const MEDIUS_KEY_3: MediusKey = 0x20;
@@ -43,7 +40,6 @@ pub const MEDIUS_KEY_8: MediusKey = 0x25;
 pub const MEDIUS_KEY_9: MediusKey = 0x26;
 pub const MEDIUS_KEY_0: MediusKey = 0x27;
 
-// Common keys.
 pub const MEDIUS_KEY_ENTER: MediusKey = 0x28;
 pub const MEDIUS_KEY_ESCAPE: MediusKey = 0x29;
 pub const MEDIUS_KEY_BACKSPACE: MediusKey = 0x2A;
@@ -61,7 +57,6 @@ pub const MEDIUS_KEY_LEFT: MediusKey = 0x50;
 pub const MEDIUS_KEY_DOWN: MediusKey = 0x51;
 pub const MEDIUS_KEY_UP: MediusKey = 0x52;
 
-// Function row.
 pub const MEDIUS_KEY_F1: MediusKey = 0x3A;
 pub const MEDIUS_KEY_F2: MediusKey = 0x3B;
 pub const MEDIUS_KEY_F3: MediusKey = 0x3C;
@@ -75,7 +70,6 @@ pub const MEDIUS_KEY_F10: MediusKey = 0x43;
 pub const MEDIUS_KEY_F11: MediusKey = 0x44;
 pub const MEDIUS_KEY_F12: MediusKey = 0x45;
 
-// Modifiers.
 pub const MEDIUS_KEY_LEFT_CTRL: MediusKey = 0xE0;
 pub const MEDIUS_KEY_LEFT_SHIFT: MediusKey = 0xE1;
 pub const MEDIUS_KEY_LEFT_ALT: MediusKey = 0xE2;
@@ -85,7 +79,6 @@ pub const MEDIUS_KEY_RIGHT_SHIFT: MediusKey = 0xE5;
 pub const MEDIUS_KEY_RIGHT_ALT: MediusKey = 0xE6;
 pub const MEDIUS_KEY_RIGHT_GUI: MediusKey = 0xE7;
 
-// Media (Consumer usages).
 pub const MEDIUS_MEDIA_PLAY_PAUSE: MediusMediaKey = 0xCD;
 pub const MEDIUS_MEDIA_STOP: MediusMediaKey = 0xB7;
 pub const MEDIUS_MEDIA_NEXT_TRACK: MediusMediaKey = 0xB5;

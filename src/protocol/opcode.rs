@@ -9,7 +9,7 @@ pub const SOF: u8 = 0xA5;
 pub const MAX_PAYLOAD: usize = 512;
 
 /// Protocol version in `RESP(VERSION)` (§4.1); the handshake requires this exact value.
-pub const PROTO_VER: u8 = 2; // v2: the unified-input-core redesign (generic INJECT/MOVE/LOCK, class-aware RATE)
+pub const PROTO_VER: u8 = 3;
 
 /// `INJECT` class byte: the momentary-usage field kind.
 pub const INJ_BTN: u8 = 0;
@@ -23,8 +23,7 @@ pub const Q_VERSION: u8 = 0;
 pub const Q_HEALTH: u8 = 1;
 /// Cloned device identity: vid/pid/bcd + serial/bos flags + primary kind + product (§4.3).
 pub const Q_DEVICE_INFO: u8 = 2;
-/// Unified device capabilities: mouse (buttons/axes/ifaces) + keyboard (keys/NKRO/media/system) +
-/// per-class change_driven. One query describes the whole cloned device (§4.4).
+/// Unified device capabilities (mouse, keyboard, per-class change_driven) for the whole cloned device (§4.4).
 pub const Q_CAPS: u8 = 3;
 /// Live native report rate + clone poll period + confidence (§4.5).
 pub const Q_RATE: u8 = 4;
@@ -40,16 +39,57 @@ pub const Q_OPTIONS: u8 = 9;
 
 /// `OPTION` id: imperfect-clone opt-in. Set value `[allow u8]`; readback adds `over_capacity`/`clone_imperfect`.
 pub const OPT_IMPERFECT: u8 = 0;
-/// `OPTION` id: movement riding. Value `[timeout u16 LE ms]` — 0 = off, N = ride window in milliseconds.
+/// `OPTION` id: movement riding. Value `[timeout u16 LE ms]`; 0 = off, N = ride window in ms.
 pub const OPT_MOVE_RIDE: u8 = 1;
-/// `OPTION` id: emit-rate pacing. Value `[mode u8][rate_hz u16 LE]` — 0 learnt / 1 bInterval / 2 fixed.
+/// `OPTION` id: emit-rate pacing. Value `[mode u8][rate_hz u16 LE]`; 0 learnt / 1 bInterval / 2 fixed.
 pub const OPT_EMIT: u8 = 2;
+/// `OPTION` id: box name. Value `[name ascii]` 1..32 printable ASCII (0 bytes clears to default); set-only, read off `RESP(VERSION)`.
+pub const OPT_NAME: u8 = 3;
+
+/// Buffered-clip status selector: `QUERY [Q_CLIP]` → `RESP(CLIP)` (§4.15).
+pub const Q_CLIP: u8 = 10;
+/// `CLIP_CTRL` engine verbs. Ops 0..5 are the shared action space (also a trigger `action` byte).
+pub const CLIP_OP_START: u8 = 0;
+pub const CLIP_OP_STOP: u8 = 1;
+pub const CLIP_OP_PAUSE: u8 = 2;
+pub const CLIP_OP_RESUME: u8 = 3;
+pub const CLIP_OP_RESTART: u8 = 4;
+pub const CLIP_OP_TOGGLE: u8 = 5;
+pub const CLIP_OP_CLEAR: u8 = 6;
+pub const CLIP_OP_FINALIZE: u8 = 7;
+/// `CLIP_SET` scalar setting ids (OPTION-shaped `[id][value]`).
+pub const CLIP_SET_AUTOLOCK: u8 = 0;
+pub const CLIP_SET_LOOP: u8 = 1;
+pub const CLIP_SET_RETAIN: u8 = 2;
+/// `CLIP_TRIGGER` set: max bindings and the flags byte bits.
+pub const CLIP_TRIG_MAX: usize = 8;
+pub const CLIP_TRIG_F_PRESENT: u8 = 0x01;
+pub const CLIP_TRIG_F_CONSUME: u8 = 0x02;
+/// `RESP(CLIP)` config-section flags byte.
+pub const CLIP_CFG_F_LOOP: u8 = 0x01;
+pub const CLIP_CFG_F_RETAIN: u8 = 0x02;
+pub const CLIP_CFG_F_FINALIZED: u8 = 0x04;
+/// Autolock scope bits (`CLIP_SET(AUTOLOCK)` value): which physical-input classes the clip auto-locks (0 = none).
+pub const CLIP_LOCK_AIM: u8 = 0x01;
+pub const CLIP_LOCK_WHEEL: u8 = 0x02;
+pub const CLIP_LOCK_BUTTONS: u8 = 0x04;
+pub const CLIP_LOCK_KEYS: u8 = 0x08;
+pub const CLIP_LOCK_MEDIA: u8 = 0x10;
+/// Trigger binding class/id wildcards: any class, any usage within a class.
+pub const CLIP_COND_ANY_CLASS: u8 = 0xFF;
+pub const CLIP_COND_ANY_ID: u16 = 0xFFFF;
+/// Clip entry tags/flags (see [`ClipBuilder`](crate::ClipBuilder)).
+pub const CLIP_TAG_GAP: u8 = 0x00;
+pub const CLIP_F_XY: u8 = 0x01;
+pub const CLIP_F_WHEEL: u8 = 0x02;
+pub const CLIP_F_EDGES: u8 = 0x04;
 
 pub const BTN_LEFT: u8 = 0;
 pub const BTN_RIGHT: u8 = 1;
 pub const BTN_MIDDLE: u8 = 2;
 pub const BTN_SIDE1: u8 = 3;
 pub const BTN_SIDE2: u8 = 4;
+#[allow(dead_code)]
 pub const BTN_COUNT: u8 = 5;
 
 /// Clear our injected press; defer to physical state.
@@ -71,9 +111,9 @@ pub const H_INJECT_ON: u8 = 0x08;
 pub const H_RATE_CONFIDENT: u8 = 0x10;
 /// At least one lock is active (§4.2, v1.5.0).
 pub const H_LOCK_ON: u8 = 0x20;
-/// A catch subscription is active — physical-input events are streaming (§4.2, v1.6.0).
+/// A catch subscription is active; physical-input events are streaming (§4.2, v1.6.0).
 pub const H_CATCH_ON: u8 = 0x40;
-/// A keyboard is attached on the host chip — cloned and injectable (§4.2, v2.0.0).
+/// A keyboard is attached on the host chip, cloned and injectable (§4.2, v2.0.0).
 pub const H_KBD_ATT: u8 = 0x80;
 
 /// `CATCH` mask: stream reports whose X or Y delta is non-zero (§3.9).
@@ -82,12 +122,33 @@ pub const CATCH_MOTION: u8 = 0x01;
 pub const CATCH_WHEEL: u8 = 0x02;
 /// `CATCH` mask: stream reports with a button edge (§3.9).
 pub const CATCH_BUTTONS: u8 = 0x04;
-/// `CATCH` mask: stream keyboard + media changes (`KB_EVENT` / `CONS_EVENT`, v2.0.0).
+/// `CATCH` mask: stream keyboard changes (§3.9).
 pub const CATCH_KEYS: u8 = 0x08;
+/// `CATCH` mask: stream media (Consumer) usage changes (§3.9, its own bit as of proto v3).
+pub const CATCH_MEDIA: u8 = 0x10;
 /// `CATCH` mask: every class (§3.9).
-pub const CATCH_ALL: u8 = 0x0F;
+pub const CATCH_ALL: u8 = 0x1F;
 /// Valid `CATCH` mask bits; the firmware ignores any others (§3.9).
-pub const CATCH_MASK: u8 = 0x0F;
+pub const CATCH_MASK: u8 = 0x1F;
+
+/// `LOCK` class byte (§3.8): momentary usages share `INJECT`'s space, plus a relative-axis class.
+pub const LOCK_CLS_BTN: u8 = 0;
+pub const LOCK_CLS_KEY: u8 = 1;
+pub const LOCK_CLS_MEDIA: u8 = 2;
+pub const LOCK_CLS_AXIS: u8 = 3;
+/// `LOCK` id sentinel: the whole class (a blanket lock).
+pub const LOCK_ID_ALL: u16 = 0xFFFF;
+/// `LOCK` axis ids (for `LOCK_CLS_AXIS`).
+pub const LOCK_AXIS_X: u16 = 0;
+pub const LOCK_AXIS_Y: u16 = 1;
+pub const LOCK_AXIS_WHEEL: u16 = 2;
+/// `LOCK` direction byte: both / positive-or-press / negative-or-release.
+pub const LOCK_DIR_BOTH: u8 = 0;
+pub const LOCK_DIR_POS: u8 = 1;
+pub const LOCK_DIR_NEG: u8 = 2;
+/// `RESP(LOCKS)` per-entry dirbits (§4.8): b0 = positive/press locked, b1 = negative/release locked.
+pub const LOCK_DIRBIT_POS: u8 = 0x01;
+pub const LOCK_DIRBIT_NEG: u8 = 0x02;
 
 /// `CAPS` kbd_flags: keys are an NKRO bitmap (`n_keys` = 0xFF), else a keycode array (§4.4).
 pub const KBC_NKRO: u8 = 0x01;
@@ -98,7 +159,7 @@ pub const KBC_SYSTEM: u8 = 0x04;
 /// `CAPS` kbd_flags: the keyboard report sits behind a HID report ID.
 pub const KBC_REPORT_ID: u8 = 0x08;
 
-/// `CAPS` change_driven flag: the mouse class is change-driven (never set — mouse motion is continuous).
+/// `CAPS` change_driven flag: the mouse class is change-driven (never set, mouse motion is continuous).
 pub const CAPS_CD_MOUSE: u8 = 0x01;
 /// `CAPS` change_driven flag: the keyboard/media class is change-driven (set when a keyboard is bound).
 pub const CAPS_CD_KBD: u8 = 0x02;
@@ -119,7 +180,7 @@ pub const CAP_REPORT_ID: u8 = 0x08;
 
 /// `RATE` flag: estimator window full (same source as [`H_RATE_CONFIDENT`], §4.5).
 pub const RATE_CONFIDENT: u8 = 0x01;
-/// `RATE` flag: the active input is change-driven (keyboard/media) — no continuous cadence, poll floor only.
+/// `RATE` flag: the active input is change-driven (keyboard/media); no continuous cadence, poll floor only.
 pub const RATE_CHANGE_DRIVEN: u8 = 0x02;
 
 pub const LOG_ERROR: u8 = 0;
@@ -132,34 +193,40 @@ pub const LOG_VERBOSE: u8 = 4;
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum FrameType {
-    /// `MOVE` — relative-axis movement, motion-tagged (cursor dx/dy or wheel dz) (PC→box).
+    /// `MOVE`: relative-axis movement, motion-tagged (cursor dx/dy or wheel dz) (PC→box).
     Move = 0x01,
-    /// `INJECT` — set a momentary-usage override (button/key/media), class-tagged (PC→box).
+    /// `INJECT`: set a momentary-usage override (button/key/media), class-tagged (PC→box).
     Inject = 0x03,
-    /// `RESET` — clear all injection (PC→box).
+    /// `RESET`: clear all injection (PC→box).
     Reset = 0x04,
-    /// `QUERY` — request a state snapshot, elicits `RESP` (PC→box).
+    /// `QUERY`: request a state snapshot, elicits `RESP` (PC→box).
     Query = 0x05,
-    /// `RESP` — reply to a `QUERY`, `SEQ` echoes the request (box→PC).
+    /// `RESP`: reply to a `QUERY`, `SEQ` echoes the request (box→PC).
     Resp = 0x06,
-    /// `REBOOT_DL` — reboot a chip to ROM download or to run (PC→box).
+    /// `REBOOT_DL`: reboot a chip to ROM download or to run (PC→box).
     RebootDl = 0x07,
-    /// `LOG` — unsolicited device diagnostics (box→PC).
+    /// `LOG`: unsolicited device diagnostics (box→PC).
     Log = 0x08,
-    /// `LED` — status LED override (PC→box).
+    /// `LED`: status LED override (PC→box).
     Led = 0x09,
-    /// `LOCK` — lock/unlock an axis or button edge (PC→box).
+    /// `LOCK`: lock/unlock an axis or button edge (PC→box).
     Lock = 0x0A,
-    /// `CATCH` — subscribe to the physical-input event stream (PC→box).
+    /// `CATCH`: subscribe to the physical-input event stream (PC→box).
     Catch = 0x0B,
-    /// `MOUSE_EVENT` — one unsolicited mouse snapshot; `SEQ` is a rolling counter (box→PC).
-    MouseEvent = 0x0C,
-    /// `KB_EVENT` — one unsolicited keyboard snapshot (modifiers + pressed keys); box→PC (v2.0.0).
-    KbEvent = 0x0F,
-    /// `CONS_EVENT` — one unsolicited media snapshot (active Consumer usages); box→PC (v2.0.0).
-    ConsEvent = 0x10,
-    /// `OPTION` — set a persistent box option by id (imperfect-clone opt-in, movement riding) (PC→box).
+    /// `MOTION_EVENT`: one unsolicited relative-axis catch event (dx/dy/dz); `SEQ` rolling (box→PC).
+    MotionEvent = 0x0C,
+    /// `USAGE_EVENT`: one unsolicited held-usage snapshot (class-tagged button/key/media); box→PC.
+    UsageEvent = 0x0F,
+    /// `OPTION`: set a persistent box option by id (imperfect-clone, movement riding, emit pacing, box name) (PC→box).
     Option = 0x11,
+    /// `CLIP_APPEND`: append buffered-clip entries to the device ring; `SEQ` = append seq (PC→box).
+    ClipAppend = 0x12,
+    /// `CLIP_CTRL`: a clip engine verb (start/stop/pause/resume/restart/toggle/clear/finalize) (PC→box).
+    ClipCtrl = 0x13,
+    /// `CLIP_SET`: a clip scalar setting `[id][value]` (autolock/loop/retain) (PC→box).
+    ClipSet = 0x14,
+    /// `CLIP_TRIGGER`: add/remove a clip trigger binding `[class][id u16][edge][action][flags]` (PC→box).
+    ClipTrigger = 0x15,
 }
 
 /// Error returned when a byte does not name a known [`FrameType`].
@@ -189,10 +256,13 @@ impl TryFrom<u8> for FrameType {
             0x09 => FrameType::Led,
             0x0A => FrameType::Lock,
             0x0B => FrameType::Catch,
-            0x0C => FrameType::MouseEvent,
-            0x0F => FrameType::KbEvent,
-            0x10 => FrameType::ConsEvent,
+            0x0C => FrameType::MotionEvent,
+            0x0F => FrameType::UsageEvent,
             0x11 => FrameType::Option,
+            0x12 => FrameType::ClipAppend,
+            0x13 => FrameType::ClipCtrl,
+            0x14 => FrameType::ClipSet,
+            0x15 => FrameType::ClipTrigger,
             other => return Err(UnknownFrameType(other)),
         })
     }

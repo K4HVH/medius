@@ -11,7 +11,7 @@ fn keepalive_reasserts_catch_while_subscribed() {
     let mock = MockBox::new();
     let device = Device::with_mock(mock.clone());
     let _stream = device.catch_events(CatchMask::all()).unwrap();
-    mock.clear_recorded(); // ignore the initial subscribe frame
+    mock.clear_recorded();
     std::thread::sleep(PAST_ONE_CADENCE);
     assert!(
         mock.saw(FrameType::Catch),

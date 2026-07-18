@@ -16,6 +16,7 @@ fn device_info_and_version_mac_round_trip_through_the_mock() {
             fw_minor: 3,
             fw_patch: 0,
             mac: [0x5A, 0x4E, 0x00, 0x11, 0x1e, 0x28],
+            name: "Left PC".to_string(),
         })
         .with_device_info(DeviceInfo {
             vid: 0x1532,
@@ -31,6 +32,7 @@ fn device_info_and_version_mac_round_trip_through_the_mock() {
 
     let v = device.query_version().unwrap();
     assert_eq!(v.mac_hex(), "5a4e00111e28");
+    assert_eq!(v.name, "Left PC"); // the name rides RESP(VERSION) beside the MAC
 
     let info = device.device_info().unwrap();
     assert_eq!((info.vid, info.pid), (0x1532, 0x0072));
@@ -71,6 +73,7 @@ fn handshake_rejects_wrong_proto_ver() {
         fw_minor: 0,
         fw_patch: 0,
         mac: [0; 6],
+        name: String::new(),
     });
     let err = Device::open_mock(mock).unwrap_err();
     assert!(matches!(err, Error::BadProtoVer { got: 9 }), "got {err:?}");
@@ -122,7 +125,7 @@ fn reapply_re_emits_only_held_overrides() {
     device.press(Button::Left).unwrap();
     device.force_release(Button::Side1).unwrap();
     device.press(Button::Middle).unwrap();
-    device.soft_release(Button::Middle).unwrap();
+    device.release(Button::Middle).unwrap();
     mock.clear_recorded();
 
     device.reapply().unwrap();
@@ -139,13 +142,13 @@ fn reapply_re_emits_only_held_overrides() {
 
 #[test]
 fn reapply_re_emits_held_locks_but_not_released_ones() {
-    use crate::{Blanket, Key, LockDirection, LockTarget};
+    use crate::{Axis, Blanket, Key, LockDirection};
     let mock = MockBox::new();
     let device = Device::with_mock(mock.clone());
-    device.lock(LockTarget::X, LockDirection::Positive).unwrap();
-    device.lock_key(Key::A, LockDirection::Both).unwrap();
-    device.lock_all(Blanket::Keys).unwrap();
-    device.unlock_key(Key::A, LockDirection::Both).unwrap(); // released -> must not reappear
+    device.lock(Axis::X, LockDirection::Positive).unwrap();
+    device.lock(Key::A, LockDirection::Both).unwrap();
+    device.lock_all(Blanket::Keys, LockDirection::Both).unwrap();
+    device.unlock(Key::A, LockDirection::Both).unwrap();
     mock.clear_recorded();
 
     device.reapply().unwrap();
@@ -155,8 +158,9 @@ fn reapply_re_emits_held_locks_but_not_released_ones() {
         .filter(|f| f.ty == FrameType::Lock)
         .map(|f| f.payload.clone())
         .collect();
-    // Only the two still-held locks, each re-asserted with state=1; key A is gone.
-    assert_eq!(locks, vec![vec![0, 0, 0, 1, 1], vec![3, 0, 0, 0, 1]]);
+    // Only the two still-held locks, each re-asserted with state=1; key A is gone. Ordered by the
+    // desired-set key (class,id,dir): the KEY blanket (1, 0xFFFF, both) before the AXIS X+ (3, 0, pos).
+    assert_eq!(locks, vec![vec![1, 0xFF, 0xFF, 0, 1], vec![3, 0, 0, 1, 1]]);
     drop(device);
 }
 

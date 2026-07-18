@@ -1,4 +1,4 @@
-//! Decoder robustness tests through the public API.
+//! Decoder resilience tests through the public API.
 #![cfg(feature = "mock")]
 
 use std::time::{Duration, Instant};

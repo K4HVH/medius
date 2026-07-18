@@ -8,8 +8,9 @@ fn main() -> medius::Result<()> {
     }
     for b in &boxes {
         println!(
-            "{}  {:<16} serial={:<12} {:<8} {}  ({})",
+            "{}  name={:<16} {:<16} serial={:<12} {:<8} {}  ({})",
             b.id(),
+            b.name(),
             b.port.path,
             b.serial().unwrap_or("-"),
             b.device.kind,
