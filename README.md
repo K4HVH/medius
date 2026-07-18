@@ -39,7 +39,7 @@ fn main() -> Result<()> {
     println!("{}", device.query_version()?);  // firmware version
     device.move_rel(100, -50)?;               // relative move
     device.press(Button::Left)?;
-    device.soft_release(Button::Left)?;
+    device.release(Button::Left)?;
     device.wheel(-3)?;
     device.reset()?;                          // back to pure passthrough
     Ok(())
@@ -58,7 +58,7 @@ The base crate is the lean sync core. Optional features:
 | `tracing` | per-frame TX/RX `tracing` instrumentation |
 
 ```toml
-medius = { version = "1.6", features = ["async", "mock"] }
+medius = { version = "3.0", features = ["async", "mock"] }
 ```
 
 ## API
@@ -92,9 +92,9 @@ device.move_rel(100, -50)?;          // relative move (+x right, +y down)
 device.wheel(3)?;                    // scroll
 
 device.press(Button::Left)?;         // force down
-device.soft_release(Button::Left)?;  // release our press (a physical hold stays)
+device.release(Button::Left)?;  // release our press (a physical hold stays)
 device.force_release(Button::Left)?; // force up, masking a physical hold
-device.button(Button::Right, Action::Press)?; // the generic form
+device.inject(Button::Right, Action::Press)?; // the generic form
 
 device.reset()?;                     // clear all injection → passthrough
 ```
@@ -106,16 +106,16 @@ Buttons are `Left`, `Right`, `Middle`, `Side1`, `Side2`. Move and wheel take a f
 ```rust
 use medius::{Action, Key, MediaKey};
 
-device.key_down(Key::A)?;            // hold a key (a modifier like Key::LEFT_SHIFT folds in)
-device.key_up(Key::A)?;             // release our press (a physical hold stays)
-device.key_force_release(Key::A)?;  // force up, masking a physical hold
-device.key(Key::ENTER, Action::Press)?; // the generic form
+device.press(Key::A)?;              // hold a key (a modifier like Key::LEFT_SHIFT folds in)
+device.release(Key::A)?;            // release our press (a physical hold stays)
+device.force_release(Key::A)?;      // force up, masking a physical hold
+device.inject(Key::ENTER, Action::Press)?; // the generic form
 
-device.media_down(MediaKey::VOLUME_UP)?; // a media key by 16-bit Consumer usage
-device.media_up(MediaKey::VOLUME_UP)?;
+device.press(MediaKey::VOLUME_UP)?; // a media key by 16-bit Consumer usage
+device.release(MediaKey::VOLUME_UP)?;
 ```
 
-Keys are HID keycodes (`Key::A`, `Key::ENTER`, the eight modifiers, F-keys, arrows…) or any usage via `Key::new(0x04)`; media keys are Consumer usages (`MediaKey::VOLUME_UP`, `PLAY_PAUSE`, `MUTE`…). The tri-state `Action` (press / soft-release / force-release) is shared with buttons. Held keys and media survive a reconnect, like buttons. Both are present-gated: a key the board can't report is a silent no-op; see `query_kbd_caps()`.
+Keys are HID keycodes (`Key::A`, `Key::ENTER`, the eight modifiers, F-keys, arrows…) or any usage via `Key::new(0x04)`; media keys are Consumer usages (`MediaKey::VOLUME_UP`, `PLAY_PAUSE`, `MUTE`…). The tri-state `Action` (press / soft-release / force-release) is shared with buttons. Held keys and media survive a reconnect, like buttons. Both are present-gated: a key the board can't report is a silent no-op; see `caps()`.
 
 ### Sustained motion
 
@@ -130,7 +130,7 @@ for _ in 0..1000 {
 
 ### Buffered clip playback
 
-For jitter-free playback, preload per-frame input into a device-side ring and let the box drain one entry per native frame, box-clocked, so it carries none of the host's scheduling jitter and none of the per-command send floor. Motion is a per-frame delta, edges (buttons/keys/media) are sticky until changed, and a gap run emits nothing for N frames. Pace top-ups off `status().free`.
+For jitter-free playback, preload per-frame input into a device-side ring and let the box drain one entry per native frame, box-clocked, so it carries none of the host's scheduling jitter and none of the per-command send floor. Motion is a per-frame delta, edges (buttons/keys/media) are sticky until changed, and a gap run emits nothing for N frames. Pace top-ups off `query_status().free`.
 
 ```rust
 use medius::{ClipBuilder, Button};
@@ -141,7 +141,7 @@ b.press(Button::Left).gap(20).release(Button::Left);
 
 let clip = device.clip();
 clip.append(&b)?;
-clip.start()?;                          // or clip.arm_catch(None)? to fire on a physical press
+clip.start()?;                          // or a trigger: clip.bind(ClipTrigger::new(Button::Side1, Edge::Press, ClipAction::Start))?
 ```
 
 ### Queries
@@ -151,8 +151,7 @@ let v = device.query_version()?;  // proto_ver + fw_major / fw_minor / fw_patch
 let h = device.query_health()?;   // link_up, mouse_attached, clone_configured, injection_active, rate_confident, lock_on, catch_on, kbd_attached
 
 let info = device.device_info()?;       // cloned device identity: vid:pid, bcd, flags, kind, product
-let caps = device.query_mouse_caps()?;  // mouse caps; caps.is_composite(), caps.n_buttons
-let kcaps = device.query_kbd_caps()?;   // keyboard caps; kcaps.nkro, kcaps.has_consumer, kcaps.n_keys
+let caps = device.caps()?;              // unified caps; caps.is_composite(), caps.mouse.n_buttons, caps.keyboard.nkro, caps.keyboard.has_consumer, caps.keyboard.n_keys
 let rate = device.query_rate()?;        // live native report rate; rate.native_hz()
 let stats = device.query_stats()?;      // delivery counters; stats.tx_drops / stats.tx_wedges
 let locks = device.query_locks()?;      // active input locks; locks.is_locked(target, direction)
@@ -166,18 +165,18 @@ Subscribe to the user's real input (mouse buttons/wheel/motion, keyboard keys, a
 ```rust
 use medius::{Button, CatchEvent, CatchMask, Key};
 
-let events = device.catch_events(CatchMask::all())?;  // MOTION | WHEEL | BUTTONS | KEYS
+let events = device.catch_events(CatchMask::all())?;  // MOTION | WHEEL | BUTTONS | KEYS | MEDIA
 while let Ok(event) = events.recv() {
     match event {
-        CatchEvent::Mouse(m) if m.is_pressed(Button::Side1) => { /* rebind the side button… */ }
-        CatchEvent::Keyboard(kb) if kb.is_pressed(Key::ESCAPE) => { /* … */ }
-        CatchEvent::Media(md) => { /* a media key changed: md.keys */ }
+        CatchEvent::Usages(u) if u.is_held(Button::Side1) => { /* rebind the side button… */ }
+        CatchEvent::Usages(u) if u.is_held(Key::ESCAPE) => { /* … */ }
+        CatchEvent::Motion(m) => { /* relative motion: m.dx / m.dy / m.dz */ }
         _ => {}
     }
 }
 ```
 
-The mask picks which classes stream; each `CatchEvent` is a full snapshot: `Mouse` (buttons + dx/dy/wheel), `Keyboard` (modifier bitmap + pressed keys), or `Media` (active Consumer usages); so diff successive snapshots for edges. The stream is bounded and lossy under back-pressure (`events.dropped()`), and the subscription is held alive by the keepalive and re-asserted across a reconnect. Under `async`, `events.recv_async().await`.
+The mask picks which classes stream; each `CatchEvent` is either `Motion` (relative dx/dy/dz) or `Usages` (a held-usage snapshot for one class: buttons, keys, or media); so diff successive snapshots for edges. The stream is bounded and lossy under back-pressure (`events.dropped()`), and the subscription is held alive by the keepalive and re-asserted across a reconnect. Under `async`, `events.recv_async().await`.
 
 ### Box management
 
@@ -217,16 +216,16 @@ It uses `flume`'s async recv, so there's no runtime dependency and it runs on an
 use medius::{Button, Device, FrameType, Health, MockBox, Rate, Version};
 
 let mock = MockBox::new()
-    .with_version(Version { proto_ver: 2, fw_major: 1, fw_minor: 2, fw_patch: 3, mac: [0; 6], name: "my-box".into() })
+    .with_version(Version { proto_ver: 3, fw_major: 1, fw_minor: 2, fw_patch: 3, mac: [0; 6], name: "my-box".into() })
     .with_health(Health::from_flags(0x0F))
-    .with_rate(Rate { native_period_us: 1000, poll_period_us: 1000, confident: true });
+    .with_rate(Rate { native_period_us: 1000, poll_period_us: 1000, confident: true, change_driven: false });
 
 let device = Device::with_mock(mock.clone());  // the real stack over a fake box
 
 assert_eq!(device.query_version()?.fw_minor, 2);
 assert_eq!(device.query_rate()?.native_hz(), Some(1000.0));
 device.press(Button::Left)?;
-assert!(mock.saw(FrameType::Button));          // commands are recorded
+assert!(mock.saw(FrameType::Inject));          // commands are recorded
 ```
 
 ## Examples
