@@ -30,6 +30,12 @@ parking_lot = "0.12"
 serialport = "4"
 tracing = { version = "0.1", optional = true }
 
+# Windows I/O goes over serial2's overlapped COM handle. serialport's handle is synchronous, so the
+# kernel serializes reads against writes and injection stalls behind the reader thread; serialport
+# stays for port discovery, which it is the only one of the two to carry USB VID/PID for.
+[target.'cfg(windows)'.dependencies]
+serial2 = { version = "0.2", features = ["windows"] }
+
 [dev-dependencies]
 # Async tests use futures' executor::block_on — NO tokio (the wrapper is runtime-agnostic).
 futures = { version = "0.3", default-features = false, features = ["executor"] }
@@ -46,3 +52,7 @@ name = "basic"
 # without features; build with `--features async` (or `--all-features`) to include the async gate.
 [[example]]
 name = "hw_full"
+
+# inject_latency times the injection write path against a connected box; run it per platform.
+[[example]]
+name = "inject_latency"
