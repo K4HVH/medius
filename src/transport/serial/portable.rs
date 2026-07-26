@@ -2,16 +2,12 @@
 
 use std::io::{self, Read, Write};
 use std::path::Path;
-use std::time::Duration;
 
 use parking_lot::Mutex;
 use serialport::SerialPort;
 
-use super::Transport;
-
-const CTRL_BAUD: u32 = 4_000_000;
-
-const READ_TIMEOUT: Duration = Duration::from_millis(100);
+use super::{CTRL_BAUD, IO_TIMEOUT};
+use crate::transport::Transport;
 
 pub(crate) struct SerialTransport {
     read: Mutex<Box<dyn SerialPort>>,
@@ -37,7 +33,7 @@ impl SerialTransport {
 }
 
 fn open_handle(path: &str) -> io::Result<Box<dyn SerialPort>> {
-    let builder = serialport::new(path, CTRL_BAUD).timeout(READ_TIMEOUT);
+    let builder = serialport::new(path, CTRL_BAUD).timeout(IO_TIMEOUT);
     #[cfg(unix)]
     {
         let mut port = serialport::TTYPort::open(&builder).map_err(to_io)?;
