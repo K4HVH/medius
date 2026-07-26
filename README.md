@@ -237,7 +237,7 @@ cargo run --example hw_full --all-features   # on-hardware validation suite (Lin
 
 ## Architecture
 
-Four layers, `protocol → transport → link → device`, each depending only on the one below it. `protocol` is the wire codec: framed binary (SOF, type, rolling SEQ, length, payload, CRC16), no I/O. `transport` is the byte pipe over the `serialport` crate (cross-platform, no `unsafe`) plus VID/PID discovery. `link` runs the live connection: the reader thread, SEQ-correlated queries, keepalive, and reconnect. `device` is the typed API on top, where each command is one `link.send(...)`.
+Four layers, `protocol → transport → link → device`, each depending only on the one below it. `protocol` is the wire codec: framed binary (SOF, type, rolling SEQ, length, payload, CRC16), no I/O. `transport` is the byte pipe (no `unsafe`) plus VID/PID discovery, over `serialport` everywhere except Windows, where `serial2`'s overlapped COM handle keeps a read and a write in flight at once. `link` runs the live connection: the reader thread, SEQ-correlated queries, keepalive, and reconnect. `device` is the typed API on top, where each command is one `link.send(...)`.
 
 `Device` takes `&self`, is `Send + Sync`, and clones cheaply. The link runs at a fixed 4 Mbaud in framed binary (no baud dance, no ASCII REPL), and queries correlate by SEQ rather than arrival order. If the host goes quiet for ~1 s the firmware clears all injection, so a crash never leaves a button stuck; a keepalive thread keeps an intentionally-held button alive. Tested on Linux and Windows.
 
