@@ -245,8 +245,17 @@ class UsageSnapshot:
 
 @dataclass
 class CatchEvent:
+    """One catch-stream event.
+
+    `ts_us` is when the real device's report arrived, in box microseconds, stamped on the box's
+    mouse-facing chip in USB interrupt context. It is the box's own clock, unrelated to any clock on
+    this machine, so it is only meaningful compared against other events. A value below the previous
+    one means the box's clock restarted and the delta across that point is meaningless.
+    """
+
     kind: CatchEventKind
     payload: Union[MotionEvent, UsageSnapshot]
+    ts_us: int = 0
 
     @property
     def motion(self) -> Optional[MotionEvent]:
@@ -737,11 +746,11 @@ def decode_catch_event(c) -> CatchEvent:
     kind = CatchEventKind(c.kind)
     if kind == CatchEventKind.MOTION:
         m = c.data.motion
-        return CatchEvent(kind, MotionEvent(m.dx, m.dy, m.dz))
+        return CatchEvent(kind, MotionEvent(m.dx, m.dy, m.dz), c.ts_us)
     u = c.data.usages
     n = min(int(u.n), _native.MEDIUS_MAX_USAGES)
     usages = [_input_copy(u.usages[i]) for i in range(n)]
-    return CatchEvent(kind, UsageSnapshot(usages))
+    return CatchEvent(kind, UsageSnapshot(usages), c.ts_us)
 
 
 def decode_log_line(c) -> LogLine:

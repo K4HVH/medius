@@ -137,12 +137,12 @@ class MockBox:
     def push_log(self, level: LogLevel, text: str):
         _native.lib.medius_mock_push_log(self._handle, int(level), text.encode("utf-8"))
 
-    def push_motion(self, seq: int, event: MotionEvent):
-        _native.lib.medius_mock_push_motion(self._handle, seq, motion_event_to_c(event))
+    def push_motion(self, seq: int, ts_us: int, event: MotionEvent):
+        _native.lib.medius_mock_push_motion(self._handle, seq, ts_us, motion_event_to_c(event))
 
-    def push_usages(self, seq: int, event: UsageSnapshot):
+    def push_usages(self, seq: int, ts_us: int, event: UsageSnapshot):
         c = usage_snapshot_to_c(event)
-        _native.lib.medius_mock_push_usages(self._handle, seq, ctypes.byref(c))
+        _native.lib.medius_mock_push_usages(self._handle, seq, ts_us, ctypes.byref(c))
 
     def recorded(self) -> int:
         return int(_native.lib.medius_mock_recorded(self._handle))

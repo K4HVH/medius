@@ -248,9 +248,12 @@ pub unsafe extern "C" fn medius_mock_push_log(
 pub unsafe extern "C" fn medius_mock_push_motion(
     mock: *mut MediusMockBox,
     seq: u8,
+    ts_us: u32,
     event: MediusMotionEvent,
 ) {
-    with_mock(mock, |m| m.push_motion(seq, event.dx, event.dy, event.dz));
+    with_mock(mock, |m| {
+        m.push_motion(seq, ts_us, event.dx, event.dy, event.dz)
+    });
 }
 
 /// Push a USAGE_EVENT as if the box emitted it (surfaces as a `Usages` catch event).
@@ -258,6 +261,7 @@ pub unsafe extern "C" fn medius_mock_push_motion(
 pub unsafe extern "C" fn medius_mock_push_usages(
     mock: *mut MediusMockBox,
     seq: u8,
+    ts_us: u32,
     event: *const MediusUsageEvent,
 ) {
     with_mock(mock, |m| {
@@ -265,7 +269,7 @@ pub unsafe extern "C" fn medius_mock_push_usages(
             return;
         }
         let usages = crate::convert::usage_event_to_medius(unsafe { &*event });
-        m.push_usages(seq, &usages);
+        m.push_usages(seq, ts_us, &usages);
     });
 }
 

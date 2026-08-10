@@ -267,10 +267,11 @@ def test_counters_readable():
 def test_catch_delivers_motion_event():
     with MockBox() as mock, Device.with_mock(mock) as d:
         with d.catch_events(CatchMask.ALL) as stream:
-            mock.push_motion(1, MotionEvent(dx=12, dy=-34, dz=1))
+            mock.push_motion(1, 7_000, MotionEvent(dx=12, dy=-34, dz=1))
             ev = stream.recv_timeout(2000)
             assert ev is not None
             assert ev.kind == CatchEventKind.MOTION
+            assert ev.ts_us == 7_000
             assert ev.motion.dx == 12
             assert ev.motion.dy == -34
             assert ev.motion.dz == 1
@@ -279,7 +280,7 @@ def test_catch_delivers_motion_event():
 def test_catch_delivers_usage_event_for_a_key():
     with MockBox() as mock, Device.with_mock(mock) as d:
         with d.catch_events(CatchMask.KEYS) as stream:
-            mock.push_usages(1, UsageSnapshot([Usage.key(Key.ESCAPE)]))
+            mock.push_usages(1, 7_000, UsageSnapshot([Usage.key(Key.ESCAPE)]))
             ev = stream.recv_timeout(2000)
             assert ev is not None
             assert ev.kind == CatchEventKind.USAGES
@@ -290,7 +291,7 @@ def test_catch_delivers_usage_event_for_a_key():
 def test_catch_delivers_usage_event_for_media():
     with MockBox() as mock, Device.with_mock(mock) as d:
         with d.catch_events(CatchMask.ALL) as stream:
-            mock.push_usages(1, UsageSnapshot([Usage.media(MediaKey.VOLUME_UP)]))
+            mock.push_usages(1, 7_000, UsageSnapshot([Usage.media(MediaKey.VOLUME_UP)]))
             ev = stream.recv_timeout(2000)
             assert ev is not None
             assert ev.kind == CatchEventKind.USAGES
@@ -331,7 +332,7 @@ def test_event_stream_clone_shares_subscription():
     with MockBox() as mock, Device.with_mock(mock) as d:
         with d.catch_events(CatchMask.ALL) as stream:
             stream2 = stream.clone()
-            mock.push_motion(1, MotionEvent(dx=9, dy=0, dz=0))
+            mock.push_motion(1, 7_000, MotionEvent(dx=9, dy=0, dz=0))
             ev = stream2.recv_timeout(2000)
             assert ev is not None and ev.kind == CatchEventKind.MOTION and ev.motion.dx == 9
             stream2.close()

@@ -258,16 +258,18 @@ fn clip_status_payload(c: &ClipStatus, cfg: &ClipSettings) -> Vec<u8> {
     p
 }
 
-fn motion_event_payload(dx: i16, dy: i16, dz: i16) -> Vec<u8> {
-    let mut p = Vec::with_capacity(6);
+fn motion_event_payload(ts_us: u32, dx: i16, dy: i16, dz: i16) -> Vec<u8> {
+    let mut p = Vec::with_capacity(10);
+    p.extend_from_slice(&ts_us.to_le_bytes());
     p.extend_from_slice(&dx.to_le_bytes());
     p.extend_from_slice(&dy.to_le_bytes());
     p.extend_from_slice(&dz.to_le_bytes());
     p
 }
 
-fn usage_event_payload(usages: &[Usage]) -> Vec<u8> {
-    let mut p = Vec::with_capacity(1 + 3 * usages.len());
+fn usage_event_payload(ts_us: u32, usages: &[Usage]) -> Vec<u8> {
+    let mut p = Vec::with_capacity(5 + 3 * usages.len());
+    p.extend_from_slice(&ts_us.to_le_bytes());
     p.push(usages.len() as u8);
     for u in usages {
         u.push_le(&mut p);
@@ -528,18 +530,23 @@ impl MockBox {
     }
 
     /// Push a `MOTION_EVENT` as if the box emitted it; surfaces as [`CatchEvent::Motion`](crate::CatchEvent).
-    pub fn push_motion(&self, seq: u8, dx: i16, dy: i16, dz: i16) {
+    /// `ts_us` is the raw wire timestamp, so a test can drive the `u32` wrap and the clock-restart case.
+    pub fn push_motion(&self, seq: u8, ts_us: u32, dx: i16, dy: i16, dz: i16) {
         self.transport.push_frame(
             FrameType::MotionEvent,
             seq,
-            &motion_event_payload(dx, dy, dz),
+            &motion_event_payload(ts_us, dx, dy, dz),
         );
     }
 
     /// Push a `USAGE_EVENT` (a held-usage snapshot); surfaces as [`CatchEvent::Usages`](crate::CatchEvent).
-    pub fn push_usages(&self, seq: u8, usages: &[Usage]) {
-        self.transport
-            .push_frame(FrameType::UsageEvent, seq, &usage_event_payload(usages));
+    /// `ts_us` is the raw wire timestamp, as for [`push_motion`](Self::push_motion).
+    pub fn push_usages(&self, seq: u8, ts_us: u32, usages: &[Usage]) {
+        self.transport.push_frame(
+            FrameType::UsageEvent,
+            seq,
+            &usage_event_payload(ts_us, usages),
+        );
     }
 
     /// A snapshot copy of every command the host has sent so far, decoded, in order.

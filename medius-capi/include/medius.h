@@ -684,6 +684,11 @@ typedef union MediusCatchEventData {
 // One catch-stream event. Read `data.motion` / `data.usages` per `kind`.
 typedef struct MediusCatchEvent {
     MediusCatchEventKind kind;
+    // When the real device's report arrived, in box microseconds, stamped on the box's mouse-facing
+    // chip in USB interrupt context. The box's own clock: unrelated to any clock on this machine, so
+    // only meaningful compared against other events. A value below the previous one means the box's
+    // clock restarted and the delta across that point is meaningless.
+    uint64_t ts_us;
     union MediusCatchEventData data;
 } MediusCatchEvent;
 
@@ -1323,6 +1328,7 @@ void medius_mock_push_log(struct MediusMockBox *mock, MediusLogLevel level, cons
 // Push a MOTION_EVENT as if the box emitted it (surfaces as a `Motion` catch event).
 void medius_mock_push_motion(struct MediusMockBox *mock,
                              uint8_t seq,
+                             uint32_t ts_us,
                              struct MediusMotionEvent event);
 #endif
 
@@ -1330,6 +1336,7 @@ void medius_mock_push_motion(struct MediusMockBox *mock,
 // Push a USAGE_EVENT as if the box emitted it (surfaces as a `Usages` catch event).
 void medius_mock_push_usages(struct MediusMockBox *mock,
                              uint8_t seq,
+                             uint32_t ts_us,
                              const struct MediusUsageEvent *event);
 #endif
 
