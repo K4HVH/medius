@@ -598,6 +598,7 @@ impl From<CatchEvent> for MediusCatchEvent {
         match e {
             CatchEvent::Motion(m) => MediusCatchEvent {
                 kind: MediusCatchEventKind::Motion,
+                ts_us: m.ts_us,
                 data: MediusCatchEventData {
                     motion: MediusMotionEvent {
                         dx: m.dx,
@@ -617,6 +618,7 @@ impl From<CatchEvent> for MediusCatchEvent {
                 }
                 MediusCatchEvent {
                     kind: MediusCatchEventKind::Usages,
+                    ts_us: s.ts_us,
                     data: MediusCatchEventData {
                         usages: MediusUsageEvent {
                             n: n as u16,

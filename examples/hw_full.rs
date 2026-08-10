@@ -555,6 +555,44 @@ mod linux {
         }
 
         {
+            // Catch timestamps: drain a short window and confirm every stamp advances by a plausible
+            // amount. Passes vacuously when the mouse is still, since there is nothing to check then;
+            // the event count in the message says whether it actually got exercised.
+            let dev = device.as_ref().unwrap();
+            let mut stamps: Vec<u64> = Vec::new();
+            if let Ok(stream) = dev.catch_events(CatchMask::all()) {
+                let deadline = std::time::Instant::now() + Duration::from_secs(2);
+                while std::time::Instant::now() < deadline {
+                    match stream.recv_timeout(Duration::from_millis(100)) {
+                        Some(medius::CatchEvent::Motion(m)) => stamps.push(m.ts_us),
+                        Some(medius::CatchEvent::Usages(u)) => stamps.push(u.ts_us),
+                        None => {}
+                    }
+                }
+            }
+            let sane = stamps
+                .windows(2)
+                .all(|w| w[1] > w[0] && w[1] - w[0] < 1_000_000);
+            let _ = dev.reset();
+            check(
+                "catch: event timestamps advance",
+                sane,
+                format!(
+                    "{} events; {}",
+                    stamps.len(),
+                    if stamps.len() < 2 {
+                        "idle, nothing to compare (move the mouse to exercise this)".to_string()
+                    } else {
+                        format!(
+                            "span {} us",
+                            stamps.last().unwrap() - stamps.first().unwrap()
+                        )
+                    }
+                ),
+            );
+        }
+
+        {
             // KEYBOARD + MEDIA: verify an injected KEY_A really reaches the grabbed evdev (key_a 1 then 0),
             // which catches a key landing on the wrong interface; the grabbed node must be the keyboard's.
             let dev = device.as_ref().unwrap();

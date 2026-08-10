@@ -43,14 +43,17 @@ fn catch_mask_class_bits_and_ops() {
 
 #[test]
 fn motion_event_decodes() {
-    let r = MotionEvent::from_payload(&[0x2C, 0x01, 0xCE, 0xFF, 0xFF, 0xFF]).unwrap();
+    let r =
+        MotionEvent::from_payload(&[0x04, 0x03, 0x02, 0x01, 0x2C, 0x01, 0xCE, 0xFF, 0xFF, 0xFF])
+            .unwrap();
     assert_eq!((r.dx, r.dy, r.dz), (300, -50, -1));
-    assert!(MotionEvent::from_payload(&[0, 0, 0, 0, 0]).is_none()); // needs 6
+    assert_eq!(r.ts_us, 0x0102_0304); // raw wire value; the reader widens it
+    assert!(MotionEvent::from_payload(&[0; 9]).is_none()); // needs 10
 }
 
 #[test]
 fn usage_snapshot_decodes() {
-    let s = UsageSnapshot::from_payload(&[2, 0, 0, 0, 1, 0x04, 0x00]).unwrap();
+    let s = UsageSnapshot::from_payload(&[0, 0, 0, 0, 2, 0, 0, 0, 1, 0x04, 0x00]).unwrap();
     assert_eq!(s.usages.len(), 2);
     assert_eq!(s.class(), Some(Class::Button));
     assert!(s.is_held(crate::Button::Left));
@@ -110,13 +113,14 @@ fn pushed_events_arrive_on_the_stream() {
     let mock = MockBox::new();
     let device = Device::with_mock(mock.clone());
     let stream = device.catch_events(CatchMask::all()).unwrap();
-    mock.push_motion(0, 5, -7, 1);
-    mock.push_usages(1, &[Usage::from(Button::Side1)]);
+    mock.push_motion(0, 1_000, 5, -7, 1);
+    mock.push_usages(1, 2_000, &[Usage::from(Button::Side1)]);
 
     let CatchEvent::Motion(r) = stream.recv_timeout(Duration::from_secs(1)).expect("motion") else {
         panic!("expected a motion event");
     };
     assert_eq!((r.dx, r.dy, r.dz), (5, -7, 1));
+    assert_eq!(r.ts_us, 1_000);
 
     let CatchEvent::Usages(u) = stream.recv_timeout(Duration::from_secs(1)).expect("usages") else {
         panic!("expected a usage event");
@@ -136,7 +140,7 @@ fn catch_buffer_drops_oldest_on_overflow() {
     const TOTAL: u16 = 300;
     const KEPT: u16 = 256; // CATCH_CAPACITY
     for i in 0..TOTAL {
-        mock.push_motion((i & 0xff) as u8, i as i16, 0, 0); // dx is a monotonic marker
+        mock.push_motion((i & 0xff) as u8, i as u32, i as i16, 0, 0); // dx is a monotonic marker
     }
     let want_dropped = (TOTAL - KEPT) as u64;
     let deadline = Instant::now() + Duration::from_secs(2);
@@ -159,4 +163,60 @@ fn catch_buffer_drops_oldest_on_overflow() {
         (TOTAL - KEPT) as i16,
         "the oldest events were dropped, the newest kept"
     );
+}
+
+#[cfg(feature = "mock")]
+#[test]
+fn timestamps_widen_past_the_u32_wrap() {
+    use crate::{CatchEvent, CatchMask, Device, MockBox};
+    use std::time::Duration;
+    let mock = MockBox::new();
+    let device = Device::with_mock(mock.clone());
+    let stream = device.catch_events(CatchMask::all()).unwrap();
+
+    // 500 ticks to reach u32::MAX, one more to reach 0, then 500 more: 1001 us across the wrap.
+    let before = u32::MAX - 500;
+    mock.push_motion(0, before, 1, 0, 0);
+    mock.push_motion(1, 500, 2, 0, 0);
+
+    let mut seen = Vec::new();
+    for _ in 0..2 {
+        let CatchEvent::Motion(m) = stream.recv_timeout(Duration::from_secs(1)).expect("motion")
+        else {
+            panic!("expected a motion event");
+        };
+        seen.push(m.ts_us);
+    }
+    assert_eq!(seen[0], before as u64);
+    assert_eq!(
+        seen[1],
+        before as u64 + 1001,
+        "the wrap became a 1 ms delta"
+    );
+}
+
+#[cfg(feature = "mock")]
+#[test]
+fn a_box_clock_restart_is_not_read_as_a_wrap() {
+    use crate::{CatchEvent, CatchMask, Device, MockBox};
+    use std::time::Duration;
+    let mock = MockBox::new();
+    let device = Device::with_mock(mock.clone());
+    let stream = device.catch_events(CatchMask::all()).unwrap();
+
+    // The chip that stamps these can reboot without the control link dropping, so a decrease that
+    // does not look like a rollover restarts the epoch instead of jumping 71.6 minutes forward.
+    mock.push_motion(0, 9_000_000, 1, 0, 0);
+    mock.push_motion(1, 1_500, 2, 0, 0);
+
+    let mut seen = Vec::new();
+    for _ in 0..2 {
+        let CatchEvent::Motion(m) = stream.recv_timeout(Duration::from_secs(1)).expect("motion")
+        else {
+            panic!("expected a motion event");
+        };
+        seen.push(m.ts_us);
+    }
+    assert_eq!(seen[0], 9_000_000);
+    assert_eq!(seen[1], 1_500, "restarted, not widened");
 }

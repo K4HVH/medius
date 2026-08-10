@@ -447,11 +447,12 @@ fn catch_delivers_a_motion_event() {
         MediusStatus::Ok
     );
     unsafe {
-        (*mock).inner.push_motion(1, 12, -34, 1);
+        (*mock).inner.push_motion(1, 7_000, 12, -34, 1);
     }
     let mut event = zeroed_event();
     assert!(unsafe { medius_event_stream_recv_timeout(stream, 2000, &mut event) });
     assert_eq!(event.kind, MediusCatchEventKind::Motion);
+    assert_eq!(event.ts_us, 7_000);
     let m = unsafe { event.data.motion };
     assert_eq!(m.dx, 12);
     assert_eq!(m.dy, -34);
@@ -479,7 +480,7 @@ fn catch_delivers_a_usage_event() {
     unsafe {
         (*mock)
             .inner
-            .push_usages(1, &[medius::Usage::from(medius::Key::ESCAPE)]);
+            .push_usages(1, 7_000, &[medius::Usage::from(medius::Key::ESCAPE)]);
     }
     let mut event = zeroed_event();
     assert!(unsafe { medius_event_stream_recv_timeout(stream, 2000, &mut event) });
@@ -656,7 +657,7 @@ fn event_stream_clone_shares_the_subscription() {
     let stream2 = unsafe { medius_event_stream_clone(stream) };
     assert!(!stream2.is_null());
     unsafe {
-        (*mock).inner.push_motion(1, 5, 0, 0);
+        (*mock).inner.push_motion(1, 7_000, 5, 0, 0);
     }
     let mut event = zeroed_event();
     assert!(unsafe { medius_event_stream_recv_timeout(stream2, 2000, &mut event) });

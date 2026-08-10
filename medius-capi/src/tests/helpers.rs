@@ -198,6 +198,7 @@ fn caps_predicates() {
 #[test]
 fn usage_snapshot_count_caps_at_capacity_without_wrapping() {
     let snap = medius::UsageSnapshot {
+        ts_us: 0,
         usages: (0..(MEDIUS_MAX_USAGES as u16 + 44))
             .map(|i| medius::Usage::new(medius::Class::Key, i))
             .collect(),

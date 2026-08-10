@@ -505,6 +505,11 @@ pub union MediusCatchEventData {
 #[derive(Clone, Copy)]
 pub struct MediusCatchEvent {
     pub kind: MediusCatchEventKind,
+    /// When the real device's report arrived, in box microseconds, stamped on the box's mouse-facing
+    /// chip in USB interrupt context. The box's own clock: unrelated to any clock on this machine, so
+    /// only meaningful compared against other events. A value below the previous one means the box's
+    /// clock restarted and the delta across that point is meaningless.
+    pub ts_us: u64,
     pub data: MediusCatchEventData,
 }
 

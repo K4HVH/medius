@@ -225,7 +225,7 @@ class MediusCatchEventData(ctypes.Union):
 
 
 class MediusCatchEvent(ctypes.Structure):
-    _fields_ = [("kind", u8), ("data", MediusCatchEventData)]
+    _fields_ = [("kind", u8), ("ts_us", u64), ("data", MediusCatchEventData)]
 
 
 class MediusLogLine(ctypes.Structure):
@@ -422,8 +422,8 @@ if HAS_MOCK:
     _decl("medius_mock_silent", None, [HANDLE])
     _decl("medius_mock_push_raw", None, [HANDLE, ctypes.POINTER(u8), usize])
     _decl("medius_mock_push_log", None, [HANDLE, u8, ctypes.c_char_p])
-    _decl("medius_mock_push_motion", None, [HANDLE, u8, MediusMotionEvent])
-    _decl("medius_mock_push_usages", None, [HANDLE, u8, ctypes.POINTER(MediusUsageEvent)])
+    _decl("medius_mock_push_motion", None, [HANDLE, u8, u32, MediusMotionEvent])
+    _decl("medius_mock_push_usages", None, [HANDLE, u8, u32, ctypes.POINTER(MediusUsageEvent)])
     _decl("medius_mock_recorded", usize, [HANDLE])
     _decl("medius_mock_saw", c_bool, [HANDLE, u8])
     _decl("medius_mock_clear_recorded", None, [HANDLE])
