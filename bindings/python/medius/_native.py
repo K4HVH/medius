@@ -225,7 +225,7 @@ class MediusCatchEventData(ctypes.Union):
 
 
 class MediusCatchEvent(ctypes.Structure):
-    _fields_ = [("kind", u8), ("ts_us", u64), ("data", MediusCatchEventData)]
+    _fields_ = [("kind", u8), ("ts_us", u32), ("data", MediusCatchEventData)]
 
 
 class MediusLogLine(ctypes.Structure):

@@ -247,10 +247,10 @@ class UsageSnapshot:
 class CatchEvent:
     """One catch-stream event.
 
-    `ts_us` is when the real device's report arrived, in box microseconds, stamped on the box's
-    mouse-facing chip in USB interrupt context. It is the box's own clock, unrelated to any clock on
-    this machine, so it is only meaningful compared against other events. A value below the previous
-    one means the box's clock restarted and the delta across that point is meaningless.
+    `ts_us` is when the real device's report arrived, in box microseconds. It is the box's own clock,
+    unrelated to any clock on this machine, so it is only meaningful compared against other events. It
+    wraps every ~71.6 minutes and restarts at zero if the box reboots, so a value below the previous one
+    is one or the other and the delta across that point is meaningless.
     """
 
     kind: CatchEventKind

@@ -559,7 +559,7 @@ mod linux {
             // amount. Passes vacuously when the mouse is still, since there is nothing to check then;
             // the event count in the message says whether it actually got exercised.
             let dev = device.as_ref().unwrap();
-            let mut stamps: Vec<u64> = Vec::new();
+            let mut stamps: Vec<u32> = Vec::new();
             if let Ok(stream) = dev.catch_events(CatchMask::all()) {
                 let deadline = std::time::Instant::now() + Duration::from_secs(2);
                 while std::time::Instant::now() < deadline {
