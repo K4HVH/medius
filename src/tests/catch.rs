@@ -167,14 +167,15 @@ fn catch_buffer_drops_oldest_on_overflow() {
 
 #[cfg(feature = "mock")]
 #[test]
-fn timestamps_widen_past_the_u32_wrap() {
+fn timestamps_reach_the_consumer_as_the_wire_value() {
     use crate::{CatchEvent, CatchMask, Device, MockBox};
     use std::time::Duration;
     let mock = MockBox::new();
     let device = Device::with_mock(mock.clone());
     let stream = device.catch_events(CatchMask::all()).unwrap();
 
-    // 500 ticks to reach u32::MAX, one more to reach 0, then 500 more: 1001 us across the wrap.
+    // Handed over raw, like CatchState::dropped and the rolling SEQ: the wrap is the consumer's to
+    // notice, so a stamp near u32::MAX followed by a small one must arrive untouched, not accumulated.
     let before = u32::MAX - 500;
     mock.push_motion(0, before, 1, 0, 0);
     mock.push_motion(1, 500, 2, 0, 0);
@@ -187,36 +188,5 @@ fn timestamps_widen_past_the_u32_wrap() {
         };
         seen.push(m.ts_us);
     }
-    assert_eq!(seen[0], before as u64);
-    assert_eq!(
-        seen[1],
-        before as u64 + 1001,
-        "the wrap became a 1 ms delta"
-    );
-}
-
-#[cfg(feature = "mock")]
-#[test]
-fn a_box_clock_restart_is_not_read_as_a_wrap() {
-    use crate::{CatchEvent, CatchMask, Device, MockBox};
-    use std::time::Duration;
-    let mock = MockBox::new();
-    let device = Device::with_mock(mock.clone());
-    let stream = device.catch_events(CatchMask::all()).unwrap();
-
-    // The chip that stamps these can reboot without the control link dropping, so a decrease that
-    // does not look like a rollover restarts the epoch instead of jumping 71.6 minutes forward.
-    mock.push_motion(0, 9_000_000, 1, 0, 0);
-    mock.push_motion(1, 1_500, 2, 0, 0);
-
-    let mut seen = Vec::new();
-    for _ in 0..2 {
-        let CatchEvent::Motion(m) = stream.recv_timeout(Duration::from_secs(1)).expect("motion")
-        else {
-            panic!("expected a motion event");
-        };
-        seen.push(m.ts_us);
-    }
-    assert_eq!(seen[0], 9_000_000);
-    assert_eq!(seen[1], 1_500, "restarted, not widened");
+    assert_eq!(seen, vec![before, 500]);
 }

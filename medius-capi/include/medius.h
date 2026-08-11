@@ -684,11 +684,11 @@ typedef union MediusCatchEventData {
 // One catch-stream event. Read `data.motion` / `data.usages` per `kind`.
 typedef struct MediusCatchEvent {
     MediusCatchEventKind kind;
-    // When the real device's report arrived, in box microseconds, stamped on the box's mouse-facing
-    // chip in USB interrupt context. The box's own clock: unrelated to any clock on this machine, so
-    // only meaningful compared against other events. A value below the previous one means the box's
-    // clock restarted and the delta across that point is meaningless.
-    uint64_t ts_us;
+    // When the real device's report arrived, in box microseconds. The box's own clock: unrelated to
+    // any clock on this machine, so only meaningful compared against other events. It wraps every
+    // ~71.6 minutes and restarts at zero if the box reboots, so a value below the previous one is one
+    // or the other and the delta across that point is meaningless.
+    uint32_t ts_us;
     union MediusCatchEventData data;
 } MediusCatchEvent;
 

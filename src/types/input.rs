@@ -78,7 +78,7 @@ pub(crate) const EVENT_TS_LEN: usize = 4;
 pub struct MotionEvent {
     /// When the real device's report arrived, in box microseconds. See [`CatchEvent`] for what the
     /// clock means.
-    pub ts_us: u64,
+    pub ts_us: u32,
     /// Relative X this report (right positive).
     pub dx: i16,
     /// Relative Y this report (down positive).
@@ -89,13 +89,12 @@ pub struct MotionEvent {
 
 impl MotionEvent {
     /// Decode a `MOTION_EVENT` payload (§4.10): `[ts_us u32 LE][dx i16 LE][dy i16 LE][dz i16 LE]`.
-    /// `ts_us` holds the raw wire value; the reader widens it past the `u32` wrap.
     pub(crate) fn from_payload(p: &[u8]) -> Option<MotionEvent> {
         if p.len() < EVENT_TS_LEN + 6 {
             return None;
         }
         Some(MotionEvent {
-            ts_us: u32::from_le_bytes([p[0], p[1], p[2], p[3]]) as u64,
+            ts_us: u32::from_le_bytes([p[0], p[1], p[2], p[3]]),
             dx: i16::from_le_bytes([p[4], p[5]]),
             dy: i16::from_le_bytes([p[6], p[7]]),
             dz: i16::from_le_bytes([p[8], p[9]]),
@@ -108,20 +107,19 @@ impl MotionEvent {
 pub struct UsageSnapshot {
     /// When the real device's report arrived, in box microseconds. See [`CatchEvent`] for what the
     /// clock means.
-    pub ts_us: u64,
+    pub ts_us: u32,
     /// The currently-held usages (all of one class per event).
     pub usages: Vec<Usage>,
 }
 
 impl UsageSnapshot {
     /// Decode a `USAGE_EVENT` payload (§4.10): `[ts_us u32 LE][n u8]` then `n × [class u8][id u16 LE]`.
-    /// `ts_us` holds the raw wire value; the reader widens it past the `u32` wrap.
     pub(crate) fn from_payload(p: &[u8]) -> Option<UsageSnapshot> {
         if p.len() < EVENT_TS_LEN {
             return None;
         }
         Some(UsageSnapshot {
-            ts_us: u32::from_le_bytes([p[0], p[1], p[2], p[3]]) as u64,
+            ts_us: u32::from_le_bytes([p[0], p[1], p[2], p[3]]),
             usages: Usage::decode_list(&p[EVENT_TS_LEN..])?,
         })
     }
@@ -143,9 +141,9 @@ impl UsageSnapshot {
 /// Both variants carry `ts_us`, the moment the real device's report arrived. The box stamps it on its
 /// mouse-facing chip in USB interrupt context, so it measures the device rather than the link and the
 /// host's own scheduling. The clock is the box's own, unrelated to any clock on this machine, so the
-/// values are only meaningful compared against each other. It counts up for as long as that chip stays
-/// up; a value lower than the one before it means the box's clock restarted, and deltas across that
-/// point are meaningless.
+/// values are only meaningful compared against each other. It wraps every ~71.6 minutes and restarts at
+/// zero if the box reboots, so a value below the previous one is one or the other and the delta across
+/// that point is meaningless.
 ///
 /// Idle polls are never reported. A device that reports at every poll interval even at rest still only
 /// produces events when a subscribed class actually changes, and a change-driven device produces

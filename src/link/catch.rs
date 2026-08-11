@@ -28,39 +28,11 @@ pub(crate) struct CatchSub {
 #[derive(Default)]
 pub(crate) struct CatchReg {
     subs: Vec<CatchSub>,
-    last_raw: Option<u32>,
-    epoch: u64,
 }
 
 impl CatchReg {
     fn effective(&self) -> CatchMask {
         self.subs.iter().fold(CatchMask::empty(), |m, s| m | s.mask)
-    }
-
-    /// Widen the wire's `u32` microseconds into the `u64` consumers see.
-    ///
-    /// A stamp lower than the last one is a rollover only if it looks like one, meaning the previous
-    /// value sat in the top quarter of the range and the new one in the bottom quarter. Any other
-    /// decrease is the box's clock restarting rather than wrapping, which a reconnect hook would miss:
-    /// the chip that stamps these is the mouse-facing one, and it can reboot on its own without the
-    /// control link ever dropping. There the epoch restarts too, so the value visibly steps backwards
-    /// instead of jumping 71.6 minutes into the future.
-    fn widen(&mut self, raw: u32) -> u64 {
-        const QUARTER: u32 = u32::MAX / 4;
-        match self.last_raw {
-            Some(prev) if raw < prev && prev > QUARTER * 3 && raw < QUARTER => {
-                self.epoch += 1 << 32;
-            }
-            Some(prev) if raw < prev => self.epoch = 0,
-            _ => {}
-        }
-        self.last_raw = Some(raw);
-        self.epoch + raw as u64
-    }
-
-    fn reset_clock(&mut self) {
-        self.last_raw = None;
-        self.epoch = 0;
     }
 }
 
@@ -74,20 +46,10 @@ fn decode_event(ty: FrameType, payload: &[u8]) -> Option<CatchEvent> {
 
 /// Broadcast one decoded catch frame to every subscriber, dropping the oldest on a full buffer.
 pub(crate) fn deliver_event(reg: &Mutex<CatchReg>, ty: FrameType, payload: &[u8]) {
-    let Some(mut event) = decode_event(ty, payload) else {
+    let Some(event) = decode_event(ty, payload) else {
         return;
     };
-    let mut reg = reg.lock();
-    // from_payload leaves the raw wire u32 in ts_us; widen it here, where the epoch state lives.
-    let raw = match &event {
-        CatchEvent::Motion(m) => m.ts_us as u32,
-        CatchEvent::Usages(u) => u.ts_us as u32,
-    };
-    let wide = reg.widen(raw);
-    match &mut event {
-        CatchEvent::Motion(m) => m.ts_us = wide,
-        CatchEvent::Usages(u) => u.ts_us = wide,
-    }
+    let reg = reg.lock();
     for sub in &reg.subs {
         match sub.tx.try_send(event.clone()) {
             Ok(()) => {}
@@ -116,9 +78,6 @@ impl Link {
         let id = self.inner.catch_gen.fetch_add(1, Ordering::Relaxed);
         let effective = {
             let mut reg = self.inner.events.lock();
-            if reg.subs.is_empty() {
-                reg.reset_clock(); // first subscriber: no stale epoch from an earlier stream
-            }
             reg.subs.push(CatchSub {
                 id,
                 mask,
@@ -146,10 +105,7 @@ impl Link {
     /// Tear down every catch subscription and clear the desired mask (used by `reset()`).
     pub(crate) fn catch_disconnect_all(&self) {
         let _serial = self.inner.catch_lock.lock();
-        let mut reg = self.inner.events.lock();
-        reg.subs.clear();
-        reg.reset_clock();
-        drop(reg);
+        self.inner.events.lock().subs.clear();
         self.inner.desired.lock().set_catch(CatchMask::empty());
     }
 
