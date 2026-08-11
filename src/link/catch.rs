@@ -47,14 +47,12 @@ impl CatchReg {
     /// instead of jumping 71.6 minutes into the future.
     fn widen(&mut self, raw: u32) -> u64 {
         const QUARTER: u32 = u32::MAX / 4;
-        if let Some(prev) = self.last_raw
-            && raw < prev
-        {
-            if prev > QUARTER * 3 && raw < QUARTER {
+        match self.last_raw {
+            Some(prev) if raw < prev && prev > QUARTER * 3 && raw < QUARTER => {
                 self.epoch += 1 << 32;
-            } else {
-                self.epoch = 0;
             }
+            Some(prev) if raw < prev => self.epoch = 0,
+            _ => {}
         }
         self.last_raw = Some(raw);
         self.epoch + raw as u64
