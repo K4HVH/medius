@@ -38,7 +38,7 @@ pub const MEDIUS_CATCH_CLASS_VEND_INTR: u8 = 6;
 pub const MEDIUS_CATCH_CLASS_VEND_BULK: u8 = 7;
 /// A proxied control transaction, keyed by endpoint number (0 = EP0).
 pub const MEDIUS_CATCH_CLASS_CONTROL: u8 = 8;
-/// The bytes the clone put on the wire, keyed by interface number.
+/// The bytes the clone put on the wire, keyed by endpoint address.
 pub const MEDIUS_CATCH_CLASS_EMIT: u8 = 9;
 /// Bus lifecycle: reset, suspend, configuration and interface changes, attach and detach.
 pub const MEDIUS_CATCH_CLASS_BUS: u8 = 10;
@@ -49,6 +49,9 @@ pub const MEDIUS_CATCH_ID_ANY: u16 = 0xFFFF;
 
 /// `MediusClockEstimate::age_ms` when the box has no estimate yet.
 pub const MEDIUS_CLOCK_AGE_NONE: u32 = u32::MAX;
+
+/// `MediusClockEstimate::rate_ppb` when the box has fitted no drift rate.
+pub const MEDIUS_CLOCK_RATE_NONE: i32 = i32::MIN;
 
 /// A keyboard key, addressed by HID Keyboard/Keypad usage. Modifiers are `0xE0..=0xE7`.
 pub type MediusKey = u8;
@@ -444,7 +447,10 @@ pub struct MediusCatchEntry {
 pub struct MediusClockEstimate {
     /// The host chip's clock minus the device chip's, in microseconds.
     pub offset_us: i32,
-    /// Relative drift between the two crystals, parts per billion.
+    /// Relative drift between the two crystals in parts per billion, or `MEDIUS_CLOCK_RATE_NONE`
+    /// when the box has fitted none. That is a different answer from a fitted 0, which says the two
+    /// crystals match: on a link too busy for enough clean exchanges no fit is made at all, which is
+    /// exactly when assuming no drift is least safe.
     pub rate_ppb: i32,
     /// Best measured round trip in the window. The offset is good to about half of this.
     pub delay_us: u16,
@@ -583,6 +589,10 @@ pub struct MediusMotionEvent {
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct MediusUsageEvent {
+    /// Which class this snapshot is of, one of `MEDIUS_CLASS_*`. Carried here rather than read off
+    /// the first entry, because the snapshot that most needs it is the one with `n == 0`: releasing
+    /// the last held usage is the edge a caller waits for, and it lists nothing to read a class from.
+    pub class: MediusClass,
     pub n: u16,
     pub usages: [MediusUsage; MEDIUS_MAX_USAGES],
 }

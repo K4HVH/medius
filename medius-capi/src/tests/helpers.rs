@@ -129,6 +129,7 @@ fn rate_native_hz_divides_the_period() {
 
 fn usage_event(usages: &[MediusUsage]) -> MediusUsageEvent {
     let mut e = MediusUsageEvent {
+        class: usages.first().map_or(MediusClass::Button, |u| u.kind),
         n: usages.len() as u16,
         usages: [MediusUsage {
             kind: MediusClass::Button,
@@ -200,6 +201,7 @@ fn usage_snapshot_count_caps_at_capacity_without_wrapping() {
     let snap = medius::UsageSnapshot {
         ts_us: 0,
         clock: medius::ClockDomain::HostChip,
+        class: medius::Class::Key,
         usages: (0..(MEDIUS_MAX_USAGES as u16 + 44))
             .map(|i| medius::Usage::new(medius::Class::Key, i))
             .collect(),
@@ -207,6 +209,28 @@ fn usage_snapshot_count_caps_at_capacity_without_wrapping() {
     let ev = MediusCatchEvent::from(medius::CatchEvent::Usages(snap));
     assert_eq!(ev.kind, MediusCatchEventKind::Usages);
     assert_eq!(unsafe { ev.data.usages.n } as usize, MEDIUS_MAX_USAGES);
+    assert_eq!(unsafe { ev.data.usages.class }, MediusClass::Key);
+}
+
+#[test]
+fn an_empty_snapshot_crosses_the_c_boundary_still_naming_its_class() {
+    // n == 0 is the release of the last held usage. Without the class in the struct a C caller could
+    // not tell which class went quiet, and the edge is the whole point of subscribing.
+    for (class, want) in [
+        (medius::Class::Button, MediusClass::Button),
+        (medius::Class::Key, MediusClass::Key),
+        (medius::Class::Media, MediusClass::Media),
+    ] {
+        let snap = medius::UsageSnapshot {
+            ts_us: 7,
+            clock: medius::ClockDomain::HostChip,
+            class,
+            usages: Vec::new(),
+        };
+        let ev = MediusCatchEvent::from(medius::CatchEvent::Usages(snap));
+        assert_eq!(unsafe { ev.data.usages.n }, 0);
+        assert_eq!(unsafe { ev.data.usages.class }, want);
+    }
 }
 
 #[test]

@@ -646,9 +646,11 @@ mod linux {
                     Some(age) => (
                         c.clock.delay_us > 0 && c.clock.delay_us < 5_000,
                         format!(
-                            "offset={}us rate={}ppb delay={}us (+/-{}us) age={}ms",
+                            "offset={}us rate={} delay={}us (+/-{}us) age={}ms",
                             c.clock.offset_us,
-                            c.clock.rate_ppb,
+                            c.clock
+                                .rate_ppb
+                                .map_or("unfitted".into(), |r| format!("{r}ppb")),
                             c.clock.delay_us,
                             c.clock.error_bound_us(),
                             age.as_millis()

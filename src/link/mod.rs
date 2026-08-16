@@ -137,6 +137,7 @@ impl Link {
             seq: Arc::clone(&seq),
             counters: Arc::clone(&counters),
             desired: Arc::clone(&desired),
+            catch_lock: Arc::clone(&catch_lock),
             stop: Arc::clone(&stop),
             cadence: keepalive_cadence,
         });

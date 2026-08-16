@@ -1,11 +1,12 @@
 //! `CATCH` (§3.9): the subscription address space, the three event frames, `RESP(CATCH)`, the HEALTH
 //! bit and the EventStream lifecycle. Bytes are pinned to the firmware wire format in ctrl_proto.h.
+use std::time::Duration;
 
 use crate::protocol::command::catch_payload;
 use crate::protocol::opcode::{CATCH_CLS_ANY, CATCH_ID_ANY, H_CATCH_ON};
 use crate::protocol::response::{Resp, parse_resp};
 use crate::types::{
-    BusEvent, CatchClass, CatchFilter, CatchState, Class, ClockDomain, ControlStatus, Health,
+    Axis, BusEvent, CatchClass, CatchFilter, CatchState, Class, ClockDomain, ControlStatus, Health,
     LockDirection, MotionEvent, TrafficEvent, UsageSnapshot,
 };
 use crate::{Button, Key, Usage};
@@ -95,13 +96,84 @@ fn motion_event_decodes_with_its_clock_domain() {
 
 #[test]
 fn usage_snapshot_decodes_with_its_clock_domain() {
-    let p = [0, 0, 0, 0, 0, 2, 0, 0, 0, 1, 0x04, 0x00];
+    // [ts u32][clk=0][cls=0 Button][n=2] then two usages.
+    let p = [0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 1, 0x04, 0x00];
     let s = UsageSnapshot::from_payload(&p).unwrap();
     assert_eq!(s.clock, ClockDomain::HostChip);
     assert_eq!(s.usages.len(), 2);
-    assert_eq!(s.class(), Some(Class::Button));
+    assert_eq!(s.class, Class::Button);
     assert!(s.is_held(Button::Left));
     assert!(s.is_held(Key::new(0x04)));
+}
+
+#[test]
+fn an_empty_snapshot_still_names_the_class_that_went_quiet() {
+    // Releasing the last held usage is the edge a caller is waiting for, and it lists nothing. With
+    // the class read off the first usage there was none to read, so "all buttons released" and "all
+    // media released" were the same twelve bytes and neither could be routed.
+    for (byte, want) in [(0u8, Class::Button), (1, Class::Key), (2, Class::Media)] {
+        let p = [7, 0, 0, 0, 0, byte, 0];
+        let s = UsageSnapshot::from_payload(&p).unwrap();
+        assert_eq!(s.class, want);
+        assert!(s.usages.is_empty());
+        assert_eq!(s.ts_us, 7);
+    }
+    assert!(UsageSnapshot::from_payload(&[7, 0, 0, 0, 0, 9, 0]).is_none()); // unknown class
+    assert!(UsageSnapshot::from_payload(&[7, 0, 0, 0, 0]).is_none()); // no class byte at all
+}
+
+#[test]
+fn a_cut_setup_packet_is_not_reported_as_a_data_stage() {
+    // A control event with snaplen under 8 keeps only part of its setup packet. Falling through to
+    // "the whole buffer is the data" handed a decoder a GET_DESCRIPTOR request labelled as the
+    // descriptor it asked for -- bytes that are real, in a field that makes them a lie.
+    let p = [0, 0, 0, 0, 1, 8, 0, 0, 0, 0, 8, 0, 0x80, 0x06, 0x00, 0x01];
+    let t = TrafficEvent::from_payload(&p).unwrap();
+    assert_eq!(t.class, CatchClass::Control);
+    assert_eq!(t.bytes.len(), 4);
+    assert!(t.truncated());
+    assert_eq!(t.setup(), None);
+    assert!(t.data().is_empty(), "got {:?}", t.data());
+
+    // The whole packet present: setup and data split where they should.
+    let full = [
+        0, 0, 0, 0, 1, 8, 0, 0, 0, 0, 10, 0, 0x80, 0x06, 0x00, 0x01, 0, 0, 0x12, 0, 0x12, 0x01,
+    ];
+    let t = TrafficEvent::from_payload(&full).unwrap();
+    assert_eq!(t.setup().unwrap(), &[0x80, 0x06, 0x00, 0x01, 0, 0, 0x12, 0]);
+    assert_eq!(t.data(), &[0x12, 0x01]);
+}
+
+#[test]
+fn control_status_covers_every_answer_the_device_can_give() {
+    let with_flags = |flags: u8| {
+        let p = [0, 0, 0, 0, 1, 8, 0, 0, 0, flags, 0, 0];
+        TrafficEvent::from_payload(&p).unwrap().control_status()
+    };
+    assert_eq!(with_flags(0x00), Some(ControlStatus::Ok));
+    assert_eq!(with_flags(0xFD), Some(ControlStatus::Stalled));
+    assert_eq!(with_flags(0xFE), Some(ControlStatus::Naked));
+    // An unknown status stays unknown. A catch-all arm reported it as a timeout, so a future
+    // firmware's new status would read as a device fault that never happened.
+    assert_eq!(with_flags(0x42), Some(ControlStatus::Other(0x42)));
+    // A class that is not Control has no control status at all, whatever its flags say.
+    let p = [0, 0, 0, 0, 1, 7, 0x83, 0x00, 1, 0x01, 0, 0];
+    assert_eq!(
+        TrafficEvent::from_payload(&p).unwrap().control_status(),
+        None
+    );
+}
+
+#[test]
+fn a_bulk_zero_length_packet_is_flagged_both_ways() {
+    let zlp = |flags: u8| {
+        let p = [0, 0, 0, 0, 1, 7, 0x83, 0x00, 1, flags, 0, 0];
+        TrafficEvent::from_payload(&p).unwrap().bulk_zlp()
+    };
+    assert!(!zlp(0x00));
+    assert!(!zlp(0x01)); // END alone is not a ZLP
+    assert!(zlp(0x02));
+    assert!(zlp(0x03)); // END and ZLP together
 }
 
 #[test]
@@ -203,7 +275,7 @@ fn catch_state_decodes_header_entries_and_clock() {
     assert!(c.table_full);
     assert_eq!(c.dropped, 0x0102_0304);
     assert_eq!(c.clock.offset_us, -250);
-    assert_eq!(c.clock.rate_ppb, -1500);
+    assert_eq!(c.clock.rate_ppb, Some(-1500));
     assert_eq!(c.clock.delay_us, 90);
     assert_eq!(c.clock.error_bound_us(), 45);
     assert_eq!(c.clock.age.unwrap().as_millis(), 12);
@@ -215,6 +287,86 @@ fn catch_state_decodes_header_entries_and_clock() {
     assert_eq!(c.entries[1].filter.snaplen, 16);
     assert_eq!(c.entries[1].dropped, 4000);
     assert!(CatchState::from_payload(&p[..18]).is_none());
+}
+
+#[test]
+fn one_unrecognised_entry_does_not_discard_the_whole_reply() {
+    // A class this build does not know must cost that entry and nothing else. Failing the parse threw
+    // away the other entries, every drop count and the clock estimate, and the caller saw it as a
+    // missing reply rather than a partially-understood one.
+    let mut p = vec![7u8, 0];
+    p.extend_from_slice(&99u32.to_le_bytes());
+    p.extend_from_slice(&0i32.to_le_bytes());
+    p.extend_from_slice(&0i32.to_le_bytes());
+    p.extend_from_slice(&90u16.to_le_bytes());
+    p.extend_from_slice(&12u16.to_le_bytes());
+    p.push(3);
+    p.extend_from_slice(&[3, 0xFF, 0xFF, 0, 0, 7, 0]); // axis blanket
+    p.extend_from_slice(&[77, 0x01, 0x00, 0, 0, 1, 0]); // a class from some later firmware
+    p.extend_from_slice(&[7, 0x83, 0x00, 1, 16, 5, 0]); // vendor bulk
+
+    let c = CatchState::from_payload(&p).unwrap();
+    assert_eq!(c.dropped, 99);
+    assert_eq!(c.clock.delay_us, 90);
+    assert_eq!(c.entries.len(), 2);
+    assert_eq!(c.entries[0].filter.class, Some(CatchClass::Axis));
+    assert_eq!(c.entries[1].filter.class, Some(CatchClass::VendorBulk));
+    assert_eq!(c.entries[1].dropped, 5);
+}
+
+#[test]
+fn a_device_stamp_translates_into_the_host_domain() {
+    // Only the None path was covered, so a sign inversion here would have shipped green. The box
+    // reports host-minus-device, so a device stamp moves FORWARD by a positive offset.
+    let build = |offset: i32, age: u16| {
+        let mut p = vec![7u8, 0];
+        p.extend_from_slice(&0u32.to_le_bytes());
+        p.extend_from_slice(&offset.to_le_bytes());
+        p.extend_from_slice(&0i32.to_le_bytes());
+        p.extend_from_slice(&90u16.to_le_bytes());
+        p.extend_from_slice(&age.to_le_bytes());
+        p.push(0);
+        CatchState::from_payload(&p).unwrap().clock
+    };
+    assert_eq!(build(250, 12).to_host_domain(1_000), Some(1_250));
+    assert_eq!(build(-250, 12).to_host_domain(1_000), Some(750));
+    // Past the u32 wrap it stays arithmetic rather than saturating: the caller gets an i64.
+    assert_eq!(
+        build(1_000, 12).to_host_domain(u32::MAX),
+        Some(4_294_968_295)
+    );
+    assert_eq!(build(250, u16::MAX).to_host_domain(1_000), None);
+}
+
+#[test]
+fn an_unfitted_rate_is_distinct_from_a_measured_zero() {
+    // Two different answers over the same wire field. A fitted 0 says the crystals are matched; the
+    // sentinel says nothing has been fitted -- which is the state a link too busy for clean exchanges
+    // stays in, exactly when assuming no drift costs the most.
+    let build = |rate: i32| {
+        let mut p = vec![7u8, 0];
+        p.extend_from_slice(&0u32.to_le_bytes());
+        p.extend_from_slice(&0i32.to_le_bytes());
+        p.extend_from_slice(&rate.to_le_bytes());
+        p.extend_from_slice(&90u16.to_le_bytes());
+        p.extend_from_slice(&12u16.to_le_bytes());
+        p.push(0);
+        CatchState::from_payload(&p).unwrap()
+    };
+    let none = build(crate::protocol::opcode::CLK_RATE_NONE);
+    assert_eq!(none.clock.rate_ppb, None);
+    assert_eq!(none.clock.drift_us_over(Duration::from_secs(10)), 0);
+
+    let flat = build(0);
+    assert_eq!(flat.clock.rate_ppb, Some(0));
+    assert_eq!(flat.clock.drift_us_over(Duration::from_secs(10)), 0);
+    assert_ne!(none.clock.rate_ppb, flat.clock.rate_ppb);
+
+    // And a real rate really extrapolates: 20 ppm over 10 s is 200 us, which is far past the 45 us
+    // error bound the same reply advertises.
+    let drifting = build(20_000);
+    assert_eq!(drifting.clock.drift_us_over(Duration::from_secs(10)), 200);
+    assert_eq!(drifting.clock.drift_us_over(Duration::from_secs(0)), 0);
 }
 
 #[test]
@@ -290,7 +442,7 @@ mod with_mock {
         let s = dev.catch_events([CatchFilter::all()]).unwrap();
 
         mock.push_motion(0, 1_000, 5, -7, 1);
-        mock.push_usages(1, 2_000, &[Usage::from(Button::Side1)]);
+        mock.push_usages(1, 2_000, Class::Button, &[Usage::from(Button::Side1)]);
         mock.push_traffic(
             2,
             3_000,
@@ -342,6 +494,118 @@ mod with_mock {
         let b = s.recv().unwrap();
         assert_eq!((a.ts_us(), a.clock()), (111, ClockDomain::HostChip));
         assert_eq!((b.ts_us(), b.clock()), (222, ClockDomain::DeviceChip));
+    }
+
+    #[test]
+    fn the_widest_snaplen_reaches_the_box() {
+        // The box holds ONE entry per address, so two subscribers naming it with different capture
+        // lengths have to be resolved rather than have one silently win. Taking either arbitrarily
+        // meant a caller asking for whole packets started receiving cut ones the moment unrelated
+        // code in the same process subscribed with a shorter snaplen. 0 = whole packet, so 0 wins.
+        let snaplen_sent_to_box = |a: u8, b: u8| {
+            let mock = MockBox::new();
+            let dev = Device::with_mock(mock.clone());
+            let _first = dev
+                .catch_events([CatchFilter::addr(CatchClass::VendorBulk, 0x83).snaplen(a)])
+                .unwrap();
+            let _second = dev
+                .catch_events([CatchFilter::addr(CatchClass::VendorBulk, 0x83).snaplen(b)])
+                .unwrap();
+            mock.recorded_frames()
+                .iter()
+                .filter(|f| f.ty == FrameType::Catch)
+                .filter_map(|f| f.payload.get(5).copied())
+                .next_back()
+                .expect("a CATCH frame")
+        };
+        assert_eq!(snaplen_sent_to_box(16, 64), 64);
+        assert_eq!(snaplen_sent_to_box(64, 16), 64);
+        assert_eq!(
+            snaplen_sent_to_box(16, 0),
+            0,
+            "whole packet beats a cut one"
+        );
+        assert_eq!(snaplen_sent_to_box(0, 16), 0, "and in either order");
+    }
+
+    #[test]
+    fn an_exact_button_filter_receives_its_own_usage_event() {
+        // The input frames carry content, not an address, so routing them means reading the address
+        // out of the content. Sending the wire's wildcard id instead made every exact-id input
+        // subscription match nothing at all -- and silently: the box accepted the entry, listed it in
+        // RESP(CATCH), counted no drops, and the stream simply stayed empty.
+        let mock = MockBox::new();
+        let dev = Device::with_mock(mock.clone());
+        let s = dev
+            .catch_events([CatchFilter::addr(
+                CatchClass::Button,
+                Button::Left.as_id() as u16,
+            )])
+            .unwrap();
+        mock.push_usages(0, 1_000, Class::Button, &[Usage::from(Button::Left)]);
+        match s.recv().unwrap() {
+            CatchEvent::Usages(u) => assert!(u.is_held(Button::Left)),
+            other => panic!("expected the button snapshot, got {other:?}"),
+        }
+        // And a snapshot holding only a DIFFERENT button is not this subscriber's business.
+        mock.push_usages(1, 2_000, Class::Button, &[Usage::from(Button::Side1)]);
+        assert!(s.try_recv().is_none());
+    }
+
+    #[test]
+    fn an_exact_axis_filter_receives_only_that_axis() {
+        let mock = MockBox::new();
+        let dev = Device::with_mock(mock.clone());
+        let s = dev
+            .catch_events([CatchFilter::addr(CatchClass::Axis, Axis::Wheel.as_u16())])
+            .unwrap();
+        mock.push_motion(0, 1_000, 40, -9, 0); // X and Y only
+        assert!(s.try_recv().is_none());
+        mock.push_motion(1, 2_000, 0, 0, 1);
+        match s.recv().unwrap() {
+            CatchEvent::Motion(m) => assert_eq!(m.dz, 1),
+            other => panic!("expected motion, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn an_axis_direction_selects_the_sign_of_the_movement() {
+        // An axis has no press or release, so its direction is the sign of the delta -- the same
+        // reading an axis LOCK uses. A subscriber asking for wheel-up must not be handed wheel-down.
+        let mock = MockBox::new();
+        let dev = Device::with_mock(mock.clone());
+        let up = dev
+            .catch_events([CatchFilter::addr(CatchClass::Axis, Axis::Wheel.as_u16())
+                .direction(LockDirection::Positive)])
+            .unwrap();
+        mock.push_motion(0, 1_000, 0, 0, -1);
+        assert!(up.try_recv().is_none());
+        mock.push_motion(1, 2_000, 0, 0, 3);
+        assert!(matches!(up.recv().unwrap(), CatchEvent::Motion(m) if m.dz == 3));
+    }
+
+    #[test]
+    fn a_release_to_nothing_reaches_the_class_that_released() {
+        // The empty snapshot is the release of the last held usage, and it lists nothing. It has to
+        // reach the subscriber for its own class and nobody else's -- it used to go to everyone
+        // subscribed to anything, so a vendor-bulk trace received keyboard events.
+        let mock = MockBox::new();
+        let dev = Device::with_mock(mock.clone());
+        let keys = dev
+            .catch_events([CatchFilter::class(CatchClass::Key)])
+            .unwrap();
+        let bulk = dev
+            .catch_events([CatchFilter::addr(CatchClass::VendorBulk, 0x83)])
+            .unwrap();
+        mock.push_usages(0, 1_000, Class::Key, &[]);
+        match keys.recv().unwrap() {
+            CatchEvent::Usages(u) => assert!(u.usages.is_empty() && u.class == Class::Key),
+            other => panic!("expected the empty key snapshot, got {other:?}"),
+        }
+        assert!(
+            bulk.try_recv().is_none(),
+            "an empty snapshot is not everyone's"
+        );
     }
 
     #[test]
