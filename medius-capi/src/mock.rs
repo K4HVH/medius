@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use medius::{Device, MockBox};
 
-use crate::convert::{emit_pace_to_medius, frame_type_to_native};
+use crate::convert::{clock_domain_to_native, emit_pace_to_medius, frame_type_to_native};
 use crate::ctypes::*;
 use crate::device::MediusDevice;
 use crate::error::{MediusStatus, clear_error, fail, guard, guard_status, record};
@@ -270,6 +270,39 @@ pub unsafe extern "C" fn medius_mock_push_usages(
         }
         let usages = crate::convert::usage_event_to_medius(unsafe { &*event });
         m.push_usages(seq, ts_us, &usages);
+    });
+}
+
+/// Push a TRAFFIC_EVENT as if the box emitted it (surfaces as a `Traffic` catch event).
+/// `true_len` above `len` is how a snaplen-truncated capture looks.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn medius_mock_push_traffic(
+    mock: *mut MediusMockBox,
+    seq: u8,
+    ts_us: u32,
+    clock: MediusClockDomain,
+    event: *const MediusTrafficEvent,
+) {
+    with_mock(mock, |m| {
+        if event.is_null() {
+            return;
+        }
+        let e = unsafe { &*event };
+        let Some(class) = medius::CatchClass::from_u8(e.class) else {
+            return;
+        };
+        let n = (e.len as usize).min(MEDIUS_MAX_TRAFFIC_BYTES);
+        m.push_traffic(
+            seq,
+            ts_us,
+            clock_domain_to_native(clock),
+            class,
+            e.id,
+            e.direction.into(),
+            e.flags,
+            e.true_len,
+            &e.bytes[..n],
+        );
     });
 }
 
