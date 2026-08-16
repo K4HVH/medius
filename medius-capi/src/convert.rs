@@ -176,6 +176,14 @@ pub(crate) fn input_to_medius(v: MediusUsage) -> Option<Usage> {
     })
 }
 
+pub(crate) fn class_from_c(c: MediusClass) -> Class {
+    match c {
+        MediusClass::Button => Class::Button,
+        MediusClass::Key => Class::Key,
+        MediusClass::Media => Class::Media,
+    }
+}
+
 fn class_kind(class: Class) -> MediusClass {
     match class {
         Class::Button => MediusClass::Button,
@@ -708,6 +716,7 @@ impl From<CatchEvent> for MediusCatchEvent {
                     data: MediusCatchEventData {
                         usages: MediusUsageEvent {
                             class: class_kind(s.class),
+                            direction: lock_direction_to_c(s.direction),
                             n: n as u16,
                             usages,
                         },

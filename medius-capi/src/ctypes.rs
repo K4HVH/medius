@@ -593,6 +593,9 @@ pub struct MediusUsageEvent {
     /// the first entry, because the snapshot that most needs it is the one with `n == 0`: releasing
     /// the last held usage is the edge a caller waits for, and it lists nothing to read a class from.
     pub class: MediusClass,
+    /// The edge that produced this snapshot: the subscribed set grew (`Positive`) or shrank
+    /// (`Negative`). Without it a direction on an input filter cannot be honoured at all.
+    pub direction: MediusLockDirection,
     pub n: u16,
     pub usages: [MediusUsage; MEDIUS_MAX_USAGES],
 }
@@ -624,6 +627,10 @@ pub enum MediusControlStatus {
     Ok = 0,
     Stalled = 1,
     Naked = 2,
+    /// A status byte this build does not know. Read `MediusTrafficEvent::flags` for its value. Kept
+    /// distinct rather than folded into the nearest known one: a catch-all arm reported a future
+    /// firmware's new status as a timeout, which reads as a device fault that never happened.
+    Other = 3,
 }
 
 /// What a `MEDIUS_CATCH_CLASS_BUS` event describes.

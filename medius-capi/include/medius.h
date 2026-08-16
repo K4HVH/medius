@@ -408,6 +408,10 @@ enum MediusControlStatus
     MEDIUS_CONTROL_STATUS_OK = 0,
     MEDIUS_CONTROL_STATUS_STALLED = 1,
     MEDIUS_CONTROL_STATUS_NAKED = 2,
+    // A status byte this build does not know. Read `MediusTrafficEvent::flags` for its value. Kept
+    // distinct rather than folded into the nearest known one: a catch-all arm reported a future
+    // firmware's new status as a timeout, which reads as a device fault that never happened.
+    MEDIUS_CONTROL_STATUS_OTHER = 3,
 };
 #ifndef __cplusplus
 #if __STDC_VERSION__ >= 202311L
@@ -822,6 +826,9 @@ typedef struct MediusUsageEvent {
     // the first entry, because the snapshot that most needs it is the one with `n == 0`: releasing
     // the last held usage is the edge a caller waits for, and it lists nothing to read a class from.
     MediusClass class_;
+    // The edge that produced this snapshot: the subscribed set grew (`Positive`) or shrank
+    // (`Negative`). Without it a direction on an input filter cannot be honoured at all.
+    MediusLockDirection direction;
     uint16_t n;
     struct MediusUsage usages[MEDIUS_MAX_USAGES];
 } MediusUsageEvent;

@@ -218,10 +218,15 @@ pub unsafe extern "C" fn medius_traffic_event_data(
         }
         let e = unsafe { &*event };
         let n = (e.len as usize).min(MEDIUS_MAX_TRAFFIC_BYTES);
-        let skip = if e.class == MEDIUS_CATCH_CLASS_CONTROL && e.len >= SETUP_LEN {
-            SETUP_LEN as usize
+        // A control event whose own setup packet was cut short by snaplen has no data stage at all.
+        // Falling through to "the whole buffer is the data" handed a decoder the surviving setup
+        // bytes -- a GET_DESCRIPTOR request labelled as the descriptor it asked for.
+        let (skip, n) = if e.class != MEDIUS_CATCH_CLASS_CONTROL {
+            (0usize, n)
+        } else if e.len >= SETUP_LEN {
+            (SETUP_LEN as usize, n)
         } else {
-            0
+            (0usize, 0usize)
         };
         if !out_len.is_null() {
             unsafe { *out_len = n - skip };
@@ -248,7 +253,8 @@ pub unsafe extern "C" fn medius_traffic_event_control_status(
         let status = match e.flags {
             0x00 => MediusControlStatus::Ok,
             0xFD => MediusControlStatus::Stalled,
-            _ => MediusControlStatus::Naked,
+            0xFE => MediusControlStatus::Naked,
+            _ => MediusControlStatus::Other,
         };
         if !out.is_null() {
             unsafe { *out = status };

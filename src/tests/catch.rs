@@ -96,8 +96,8 @@ fn motion_event_decodes_with_its_clock_domain() {
 
 #[test]
 fn usage_snapshot_decodes_with_its_clock_domain() {
-    // [ts u32][clk=0][cls=0 Button][n=2] then two usages.
-    let p = [0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 1, 0x04, 0x00];
+    // [ts u32][clk=0][cls=0 Button][dir=1 press][n=2] then two usages.
+    let p = [0, 0, 0, 0, 0, 0, 1, 2, 0, 0, 0, 1, 0x04, 0x00];
     let s = UsageSnapshot::from_payload(&p).unwrap();
     assert_eq!(s.clock, ClockDomain::HostChip);
     assert_eq!(s.usages.len(), 2);
@@ -112,14 +112,16 @@ fn an_empty_snapshot_still_names_the_class_that_went_quiet() {
     // the class read off the first usage there was none to read, so "all buttons released" and "all
     // media released" were the same twelve bytes and neither could be routed.
     for (byte, want) in [(0u8, Class::Button), (1, Class::Key), (2, Class::Media)] {
-        let p = [7, 0, 0, 0, 0, byte, 0];
+        let p = [7, 0, 0, 0, 0, byte, 2, 0];
         let s = UsageSnapshot::from_payload(&p).unwrap();
         assert_eq!(s.class, want);
+        assert_eq!(s.direction, LockDirection::Negative);
         assert!(s.usages.is_empty());
         assert_eq!(s.ts_us, 7);
     }
-    assert!(UsageSnapshot::from_payload(&[7, 0, 0, 0, 0, 9, 0]).is_none()); // unknown class
-    assert!(UsageSnapshot::from_payload(&[7, 0, 0, 0, 0]).is_none()); // no class byte at all
+    assert!(UsageSnapshot::from_payload(&[7, 0, 0, 0, 0, 9, 2, 0]).is_none()); // unknown class
+    assert!(UsageSnapshot::from_payload(&[7, 0, 0, 0, 0, 0, 9, 0]).is_none()); // unknown direction
+    assert!(UsageSnapshot::from_payload(&[7, 0, 0, 0, 0, 0]).is_none()); // no direction byte at all
 }
 
 #[test]
@@ -442,7 +444,13 @@ mod with_mock {
         let s = dev.catch_events([CatchFilter::all()]).unwrap();
 
         mock.push_motion(0, 1_000, 5, -7, 1);
-        mock.push_usages(1, 2_000, Class::Button, &[Usage::from(Button::Side1)]);
+        mock.push_usages(
+            1,
+            2_000,
+            Class::Button,
+            LockDirection::Positive,
+            &[Usage::from(Button::Side1)],
+        );
         mock.push_traffic(
             2,
             3_000,
@@ -529,11 +537,64 @@ mod with_mock {
     }
 
     #[test]
-    fn an_exact_button_filter_receives_its_own_usage_event() {
+    fn a_narrow_entry_does_not_cut_a_broad_subscribers_packets() {
+        // The box resolves an event to its most SPECIFIC matching entry and captures at THAT entry's
+        // snaplen. Resolving snaplen only between identical addresses is therefore not enough: a
+        // blanket subscriber asking for whole packets had them cut to 8 the moment another caller
+        // subscribed to one endpoint with a shorter capture -- on that endpoint only, silently.
+        let mock = MockBox::new();
+        let dev = Device::with_mock(mock.clone());
+        let _broad = dev.catch_events([CatchFilter::all()]).unwrap();
+        let _narrow = dev
+            .catch_events([CatchFilter::addr(CatchClass::VendorBulk, 0x83).snaplen(8)])
+            .unwrap();
+        let snaplens: Vec<u8> = mock
+            .recorded_frames()
+            .iter()
+            .filter(|f| f.ty == FrameType::Catch)
+            .filter_map(|f| f.payload.get(5).copied())
+            .collect();
+        assert!(!snaplens.is_empty());
+        assert!(
+            snaplens.iter().all(|s| *s == 0),
+            "every entry must still capture whole packets, got {snaplens:?}"
+        );
+    }
+
+    #[test]
+    fn duplicate_addresses_in_one_call_take_the_widest() {
+        // The same rule inside a single subscribe. Collecting straight into a set kept whichever
+        // duplicate happened to be listed last, so the two orderings of one pair disagreed.
+        let sent = |filters: [CatchFilter; 2]| {
+            let mock = MockBox::new();
+            let dev = Device::with_mock(mock.clone());
+            let _s = dev.catch_events(filters).unwrap();
+            mock.recorded_frames()
+                .iter()
+                .filter(|f| f.ty == FrameType::Catch)
+                .filter_map(|f| f.payload.get(5).copied())
+                .next_back()
+                .expect("a CATCH frame")
+        };
+        let a = CatchFilter::addr(CatchClass::VendorBulk, 0x83);
+        assert_eq!(sent([a.snaplen(16), a.snaplen(64)]), 64);
+        assert_eq!(sent([a.snaplen(64), a.snaplen(16)]), 64);
+        assert_eq!(sent([a.snaplen(16), a.snaplen(0)]), 0);
+        assert_eq!(sent([a.snaplen(0), a.snaplen(16)]), 0);
+    }
+
+    #[test]
+    fn an_exact_input_filter_receives_its_class_and_diffs_it() {
         // The input frames carry content, not an address, so routing them means reading the address
         // out of the content. Sending the wire's wildcard id instead made every exact-id input
         // subscription match nothing at all -- and silently: the box accepted the entry, listed it in
         // RESP(CATCH), counted no drops, and the stream simply stayed empty.
+        //
+        // A snapshot lists what is HELD, so the RELEASE of Left is the snapshot that no longer
+        // mentions Left. Delivering only snapshots that CONTAIN the subscriber's usage therefore
+        // discards precisely the edge it was waiting for -- and only when some other subscriber's
+        // usage is still held, so a single-subscriber test cannot see it. Routed on class instead,
+        // and the subscriber diffs successive snapshots.
         let mock = MockBox::new();
         let dev = Device::with_mock(mock.clone());
         let s = dev
@@ -542,14 +603,70 @@ mod with_mock {
                 Button::Left.as_id() as u16,
             )])
             .unwrap();
-        mock.push_usages(0, 1_000, Class::Button, &[Usage::from(Button::Left)]);
-        match s.recv().unwrap() {
-            CatchEvent::Usages(u) => assert!(u.is_held(Button::Left)),
-            other => panic!("expected the button snapshot, got {other:?}"),
+        let next = |what: &str| match s.recv_timeout(Duration::from_secs(1)) {
+            Some(CatchEvent::Usages(u)) => u,
+            other => panic!("expected {what}, got {other:?}"),
+        };
+        mock.push_usages(
+            0,
+            1_000,
+            Class::Button,
+            LockDirection::Positive,
+            &[Usage::from(Button::Left)],
+        );
+        assert!(next("the press").is_held(Button::Left));
+
+        // Left released while another subscriber's Side1 is still held. The box lists only Side1 --
+        // and that snapshot IS how this subscriber learns Left came up.
+        mock.push_usages(
+            1,
+            2_000,
+            Class::Button,
+            LockDirection::Negative,
+            &[Usage::from(Button::Side1)],
+        );
+        assert!(!next("the release").is_held(Button::Left));
+
+        // A different class still is not its business. Asserted after an event that MUST arrive, so
+        // this cannot pass merely by outrunning the reader thread.
+        mock.push_usages(
+            2,
+            3_000,
+            Class::Key,
+            LockDirection::Positive,
+            &[Usage::from(Key::new(0x04))],
+        );
+        mock.push_usages(3, 4_000, Class::Button, LockDirection::Negative, &[]);
+        assert!(next("the empty button snapshot").usages.is_empty());
+    }
+
+    #[test]
+    fn an_input_filter_direction_selects_the_edge() {
+        // The box emits on both edges as soon as any other subscriber holds a wider entry, so without
+        // the edge on the wire a press-only subscription silently received releases too.
+        let mock = MockBox::new();
+        let dev = Device::with_mock(mock.clone());
+        let press = dev
+            .catch_events([CatchFilter::class(CatchClass::Key).direction(LockDirection::Positive)])
+            .unwrap();
+        mock.push_usages(0, 1_000, Class::Key, LockDirection::Negative, &[]);
+        mock.push_usages(
+            1,
+            2_000,
+            Class::Key,
+            LockDirection::Positive,
+            &[Usage::from(Key::new(0x04))],
+        );
+        match press.recv_timeout(Duration::from_secs(1)) {
+            Some(CatchEvent::Usages(u)) => {
+                assert_eq!(u.direction, LockDirection::Positive);
+                assert!(
+                    u.is_held(Key::new(0x04)),
+                    "the release must not arrive first"
+                );
+            }
+            other => panic!("expected the press, got {other:?}"),
         }
-        // And a snapshot holding only a DIFFERENT button is not this subscriber's business.
-        mock.push_usages(1, 2_000, Class::Button, &[Usage::from(Button::Side1)]);
-        assert!(s.try_recv().is_none());
     }
 
     #[test]
@@ -597,8 +714,8 @@ mod with_mock {
         let bulk = dev
             .catch_events([CatchFilter::addr(CatchClass::VendorBulk, 0x83)])
             .unwrap();
-        mock.push_usages(0, 1_000, Class::Key, &[]);
-        match keys.recv().unwrap() {
+        mock.push_usages(0, 1_000, Class::Key, LockDirection::Negative, &[]);
+        match keys.recv_timeout(Duration::from_secs(1)).expect("release") {
             CatchEvent::Usages(u) => assert!(u.usages.is_empty() && u.class == Class::Key),
             other => panic!("expected the empty key snapshot, got {other:?}"),
         }

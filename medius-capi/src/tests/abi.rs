@@ -483,9 +483,13 @@ fn catch_delivers_a_usage_event() {
     );
     let stream = unsafe { subscribe(dev, &[medius_catch_filter_class(MEDIUS_CATCH_CLASS_KEY)]) };
     unsafe {
-        (*mock)
-            .inner
-            .push_usages(1, 7_000, &[medius::Usage::from(medius::Key::ESCAPE)]);
+        (*mock).inner.push_usages(
+            1,
+            7_000,
+            medius::Class::Key,
+            medius::LockDirection::Positive,
+            &[medius::Usage::from(medius::Key::ESCAPE)],
+        );
     }
     let mut event = zeroed_event();
     assert!(unsafe { medius_event_stream_recv_timeout(stream, 2000, &mut event) });

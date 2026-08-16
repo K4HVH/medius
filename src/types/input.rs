@@ -128,10 +128,19 @@ impl CatchClass {
 }
 
 impl CatchFilter {
-    /// Whether this filter covers a class at all, whatever id or direction it names. Used for the
-    /// empty usage snapshot, which says a class went quiet without naming which usage did it.
+    /// Whether this filter covers a class at all, whatever id it names. A held-usage snapshot is the
+    /// class's state, so this is how one is routed: the subscriber diffs successive snapshots for its
+    /// own usages, because the release of a usage is the snapshot that no longer lists it.
     pub(crate) fn matches_class_only(&self, class: CatchClass) -> bool {
         self.class.is_none_or(|c| c == class)
+    }
+
+    /// Whether this filter accepts an event that arrived on `direction`. Either side naming both
+    /// matches, exactly as the box's own resolution does.
+    pub(crate) fn admits_direction(&self, direction: LockDirection) -> bool {
+        self.direction == LockDirection::Both
+            || direction == LockDirection::Both
+            || self.direction == direction
     }
 
     /// Whether an event of this class, id and direction is one this filter asked for.
@@ -149,6 +158,31 @@ impl CatchFilter {
         self.direction == LockDirection::Both
             || direction == LockDirection::Both
             || self.direction == direction
+    }
+
+    /// Collapse filters onto one entry per `(class, id, direction)`, keeping the WIDEST capture
+    /// length -- 0 means the whole packet, so it beats every finite one. The box holds a single entry
+    /// per address, so two filters naming the same one have to be resolved rather than have whichever
+    /// came last silently win.
+    pub(crate) fn widest(
+        filters: impl IntoIterator<Item = CatchFilter>,
+    ) -> std::collections::BTreeSet<CatchFilter> {
+        let mut out: std::collections::BTreeMap<CatchFilter, u8> =
+            std::collections::BTreeMap::new();
+        for f in filters {
+            let e = out.entry(f).or_insert(f.snaplen);
+            *e = if *e == 0 || f.snaplen == 0 {
+                0
+            } else {
+                (*e).max(f.snaplen)
+            };
+        }
+        out.into_iter()
+            .map(|(mut f, snaplen)| {
+                f.snaplen = snaplen;
+                f
+            })
+            .collect()
     }
 
     /// Every class, every id, both directions, whole packets. One frame on the wire.
@@ -334,22 +368,29 @@ pub struct UsageSnapshot {
     /// The snapshot that most needs it is the empty one — releasing the last held usage is the edge
     /// a caller is watching for, and it has no usages to read a class from.
     pub class: Class,
+    /// The edge that produced this snapshot: the subscribed set grew ([`LockDirection::Positive`]) or
+    /// shrank ([`LockDirection::Negative`]). Without it on the wire a direction on an input filter is
+    /// unenforceable here — the box resolves each usage against the entry's direction, but as soon as
+    /// any other subscriber holds a wider entry the box emits on both edges and nothing distinguishes
+    /// them.
+    pub direction: LockDirection,
     /// The currently-held usages, all of `class`.
     pub usages: Vec<Usage>,
 }
 
 impl UsageSnapshot {
-    /// Decode a `USAGE_EVENT` payload (§4.10): `[ts u32][clk u8][cls u8][n u8]` then
+    /// Decode a `USAGE_EVENT` payload (§4.10): `[ts u32][clk u8][cls u8][dir u8][n u8]` then
     /// `n × [class][id u16]`.
     pub(crate) fn from_payload(p: &[u8]) -> Option<UsageSnapshot> {
-        if p.len() < EVENT_HDR + 1 {
+        if p.len() < EVENT_HDR + 2 {
             return None;
         }
         Some(UsageSnapshot {
             ts_us: u32::from_le_bytes([p[0], p[1], p[2], p[3]]),
             clock: ClockDomain::from_u8(p[4]),
             class: Class::from_u8(p[5])?,
-            usages: Usage::decode_list(&p[EVENT_HDR + 1..])?,
+            direction: LockDirection::from_u8(p[6])?,
+            usages: Usage::decode_list(&p[EVENT_HDR + 2..])?,
         })
     }
 

@@ -96,7 +96,11 @@ impl Device {
         &self,
         filters: impl IntoIterator<Item = CatchFilter>,
     ) -> Result<EventStream> {
-        let set: std::collections::BTreeSet<CatchFilter> = filters.into_iter().collect();
+        // Widest-wins within this one call too. Collecting straight into the set silently kept
+        // whichever duplicate address came last, so `[addr(x).snaplen(0), addr(x).snaplen(16)]` cut
+        // the caller's own captures to 16 while the reverse order gave whole packets -- a difference
+        // in the order two filters were listed, with nothing to say so.
+        let set = CatchFilter::widest(filters);
         let (id, rx, dropped) = self.link.catch_subscribe(set)?;
         Ok(EventStream::new(rx, dropped, self.link.clone(), id))
     }

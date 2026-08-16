@@ -12,7 +12,7 @@ use crate::types::{
     Axis, CatchClass, CatchEvent, CatchFilter, LockDirection, MotionEvent, TrafficEvent,
     UsageSnapshot,
 };
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 
 use super::Link;
 
@@ -45,19 +45,36 @@ impl CatchReg {
     /// the moment unrelated code in the same process subscribed with a shorter snaplen, with no
     /// error and nothing to say why.
     fn effective(&self) -> BTreeSet<CatchFilter> {
-        let mut widest: BTreeMap<CatchFilter, u8> = BTreeMap::new();
-        for f in self.subs.iter().flat_map(|s| s.filters.iter().copied()) {
-            let e = widest.entry(f).or_insert(f.snaplen);
-            *e = if *e == 0 || f.snaplen == 0 {
-                0
-            } else {
-                (*e).max(f.snaplen)
-            };
-        }
+        let widest = CatchFilter::widest(self.subs.iter().flat_map(|s| s.filters.iter().copied()));
+        // Widest-wins across ADDRESSES too, not only across identical ones. The box resolves an event
+        // to its most SPECIFIC matching entry and captures at that entry's snaplen, so a narrow entry
+        // from one subscriber silently cuts a broad subscriber's packets: `all()` at whole-packet plus
+        // `addr(VendorBulk, 0x83).snaplen(8)` gives the blanket subscriber 8 bytes on that endpoint.
+        // Every filter that would also have matched an entry therefore folds its snaplen into it.
+        let all: Vec<CatchFilter> = self
+            .subs
+            .iter()
+            .flat_map(|s| s.filters.iter().copied())
+            .collect();
         widest
             .into_iter()
-            .map(|(mut f, snaplen)| {
-                f.snaplen = snaplen;
+            .map(|mut f| {
+                f.snaplen = all
+                    .iter()
+                    .filter(|o| {
+                        o.matches(
+                            f.class.unwrap_or(CatchClass::Button),
+                            f.id.unwrap_or(u16::MAX),
+                            f.direction,
+                        )
+                    })
+                    .fold(f.snaplen, |acc, o| {
+                        if acc == 0 || o.snaplen == 0 {
+                            0
+                        } else {
+                            acc.max(o.snaplen)
+                        }
+                    });
                 f
             })
             .collect()
@@ -111,20 +128,16 @@ fn wanted(sub: &CatchSub, event: &CatchEvent) -> bool {
                     )
             })
         }
-        // A snapshot lists the usages currently HELD. An empty one is the release of the last of
-        // them, which is exactly the edge a caller waits for, so it is matched on the frame's own
-        // class rather than dropped for having nothing in it.
-        CatchEvent::Usages(u) => {
-            let class = CatchClass::from_usage_class(u.class);
-            if u.usages.is_empty() {
-                any(class, u16::MAX, LockDirection::Both)
-                    || sub.filters.iter().any(|f| f.matches_class_only(class))
-            } else {
-                u.usages
-                    .iter()
-                    .any(|usage| any(class, usage.id, LockDirection::Both))
-            }
-        }
+        // A snapshot is the CLASS's state, not one usage's: it lists what is HELD, so the release of
+        // usage U is the snapshot that does NOT contain U. Matching per-usage therefore threw away
+        // exactly the edge a caller was waiting for -- and only when some OTHER subscriber's usage
+        // happened to still be held, which is the shape that hides it from a single-subscriber test.
+        // Routed on class and edge instead; the subscriber diffs successive snapshots for its own
+        // usages, which is the only thing a snapshot can support.
+        CatchEvent::Usages(u) => sub.filters.iter().any(|f| {
+            f.matches_class_only(CatchClass::from_usage_class(u.class))
+                && f.admits_direction(u.direction)
+        }),
         CatchEvent::Traffic(t) => any(t.class, t.id, t.direction),
     }
 }

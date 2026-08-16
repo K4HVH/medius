@@ -158,7 +158,10 @@ class ClockEstimate:
     """The measured difference between the two chips' clocks, from RESP(CATCH)."""
 
     offset_us: int = 0
-    rate_ppb: int = 0
+    # None when the box has fitted no rate. Not the same as a fitted 0, which says the two crystals
+    # are matched: on a link too busy for enough clean exchanges no fit is made at all, which is
+    # exactly when assuming no drift costs the most.
+    rate_ppb: int | None = 0
     delay_us: int = 0
     # `None` is the box saying it has never measured, which an offset of zero also looks like.
     age_ms: Optional[int] = None
@@ -274,9 +277,23 @@ class MotionEvent:
 
 @dataclass
 class UsageSnapshot:
-    """A held-usage snapshot for one class: every held usage (button, key, or media)."""
+    """A held-usage snapshot for one class: every held usage (button, key, or media).
+
+    `cls` and `direction` come from the frame header, not from the entries. The snapshot that most
+    needs them is the EMPTY one -- releasing the last held usage is the edge a caller waits for, and
+    it lists nothing to read a class or an edge from.
+    """
 
     usages: List["Usage"] = field(default_factory=list)
+    cls: Class = Class.BUTTON
+    direction: LockDirection = LockDirection.BOTH
+
+    def __post_init__(self) -> None:
+        # A snapshot carries one class, so its entries are what that class IS. Taking it from them
+        # keeps a hand-built snapshot from claiming a class its own usages contradict; the header
+        # field exists for the EMPTY snapshot, which has no entry to read it from.
+        if self.usages:
+            self.cls = Class(self.usages[0].kind)
 
     def is_held(self, usage: "Usage") -> bool:
         return any(u == usage for u in self.usages)
@@ -748,12 +765,14 @@ def catch_filter_from_c(c) -> CatchFilter:
 
 def clock_estimate_from_c(c) -> ClockEstimate:
     age = None if c.age_ms == _native.MEDIUS_CLOCK_AGE_NONE else int(c.age_ms)
-    return ClockEstimate(int(c.offset_us), int(c.rate_ppb), int(c.delay_us), age)
+    rate = None if c.rate_ppb == _native.MEDIUS_CLOCK_RATE_NONE else int(c.rate_ppb)
+    return ClockEstimate(int(c.offset_us), rate, int(c.delay_us), age)
 
 
 def clock_estimate_to_c(e) -> "_native.MediusClockEstimate":
     age = _native.MEDIUS_CLOCK_AGE_NONE if e.age_ms is None else int(e.age_ms)
-    return _native.MediusClockEstimate(e.offset_us, e.rate_ppb, e.delay_us, age)
+    rate = _native.MEDIUS_CLOCK_RATE_NONE if e.rate_ppb is None else int(e.rate_ppb)
+    return _native.MediusClockEstimate(e.offset_us, rate, e.delay_us, age)
 
 
 def catch_state_from_c(c) -> CatchState:
@@ -959,6 +978,8 @@ def motion_event_to_c(e) -> "_native.MediusMotionEvent":
 
 def usage_snapshot_to_c(s) -> "_native.MediusUsageEvent":
     c = _native.MediusUsageEvent()
+    c.class_ = int(s.cls)
+    c.direction = int(s.direction)
     n = min(len(s.usages), _native.MEDIUS_MAX_USAGES)
     c.n = n
     for idx in range(n):
@@ -1003,7 +1024,8 @@ def decode_catch_event(c) -> CatchEvent:
     u = c.data.usages
     n = min(int(u.n), _native.MEDIUS_MAX_USAGES)
     usages = [_input_copy(u.usages[i]) for i in range(n)]
-    return CatchEvent(kind, UsageSnapshot(usages), c.ts_us, clock)
+    snap = UsageSnapshot(usages, Class(u.class_), LockDirection(u.direction))
+    return CatchEvent(kind, snap, c.ts_us, clock)
 
 
 def decode_log_line(c) -> LogLine:
