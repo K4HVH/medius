@@ -77,7 +77,10 @@ impl CatchClass {
 ///
 /// Addressing doubles as the filter, and that is load-bearing rather than tidy: the control link
 /// cannot carry every class at once, so a subscription has to be able to name what it means.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+// Ord/Eq deliberately ignore `snaplen`: the box dedups its table on (class, id, direction), so two
+// filters differing only in snaplen are ONE box-side entry. Treating them as distinct here let two
+// subscribers each believe they had their own, while the second silently overwrote the first's.
+#[derive(Debug, Clone, Copy)]
 pub struct CatchFilter {
     /// The class to observe; `None` for every class.
     pub class: Option<CatchClass>,
@@ -90,7 +93,46 @@ pub struct CatchFilter {
     pub snaplen: u8,
 }
 
+impl PartialEq for CatchFilter {
+    fn eq(&self, o: &CatchFilter) -> bool {
+        (self.class, self.id, self.direction) == (o.class, o.id, o.direction)
+    }
+}
+impl Eq for CatchFilter {}
+impl core::hash::Hash for CatchFilter {
+    fn hash<H: core::hash::Hasher>(&self, h: &mut H) {
+        (self.class, self.id, self.direction).hash(h);
+    }
+}
+impl PartialOrd for CatchFilter {
+    fn partial_cmp(&self, o: &CatchFilter) -> Option<core::cmp::Ordering> {
+        Some(self.cmp(o))
+    }
+}
+impl Ord for CatchFilter {
+    fn cmp(&self, o: &CatchFilter) -> core::cmp::Ordering {
+        (self.class, self.id, self.direction).cmp(&(o.class, o.id, o.direction))
+    }
+}
+
 impl CatchFilter {
+    /// Whether an event of this class, id and direction is one this filter asked for.
+    pub(crate) fn matches(&self, class: CatchClass, id: u16, direction: LockDirection) -> bool {
+        if let Some(c) = self.class {
+            if c != class {
+                return false;
+            }
+            if let Some(i) = self.id {
+                if i != id {
+                    return false;
+                }
+            }
+        }
+        self.direction == LockDirection::Both
+            || direction == LockDirection::Both
+            || self.direction == direction
+    }
+
     /// Every class, every id, both directions, whole packets. One frame on the wire.
     pub const fn all() -> CatchFilter {
         CatchFilter {
@@ -204,11 +246,23 @@ impl ClockEstimate {
         self.delay_us / 2
     }
 
-    /// Translate a device-chip stamp into the host chip's domain, drift-corrected. `None` when there
-    /// is no estimate to apply.
+    /// Translate a device-chip stamp into the host chip's domain. `None` when there is no estimate.
+    ///
+    /// This applies the offset alone. The box corrects for drift against the moment IT measured the
+    /// offset, which is a reference this side does not have — so over a long-lived stream the two
+    /// crystals pull apart at up to 20 ppm, roughly 20 us per second of estimate age. Re-read
+    /// [`Device::query_catch`](crate::Device::query_catch) when [`Self::age`] has grown large
+    /// relative to [`Self::error_bound_us`], and use [`Self::drift_since`] to see how much it costs.
     pub fn to_host_domain(&self, device_us: u32) -> Option<i64> {
         self.age?;
         Some(device_us as i64 + self.offset_us as i64)
+    }
+
+    /// How far the offset has drifted over `elapsed`, in microseconds. Add this to
+    /// [`Self::error_bound_us`] for the honest bound on a stamp translated `elapsed` after the
+    /// estimate was taken.
+    pub fn drift_us_over(&self, elapsed: core::time::Duration) -> i64 {
+        (elapsed.as_micros() as i64).saturating_mul(self.rate_ppb as i64) / 1_000_000_000
     }
 }
 
