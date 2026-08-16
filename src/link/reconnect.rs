@@ -159,17 +159,18 @@ fn reapply_held(ctx: &ReconnectCtx) -> Result<()> {
             &lock_payload(class, usage, direction, 1),
         )?;
     }
-    // Re-assert the catch subscription: a link drop past the firmware's ~1 s silence window makes the
-    // box clear the mask, so without this the stream stays dead. Idempotent if the drop was short.
-    if !catch.is_empty() {
+    // Re-assert the catch table: a link drop past the firmware's ~1 s silence window makes the box
+    // clear it, so without this the stream stays dead. Idempotent if the drop was short.
+    for f in &catch {
         let seq = ctx.seq.fetch_add(1, Ordering::Relaxed);
+        let (class, id) = f.wire();
         write_frame(
             &ctx.transport,
             &ctx.write_lock,
             &ctx.counters,
             seq,
             FrameType::Catch,
-            &catch_payload(catch.bits()),
+            &catch_payload(class, id, f.direction.as_u8(), 1, f.snaplen),
         )?;
     }
     Ok(())

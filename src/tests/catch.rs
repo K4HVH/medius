@@ -1,192 +1,368 @@
-//! CATCH command (§3.9): payload bytes, the mask/event/snapshot/state decode, the HEALTH catch_on bit, and EventStream lifecycle; bytes pinned to the firmware wire format in ctrl_proto.h.
+//! `CATCH` (§3.9): the subscription address space, the three event frames, `RESP(CATCH)`, the HEALTH
+//! bit and the EventStream lifecycle. Bytes are pinned to the firmware wire format in ctrl_proto.h.
 
-#[cfg(feature = "mock")]
-use crate::protocol::FrameType;
 use crate::protocol::command::catch_payload;
-use crate::protocol::opcode::{CATCH_BUTTONS, CATCH_KEYS, CATCH_MEDIA, CATCH_MOTION, CATCH_WHEEL};
-use crate::protocol::{Resp, parse_resp};
-use crate::types::{CatchMask, CatchState, Class, Health, MotionEvent, UsageSnapshot};
+use crate::protocol::opcode::{CATCH_CLS_ANY, CATCH_ID_ANY, H_CATCH_ON};
+use crate::protocol::response::{Resp, parse_resp};
+use crate::types::{
+    BusEvent, CatchClass, CatchFilter, CatchState, Class, ClockDomain, ControlStatus, Health,
+    LockDirection, MotionEvent, TrafficEvent, UsageSnapshot,
+};
+use crate::{Button, Key, Usage};
 
 #[test]
 fn catch_payload_bytes() {
-    assert_eq!(catch_payload(CatchMask::all().bits()), [0x1F]);
-    assert_eq!(catch_payload(0), [0x00]);
-}
-
-#[test]
-fn catch_mask_class_bits_and_ops() {
-    assert_eq!(CatchMask::MOTION.bits(), CATCH_MOTION);
-    assert_eq!(CatchMask::WHEEL.bits(), CATCH_WHEEL);
-    assert_eq!(CatchMask::BUTTONS.bits(), CATCH_BUTTONS);
-    assert_eq!(CatchMask::KEYS.bits(), CATCH_KEYS);
-    assert_eq!(CatchMask::MEDIA.bits(), CATCH_MEDIA);
-    assert_eq!(CatchMask::all().bits(), 0x1F);
-    assert!(CatchMask::empty().is_empty());
-
-    let m = CatchMask::MOTION | CatchMask::BUTTONS;
-    assert_eq!(m.bits(), 0x05);
-    assert!(m.contains(CatchMask::MOTION));
-    assert!(m.contains(CatchMask::BUTTONS));
-    assert!(!m.contains(CatchMask::WHEEL));
+    // Subscribe to everything: class and id both wildcards, state 1.
     assert_eq!(
-        CatchMask::MOTION
-            | CatchMask::WHEEL
-            | CatchMask::BUTTONS
-            | CatchMask::KEYS
-            | CatchMask::MEDIA,
-        CatchMask::all()
+        catch_payload(CATCH_CLS_ANY, CATCH_ID_ANY, 0, 1, 0),
+        [0xFF, 0xFF, 0xFF, 0, 1, 0]
     );
-
-    assert_eq!(CatchMask::from_bits_truncate(0xFF), CatchMask::all());
-    assert_eq!(CatchMask::from_bits_truncate(0xE0), CatchMask::empty());
+    // One vendor bulk endpoint, IN only, cut to 16 bytes.
+    assert_eq!(catch_payload(7, 0x83, 1, 1, 16), [7, 0x83, 0x00, 1, 1, 16]);
+    // The blanket clear a host sends to tear the whole table down.
+    assert_eq!(
+        catch_payload(CATCH_CLS_ANY, CATCH_ID_ANY, 0, 0, 0),
+        [0xFF, 0xFF, 0xFF, 0, 0, 0]
+    );
 }
 
 #[test]
-fn motion_event_decodes() {
-    let r =
-        MotionEvent::from_payload(&[0x04, 0x03, 0x02, 0x01, 0x2C, 0x01, 0xCE, 0xFF, 0xFF, 0xFF])
-            .unwrap();
-    assert_eq!((r.dx, r.dy, r.dz), (300, -50, -1));
-    assert_eq!(r.ts_us, 0x0102_0304); // raw wire value; the reader widens it
-    assert!(MotionEvent::from_payload(&[0; 9]).is_none()); // needs 10
+fn catch_classes_match_the_wire() {
+    // Classes 0..3 must equal LOCK's and INJECT's, or one vocabulary silently becomes two.
+    assert_eq!(CatchClass::Button.as_u8(), 0);
+    assert_eq!(CatchClass::Key.as_u8(), 1);
+    assert_eq!(CatchClass::Media.as_u8(), 2);
+    assert_eq!(CatchClass::Axis.as_u8(), 3);
+    assert_eq!(CatchClass::HidIn.as_u8(), 4);
+    assert_eq!(CatchClass::HidOut.as_u8(), 5);
+    assert_eq!(CatchClass::VendorInterrupt.as_u8(), 6);
+    assert_eq!(CatchClass::VendorBulk.as_u8(), 7);
+    assert_eq!(CatchClass::Control.as_u8(), 8);
+    assert_eq!(CatchClass::Emit.as_u8(), 9);
+    assert_eq!(CatchClass::Bus.as_u8(), 10);
+    assert_eq!(CatchClass::from_u8(10), Some(CatchClass::Bus));
+    assert_eq!(CatchClass::from_u8(11), None);
+    assert_eq!(CatchClass::from_u8(0xFF), None); // the wildcard is not a class
 }
 
 #[test]
-fn usage_snapshot_decodes() {
-    let s = UsageSnapshot::from_payload(&[0, 0, 0, 0, 2, 0, 0, 0, 1, 0x04, 0x00]).unwrap();
+fn filter_builders_produce_the_right_wire_pair() {
+    assert_eq!(CatchFilter::all().wire(), (CATCH_CLS_ANY, CATCH_ID_ANY));
+    assert_eq!(
+        CatchFilter::class(CatchClass::Emit).wire(),
+        (9, CATCH_ID_ANY)
+    );
+    assert_eq!(
+        CatchFilter::addr(CatchClass::VendorBulk, 0x83).wire(),
+        (7, 0x83)
+    );
+    let f = CatchFilter::addr(CatchClass::HidOut, 0x02)
+        .direction(LockDirection::Negative)
+        .snaplen(24);
+    assert_eq!(f.direction, LockDirection::Negative);
+    assert_eq!(f.snaplen, 24);
+}
+
+#[test]
+fn motion_event_decodes_with_its_clock_domain() {
+    // [ts u32][clk u8][dx][dy][dz] -- clk sits between ts and the axes, so every field after it
+    // shifted by one when the domain byte was added.
+    let p = [
+        0x04, 0x03, 0x02, 0x01, 0, 0x2C, 0x01, 0xCE, 0xFF, 0xFF, 0xFF,
+    ];
+    let m = MotionEvent::from_payload(&p).unwrap();
+    assert_eq!(m.ts_us, 0x0102_0304);
+    assert_eq!(m.clock, ClockDomain::HostChip);
+    assert_eq!((m.dx, m.dy, m.dz), (300, -50, -1));
+    assert!(MotionEvent::from_payload(&p[..10]).is_none());
+}
+
+#[test]
+fn usage_snapshot_decodes_with_its_clock_domain() {
+    let p = [0, 0, 0, 0, 0, 2, 0, 0, 0, 1, 0x04, 0x00];
+    let s = UsageSnapshot::from_payload(&p).unwrap();
+    assert_eq!(s.clock, ClockDomain::HostChip);
     assert_eq!(s.usages.len(), 2);
     assert_eq!(s.class(), Some(Class::Button));
-    assert!(s.is_held(crate::Button::Left));
-    assert!(s.is_held(crate::Key::A));
-    assert!(!s.is_held(crate::Button::Right));
+    assert!(s.is_held(Button::Left));
+    assert!(s.is_held(Key::new(0x04)));
 }
 
 #[test]
-fn catch_state_decodes_mask_and_drops() {
-    let c = CatchState::from_payload(&[7, 0x04, 0x04, 0x03, 0x02, 0x01]).unwrap();
-    assert_eq!(c.mask, CatchMask::BUTTONS);
-    assert_eq!(c.dropped, 0x01020304);
-    assert!(CatchState::from_payload(&[7, 0, 0, 0, 0]).is_none()); // needs 6
+fn traffic_event_decodes() {
+    // [ts][clk=1][class=7 VendorBulk][id=0x0083][dir=1 IN][flags=1 END][true_len=4][4 bytes]
+    let p = [
+        0x04, 0x03, 0x02, 0x01, 1, 7, 0x83, 0x00, 1, 0x01, 0x04, 0x00, 0xDE, 0xAD, 0xBE, 0xEF,
+    ];
+    let t = TrafficEvent::from_payload(&p).unwrap();
+    assert_eq!(t.ts_us, 0x0102_0304);
+    assert_eq!(t.clock, ClockDomain::DeviceChip);
+    assert_eq!(t.class, CatchClass::VendorBulk);
+    assert_eq!(t.id, 0x83);
+    assert_eq!(t.direction, LockDirection::Positive);
+    assert_eq!(t.true_len, 4);
+    assert_eq!(t.bytes, [0xDE, 0xAD, 0xBE, 0xEF]);
+    assert!(!t.truncated());
+    assert!(t.bulk_end_of_transfer());
+    assert!(!t.bulk_zlp());
+    assert!(TrafficEvent::from_payload(&p[..11]).is_none());
+    // An unknown class must not decode into a plausible one.
+    let mut bad = p;
+    bad[5] = 200;
+    assert!(TrafficEvent::from_payload(&bad).is_none());
+}
+
+#[test]
+fn truncation_is_visible() {
+    // true_len 64 with 8 bytes delivered: without the flag a cut capture and a genuinely short
+    // packet are indistinguishable, which is the whole reason true_len is on the wire.
+    let mut p = vec![0, 0, 0, 0, 1, 6, 0x83, 0x00, 1, 0, 64, 0];
+    p.extend_from_slice(&[1, 2, 3, 4, 5, 6, 7, 8]);
+    let t = TrafficEvent::from_payload(&p).unwrap();
+    assert_eq!(t.true_len, 64);
+    assert_eq!(t.bytes.len(), 8);
+    assert!(t.truncated());
+}
+
+#[test]
+fn control_event_splits_setup_from_data() {
+    let mut p = vec![0, 0, 0, 0, 1, 8, 0x00, 0x00, 1, 0x00, 10, 0];
+    p.extend_from_slice(&[0xA1, 0x01, 0x00, 0x02, 0x00, 0x00, 0x02, 0x00]); // setup
+    p.extend_from_slice(&[0xAA, 0xBB]); // data stage
+    let t = TrafficEvent::from_payload(&p).unwrap();
+    assert_eq!(
+        t.setup().unwrap(),
+        &[0xA1, 0x01, 0x00, 0x02, 0x00, 0x00, 0x02, 0x00]
+    );
+    assert_eq!(t.data(), &[0xAA, 0xBB]);
+    assert_eq!(t.control_status(), Some(ControlStatus::Ok));
+    // A STALL is what the real device answered, not the box's own refusal.
+    let mut stalled = p.clone();
+    stalled[9] = 0xFD;
+    assert_eq!(
+        TrafficEvent::from_payload(&stalled)
+            .unwrap()
+            .control_status(),
+        Some(ControlStatus::Stalled)
+    );
+    // Other classes have no setup packet, and their whole payload is data.
+    let other = [0u8, 0, 0, 0, 1, 9, 0, 0, 1, 0, 2, 0, 0x11, 0x22];
+    let o = TrafficEvent::from_payload(&other).unwrap();
+    assert!(o.setup().is_none());
+    assert_eq!(o.data(), &[0x11, 0x22]);
+    assert!(o.control_status().is_none());
+}
+
+#[test]
+fn bus_event_decodes_its_kind() {
+    let mk = |flags: u8, a: u8, b: u8| {
+        TrafficEvent::from_payload(&[0, 0, 0, 0, 1, 10, 0xFF, 0xFF, 0, flags, 2, 0, a, b]).unwrap()
+    };
+    assert_eq!(mk(0, 0, 0).bus_event(), Some(BusEvent::Reset));
+    assert_eq!(mk(3, 2, 0).bus_event(), Some(BusEvent::Configured(2)));
+    assert_eq!(
+        mk(5, 1, 3).bus_event(),
+        Some(BusEvent::SetInterface {
+            interface: 1,
+            alt: 3
+        })
+    );
+    assert_eq!(mk(9, 0, 0).bus_event(), Some(BusEvent::CloneDown));
+    assert_eq!(mk(200, 0, 0).bus_event(), None);
+}
+
+#[test]
+fn catch_state_decodes_header_entries_and_clock() {
+    let mut p = vec![7u8, 0x01]; // what, flags: table full
+    p.extend_from_slice(&0x0102_0304u32.to_le_bytes()); // dropped
+    p.extend_from_slice(&(-250i32).to_le_bytes()); // clk_offset_us
+    p.extend_from_slice(&(-1500i32).to_le_bytes()); // clk_rate_ppb
+    p.extend_from_slice(&90u16.to_le_bytes()); // clk_delay_us
+    p.extend_from_slice(&12u16.to_le_bytes()); // clk_age_ms
+    p.push(2); // n
+    p.extend_from_slice(&[3, 0xFF, 0xFF, 0, 0, 7, 0]); // axis blanket, 7 drops
+    p.extend_from_slice(&[7, 0x83, 0x00, 1, 16, 0xA0, 0x0F]); // vend bulk ep, 4000 drops
+
+    let c = CatchState::from_payload(&p).unwrap();
+    assert!(c.table_full);
+    assert_eq!(c.dropped, 0x0102_0304);
+    assert_eq!(c.clock.offset_us, -250);
+    assert_eq!(c.clock.rate_ppb, -1500);
+    assert_eq!(c.clock.delay_us, 90);
+    assert_eq!(c.clock.error_bound_us(), 45);
+    assert_eq!(c.clock.age.unwrap().as_millis(), 12);
+    assert_eq!(c.entries.len(), 2);
+    assert_eq!(c.entries[0].filter.class, Some(CatchClass::Axis));
+    assert_eq!(c.entries[0].filter.id, None);
+    assert_eq!(c.entries[0].dropped, 7);
+    assert_eq!(c.entries[1].filter.id, Some(0x83));
+    assert_eq!(c.entries[1].filter.snaplen, 16);
+    assert_eq!(c.entries[1].dropped, 4000);
+    assert!(CatchState::from_payload(&p[..18]).is_none());
+}
+
+#[test]
+fn no_clock_estimate_is_distinct_from_a_zero_offset() {
+    // 0xFFFF age is the box saying it has no estimate. Reporting it as "zero milliseconds old" would
+    // make a caller trust an offset that was never measured.
+    let mut p = vec![7u8, 0];
+    p.extend_from_slice(&0u32.to_le_bytes());
+    p.extend_from_slice(&0i32.to_le_bytes());
+    p.extend_from_slice(&0i32.to_le_bytes());
+    p.extend_from_slice(&0u16.to_le_bytes());
+    p.extend_from_slice(&u16::MAX.to_le_bytes());
+    p.push(0);
+    let c = CatchState::from_payload(&p).unwrap();
+    assert_eq!(c.clock.age, None);
+    assert_eq!(c.clock.offset_us, 0);
+    assert_eq!(c.clock.to_host_domain(1000), None);
+    assert!(c.is_empty());
 }
 
 #[test]
 fn decode_catch_through_parse_resp() {
-    let Some(Resp::Catch(c)) = parse_resp(&[7, 0x1F, 0, 0, 0, 0]) else {
-        panic!("expected Catch");
-    };
-    assert_eq!(c.mask, CatchMask::all());
-    assert_eq!(c.dropped, 0);
+    let mut p = vec![7u8, 0];
+    p.extend_from_slice(&[0; 16]);
+    p.push(0);
+    assert!(matches!(parse_resp(&p), Some(Resp::Catch(_))));
 }
 
 #[test]
 fn health_catch_on_bit_roundtrips() {
-    let h = Health::from_flags(0x40);
+    let h = Health::from_flags(H_CATCH_ON);
     assert!(h.catch_on);
-    assert!(!h.lock_on && !h.link_up);
-    assert_eq!(h.to_flags(), 0x40);
-    assert_eq!(Health::from_flags(0x7F).to_flags(), 0x7F);
+    assert_eq!(h.to_flags(), H_CATCH_ON);
 }
 
 #[cfg(feature = "mock")]
-#[test]
-fn dropping_the_stream_unsubscribes() {
-    use crate::{CatchMask, Device, MockBox};
-    let mock = MockBox::new();
-    let device = Device::with_mock(mock.clone());
-    {
-        let _stream = device.catch_events(CatchMask::all()).unwrap();
-    } // stream dropped here -> CATCH(0)
-    let catch_frames: Vec<_> = mock
-        .recorded_frames()
-        .into_iter()
-        .filter(|f| f.ty == FrameType::Catch)
-        .collect();
-    assert_eq!(catch_frames.first().unwrap().payload, vec![0x1F]);
-    assert_eq!(catch_frames.last().unwrap().payload, vec![0x00]);
-}
+mod with_mock {
+    use super::*;
+    use crate::{CatchEvent, Device, FrameType, MockBox};
 
-#[cfg(feature = "mock")]
-#[test]
-fn pushed_events_arrive_on_the_stream() {
-    use crate::{Button, CatchEvent, CatchMask, Device, MockBox, Usage};
-    use std::time::Duration;
-    let mock = MockBox::new();
-    let device = Device::with_mock(mock.clone());
-    let stream = device.catch_events(CatchMask::all()).unwrap();
-    mock.push_motion(0, 1_000, 5, -7, 1);
-    mock.push_usages(1, 2_000, &[Usage::from(Button::Side1)]);
-
-    let CatchEvent::Motion(r) = stream.recv_timeout(Duration::from_secs(1)).expect("motion") else {
-        panic!("expected a motion event");
-    };
-    assert_eq!((r.dx, r.dy, r.dz), (5, -7, 1));
-    assert_eq!(r.ts_us, 1_000);
-
-    let CatchEvent::Usages(u) = stream.recv_timeout(Duration::from_secs(1)).expect("usages") else {
-        panic!("expected a usage event");
-    };
-    assert!(u.is_held(Button::Side1));
-}
-
-#[cfg(feature = "mock")]
-#[test]
-fn catch_buffer_drops_oldest_on_overflow() {
-    use crate::{CatchEvent, CatchMask, Device, MockBox};
-    use std::time::{Duration, Instant};
-    let mock = MockBox::new();
-    let device = Device::with_mock(mock.clone());
-    let stream = device.catch_events(CatchMask::all()).unwrap();
-    // Push well past the 256-deep buffer without draining; the oldest get evicted.
-    const TOTAL: u16 = 300;
-    const KEPT: u16 = 256; // CATCH_CAPACITY
-    for i in 0..TOTAL {
-        mock.push_motion((i & 0xff) as u8, i as u32, i as i16, 0, 0); // dx is a monotonic marker
+    #[test]
+    fn subscribing_sends_one_frame_per_entry_and_dropping_unsubscribes() {
+        let mock = MockBox::new();
+        let dev = Device::with_mock(mock.clone());
+        {
+            let _s = dev
+                .catch_events([
+                    CatchFilter::all().snaplen(16),
+                    CatchFilter::addr(CatchClass::VendorBulk, 0x83),
+                ])
+                .unwrap();
+            let sent: Vec<_> = mock
+                .recorded_frames()
+                .into_iter()
+                .filter(|f| f.ty == FrameType::Catch)
+                .collect();
+            assert_eq!(sent.len(), 2);
+            assert!(sent.iter().all(|f| f.payload[4] == 1)); // both are subscribes
+        }
+        // The guard fires on drop; the box must be told to stop.
+        let last = mock
+            .recorded_frames()
+            .into_iter()
+            .rfind(|f| f.ty == FrameType::Catch)
+            .unwrap();
+        assert_eq!(last.payload[4], 0);
     }
-    let want_dropped = (TOTAL - KEPT) as u64;
-    let deadline = Instant::now() + Duration::from_secs(2);
-    while stream.dropped() < want_dropped && Instant::now() < deadline {
-        std::thread::sleep(Duration::from_millis(10));
+
+    #[test]
+    fn pushed_events_of_every_kind_arrive_on_the_stream() {
+        let mock = MockBox::new();
+        let dev = Device::with_mock(mock.clone());
+        let s = dev.catch_events([CatchFilter::all()]).unwrap();
+
+        mock.push_motion(0, 1_000, 5, -7, 1);
+        mock.push_usages(1, 2_000, &[Usage::from(Button::Side1)]);
+        mock.push_traffic(
+            2,
+            3_000,
+            ClockDomain::DeviceChip,
+            CatchClass::Emit,
+            0,
+            LockDirection::Positive,
+            0,
+            3,
+            &[1, 2, 3],
+        );
+
+        match s.recv().unwrap() {
+            CatchEvent::Motion(m) => assert_eq!((m.dx, m.dy, m.dz), (5, -7, 1)),
+            other => panic!("expected motion, got {other:?}"),
+        }
+        match s.recv().unwrap() {
+            CatchEvent::Usages(u) => assert!(u.is_held(Button::Side1)),
+            other => panic!("expected usages, got {other:?}"),
+        }
+        match s.recv().unwrap() {
+            CatchEvent::Traffic(t) => {
+                assert_eq!(t.class, CatchClass::Emit);
+                assert_eq!(t.clock, ClockDomain::DeviceChip);
+                assert_eq!(t.bytes, [1, 2, 3]);
+            }
+            other => panic!("expected traffic, got {other:?}"),
+        }
     }
-    assert_eq!(
-        stream.dropped(),
-        want_dropped,
-        "exactly the overflow count was dropped"
-    );
-    let CatchEvent::Motion(first) = stream
-        .recv_timeout(Duration::from_secs(1))
-        .expect("survived")
-    else {
-        panic!("expected a motion event");
-    };
-    assert_eq!(
-        first.dx,
-        (TOTAL - KEPT) as i16,
-        "the oldest events were dropped, the newest kept"
-    );
-}
 
-#[cfg(feature = "mock")]
-#[test]
-fn timestamps_reach_the_consumer_as_the_wire_value() {
-    use crate::{CatchEvent, CatchMask, Device, MockBox};
-    use std::time::Duration;
-    let mock = MockBox::new();
-    let device = Device::with_mock(mock.clone());
-    let stream = device.catch_events(CatchMask::all()).unwrap();
-
-    // Handed over raw, like CatchState::dropped and the rolling SEQ: the wrap is the consumer's to
-    // notice, so a stamp near u32::MAX followed by a small one must arrive untouched, not accumulated.
-    let before = u32::MAX - 500;
-    mock.push_motion(0, before, 1, 0, 0);
-    mock.push_motion(1, 500, 2, 0, 0);
-
-    let mut seen = Vec::new();
-    for _ in 0..2 {
-        let CatchEvent::Motion(m) = stream.recv_timeout(Duration::from_secs(1)).expect("motion")
-        else {
-            panic!("expected a motion event");
-        };
-        seen.push(m.ts_us);
+    #[test]
+    fn every_variant_reports_its_stamp_and_domain_uniformly() {
+        let mock = MockBox::new();
+        let dev = Device::with_mock(mock.clone());
+        let s = dev.catch_events([CatchFilter::all()]).unwrap();
+        mock.push_motion(0, 111, 1, 0, 0);
+        mock.push_traffic(
+            1,
+            222,
+            ClockDomain::DeviceChip,
+            CatchClass::Bus,
+            0xFFFF,
+            LockDirection::Both,
+            0,
+            2,
+            &[0, 0],
+        );
+        let a = s.recv().unwrap();
+        let b = s.recv().unwrap();
+        assert_eq!((a.ts_us(), a.clock()), (111, ClockDomain::HostChip));
+        assert_eq!((b.ts_us(), b.clock()), (222, ClockDomain::DeviceChip));
     }
-    assert_eq!(seen, vec![before, 500]);
+
+    #[test]
+    fn catch_buffer_drops_oldest_on_overflow() {
+        const TOTAL: u16 = 300;
+        const KEPT: usize = 256; // CATCH_CAPACITY
+        let mock = MockBox::new();
+        let dev = Device::with_mock(mock.clone());
+        let s = dev.catch_events([CatchFilter::all()]).unwrap();
+        for i in 0..TOTAL {
+            mock.push_motion(i as u8, 0, i as i16, 0, 0);
+        }
+        // The reader delivers on its own thread, so wait for the count rather than assuming it has
+        // caught up: asserting immediately makes this pass or fail on scheduling.
+        let want = (TOTAL as usize - KEPT) as u64;
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        while s.dropped() < want && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        assert_eq!(s.dropped(), want);
+        // The survivor is the oldest of what remains, so the newest are the ones kept.
+        match s.recv().unwrap() {
+            CatchEvent::Motion(m) => assert_eq!(m.dx, (TOTAL as usize - KEPT) as i16),
+            other => panic!("expected motion, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn timestamps_reach_the_consumer_as_the_wire_value() {
+        let mock = MockBox::new();
+        let dev = Device::with_mock(mock.clone());
+        let s = dev.catch_events([CatchFilter::all()]).unwrap();
+        mock.push_motion(0, u32::MAX - 500, 1, 0, 0);
+        mock.push_motion(1, 500, 1, 0, 0);
+        let first = s.recv().unwrap().ts_us();
+        let second = s.recv().unwrap().ts_us();
+        assert_eq!(first, u32::MAX - 500);
+        assert_eq!(second, 500); // a wrap is the consumer's to notice, not ours to smooth over
+    }
 }

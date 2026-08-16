@@ -8,7 +8,8 @@ use parking_lot::Mutex;
 use crate::error::Result;
 use crate::protocol::FrameType;
 use crate::protocol::command::catch_payload;
-use crate::types::{CatchEvent, CatchMask, MotionEvent, UsageSnapshot};
+use crate::types::{CatchEvent, CatchFilter, MotionEvent, TrafficEvent, UsageSnapshot};
+use std::collections::BTreeSet;
 
 use super::Link;
 
@@ -17,7 +18,7 @@ pub(crate) const CATCH_CAPACITY: usize = 256;
 
 pub(crate) struct CatchSub {
     id: u64,
-    mask: CatchMask,
+    filters: BTreeSet<CatchFilter>,
     tx: flume::Sender<CatchEvent>,
     // Reader-side clone for drop-oldest eviction; the consumer's own receiver lives in the
     // EventStream, both sharing the one MPMC channel.
@@ -31,8 +32,13 @@ pub(crate) struct CatchReg {
 }
 
 impl CatchReg {
-    fn effective(&self) -> CatchMask {
-        self.subs.iter().fold(CatchMask::empty(), |m, s| m | s.mask)
+    /// The union every subscriber together asks for. The box holds one table, so overlapping
+    /// subscriptions collapse into it and each consumer still sees everything it asked for.
+    fn effective(&self) -> BTreeSet<CatchFilter> {
+        self.subs
+            .iter()
+            .flat_map(|s| s.filters.iter().copied())
+            .collect()
     }
 }
 
@@ -40,6 +46,7 @@ fn decode_event(ty: FrameType, payload: &[u8]) -> Option<CatchEvent> {
     match ty {
         FrameType::MotionEvent => MotionEvent::from_payload(payload).map(CatchEvent::Motion),
         FrameType::UsageEvent => UsageSnapshot::from_payload(payload).map(CatchEvent::Usages),
+        FrameType::TrafficEvent => TrafficEvent::from_payload(payload).map(CatchEvent::Traffic),
         _ => None,
     }
 }
@@ -64,58 +71,98 @@ pub(crate) fn deliver_event(reg: &Mutex<CatchReg>, ty: FrameType, payload: &[u8]
 }
 
 impl Link {
-    /// Register a subscription, push the widened union mask, and return the receiver plus drop counter.
+    /// Send every entry in `next` as a subscribe, and an unsubscribe for anything `prev` held that
+    /// `next` does not. Re-sending an existing entry is a harmless overwrite box-side, so only the
+    /// removals have to be diffed; blanket-clearing and re-adding instead would leave a gap in the
+    /// stream every time any subscription changed.
+    pub(crate) fn catch_sync(
+        &self,
+        prev: &BTreeSet<CatchFilter>,
+        next: &BTreeSet<CatchFilter>,
+    ) -> Result<()> {
+        for f in prev.difference(next) {
+            let (class, id) = f.wire();
+            self.send(
+                FrameType::Catch,
+                &catch_payload(class, id, f.direction.as_u8(), 0, f.snaplen),
+            )?;
+        }
+        for f in next {
+            let (class, id) = f.wire();
+            self.send(
+                FrameType::Catch,
+                &catch_payload(class, id, f.direction.as_u8(), 1, f.snaplen),
+            )?;
+        }
+        Ok(())
+    }
+
+    /// Register a subscription, widen the box's table to the new union, and return the receiver plus
+    /// drop counter.
     pub(crate) fn catch_subscribe(
         &self,
-        mask: CatchMask,
+        filters: BTreeSet<CatchFilter>,
     ) -> Result<(u64, flume::Receiver<CatchEvent>, Arc<AtomicU64>)> {
-        // Serialize subscribe/unsubscribe so the registry mutate, union recompute, and CATCH send
-        // commit atomically; interleaving could leave the box streaming a mask the registry dropped.
+        // Serialize subscribe/unsubscribe so the registry mutate, union recompute and CATCH sends
+        // commit atomically; interleaving could leave the box streaming a table the registry dropped.
         let _serial = self.inner.catch_lock.lock();
         let (tx, rx) = flume::bounded::<CatchEvent>(CATCH_CAPACITY);
         let evict_rx = rx.clone();
         let dropped = Arc::new(AtomicU64::new(0));
         let id = self.inner.catch_gen.fetch_add(1, Ordering::Relaxed);
+        let prev = self.inner.events.lock().effective();
         let effective = {
             let mut reg = self.inner.events.lock();
             reg.subs.push(CatchSub {
                 id,
-                mask,
+                filters,
                 tx,
                 evict_rx,
                 dropped: Arc::clone(&dropped),
             });
             reg.effective()
         };
-        self.inner.desired.lock().set_catch(effective);
-        if let Err(e) = self.send(FrameType::Catch, &catch_payload(effective.bits())) {
+        self.inner.desired.lock().set_catch(effective.clone());
+        if let Err(e) = self.catch_sync(&prev, &effective) {
             self.detach_sub(id);
             return Err(e);
         }
         Ok((id, rx, dropped))
     }
 
-    /// Drop a subscription and re-assert the narrowed union; an empty union sends `CATCH(0)` to unsubscribe.
+    /// Drop a subscription and narrow the box's table to what remains.
     pub(crate) fn catch_unsubscribe(&self, id: u64) {
         let _serial = self.inner.catch_lock.lock();
+        let prev = self.inner.events.lock().effective();
         let effective = self.detach_sub(id);
-        let _ = self.send(FrameType::Catch, &catch_payload(effective.bits()));
+        let _ = self.catch_sync(&prev, &effective);
     }
 
-    /// Tear down every catch subscription and clear the desired mask (used by `reset()`).
+    /// Tear down every catch subscription (used by `reset()`). One blanket clear rather than a
+    /// per-entry diff: nothing is left to keep streaming.
     pub(crate) fn catch_disconnect_all(&self) {
         let _serial = self.inner.catch_lock.lock();
         self.inner.events.lock().subs.clear();
-        self.inner.desired.lock().set_catch(CatchMask::empty());
+        self.inner.desired.lock().set_catch(BTreeSet::new());
+        let _ = self.send(
+            FrameType::Catch,
+            &catch_payload(
+                crate::protocol::opcode::CATCH_CLS_ANY,
+                crate::protocol::opcode::CATCH_ID_ANY,
+                0,
+                0,
+                0,
+            ),
+        );
     }
 
-    fn detach_sub(&self, id: u64) -> CatchMask {
+    fn detach_sub(&self, id: u64) -> BTreeSet<CatchFilter> {
         let effective = {
             let mut reg = self.inner.events.lock();
             reg.subs.retain(|s| s.id != id);
             reg.effective()
         };
-        self.inner.desired.lock().set_catch(effective);
+        self.inner.desired.lock().set_catch(effective.clone());
         effective
     }
 }

@@ -33,7 +33,10 @@ pub use emit_pace::{EmitPace, EmitPaceStatus};
 pub use health::Health;
 pub use imperfect::ImperfectStatus;
 pub use inject::Motion;
-pub use input::{CatchEvent, CatchMask, CatchState, MotionEvent, UsageSnapshot};
+pub use input::{
+    BusEvent, CatchClass, CatchEntry, CatchEvent, CatchFilter, CatchState, ClockDomain,
+    ClockEstimate, ControlStatus, MotionEvent, TrafficEvent, UsageSnapshot,
+};
 pub use kbd_caps::KbdCaps;
 pub use keyboard::Key;
 pub use led::{LedMode, LedTarget};

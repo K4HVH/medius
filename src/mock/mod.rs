@@ -14,8 +14,9 @@ use crate::protocol::{DecodedFrame, FrameType, encode};
 use crate::transport::mock::MockTransport;
 use crate::types::lock::blanket_scope;
 use crate::types::{
-    Caps, CatchState, ClipSettings, ClipState, ClipStatus, DeviceInfo, DeviceKind, EmitPace,
-    Health, ImperfectStatus, KbdCaps, Locks, LogLevel, MouseCaps, Rate, Stats, Usage, Version,
+    Caps, CatchClass, CatchState, ClipSettings, ClipState, ClipStatus, ClockDomain, DeviceInfo,
+    DeviceKind, EmitPace, Health, ImperfectStatus, KbdCaps, LockDirection, Locks, LogLevel,
+    MouseCaps, Rate, Stats, Usage, Version,
 };
 
 #[derive(Debug)]
@@ -55,7 +56,10 @@ impl Default for State {
             stats: Stats::from_payload(&[5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
                 .unwrap(),
             locks: Locks::from_payload(&[6, 0, 0]).unwrap(),
-            catch: CatchState::from_payload(&[7, 0, 0, 0, 0, 0]).unwrap(),
+            catch: CatchState::from_payload(&[
+                7, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xFF, 0xFF, 0,
+            ])
+            .unwrap(),
             imperfect: ImperfectStatus::default(),
             move_ride_ms: 0,
             emit_pace: EmitPace::Learned,
@@ -178,9 +182,27 @@ fn locks_payload(l: &Locks) -> Vec<u8> {
     p
 }
 
-fn catch_resp_payload(c: CatchState) -> Vec<u8> {
-    let mut p = vec![7u8, c.mask.bits()];
+fn catch_resp_payload(c: &CatchState) -> Vec<u8> {
+    let mut p = vec![7u8, c.table_full as u8];
     p.extend_from_slice(&c.dropped.to_le_bytes());
+    p.extend_from_slice(&c.clock.offset_us.to_le_bytes());
+    p.extend_from_slice(&c.clock.rate_ppb.to_le_bytes());
+    p.extend_from_slice(&c.clock.delay_us.to_le_bytes());
+    // 0xFFFF is "no estimate", which a consumer must be able to tell from a zero-age one.
+    let age = c
+        .clock
+        .age
+        .map_or(u16::MAX, |d| d.as_millis().min(u16::MAX as u128 - 1) as u16);
+    p.extend_from_slice(&age.to_le_bytes());
+    p.push(c.entries.len() as u8);
+    for e in &c.entries {
+        let (class, id) = e.filter.wire();
+        p.push(class);
+        p.extend_from_slice(&id.to_le_bytes());
+        p.push(e.filter.direction.as_u8());
+        p.push(e.filter.snaplen);
+        p.extend_from_slice(&e.dropped.to_le_bytes());
+    }
     p
 }
 
@@ -259,8 +281,10 @@ fn clip_status_payload(c: &ClipStatus, cfg: &ClipSettings) -> Vec<u8> {
 }
 
 fn motion_event_payload(ts_us: u32, dx: i16, dy: i16, dz: i16) -> Vec<u8> {
-    let mut p = Vec::with_capacity(10);
+    let mut p = Vec::with_capacity(11);
     p.extend_from_slice(&ts_us.to_le_bytes());
+    p.push(0); // clk: a motion event only exists for a real device's report
+
     p.extend_from_slice(&dx.to_le_bytes());
     p.extend_from_slice(&dy.to_le_bytes());
     p.extend_from_slice(&dz.to_le_bytes());
@@ -268,8 +292,9 @@ fn motion_event_payload(ts_us: u32, dx: i16, dy: i16, dz: i16) -> Vec<u8> {
 }
 
 fn usage_event_payload(ts_us: u32, usages: &[Usage]) -> Vec<u8> {
-    let mut p = Vec::with_capacity(5 + 3 * usages.len());
+    let mut p = Vec::with_capacity(6 + 3 * usages.len());
     p.extend_from_slice(&ts_us.to_le_bytes());
+    p.push(0); // clk: host chip, as for motion
     p.push(usages.len() as u8);
     for u in usages {
         u.push_le(&mut p);
@@ -329,7 +354,7 @@ impl MockBox {
                     Some(6) => {
                         encode(FrameType::Resp, seq, &locks_payload(&st.locks)).expect("resp fits")
                     }
-                    Some(7) => encode(FrameType::Resp, seq, &catch_resp_payload(st.catch))
+                    Some(7) => encode(FrameType::Resp, seq, &catch_resp_payload(&st.catch))
                         .expect("resp fits"),
                     Some(9) => match payload.get(1).copied() {
                         Some(OPT_IMPERFECT) => encode(
@@ -540,6 +565,36 @@ impl MockBox {
     }
 
     /// Push a `USAGE_EVENT` (a held-usage snapshot); surfaces as [`CatchEvent::Usages`](crate::CatchEvent).
+    /// Push a `TRAFFIC_EVENT` as if the box emitted it (surfaces as a `Traffic` catch event).
+    /// `true_len` may exceed `bytes.len()`, which is how a snaplen-truncated capture looks.
+    #[allow(clippy::too_many_arguments)]
+    pub fn push_traffic(
+        &self,
+        seq: u8,
+        ts_us: u32,
+        clock: ClockDomain,
+        class: CatchClass,
+        id: u16,
+        direction: LockDirection,
+        flags: u8,
+        true_len: u16,
+        bytes: &[u8],
+    ) {
+        let mut p = Vec::with_capacity(12 + bytes.len());
+        p.extend_from_slice(&ts_us.to_le_bytes());
+        p.push(match clock {
+            ClockDomain::HostChip => 0,
+            ClockDomain::DeviceChip => 1,
+        });
+        p.push(class.as_u8());
+        p.extend_from_slice(&id.to_le_bytes());
+        p.push(direction.as_u8());
+        p.push(flags);
+        p.extend_from_slice(&true_len.to_le_bytes());
+        p.extend_from_slice(bytes);
+        self.transport.push_frame(FrameType::TrafficEvent, seq, &p);
+    }
+
     /// `ts_us` is the raw wire timestamp, as for [`push_motion`](Self::push_motion).
     pub fn push_usages(&self, seq: u8, ts_us: u32, usages: &[Usage]) {
         self.transport.push_frame(

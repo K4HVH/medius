@@ -8,7 +8,7 @@ use crate::protocol::opcode::{
 };
 use crate::protocol::{Resp, parse_resp};
 use crate::types::{
-    Action, Axis, Blanket, Caps, CatchMask, CatchState, ClipBuilder, ClipSettings, ClipStatus,
+    Action, Axis, Blanket, Caps, CatchFilter, CatchState, ClipBuilder, ClipSettings, ClipStatus,
     ClipTrigger, CountersSnapshot, DeviceInfo, Edge, EmitPace, EmitPaceStatus, Health,
     ImperfectStatus, LedMode, LedTarget, LockDirection, LockTarget, Locks, Motion, Rate,
     RebootTarget, Stats, Usage, Version,
@@ -151,9 +151,12 @@ impl AsyncDevice {
         self.dev().unlock_all(what, direction)
     }
 
-    /// Subscribe to the physical-input event stream. Instant; see [`Device::catch_events`].
-    pub fn catch_events(&self, mask: CatchMask) -> Result<EventStream> {
-        self.dev().catch_events(mask)
+    /// Subscribe to the catch stream. Instant; see [`Device::catch_events`].
+    pub fn catch_events(
+        &self,
+        filters: impl IntoIterator<Item = CatchFilter>,
+    ) -> Result<EventStream> {
+        self.dev().catch_events(filters)
     }
 
     /// `OPTION(IMPERFECT)`: opt into cloning an over-capacity device. Instant; see [`Device::allow_imperfect_clones`].

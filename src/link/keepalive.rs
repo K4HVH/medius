@@ -45,14 +45,28 @@ fn keepalive_loop(ctx: KeepaliveCtx) {
         if idle {
             continue;
         }
+        // Both frames feed the firmware silence timer (§5.4) to keep a held override/subscription
+        // alive. Re-sending the CATCH entries (not a bare QUERY) also restores the table if a device
+        // blip cleared it box-side. Only subscribes go out, never an unsubscribe: a blanket clear and
+        // re-add here would punch a hole in the stream on every cadence.
+        if !catch.is_empty() {
+            for f in &catch {
+                let seq = ctx.seq.fetch_add(1, Ordering::Relaxed);
+                let (class, id) = f.wire();
+                let _ = write_frame(
+                    &ctx.transport,
+                    &ctx.write_lock,
+                    &ctx.counters,
+                    seq,
+                    FrameType::Catch,
+                    &catch_payload(class, id, f.direction.as_u8(), 1, f.snaplen),
+                );
+            }
+            continue;
+        }
         let seq = ctx.seq.fetch_add(1, Ordering::Relaxed);
-        // Both frames feed the firmware silence timer (§5.4) to keep a held override/subscription alive.
-        // Re-sending CATCH (not a bare QUERY) also restores the mask if a device blip cleared it box-side.
-        let (ty, payload): (FrameType, Vec<u8>) = if catch.is_empty() {
-            (FrameType::Query, query_payload(Q_HEALTH).to_vec())
-        } else {
-            (FrameType::Catch, catch_payload(catch.bits()).to_vec())
-        };
+        let (ty, payload): (FrameType, Vec<u8>) =
+            (FrameType::Query, query_payload(Q_HEALTH).to_vec());
         let _ = write_frame(
             &ctx.transport,
             &ctx.write_lock,

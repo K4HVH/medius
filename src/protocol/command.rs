@@ -37,9 +37,11 @@ pub fn lock_payload(class: u8, usage: u16, direction: u8, state: u8) -> [u8; 5] 
     [class, u[0], u[1], direction, state]
 }
 
-/// `CATCH` (§3.9): `[mask u8]`; subscribe to physical-input event classes (0 = unsubscribe).
-pub fn catch_payload(mask: u8) -> [u8; 1] {
-    [mask]
+/// `CATCH` (§3.9): `[class u8][id u16 LE][dir u8][state u8][snaplen u8]`; add or remove one
+/// subscription entry. A blanket `state = 0` (every class, every id) clears the whole table.
+pub fn catch_payload(class: u8, id: u16, direction: u8, state: u8, snaplen: u8) -> [u8; 6] {
+    let i = id.to_le_bytes();
+    [class, i[0], i[1], direction, state, snaplen]
 }
 
 /// `OPTION(IMPERFECT)` (§3.10): `[id=0][allow u8]`; 1 = opt into cloning over-capacity devices, 0 = faithful-only.
