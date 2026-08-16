@@ -60,7 +60,7 @@ pub(crate) fn blanket_from_scope(scope: u8) -> Vec<Blanket> {
 
 /// Which edge a `LOCK` covers: press/release for a usage, `+`/`-` sign for an axis.
 #[repr(u8)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum LockDirection {
     Both = LOCK_DIR_BOTH,
     Positive = LOCK_DIR_POS,

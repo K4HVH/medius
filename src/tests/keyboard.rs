@@ -47,12 +47,15 @@ fn kbd_caps_decodes() {
 #[cfg(feature = "mock")]
 #[test]
 fn pushed_keyboard_and_media_events_arrive_on_the_stream() {
-    use crate::{CatchEvent, CatchMask, Device, Key, MediaKey, MockBox, Usage};
+    use crate::{CatchClass, CatchEvent, CatchFilter, Device, Key, MediaKey, MockBox, Usage};
     use std::time::Duration;
     let mock = MockBox::new();
     let device = Device::with_mock(mock.clone());
     let stream = device
-        .catch_events(CatchMask::KEYS | CatchMask::MEDIA)
+        .catch_events([
+            CatchFilter::class(CatchClass::Key),
+            CatchFilter::class(CatchClass::Media),
+        ])
         .unwrap();
 
     mock.push_usages(

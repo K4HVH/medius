@@ -19,8 +19,9 @@ mod linux {
     use std::time::{Duration, Instant};
 
     use medius::{
-        Action, Axis, Blanket, Button, CatchMask, ClipAction, ClipBuilder, ClipState, ClipTrigger,
-        Device, Edge, EmitPace, Key, LedMode, LedTarget, LockDirection, MediaKey, RebootTarget,
+        Action, Axis, Blanket, Button, CatchClass, CatchFilter, ClipAction, ClipBuilder, ClipState,
+        ClipTrigger, Device, Edge, EmitPace, Key, LedMode, LedTarget, LockDirection, MediaKey,
+        RebootTarget,
     };
 
     const EVIOCGRAB: libc::c_ulong = 0x4004_4590;
@@ -526,13 +527,10 @@ mod linux {
             // CATCH: subscribe, confirm CATCH_ON + mask via query_catch, idle stays quiet, and RESET
             // clears catch AND disconnects the host stream (recv -> Err). Live delivery needs a hand.
             let dev = device.as_ref().unwrap();
-            let stream = dev.catch_events(CatchMask::all());
+            let stream = dev.catch_events([CatchFilter::all()]);
             std::thread::sleep(Duration::from_millis(100));
             let on = dev.query_health().map(|h| h.catch_on).unwrap_or(false);
-            let mask = dev
-                .query_catch()
-                .map(|c| c.mask)
-                .unwrap_or(CatchMask::empty());
+            let entries = dev.query_catch().map(|c| c.entries.len()).unwrap_or(0);
             let idle_quiet = stream
                 .as_ref()
                 .map(|s| s.try_recv().is_none())
@@ -540,16 +538,13 @@ mod linux {
             let _ = dev.reset();
             std::thread::sleep(Duration::from_millis(100));
             let off = dev.query_health().map(|h| !h.catch_on).unwrap_or(false);
-            let cleared = dev
-                .query_catch()
-                .map(|c| c.mask == CatchMask::empty())
-                .unwrap_or(false);
+            let cleared = dev.query_catch().map(|c| c.is_empty()).unwrap_or(false);
             let stream_ended = stream.as_ref().map(|s| s.recv().is_err()).unwrap_or(false);
             check(
                 "catch: subscribe + reset",
-                on && mask == CatchMask::all() && idle_quiet && off && cleared && stream_ended,
+                on && entries == 1 && idle_quiet && off && cleared && stream_ended,
                 format!(
-                    "CATCH_ON={on} mask={mask:?} idle_quiet={idle_quiet}; reset->off={off} cleared={cleared} stream_ended={stream_ended}"
+                    "CATCH_ON={on} entries={entries} idle_quiet={idle_quiet}; reset->off={off} cleared={cleared} stream_ended={stream_ended}"
                 ),
             );
         }
@@ -560,13 +555,16 @@ mod linux {
             // the event count in the message says whether it actually got exercised.
             let dev = device.as_ref().unwrap();
             let mut stamps: Vec<u32> = Vec::new();
-            if let Ok(stream) = dev.catch_events(CatchMask::all()) {
+            if let Ok(stream) = dev.catch_events([
+                CatchFilter::class(CatchClass::Axis),
+                CatchFilter::class(CatchClass::Button),
+            ]) {
                 let deadline = std::time::Instant::now() + Duration::from_secs(2);
                 while std::time::Instant::now() < deadline {
-                    match stream.recv_timeout(Duration::from_millis(100)) {
-                        Some(medius::CatchEvent::Motion(m)) => stamps.push(m.ts_us),
-                        Some(medius::CatchEvent::Usages(u)) => stamps.push(u.ts_us),
-                        None => {}
+                    // One domain only: these two classes are always host-chip stamped, so the
+                    // monotonicity check below is comparing like with like.
+                    if let Some(ev) = stream.recv_timeout(Duration::from_millis(100)) {
+                        stamps.push(ev.ts_us());
                     }
                 }
             }
@@ -590,6 +588,81 @@ mod linux {
                     }
                 ),
             );
+        }
+
+        {
+            // The traffic classes: HID_IN is host-stamped (the real device produced it) and EMIT is
+            // device-stamped (the clone produced it), and the two must agree on the report count.
+            // A class tagged with the wrong clock domain yields plausible wrong deltas rather than an
+            // error, so the domain is asserted rather than eyeballed.
+            let dev = device.as_ref().unwrap();
+            let mut hid_in = 0usize;
+            let mut emit = 0usize;
+            let mut domains_right = true;
+            if let Ok(stream) = dev.catch_events([
+                CatchFilter::class(CatchClass::HidIn),
+                CatchFilter::class(CatchClass::Emit),
+            ]) {
+                let deadline = std::time::Instant::now() + Duration::from_secs(2);
+                while std::time::Instant::now() < deadline {
+                    if let Some(medius::CatchEvent::Traffic(t)) =
+                        stream.recv_timeout(Duration::from_millis(100))
+                    {
+                        match t.class {
+                            CatchClass::HidIn => {
+                                hid_in += 1;
+                                domains_right &= t.clock == medius::ClockDomain::HostChip;
+                            }
+                            CatchClass::Emit => {
+                                emit += 1;
+                                domains_right &= t.clock == medius::ClockDomain::DeviceChip;
+                            }
+                            _ => domains_right = false,
+                        }
+                    }
+                }
+            }
+            let _ = dev.reset();
+            // The two streams track the same reports, so they differ by at most whatever was in
+            // flight when the window closed.
+            let paired = hid_in > 0 && emit > 0 && hid_in.abs_diff(emit) <= 2;
+            check(
+                "catch: traffic classes",
+                paired && domains_right,
+                format!("hid_in={hid_in} emit={emit} clock_domains_correct={domains_right}"),
+            );
+        }
+
+        {
+            // The measured inter-chip clock estimate. Both chips must be running current firmware for
+            // this to converge; an absent estimate reads as age=None rather than a zero offset.
+            let dev = device.as_ref().unwrap();
+            let st = dev.catch_events([CatchFilter::all()]).ok().and_then(|_s| {
+                std::thread::sleep(Duration::from_millis(300));
+                dev.query_catch().ok()
+            });
+            let (converged, detail) = match st {
+                Some(c) => match c.clock.age {
+                    Some(age) => (
+                        c.clock.delay_us > 0 && c.clock.delay_us < 5_000,
+                        format!(
+                            "offset={}us rate={}ppb delay={}us (+/-{}us) age={}ms",
+                            c.clock.offset_us,
+                            c.clock.rate_ppb,
+                            c.clock.delay_us,
+                            c.clock.error_bound_us(),
+                            age.as_millis()
+                        ),
+                    ),
+                    None => (
+                        false,
+                        "no estimate: is the host chip on current firmware?".into(),
+                    ),
+                },
+                None => (false, "query failed".into()),
+            };
+            let _ = dev.reset();
+            check("catch: inter-chip clock", converged, detail);
         }
 
         {

@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use crate::error::{Error, Result};
 use crate::link::Link;
-use crate::types::{CatchEvent, CatchMask};
+use crate::types::{CatchEvent, CatchFilter};
 
 use super::Device;
 
@@ -76,9 +76,28 @@ impl EventStream {
 }
 
 impl Device {
-    /// Subscribe to the physical-input event stream for the given classes (the `CATCH` feature, §3.9).
-    pub fn catch_events(&self, mask: CatchMask) -> Result<EventStream> {
-        let (id, rx, dropped) = self.link.catch_subscribe(mask)?;
+    /// Subscribe to the catch stream for the given filters (the `CATCH` feature, §3.9).
+    ///
+    /// Each [`CatchFilter`] addresses a class, an id within it, or everything. Overlapping
+    /// subscriptions from different callers collapse into the one table the box holds, and each
+    /// consumer still receives everything it asked for.
+    ///
+    /// ```no_run
+    /// # use medius::{Device, CatchClass, CatchFilter};
+    /// # fn f(dev: &Device) -> medius::Result<()> {
+    /// // Everything, cut to 16 bytes per event, except one endpoint kept whole.
+    /// let events = dev.catch_events([
+    ///     CatchFilter::all().snaplen(16),
+    ///     CatchFilter::addr(CatchClass::VendorBulk, 0x83),
+    /// ])?;
+    /// # Ok(()) }
+    /// ```
+    pub fn catch_events(
+        &self,
+        filters: impl IntoIterator<Item = CatchFilter>,
+    ) -> Result<EventStream> {
+        let set: std::collections::BTreeSet<CatchFilter> = filters.into_iter().collect();
+        let (id, rx, dropped) = self.link.catch_subscribe(set)?;
         Ok(EventStream::new(rx, dropped, self.link.clone(), id))
     }
 }

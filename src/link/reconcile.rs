@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::types::{Action, CatchMask, Class, Usage};
+use crate::types::{Action, CatchFilter, Class, Usage};
 
 /// A lock the host wants held, keyed by its wire fields so a reapply is exact and idempotent.
 pub(crate) type LockKey = (u8, u16, u8);
@@ -32,21 +32,11 @@ impl Override {
 }
 
 /// PC-owned injection + subscription state, re-asserted after a reconnect so held usages and open catches survive a control-link blip.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub(crate) struct DesiredState {
     overrides: BTreeMap<(u8, u16), Override>, // never sits at None in the map
     locks: BTreeSet<LockKey>,
-    catch: CatchMask,
-}
-
-impl Default for DesiredState {
-    fn default() -> Self {
-        DesiredState {
-            overrides: BTreeMap::new(),
-            locks: BTreeSet::new(),
-            catch: CatchMask::empty(),
-        }
-    }
+    catch: BTreeSet<CatchFilter>,
 }
 
 impl DesiredState {
@@ -79,13 +69,13 @@ impl DesiredState {
         self.locks.clear();
     }
 
-    /// The catch subscription mask the box should be streaming (re-asserted on reconnect).
-    pub(crate) fn set_catch(&mut self, mask: CatchMask) {
-        self.catch = mask;
+    /// The catch subscription table the box should be holding (re-asserted on reconnect).
+    pub(crate) fn set_catch(&mut self, filters: BTreeSet<CatchFilter>) {
+        self.catch = filters;
     }
 
-    pub(crate) fn catch(&self) -> CatchMask {
-        self.catch
+    pub(crate) fn catch(&self) -> BTreeSet<CatchFilter> {
+        self.catch.clone()
     }
 
     /// Idle = nothing for the keepalive to hold alive; a catch subscription counts.
