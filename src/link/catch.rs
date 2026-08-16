@@ -8,6 +8,7 @@ use parking_lot::Mutex;
 use crate::error::Result;
 use crate::protocol::FrameType;
 use crate::protocol::command::catch_payload;
+use crate::protocol::opcode::CATCH_MAX_ENTRIES;
 use crate::types::{
     Axis, CatchClass, CatchEvent, CatchFilter, LockDirection, MotionEvent, TrafficEvent,
     UsageSnapshot,
@@ -171,10 +172,15 @@ pub(crate) fn deliver_event(reg: &Mutex<CatchReg>, ty: FrameType, payload: &[u8]
 }
 
 impl Link {
-    /// Send every entry in `next` as a subscribe, and an unsubscribe for anything `prev` held that
-    /// `next` does not. Re-sending an existing entry is a harmless overwrite box-side, so only the
-    /// removals have to be diffed; blanket-clearing and re-adding instead would leave a gap in the
-    /// stream every time any subscription changed.
+    /// Send an unsubscribe for anything `prev` held that `next` does not, and a subscribe for every
+    /// entry that is new or whose capture length changed. Blanket-clearing and re-adding instead
+    /// would leave a gap in the stream every time any subscription changed.
+    ///
+    /// Only what CHANGED, not all of `next`. This runs holding `catch_lock`, and every frame is a
+    /// blocking write on a serial port — so re-sending the whole table made dropping one stream cost
+    /// up to a write per entry, all of it in front of any other subscribe and of the keepalive. The
+    /// ordinary case is now zero or one frame. Snaplen has to be compared explicitly because it is
+    /// deliberately not part of a filter's identity, so the set difference alone cannot see it move.
     pub(crate) fn catch_sync(
         &self,
         prev: &BTreeSet<CatchFilter>,
@@ -188,6 +194,9 @@ impl Link {
             )?;
         }
         for f in next {
+            if prev.get(f).is_some_and(|had| had.snaplen == f.snaplen) {
+                continue; // the box already holds this entry, at this capture length
+            }
             let (class, id) = f.wire();
             self.send(
                 FrameType::Catch,
@@ -222,9 +231,24 @@ impl Link {
             });
             reg.effective()
         };
+        // Refused BEFORE anything is sent, and before the registry keeps the subscription: the box
+        // silently drops entries past its table and reports it only in a flag nothing was obliged to
+        // read, so the caller's stream would just be missing the addresses that did not fit.
+        if effective.len() > CATCH_MAX_ENTRIES {
+            let needed = effective.len();
+            self.inner.events.lock().subs.retain(|s| s.id != id);
+            return Err(crate::error::Error::CatchTableFull { needed });
+        }
         self.inner.desired.lock().set_catch(effective.clone());
         if let Err(e) = self.catch_sync(&prev, &effective) {
-            self.detach_sub(id);
+            // The send failed PART WAY: entries before the failure are live in the box, and undoing
+            // only the registry would leave the box streaming a table nothing on this side records --
+            // so no later diff could ever narrow it, and on a vendor-bulk entry that is a quarter of a
+            // megabyte a second for the life of the connection. Narrow the box back to `prev` too.
+            // Best-effort: if the link is down that write fails as well, and a reconnect re-syncs
+            // from `desired`, which detach_sub has already corrected.
+            let restored = self.detach_sub(id);
+            let _ = self.catch_sync(&effective, &restored);
             return Err(e);
         }
         Ok((id, rx, dropped))
