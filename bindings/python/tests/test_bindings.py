@@ -1,16 +1,20 @@
 """Mock-backed tests for the Python bindings."""
 
 import gc
+import time
 
 import pytest
 
 import medius
 from medius import (
     BadProtoVerError,
+    BusEventKind,
     Button,
     Caps,
+    CatchClass,
+    CatchEntry,
     CatchEventKind,
-    CatchMask,
+    CatchFilter,
     CatchState,
     Action,
     Blanket,
@@ -20,6 +24,9 @@ from medius import (
     ClipState,
     ClipStatus,
     ClipTrigger,
+    ClockDomain,
+    ClockEstimate,
+    ControlStatus,
     Edge,
     Usage,
     Device,
@@ -27,6 +34,7 @@ from medius import (
     FrameType,
     Health,
     ImperfectStatus,
+    InvalidArgError,
     KbdCaps,
     Key,
     LockDirection,
@@ -44,6 +52,7 @@ from medius import (
     Rate,
     Stats,
     Status,
+    TrafficEvent,
     UsageSnapshot,
     Version,
 )
@@ -54,7 +63,9 @@ def test_mock_feature_present():
 
 
 def test_meta_functions():
-    assert medius.abi_version() >= 1
+    # These are a hand-written mirror of the C structs, so a bumped ABI means they are stale until
+    # someone re-reads the header. Pin it rather than accept anything newer.
+    assert medius.abi_version() == 4
     assert medius.version_string()
     assert medius.default_query_timeout_ms() > 0
     assert medius.default_keepalive_cadence_ms() > 0
@@ -214,14 +225,61 @@ def test_stats_roundtrip():
     assert got == stats
 
 
-def test_catch_state_roundtrip():
-    state = CatchState(mask=int(CatchMask.ALL), dropped=42)
+def _query_catch(state: CatchState) -> CatchState:
     with MockBox() as mock:
         mock.set_catch_state(state)
         with Device.with_mock(mock) as d:
-            got = d.query_catch()
-    assert got.mask == int(CatchMask.ALL)
-    assert got.dropped == 42
+            return d.query_catch()
+
+
+def test_catch_state_roundtrip():
+    state = CatchState(
+        table_full=True,
+        dropped=42,
+        clock=ClockEstimate(offset_us=-1234, rate_ppb=57, delay_us=90, age_ms=1500),
+        entries=[
+            CatchEntry(CatchFilter.all().with_snaplen(16), dropped=3),
+            CatchEntry(
+                CatchFilter.addr(CatchClass.VENDOR_BULK, 0x83).with_direction(
+                    LockDirection.POSITIVE
+                ),
+                dropped=7,
+            ),
+        ],
+    )
+    got = _query_catch(state)
+    assert got == state
+    assert got.clock.error_bound_us == 45
+    assert [e.dropped for e in got.entries] == [3, 7]
+    assert got.entries[1].filter.catch_class == CatchClass.VENDOR_BULK
+    assert got.entries[1].filter.id == 0x83
+
+
+def test_catch_state_clock_age_none_is_not_a_zero_age():
+    # An offset that was never measured also reads as zero, so the sentinel has to survive the
+    # round trip: applying an unmeasured offset would silently shift every cross-domain stamp.
+    never = _query_catch(CatchState(clock=ClockEstimate(offset_us=500, age_ms=None)))
+    fresh = _query_catch(CatchState(clock=ClockEstimate(offset_us=500, age_ms=0)))
+    assert never.clock.age_ms is None
+    assert fresh.clock.age_ms == 0
+    assert never.clock != fresh.clock
+    assert never.clock.to_host_domain(1_000) is None
+    assert fresh.clock.to_host_domain(1_000) == 1_500
+
+
+def test_catch_filter_wildcards_survive_the_roundtrip():
+    every = CatchFilter.all()
+    blanket = CatchFilter.class_(CatchClass.HID_IN)
+    exact = CatchFilter.addr(CatchClass.CONTROL, 0)
+    assert (every.catch_class, every.id) == (None, None)
+    assert (blanket.catch_class, blanket.id) == (CatchClass.HID_IN, None)
+    assert (exact.catch_class, exact.id) == (CatchClass.CONTROL, 0)
+
+    got = _query_catch(CatchState(entries=[CatchEntry(f) for f in (every, blanket, exact)]))
+    assert [e.filter for e in got.entries] == [every, blanket, exact]
+    # An id of 0 is a real address, not the every-id wildcard.
+    assert got.entries[2].filter.id == 0
+    assert got.entries[0].filter.id is None
 
 
 def test_imperfect_roundtrip():
@@ -266,7 +324,7 @@ def test_counters_readable():
 
 def test_catch_delivers_motion_event():
     with MockBox() as mock, Device.with_mock(mock) as d:
-        with d.catch_events(CatchMask.ALL) as stream:
+        with d.catch_events(CatchFilter.all()) as stream:
             mock.push_motion(1, 7_000, MotionEvent(dx=12, dy=-34, dz=1))
             ev = stream.recv_timeout(2000)
             assert ev is not None
@@ -279,7 +337,7 @@ def test_catch_delivers_motion_event():
 
 def test_catch_delivers_usage_event_for_a_key():
     with MockBox() as mock, Device.with_mock(mock) as d:
-        with d.catch_events(CatchMask.KEYS) as stream:
+        with d.catch_events(CatchFilter.class_(CatchClass.KEY)) as stream:
             mock.push_usages(1, 7_000, UsageSnapshot([Usage.key(Key.ESCAPE)]))
             ev = stream.recv_timeout(2000)
             assert ev is not None
@@ -290,7 +348,7 @@ def test_catch_delivers_usage_event_for_a_key():
 
 def test_catch_delivers_usage_event_for_media():
     with MockBox() as mock, Device.with_mock(mock) as d:
-        with d.catch_events(CatchMask.ALL) as stream:
+        with d.catch_events(CatchFilter.all()) as stream:
             mock.push_usages(1, 7_000, UsageSnapshot([Usage.media(MediaKey.VOLUME_UP)]))
             ev = stream.recv_timeout(2000)
             assert ev is not None
@@ -298,9 +356,126 @@ def test_catch_delivers_usage_event_for_media():
             assert ev.usages.is_held(Usage.media(MediaKey.VOLUME_UP))
 
 
+def _push_and_recv(mock, stream, event: TrafficEvent, clock=ClockDomain.DEVICE_CHIP):
+    mock.push_traffic(1, 7_000, clock, event)
+    ev = stream.recv_timeout(2000)
+    assert ev is not None and ev.kind == CatchEventKind.TRAFFIC
+    return ev
+
+
+def test_catch_delivers_traffic_event():
+    sent = TrafficEvent(
+        catch_class=CatchClass.HID_IN,
+        id=2,
+        direction=LockDirection.POSITIVE,
+        flags=0,
+        true_len=6,
+        bytes=bytes([0x01, 0x02, 0x03, 0x04, 0x05, 0x06]),
+    )
+    with MockBox() as mock, Device.with_mock(mock) as d:
+        with d.catch_events(CatchFilter.class_(CatchClass.HID_IN)) as stream:
+            ev = _push_and_recv(mock, stream, sent, ClockDomain.HOST_CHIP)
+    assert ev.ts_us == 7_000
+    assert ev.clock == ClockDomain.HOST_CHIP  # the real device's bytes carry the host chip's stamp
+    assert ev.motion is None and ev.usages is None
+    assert ev.traffic == sent
+    assert not ev.traffic.truncated()
+    assert ev.traffic.data() == sent.bytes  # no setup stage outside CONTROL
+
+
+def test_traffic_event_true_len_above_the_capture_is_truncation():
+    # A snaplen-cut capture and a genuinely short packet are the same bytes; only true_len separates
+    # them, so it has to survive the wire.
+    cut = TrafficEvent(
+        catch_class=CatchClass.VENDOR_BULK,
+        id=0x83,
+        direction=LockDirection.POSITIVE,
+        flags=0x03,
+        true_len=512,
+        bytes=bytes(range(16)),
+    )
+    with MockBox() as mock, Device.with_mock(mock) as d:
+        with d.catch_events(CatchFilter.addr(CatchClass.VENDOR_BULK, 0x83).with_snaplen(16)) as s:
+            ev = _push_and_recv(mock, s, cut)
+    assert ev.traffic.true_len == 512
+    assert len(ev.traffic.bytes) == 16
+    assert ev.traffic.truncated()
+    assert ev.traffic.bulk_end_of_transfer()
+    assert ev.traffic.bulk_zlp()
+
+    whole = TrafficEvent(CatchClass.VENDOR_BULK, 0x83, LockDirection.POSITIVE, 0, 16, bytes(16))
+    assert not whole.truncated()
+
+
+def test_traffic_event_control_accessors():
+    setup = bytes([0x80, 0x06, 0x00, 0x01, 0x00, 0x00, 0x12, 0x00])
+    stalled = TrafficEvent(
+        catch_class=CatchClass.CONTROL,
+        id=0,
+        direction=LockDirection.POSITIVE,
+        flags=0xFD,
+        true_len=8,
+        bytes=setup,
+    )
+    with MockBox() as mock, Device.with_mock(mock) as d:
+        with d.catch_events(CatchFilter.class_(CatchClass.CONTROL)) as stream:
+            ev = _push_and_recv(mock, stream, stalled)
+    assert ev.traffic.setup() == setup
+    assert ev.traffic.data() == b""  # a STALL answers with no data stage
+    assert ev.traffic.control_status() == ControlStatus.STALLED
+    assert ev.traffic.bus_event() is None
+
+    answered = TrafficEvent(
+        CatchClass.CONTROL, 0, LockDirection.POSITIVE, 0x00, 10, setup + b"\x12\x01"
+    )
+    assert answered.control_status() == ControlStatus.OK
+    assert answered.data() == b"\x12\x01"
+
+
+def test_traffic_event_bus_event():
+    with MockBox() as mock, Device.with_mock(mock) as d:
+        with d.catch_events(CatchFilter.class_(CatchClass.BUS)) as stream:
+            ev = _push_and_recv(
+                mock,
+                stream,
+                TrafficEvent(CatchClass.BUS, 0, LockDirection.BOTH, 5, 2, bytes([3, 1])),
+            )
+    bus = ev.traffic.bus_event()
+    assert bus.kind == BusEventKind.SET_INTERFACE
+    assert (bus.interface, bus.alt) == (3, 1)
+    assert ev.traffic.control_status() is None
+
+
+def test_traffic_event_surfaces_on_every_receive_path():
+    ev = TrafficEvent(CatchClass.EMIT, 1, LockDirection.POSITIVE, 0, 3, b"\x01\x02\x03")
+    with MockBox() as mock, Device.with_mock(mock) as d:
+        with d.catch_events(CatchFilter.class_(CatchClass.EMIT)) as stream:
+            mock.push_traffic(1, 10, ClockDomain.DEVICE_CHIP, ev)
+            blocking = stream.recv()
+
+            mock.push_traffic(2, 20, ClockDomain.DEVICE_CHIP, ev)
+            deadline = time.monotonic() + 2.0
+            polled = None
+            while polled is None and time.monotonic() < deadline:
+                polled = stream.try_recv()
+
+            mock.push_traffic(3, 30, ClockDomain.DEVICE_CHIP, ev)
+            timed = stream.recv_timeout(2000)
+    assert polled is not None and timed is not None
+    for got in (blocking, polled, timed):
+        assert got.kind == CatchEventKind.TRAFFIC
+        assert got.traffic == ev
+
+
+def test_catch_events_needs_at_least_one_filter():
+    with MockBox() as mock, Device.with_mock(mock) as d:
+        with pytest.raises(InvalidArgError):
+            d.catch_events([])
+
+
 def test_try_recv_returns_none_when_empty():
     with MockBox() as mock, Device.with_mock(mock) as d:
-        with d.catch_events(CatchMask.ALL) as stream:
+        with d.catch_events(CatchFilter.all()) as stream:
             assert stream.try_recv() is None
             assert stream.dropped == 0
 
@@ -330,7 +505,7 @@ def test_clone_shares_state():
 
 def test_event_stream_clone_shares_subscription():
     with MockBox() as mock, Device.with_mock(mock) as d:
-        with d.catch_events(CatchMask.ALL) as stream:
+        with d.catch_events(CatchFilter.all()) as stream:
             stream2 = stream.clone()
             mock.push_motion(1, 7_000, MotionEvent(dx=9, dy=0, dz=0))
             ev = stream2.recv_timeout(2000)
@@ -350,7 +525,7 @@ def test_double_close_is_safe():
 def test_gc_frees_cleanly():
     mock = MockBox()
     d = Device.with_mock(mock)
-    stream = d.catch_events(CatchMask.ALL)
+    stream = d.catch_events(CatchFilter.all())
     del stream
     del d
     del mock
