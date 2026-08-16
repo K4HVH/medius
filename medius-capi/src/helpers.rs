@@ -3,6 +3,8 @@
 use crate::ctypes::*;
 use crate::error::guard;
 
+const SETUP_LEN: u16 = 8;
+
 /// Build an [`MediusUsage`] addressing a mouse button.
 #[unsafe(no_mangle)]
 pub extern "C" fn medius_usage_button(button: MediusButton) -> MediusUsage {
@@ -137,6 +139,209 @@ pub unsafe extern "C" fn medius_usage_event_is_held(
         let e = unsafe { &*event };
         let n = (e.n as usize).min(MEDIUS_MAX_USAGES);
         e.usages[..n].contains(&usage)
+    })
+}
+
+/// A filter matching every class, every id, both directions, whole packets. One frame on the wire.
+#[unsafe(no_mangle)]
+pub extern "C" fn medius_catch_filter_all() -> MediusCatchFilter {
+    MediusCatchFilter {
+        class: MEDIUS_CATCH_CLASS_ANY,
+        id: MEDIUS_CATCH_ID_ANY,
+        direction: MediusLockDirection::Both,
+        snaplen: 0,
+    }
+}
+
+/// A filter matching every id within one class. Set `direction`/`snaplen` on the result to narrow it.
+#[unsafe(no_mangle)]
+pub extern "C" fn medius_catch_filter_class(class: MediusCatchClass) -> MediusCatchFilter {
+    MediusCatchFilter {
+        class,
+        id: MEDIUS_CATCH_ID_ANY,
+        direction: MediusLockDirection::Both,
+        snaplen: 0,
+    }
+}
+
+/// A filter matching one exact address: an endpoint, an interface, or a usage.
+#[unsafe(no_mangle)]
+pub extern "C" fn medius_catch_filter_addr(class: MediusCatchClass, id: u16) -> MediusCatchFilter {
+    MediusCatchFilter {
+        class,
+        id,
+        direction: MediusLockDirection::Both,
+        snaplen: 0,
+    }
+}
+
+/// Whether `snaplen` cut this packet short. Without checking, a truncated capture and a genuinely
+/// short packet are indistinguishable. Mirrors `medius::TrafficEvent::truncated`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn medius_traffic_event_truncated(event: *const MediusTrafficEvent) -> bool {
+    guard(false, || {
+        if event.is_null() {
+            return false;
+        }
+        let e = unsafe { &*event };
+        e.len < e.true_len
+    })
+}
+
+/// The 8-byte setup packet of a CONTROL event, or NULL for another class or a capture cut shorter
+/// than the setup stage. Points into `event`. Mirrors `medius::TrafficEvent::setup`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn medius_traffic_event_setup(event: *const MediusTrafficEvent) -> *const u8 {
+    guard(std::ptr::null(), || {
+        if event.is_null() {
+            return std::ptr::null();
+        }
+        let e = unsafe { &*event };
+        if e.class == MEDIUS_CATCH_CLASS_CONTROL && e.len >= SETUP_LEN {
+            e.bytes.as_ptr()
+        } else {
+            std::ptr::null()
+        }
+    })
+}
+
+/// The data stage of a CONTROL event, the whole packet for any other class; its length goes to
+/// `*out_len`. Points into `event`. Mirrors `medius::TrafficEvent::data`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn medius_traffic_event_data(
+    event: *const MediusTrafficEvent,
+    out_len: *mut usize,
+) -> *const u8 {
+    guard(std::ptr::null(), || {
+        if event.is_null() {
+            return std::ptr::null();
+        }
+        let e = unsafe { &*event };
+        let n = (e.len as usize).min(MEDIUS_MAX_TRAFFIC_BYTES);
+        let skip = if e.class == MEDIUS_CATCH_CLASS_CONTROL && e.len >= SETUP_LEN {
+            SETUP_LEN as usize
+        } else {
+            0
+        };
+        if !out_len.is_null() {
+            unsafe { *out_len = n - skip };
+        }
+        unsafe { e.bytes.as_ptr().add(skip) }
+    })
+}
+
+/// What the real device answered, written to `*out`; false for any class but CONTROL. Mirrors
+/// `medius::TrafficEvent::control_status`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn medius_traffic_event_control_status(
+    event: *const MediusTrafficEvent,
+    out: *mut MediusControlStatus,
+) -> bool {
+    guard(false, || {
+        if event.is_null() {
+            return false;
+        }
+        let e = unsafe { &*event };
+        if e.class != MEDIUS_CATCH_CLASS_CONTROL {
+            return false;
+        }
+        let status = match e.flags {
+            0x00 => MediusControlStatus::Ok,
+            0xFD => MediusControlStatus::Stalled,
+            _ => MediusControlStatus::Naked,
+        };
+        if !out.is_null() {
+            unsafe { *out = status };
+        }
+        true
+    })
+}
+
+/// The lifecycle event, written to `*out`; false for any class but BUS or an unknown kind. Mirrors
+/// `medius::TrafficEvent::bus_event`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn medius_traffic_event_bus_event(
+    event: *const MediusTrafficEvent,
+    out: *mut MediusBusEvent,
+) -> bool {
+    guard(false, || {
+        if event.is_null() {
+            return false;
+        }
+        let e = unsafe { &*event };
+        if e.class != MEDIUS_CATCH_CLASS_BUS {
+            return false;
+        }
+        // Only the captured bytes count: past `len` the array still holds whatever the caller left
+        // there, and a stale byte would name the wrong configuration or interface.
+        let payload = &e.bytes[..(e.len as usize).min(MEDIUS_MAX_TRAFFIC_BYTES)];
+        let a = payload.first().copied().unwrap_or(0);
+        let b = payload.get(1).copied().unwrap_or(0);
+        let kind = match e.flags {
+            0 => MediusBusEventKind::Reset,
+            1 => MediusBusEventKind::Suspend,
+            2 => MediusBusEventKind::Resume,
+            3 => MediusBusEventKind::Configured,
+            4 => MediusBusEventKind::Deconfigured,
+            5 => MediusBusEventKind::SetInterface,
+            6 => MediusBusEventKind::DeviceAttached,
+            7 => MediusBusEventKind::DeviceDetached,
+            8 => MediusBusEventKind::CloneUp,
+            9 => MediusBusEventKind::CloneDown,
+            _ => return false,
+        };
+        if !out.is_null() {
+            unsafe {
+                *out = MediusBusEvent {
+                    kind,
+                    configuration: if kind == MediusBusEventKind::Configured {
+                        a
+                    } else {
+                        0
+                    },
+                    interface: if kind == MediusBusEventKind::SetInterface {
+                        a
+                    } else {
+                        0
+                    },
+                    alt: if kind == MediusBusEventKind::SetInterface {
+                        b
+                    } else {
+                        0
+                    },
+                }
+            };
+        }
+        true
+    })
+}
+
+/// Whether this event carries end-of-transfer, for a VEND_BULK event. Mirrors
+/// `medius::TrafficEvent::bulk_end_of_transfer`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn medius_traffic_event_bulk_end_of_transfer(
+    event: *const MediusTrafficEvent,
+) -> bool {
+    guard(false, || {
+        if event.is_null() {
+            return false;
+        }
+        let e = unsafe { &*event };
+        e.class == MEDIUS_CATCH_CLASS_VEND_BULK && e.flags & 0x01 != 0
+    })
+}
+
+/// Whether this event is a zero-length packet, for a VEND_BULK event. A ZLP terminates a transfer
+/// whose length is an exact multiple of the packet size, so it carries no bytes and still matters.
+/// Mirrors `medius::TrafficEvent::bulk_zlp`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn medius_traffic_event_bulk_zlp(event: *const MediusTrafficEvent) -> bool {
+    guard(false, || {
+        if event.is_null() {
+            return false;
+        }
+        let e = unsafe { &*event };
+        e.class == MEDIUS_CATCH_CLASS_VEND_BULK && e.flags & 0x02 != 0
     })
 }
 

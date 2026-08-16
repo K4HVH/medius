@@ -433,6 +433,18 @@ fn zeroed_event() -> MediusCatchEvent {
     unsafe { std::mem::zeroed() }
 }
 
+unsafe fn subscribe(
+    dev: *mut MediusDevice,
+    filters: &[MediusCatchFilter],
+) -> *mut MediusEventStream {
+    let mut stream: *mut MediusEventStream = ptr::null_mut();
+    assert_eq!(
+        unsafe { medius_device_catch_events(dev, filters.as_ptr(), filters.len(), &mut stream) },
+        MediusStatus::Ok
+    );
+    stream
+}
+
 #[test]
 fn catch_delivers_a_motion_event() {
     let mock = medius_mock_new();
@@ -441,11 +453,7 @@ fn catch_delivers_a_motion_event() {
         unsafe { medius_device_with_mock(mock, &mut dev) },
         MediusStatus::Ok
     );
-    let mut stream: *mut MediusEventStream = ptr::null_mut();
-    assert_eq!(
-        unsafe { medius_device_catch_events(dev, MEDIUS_CATCH_MASK_ALL, &mut stream) },
-        MediusStatus::Ok
-    );
+    let stream = unsafe { subscribe(dev, &[medius_catch_filter_all()]) };
     unsafe {
         (*mock).inner.push_motion(1, 7_000, 12, -34, 1);
     }
@@ -453,6 +461,7 @@ fn catch_delivers_a_motion_event() {
     assert!(unsafe { medius_event_stream_recv_timeout(stream, 2000, &mut event) });
     assert_eq!(event.kind, MediusCatchEventKind::Motion);
     assert_eq!(event.ts_us, 7_000);
+    assert_eq!(event.clock, MediusClockDomain::HostChip);
     let m = unsafe { event.data.motion };
     assert_eq!(m.dx, 12);
     assert_eq!(m.dy, -34);
@@ -472,11 +481,7 @@ fn catch_delivers_a_usage_event() {
         unsafe { medius_device_with_mock(mock, &mut dev) },
         MediusStatus::Ok
     );
-    let mut stream: *mut MediusEventStream = ptr::null_mut();
-    assert_eq!(
-        unsafe { medius_device_catch_events(dev, MEDIUS_CATCH_MASK_KEYS, &mut stream) },
-        MediusStatus::Ok
-    );
+    let stream = unsafe { subscribe(dev, &[medius_catch_filter_class(MEDIUS_CATCH_CLASS_KEY)]) };
     unsafe {
         (*mock)
             .inner
@@ -489,6 +494,207 @@ fn catch_delivers_a_usage_event() {
     assert!(unsafe { medius_usage_event_is_held(&usages, medius_usage_key(MEDIUS_KEY_ESCAPE)) });
     unsafe {
         medius_event_stream_free(stream);
+        medius_device_free(dev);
+        medius_mock_free(mock);
+    }
+}
+
+#[test]
+fn catch_delivers_a_traffic_event() {
+    let mock = medius_mock_new();
+    let mut dev: *mut MediusDevice = ptr::null_mut();
+    assert_eq!(
+        unsafe { medius_device_with_mock(mock, &mut dev) },
+        MediusStatus::Ok
+    );
+    let stream = unsafe {
+        subscribe(
+            dev,
+            &[medius_catch_filter_addr(MEDIUS_CATCH_CLASS_VEND_BULK, 0x83)],
+        )
+    };
+    unsafe {
+        (*mock).inner.push_traffic(
+            1,
+            9_000,
+            medius::ClockDomain::DeviceChip,
+            medius::CatchClass::VendorBulk,
+            0x83,
+            medius::LockDirection::Positive,
+            0x01,
+            64,
+            &[0xDE, 0xAD, 0xBE, 0xEF],
+        );
+    }
+    let mut event = zeroed_event();
+    assert!(unsafe { medius_event_stream_recv_timeout(stream, 2000, &mut event) });
+    assert_eq!(event.kind, MediusCatchEventKind::Traffic);
+    assert_eq!(event.ts_us, 9_000);
+    assert_eq!(event.clock, MediusClockDomain::DeviceChip);
+    let t = unsafe { event.data.traffic };
+    assert_eq!(t.class, MEDIUS_CATCH_CLASS_VEND_BULK);
+    assert_eq!(t.id, 0x83);
+    assert_eq!(t.direction, MediusLockDirection::Positive);
+    assert_eq!(t.flags, 0x01);
+    assert_eq!(t.true_len, 64);
+    assert_eq!(t.len, 4);
+    assert_eq!(&t.bytes[..4], &[0xDE, 0xAD, 0xBE, 0xEF]);
+    // true_len above len: the capture was cut by snaplen, not a genuinely short packet.
+    assert!(unsafe { medius_traffic_event_truncated(&t) });
+    assert!(unsafe { medius_traffic_event_bulk_end_of_transfer(&t) });
+    unsafe {
+        medius_event_stream_free(stream);
+        medius_device_free(dev);
+        medius_mock_free(mock);
+    }
+}
+
+#[test]
+fn traffic_event_survives_the_mock_push_round_trip() {
+    let mock = medius_mock_new();
+    let mut dev: *mut MediusDevice = ptr::null_mut();
+    assert_eq!(
+        unsafe { medius_device_with_mock(mock, &mut dev) },
+        MediusStatus::Ok
+    );
+    let stream = unsafe { subscribe(dev, &[medius_catch_filter_all()]) };
+    let mut pushed: MediusTrafficEvent = unsafe { std::mem::zeroed() };
+    pushed.class = MEDIUS_CATCH_CLASS_CONTROL;
+    pushed.id = 0;
+    pushed.direction = MediusLockDirection::Positive;
+    pushed.flags = 0xFD;
+    pushed.true_len = 10;
+    pushed.len = 10;
+    pushed.bytes[..10]
+        .copy_from_slice(&[0x80, 0x06, 0x00, 0x01, 0x00, 0x00, 0x12, 0x00, 0x12, 0x01]);
+    unsafe {
+        medius_mock_push_traffic(mock, 2, 4_242, MediusClockDomain::DeviceChip, &pushed);
+    }
+    let mut event = zeroed_event();
+    assert!(unsafe { medius_event_stream_recv_timeout(stream, 2000, &mut event) });
+    assert_eq!(event.kind, MediusCatchEventKind::Traffic);
+    assert_eq!(event.ts_us, 4_242);
+    assert_eq!(event.clock, MediusClockDomain::DeviceChip);
+    assert_eq!(unsafe { event.data.traffic }, pushed);
+    unsafe {
+        medius_event_stream_free(stream);
+        medius_device_free(dev);
+        medius_mock_free(mock);
+    }
+}
+
+#[test]
+fn catch_events_rejects_an_empty_or_unknown_filter_list() {
+    let mock = medius_mock_new();
+    let mut dev: *mut MediusDevice = ptr::null_mut();
+    assert_eq!(
+        unsafe { medius_device_with_mock(mock, &mut dev) },
+        MediusStatus::Ok
+    );
+    let mut stream: *mut MediusEventStream = ptr::null_mut();
+    let all = [medius_catch_filter_all()];
+    assert_eq!(
+        unsafe { medius_device_catch_events(dev, all.as_ptr(), 0, &mut stream) },
+        MediusStatus::ErrInvalidArg
+    );
+    assert_eq!(
+        unsafe { medius_device_catch_events(dev, ptr::null(), 1, &mut stream) },
+        MediusStatus::ErrInvalidArg
+    );
+    // A class the box does not define must fail the whole call: a silently narrower subscription is
+    // indistinguishable from a box producing no events.
+    let bogus = [medius_catch_filter_class(200)];
+    assert_eq!(
+        unsafe { medius_device_catch_events(dev, bogus.as_ptr(), 1, &mut stream) },
+        MediusStatus::ErrInvalidArg
+    );
+    assert!(stream.is_null());
+    unsafe {
+        medius_device_free(dev);
+        medius_mock_free(mock);
+    }
+}
+
+#[test]
+fn query_catch_returns_the_table_and_the_clock_estimate() {
+    let mock = medius_mock_new();
+    let mut set: MediusCatchState = unsafe { std::mem::zeroed() };
+    set.table_full = 1;
+    set.dropped = 77;
+    set.clock = MediusClockEstimate {
+        offset_us: -1234,
+        rate_ppb: 56,
+        delay_us: 40,
+        age_ms: 250,
+    };
+    set.n = 2;
+    set.entries[0] = MediusCatchEntry {
+        filter: MediusCatchFilter {
+            snaplen: 16,
+            ..medius_catch_filter_all()
+        },
+        dropped: 3,
+    };
+    set.entries[1] = MediusCatchEntry {
+        filter: medius_catch_filter_addr(MEDIUS_CATCH_CLASS_CONTROL, 0),
+        dropped: 0,
+    };
+    unsafe { medius_mock_set_catch_state(mock, set) };
+    let mut dev: *mut MediusDevice = ptr::null_mut();
+    assert_eq!(
+        unsafe { medius_device_with_mock(mock, &mut dev) },
+        MediusStatus::Ok
+    );
+    let mut got: MediusCatchState = unsafe { std::mem::zeroed() };
+    assert_eq!(
+        unsafe { medius_device_query_catch(dev, &mut got) },
+        MediusStatus::Ok
+    );
+    assert_eq!(got.table_full, 1);
+    assert_eq!(got.dropped, 77);
+    assert_eq!(got.clock, set.clock);
+    assert_eq!(got.n, 2);
+    assert_eq!(got.entries[0], set.entries[0]);
+    assert_eq!(got.entries[1], set.entries[1]);
+    unsafe {
+        medius_device_free(dev);
+        medius_mock_free(mock);
+    }
+}
+
+#[test]
+fn no_clock_estimate_is_distinguishable_from_a_zero_age_one() {
+    let mock = medius_mock_new();
+    let mut set: MediusCatchState = unsafe { std::mem::zeroed() };
+    set.clock = MediusClockEstimate {
+        offset_us: 0,
+        rate_ppb: 0,
+        delay_us: 0,
+        age_ms: MEDIUS_CLOCK_AGE_NONE,
+    };
+    unsafe { medius_mock_set_catch_state(mock, set) };
+    let mut dev: *mut MediusDevice = ptr::null_mut();
+    assert_eq!(
+        unsafe { medius_device_with_mock(mock, &mut dev) },
+        MediusStatus::Ok
+    );
+    let mut got: MediusCatchState = unsafe { std::mem::zeroed() };
+    assert_eq!(
+        unsafe { medius_device_query_catch(dev, &mut got) },
+        MediusStatus::Ok
+    );
+    // Zeroing the struct would have produced age_ms == 0, which means a fresh estimate of exactly
+    // zero offset. The sentinel has to survive so a caller does not apply an unmeasured offset.
+    assert_eq!(got.clock.age_ms, MEDIUS_CLOCK_AGE_NONE);
+
+    set.clock.age_ms = 0;
+    unsafe { medius_mock_set_catch_state(mock, set) };
+    assert_eq!(
+        unsafe { medius_device_query_catch(dev, &mut got) },
+        MediusStatus::Ok
+    );
+    assert_eq!(got.clock.age_ms, 0);
+    unsafe {
         medius_device_free(dev);
         medius_mock_free(mock);
     }
@@ -649,11 +855,7 @@ fn event_stream_clone_shares_the_subscription() {
         unsafe { medius_device_with_mock(mock, &mut dev) },
         MediusStatus::Ok
     );
-    let mut stream: *mut MediusEventStream = ptr::null_mut();
-    assert_eq!(
-        unsafe { medius_device_catch_events(dev, MEDIUS_CATCH_MASK_ALL, &mut stream) },
-        MediusStatus::Ok
-    );
+    let stream = unsafe { subscribe(dev, &[medius_catch_filter_all()]) };
     let stream2 = unsafe { medius_event_stream_clone(stream) };
     assert!(!stream2.is_null());
     unsafe {

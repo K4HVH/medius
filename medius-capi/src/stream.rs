@@ -2,8 +2,7 @@
 
 use std::time::Duration;
 
-use medius::CatchMask;
-
+use crate::convert::catch_filter_from_c;
 use crate::ctypes::*;
 use crate::device::MediusDevice;
 use crate::error::{MediusStatus, clear_error, fail, guard, guard_status, record};
@@ -18,19 +17,33 @@ pub struct MediusLogStream {
     pub(crate) inner: medius::LogStream,
 }
 
-/// Subscribe to the physical-input event stream for class `mask` (`MEDIUS_CATCH_MASK_*` bits); writes the handle to `*out`.
+/// Subscribe to the catch stream for `filters[0..n]` (build them with the `medius_catch_filter_*` helpers); writes the handle to `*out`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_device_catch_events(
     dev: *mut MediusDevice,
-    mask: MediusCatchMask,
+    filters: *const MediusCatchFilter,
+    n: usize,
     out: *mut *mut MediusEventStream,
 ) -> MediusStatus {
     guard_status(|| {
-        if dev.is_null() || out.is_null() {
+        if dev.is_null() || out.is_null() || filters.is_null() {
             return fail(MediusStatus::ErrInvalidArg, "null pointer");
         }
+        if n == 0 {
+            return fail(MediusStatus::ErrInvalidArg, "empty filter list");
+        }
+        let slice = unsafe { std::slice::from_raw_parts(filters, n) };
+        // Reject the whole call rather than dropping the offender: a subscription silently narrower
+        // than the caller asked for looks like the box producing no events.
+        let mut parsed = Vec::with_capacity(n);
+        for f in slice {
+            match catch_filter_from_c(*f) {
+                Some(f) => parsed.push(f),
+                None => return fail(MediusStatus::ErrInvalidArg, "unknown catch class"),
+            }
+        }
         let d = unsafe { &(*dev).inner };
-        match d.catch_events(CatchMask::from_bits_truncate(mask)) {
+        match d.catch_events(parsed) {
             Ok(stream) => {
                 unsafe { *out = Box::into_raw(Box::new(MediusEventStream { inner: stream })) };
                 clear_error();
