@@ -5,7 +5,8 @@ use core::time::Duration;
 use crate::protocol::opcode::{
     CATCH_CLS_ANY, CATCH_CLS_AXIS, CATCH_CLS_BTN, CATCH_CLS_BUS, CATCH_CLS_CONTROL, CATCH_CLS_EMIT,
     CATCH_CLS_HID_IN, CATCH_CLS_HID_OUT, CATCH_CLS_KEY, CATCH_CLS_MEDIA, CATCH_CLS_VEND_BULK,
-    CATCH_CLS_VEND_INTR, CATCH_ID_ANY,
+    CATCH_CLS_VEND_INTR, CATCH_CTRL_NAK, CATCH_CTRL_OK, CATCH_CTRL_STALL, CATCH_ID_ANY,
+    CLK_RATE_NONE,
 };
 use crate::types::{Class, LockDirection, Usage};
 
@@ -37,7 +38,7 @@ pub enum CatchClass {
     VendorBulk = CATCH_CLS_VEND_BULK,
     /// A proxied control transaction; `id` is the endpoint number (0 = EP0).
     Control = CATCH_CLS_CONTROL,
-    /// The bytes the clone actually put on the wire; `id` is the interface number.
+    /// The bytes the clone actually put on the wire; `id` is the endpoint address.
     Emit = CATCH_CLS_EMIT,
     /// Bus lifecycle (reset, suspend, configuration and interface changes, attach and detach).
     Bus = CATCH_CLS_BUS,
@@ -115,7 +116,24 @@ impl Ord for CatchFilter {
     }
 }
 
+impl CatchClass {
+    /// The catch class an input [`Class`] addresses. The two vocabularies are the same one.
+    pub(crate) fn from_usage_class(c: Class) -> CatchClass {
+        match c {
+            Class::Button => CatchClass::Button,
+            Class::Key => CatchClass::Key,
+            Class::Media => CatchClass::Media,
+        }
+    }
+}
+
 impl CatchFilter {
+    /// Whether this filter covers a class at all, whatever id or direction it names. Used for the
+    /// empty usage snapshot, which says a class went quiet without naming which usage did it.
+    pub(crate) fn matches_class_only(&self, class: CatchClass) -> bool {
+        self.class.is_none_or(|c| c == class)
+    }
+
     /// Whether an event of this class, id and direction is one this filter asked for.
     pub(crate) fn matches(&self, class: CatchClass, id: u16, direction: LockDirection) -> bool {
         if let Some(c) = self.class {
@@ -231,8 +249,11 @@ impl ClockDomain {
 pub struct ClockEstimate {
     /// The host chip's clock minus the device chip's, in microseconds.
     pub offset_us: i32,
-    /// Relative drift between the two crystals, parts per billion.
-    pub rate_ppb: i32,
+    /// Relative drift between the two crystals in parts per billion, or `None` when the box has not
+    /// fitted one. That is a different answer from a fitted zero, which says the two crystals match:
+    /// on a link busy enough that too few clean exchanges reach the box's filter, no fit is made at
+    /// all — precisely when assuming no drift is least safe.
+    pub rate_ppb: Option<i32>,
     /// Best measured round trip in the window. The offset is good to about half of this.
     pub delay_us: u16,
     /// Age of the estimate, or `None` if the box has no estimate yet — which is how a caller tells
@@ -252,7 +273,7 @@ impl ClockEstimate {
     /// offset, which is a reference this side does not have — so over a long-lived stream the two
     /// crystals pull apart at up to 20 ppm, roughly 20 us per second of estimate age. Re-read
     /// [`Device::query_catch`](crate::Device::query_catch) when [`Self::age`] has grown large
-    /// relative to [`Self::error_bound_us`], and use [`Self::drift_since`] to see how much it costs.
+    /// relative to [`Self::error_bound_us`], and use [`Self::drift_us_over`] to see how much it costs.
     pub fn to_host_domain(&self, device_us: u32) -> Option<i64> {
         self.age?;
         Some(device_us as i64 + self.offset_us as i64)
@@ -261,8 +282,10 @@ impl ClockEstimate {
     /// How far the offset has drifted over `elapsed`, in microseconds. Add this to
     /// [`Self::error_bound_us`] for the honest bound on a stamp translated `elapsed` after the
     /// estimate was taken.
+    /// 0 when the box has fitted no rate: it is what is known, not a claim that there is no drift.
     pub fn drift_us_over(&self, elapsed: core::time::Duration) -> i64 {
-        (elapsed.as_micros() as i64).saturating_mul(self.rate_ppb as i64) / 1_000_000_000
+        let Some(ppb) = self.rate_ppb else { return 0 };
+        (elapsed.as_micros() as i64).saturating_mul(ppb as i64) / 1_000_000_000
     }
 }
 
@@ -307,26 +330,27 @@ pub struct UsageSnapshot {
     pub ts_us: u32,
     /// Always [`ClockDomain::HostChip`].
     pub clock: ClockDomain,
-    /// The currently-held usages (all of one class per event).
+    /// Which class this snapshot is of, carried in the frame rather than read off the first usage.
+    /// The snapshot that most needs it is the empty one — releasing the last held usage is the edge
+    /// a caller is watching for, and it has no usages to read a class from.
+    pub class: Class,
+    /// The currently-held usages, all of `class`.
     pub usages: Vec<Usage>,
 }
 
 impl UsageSnapshot {
-    /// Decode a `USAGE_EVENT` payload (§4.10): `[ts u32][clk u8][n u8]` then `n × [class][id u16]`.
+    /// Decode a `USAGE_EVENT` payload (§4.10): `[ts u32][clk u8][cls u8][n u8]` then
+    /// `n × [class][id u16]`.
     pub(crate) fn from_payload(p: &[u8]) -> Option<UsageSnapshot> {
-        if p.len() < EVENT_HDR {
+        if p.len() < EVENT_HDR + 1 {
             return None;
         }
         Some(UsageSnapshot {
             ts_us: u32::from_le_bytes([p[0], p[1], p[2], p[3]]),
             clock: ClockDomain::from_u8(p[4]),
-            usages: Usage::decode_list(&p[EVENT_HDR..])?,
+            class: Class::from_u8(p[5])?,
+            usages: Usage::decode_list(&p[EVENT_HDR + 1..])?,
         })
-    }
-
-    /// The class of this snapshot's usages (from the first entry), or `None` if empty.
-    pub fn class(&self) -> Option<Class> {
-        self.usages.first().map(|u| u.class)
     }
 
     /// Whether `usage` is held in this snapshot.
@@ -370,6 +394,10 @@ pub enum ControlStatus {
     Stalled,
     /// The device NAKed to timeout, or never answered.
     Naked,
+    /// A status byte this build does not know. Kept distinct rather than folded into the nearest
+    /// known one: a catch-all arm would report a future firmware's new status as a timeout, which
+    /// reads as a device fault that never happened.
+    Other(u8),
 }
 
 /// A byte-oriented catch event, a `TRAFFIC_EVENT` frame (§4.10). Everything the box relays that is
@@ -427,11 +455,18 @@ impl TrafficEvent {
     }
 
     /// The data stage, for a [`CatchClass::Control`] event; the whole packet for any other class.
+    ///
+    /// Empty for a control event whose own setup packet was cut short by `snaplen` — the bytes that
+    /// survived are the request, and returning them as the answer would hand a decoder a
+    /// GET_DESCRIPTOR request labelled as the descriptor.
     pub fn data(&self) -> &[u8] {
-        if self.class == CatchClass::Control && self.bytes.len() >= 8 {
+        if self.class != CatchClass::Control {
+            return &self.bytes;
+        }
+        if self.bytes.len() >= 8 {
             &self.bytes[8..]
         } else {
-            &self.bytes
+            &[]
         }
     }
 
@@ -441,9 +476,10 @@ impl TrafficEvent {
             return None;
         }
         Some(match self.flags {
-            0x00 => ControlStatus::Ok,
-            0xFD => ControlStatus::Stalled,
-            _ => ControlStatus::Naked,
+            CATCH_CTRL_OK => ControlStatus::Ok,
+            CATCH_CTRL_STALL => ControlStatus::Stalled,
+            CATCH_CTRL_NAK => ControlStatus::Naked,
+            v => ControlStatus::Other(v),
         })
     }
 
@@ -566,12 +602,18 @@ impl CatchState {
             if o + Self::ENTRY > p.len() {
                 break;
             }
-            let filter = CatchFilter::from_wire(
+            // An entry this build cannot name is SKIPPED, not fatal to the whole reply. Propagating
+            // the failure discarded every other entry, the drop counts and the clock estimate, and
+            // surfaced as "no reply" -- a firmware that added one class would look like a dead link
+            // and send the caller down a reconnect path.
+            let Some(filter) = CatchFilter::from_wire(
                 p[o],
                 u16::from_le_bytes([p[o + 1], p[o + 2]]),
                 p[o + 3],
                 p[o + 4],
-            )?;
+            ) else {
+                continue;
+            };
             entries.push(CatchEntry {
                 filter,
                 dropped: u16::from_le_bytes([p[o + 5], p[o + 6]]),
@@ -582,7 +624,10 @@ impl CatchState {
             dropped: u32::from_le_bytes([p[2], p[3], p[4], p[5]]),
             clock: ClockEstimate {
                 offset_us: i32::from_le_bytes([p[6], p[7], p[8], p[9]]),
-                rate_ppb: i32::from_le_bytes([p[10], p[11], p[12], p[13]]),
+                rate_ppb: match i32::from_le_bytes([p[10], p[11], p[12], p[13]]) {
+                    CLK_RATE_NONE => None,
+                    v => Some(v),
+                },
                 delay_us: u16::from_le_bytes([p[14], p[15]]),
                 // 0xFFFF is the box saying it has no estimate, which is not the same as an estimate
                 // that happens to be zero microseconds old.

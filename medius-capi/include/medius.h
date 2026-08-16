@@ -63,7 +63,7 @@
 // A proxied control transaction, keyed by endpoint number (0 = EP0).
 #define MEDIUS_CATCH_CLASS_CONTROL 8
 
-// The bytes the clone put on the wire, keyed by interface number.
+// The bytes the clone put on the wire, keyed by endpoint address.
 #define MEDIUS_CATCH_CLASS_EMIT 9
 
 // Bus lifecycle: reset, suspend, configuration and interface changes, attach and detach.
@@ -77,6 +77,9 @@
 
 // `MediusClockEstimate::age_ms` when the box has no estimate yet.
 #define MEDIUS_CLOCK_AGE_NONE UINT32_MAX
+
+// `MediusClockEstimate::rate_ppb` when the box has fitted no drift rate.
+#define MEDIUS_CLOCK_RATE_NONE INT32_MIN
 
 // The max clip trigger bindings in a `MediusClipSettings` (matches the firmware `CLIP_TRIG_MAX`).
 #define MEDIUS_CLIP_TRIG_MAX 8
@@ -730,7 +733,10 @@ typedef struct MediusLocks {
 typedef struct MediusClockEstimate {
     // The host chip's clock minus the device chip's, in microseconds.
     int32_t offset_us;
-    // Relative drift between the two crystals, parts per billion.
+    // Relative drift between the two crystals in parts per billion, or `MEDIUS_CLOCK_RATE_NONE`
+    // when the box has fitted none. That is a different answer from a fitted 0, which says the two
+    // crystals match: on a link too busy for enough clean exchanges no fit is made at all, which is
+    // exactly when assuming no drift is least safe.
     int32_t rate_ppb;
     // Best measured round trip in the window. The offset is good to about half of this.
     uint16_t delay_us;
@@ -812,6 +818,10 @@ typedef uint16_t MediusMediaKey;
 
 // One held-usage snapshot: every held usage of one class in `usages[0..n]`.
 typedef struct MediusUsageEvent {
+    // Which class this snapshot is of, one of `MEDIUS_CLASS_*`. Carried here rather than read off
+    // the first entry, because the snapshot that most needs it is the one with `n == 0`: releasing
+    // the last held usage is the edge a caller waits for, and it lists nothing to read a class from.
+    MediusClass class_;
     uint16_t n;
     struct MediusUsage usages[MEDIUS_MAX_USAGES];
 } MediusUsageEvent;

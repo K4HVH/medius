@@ -422,7 +422,7 @@ pub(crate) fn catch_filter_from_c(f: MediusCatchFilter) -> Option<CatchFilter> {
 fn clock_estimate_to_c(c: ClockEstimate) -> MediusClockEstimate {
     MediusClockEstimate {
         offset_us: c.offset_us,
-        rate_ppb: c.rate_ppb,
+        rate_ppb: c.rate_ppb.unwrap_or(MEDIUS_CLOCK_RATE_NONE),
         delay_us: c.delay_us,
         // Saturate one short of the sentinel so a real age can never read as "no estimate".
         age_ms: c.age.map_or(MEDIUS_CLOCK_AGE_NONE, |d| {
@@ -434,7 +434,7 @@ fn clock_estimate_to_c(c: ClockEstimate) -> MediusClockEstimate {
 fn clock_estimate_from_c(c: MediusClockEstimate) -> ClockEstimate {
     ClockEstimate {
         offset_us: c.offset_us,
-        rate_ppb: c.rate_ppb,
+        rate_ppb: (c.rate_ppb != MEDIUS_CLOCK_RATE_NONE).then_some(c.rate_ppb),
         delay_us: c.delay_us,
         age: (c.age_ms != MEDIUS_CLOCK_AGE_NONE).then(|| Duration::from_millis(c.age_ms as u64)),
     }
@@ -707,6 +707,7 @@ impl From<CatchEvent> for MediusCatchEvent {
                     clock: clock_domain_to_c(s.clock),
                     data: MediusCatchEventData {
                         usages: MediusUsageEvent {
+                            class: class_kind(s.class),
                             n: n as u16,
                             usages,
                         },

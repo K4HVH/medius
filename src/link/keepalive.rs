@@ -22,6 +22,13 @@ pub(crate) struct KeepaliveCtx {
     pub(crate) seq: Arc<AtomicU8>,
     pub(crate) counters: Arc<Counters>,
     pub(crate) desired: Arc<Mutex<DesiredState>>,
+    /// The same lock subscribe and unsubscribe commit under. Held across this thread's read of the
+    /// desired set AND its sends, because between the two an unsubscribe can commit -- and then this
+    /// thread re-adds the entry it just removed. The box would hold a table no subscriber wants and
+    /// the crate's own set does not contain, so no later diff would ever remove it, and because the
+    /// table stays non-empty the firmware's silence clear never fires either. On a vendor-bulk entry
+    /// that is a quarter of a megabyte a second the link cannot carry, for the life of the connection.
+    pub(crate) catch_lock: Arc<Mutex<()>>,
     pub(crate) stop: Arc<AtomicBool>,
     pub(crate) cadence: Duration,
 }
@@ -38,6 +45,7 @@ fn keepalive_loop(ctx: KeepaliveCtx) {
         if sleep_cadence(&ctx.stop, ctx.cadence) {
             return;
         }
+        let _serial = ctx.catch_lock.lock();
         let (idle, catch) = {
             let d = ctx.desired.lock();
             (d.is_idle(), d.catch())

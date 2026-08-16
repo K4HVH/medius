@@ -9,14 +9,16 @@ use crate::protocol::opcode::{
     KBC_CONSUMER, KBC_NKRO, KBC_REPORT_ID, KBC_SYSTEM, OPT_EMIT, OPT_IMPERFECT, OPT_MOVE_RIDE,
     RATE_CONFIDENT,
 };
-use crate::protocol::opcode::{CLIP_CFG_F_FINALIZED, CLIP_CFG_F_LOOP, CLIP_CFG_F_RETAIN};
+use crate::protocol::opcode::{
+    CLIP_CFG_F_FINALIZED, CLIP_CFG_F_LOOP, CLIP_CFG_F_RETAIN, CLK_RATE_NONE,
+};
 use crate::protocol::{DecodedFrame, FrameType, encode};
 use crate::transport::mock::MockTransport;
 use crate::types::lock::blanket_scope;
 use crate::types::{
-    Caps, CatchClass, CatchState, ClipSettings, ClipState, ClipStatus, ClockDomain, DeviceInfo,
-    DeviceKind, EmitPace, Health, ImperfectStatus, KbdCaps, LockDirection, Locks, LogLevel,
-    MouseCaps, Rate, Stats, Usage, Version,
+    Caps, CatchClass, CatchState, Class, ClipSettings, ClipState, ClipStatus, ClockDomain,
+    DeviceInfo, DeviceKind, EmitPace, Health, ImperfectStatus, KbdCaps, LockDirection, Locks,
+    LogLevel, MouseCaps, Rate, Stats, Usage, Version,
 };
 
 #[derive(Debug)]
@@ -186,7 +188,7 @@ fn catch_resp_payload(c: &CatchState) -> Vec<u8> {
     let mut p = vec![7u8, c.table_full as u8];
     p.extend_from_slice(&c.dropped.to_le_bytes());
     p.extend_from_slice(&c.clock.offset_us.to_le_bytes());
-    p.extend_from_slice(&c.clock.rate_ppb.to_le_bytes());
+    p.extend_from_slice(&c.clock.rate_ppb.unwrap_or(CLK_RATE_NONE).to_le_bytes());
     p.extend_from_slice(&c.clock.delay_us.to_le_bytes());
     // 0xFFFF is "no estimate", which a consumer must be able to tell from a zero-age one.
     let age = c
@@ -291,10 +293,11 @@ fn motion_event_payload(ts_us: u32, dx: i16, dy: i16, dz: i16) -> Vec<u8> {
     p
 }
 
-fn usage_event_payload(ts_us: u32, usages: &[Usage]) -> Vec<u8> {
-    let mut p = Vec::with_capacity(6 + 3 * usages.len());
+fn usage_event_payload(ts_us: u32, class: Class, usages: &[Usage]) -> Vec<u8> {
+    let mut p = Vec::with_capacity(7 + 3 * usages.len());
     p.extend_from_slice(&ts_us.to_le_bytes());
     p.push(0); // clk: host chip, as for motion
+    p.push(class.as_u8());
     p.push(usages.len() as u8);
     for u in usages {
         u.push_le(&mut p);
@@ -596,11 +599,14 @@ impl MockBox {
     }
 
     /// `ts_us` is the raw wire timestamp, as for [`push_motion`](Self::push_motion).
-    pub fn push_usages(&self, seq: u8, ts_us: u32, usages: &[Usage]) {
+    /// A held-usage snapshot. `class` is carried in the frame rather than inferred, so a test can
+    /// push the EMPTY snapshot -- the release of the last held usage -- and still say which class
+    /// went quiet.
+    pub fn push_usages(&self, seq: u8, ts_us: u32, class: Class, usages: &[Usage]) {
         self.transport.push_frame(
             FrameType::UsageEvent,
             seq,
-            &usage_event_payload(ts_us, usages),
+            &usage_event_payload(ts_us, class, usages),
         );
     }
 

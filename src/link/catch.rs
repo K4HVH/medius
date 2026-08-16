@@ -9,9 +9,10 @@ use crate::error::Result;
 use crate::protocol::FrameType;
 use crate::protocol::command::catch_payload;
 use crate::types::{
-    CatchClass, CatchEvent, CatchFilter, LockDirection, MotionEvent, TrafficEvent, UsageSnapshot,
+    Axis, CatchClass, CatchEvent, CatchFilter, LockDirection, MotionEvent, TrafficEvent,
+    UsageSnapshot,
 };
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use super::Link;
 
@@ -36,10 +37,29 @@ pub(crate) struct CatchReg {
 impl CatchReg {
     /// The union every subscriber together asks for. The box holds one table, so overlapping
     /// subscriptions collapse into it and each consumer still sees everything it asked for.
+    ///
+    /// Where two subscribers name the same entry with different capture lengths, the WIDEST wins --
+    /// 0 means the whole packet, so it beats every finite length. Snaplen is a property of an entry
+    /// rather than part of its address, so collapsing on address alone let whichever filter the set
+    /// happened to keep decide it: a caller that asked for whole packets started receiving cut ones
+    /// the moment unrelated code in the same process subscribed with a shorter snaplen, with no
+    /// error and nothing to say why.
     fn effective(&self) -> BTreeSet<CatchFilter> {
-        self.subs
-            .iter()
-            .flat_map(|s| s.filters.iter().copied())
+        let mut widest: BTreeMap<CatchFilter, u8> = BTreeMap::new();
+        for f in self.subs.iter().flat_map(|s| s.filters.iter().copied()) {
+            let e = widest.entry(f).or_insert(f.snaplen);
+            *e = if *e == 0 || f.snaplen == 0 {
+                0
+            } else {
+                (*e).max(f.snaplen)
+            };
+        }
+        widest
+            .into_iter()
+            .map(|(mut f, snaplen)| {
+                f.snaplen = snaplen;
+                f
+            })
             .collect()
     }
 }
@@ -53,23 +73,60 @@ fn decode_event(ty: FrameType, payload: &[u8]) -> Option<CatchEvent> {
     }
 }
 
-/// The address an event carries, for matching against a subscriber's own filters.
+/// Whether this subscriber asked for this event.
 ///
-/// The input frames do not carry a class byte: a `MOTION_EVENT` is always an axis, and a
-/// `USAGE_EVENT` is whatever class its usages are. That is enough to route them.
-fn event_address(event: &CatchEvent) -> Option<(CatchClass, u16, LockDirection)> {
-    Some(match event {
-        CatchEvent::Motion(_) => (CatchClass::Axis, u16::MAX, LockDirection::Both),
-        CatchEvent::Usages(u) => {
-            let class = match u.class()? {
-                crate::types::Class::Button => CatchClass::Button,
-                crate::types::Class::Key => CatchClass::Key,
-                crate::types::Class::Media => CatchClass::Media,
-            };
-            (class, u16::MAX, LockDirection::Both)
+/// A traffic event carries its own `(class, id, direction)` and matches directly. The two input
+/// frames do not: they carry CONTENT, and the addresses they represent have to be read out of it.
+///
+/// Getting that wrong is silent in the worst way. Passing `id = u16::MAX` for an input event -- which
+/// is the wildcard value on the wire but not on this side -- made every exact-id input subscription
+/// match nothing at all: the box accepted the entry, `RESP(CATCH)` listed it, its drop count stayed
+/// zero, and the stream was simply empty forever.
+fn wanted(sub: &CatchSub, event: &CatchEvent) -> bool {
+    let any = |class, id, dir| sub.filters.iter().any(|f| f.matches(class, id, dir));
+    match event {
+        // One report can move several axes. It is delivered if ANY axis it moved was subscribed, with
+        // that axis's own direction -- the sign of its delta, which is what an axis direction means
+        // here and what the box resolves on. A report that moved nothing names no axis, so it falls
+        // back to the class, exactly as the empty usage snapshot does: the box does not emit one, and
+        // an event this side cannot address is one to deliver, never one to discard.
+        CatchEvent::Motion(m) => {
+            let moved = [(Axis::X, m.dx), (Axis::Y, m.dy), (Axis::Wheel, m.dz)];
+            if moved.iter().all(|(_, d)| *d == 0) {
+                return sub
+                    .filters
+                    .iter()
+                    .any(|f| f.matches_class_only(CatchClass::Axis));
+            }
+            moved.into_iter().any(|(ax, d)| {
+                d != 0
+                    && any(
+                        CatchClass::Axis,
+                        ax.as_u16(),
+                        if d > 0 {
+                            LockDirection::Positive
+                        } else {
+                            LockDirection::Negative
+                        },
+                    )
+            })
         }
-        CatchEvent::Traffic(t) => (t.class, t.id, t.direction),
-    })
+        // A snapshot lists the usages currently HELD. An empty one is the release of the last of
+        // them, which is exactly the edge a caller waits for, so it is matched on the frame's own
+        // class rather than dropped for having nothing in it.
+        CatchEvent::Usages(u) => {
+            let class = CatchClass::from_usage_class(u.class);
+            if u.usages.is_empty() {
+                any(class, u16::MAX, LockDirection::Both)
+                    || sub.filters.iter().any(|f| f.matches_class_only(class))
+            } else {
+                u.usages
+                    .iter()
+                    .any(|usage| any(class, usage.id, LockDirection::Both))
+            }
+        }
+        CatchEvent::Traffic(t) => any(t.class, t.id, t.direction),
+    }
 }
 
 /// Deliver one decoded catch frame to the subscribers that asked for it, dropping the oldest on a
@@ -83,15 +140,10 @@ pub(crate) fn deliver_event(reg: &Mutex<CatchReg>, ty: FrameType, payload: &[u8]
     let Some(event) = decode_event(ty, payload) else {
         return;
     };
-    let addr = event_address(&event);
     let reg = reg.lock();
     for sub in &reg.subs {
-        // An event whose address cannot be determined (an empty usage snapshot) goes to everyone
-        // subscribed to anything rather than being dropped: losing it silently would be worse.
-        if let Some((class, id, dir)) = addr {
-            if !sub.filters.iter().any(|f| f.matches(class, id, dir)) {
-                continue;
-            }
+        if !wanted(sub, &event) {
+            continue;
         }
         match sub.tx.try_send(event.clone()) {
             Ok(()) => {}

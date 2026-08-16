@@ -143,6 +143,17 @@ pub const CATCH_CLS_ANY: u8 = 0xFF;
 /// `CATCH` id wildcard: every id within the class (§3.9), the same sentinel `LOCK` uses.
 pub const CATCH_ID_ANY: u16 = 0xFFFF;
 
+/// `TRAFFIC_EVENT.flags` for a `CATCH_CLS_CONTROL` event: what the real device answered.
+pub const CATCH_CTRL_OK: u8 = 0x00;
+/// The device STALLed the transfer.
+pub const CATCH_CTRL_STALL: u8 = 0xFD;
+/// The device NAKed to timeout, or never answered.
+pub const CATCH_CTRL_NAK: u8 = 0xFE;
+
+/// `RESP(CATCH).clk_rate_ppb` sentinel: the box has fitted no drift rate. Distinct from a fitted 0,
+/// which says the two crystals are matched.
+pub const CLK_RATE_NONE: i32 = i32::MIN;
+
 /// `LOCK` class byte (§3.8): momentary usages share `INJECT`'s space, plus a relative-axis class.
 pub const LOCK_CLS_BTN: u8 = 0;
 pub const LOCK_CLS_KEY: u8 = 1;
