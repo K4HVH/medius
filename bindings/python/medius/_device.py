@@ -3,15 +3,16 @@
 from __future__ import annotations
 
 import ctypes
-from typing import Optional
+from typing import Optional, Sequence, Union
 
 from . import _native
-from ._enums import Action, Blanket, CatchMask, LedMode, LedTarget, LockDirection, RebootTarget, Status
-from ._errors import MediusError, check
+from ._enums import Action, Blanket, LedMode, LedTarget, LockDirection, RebootTarget, Status
+from ._errors import InvalidArgError, MediusError, check
 from ._clip import ClipHandle
 from ._streams import EventStream, LogStream
 from ._types import (
     Caps,
+    CatchFilter,
     CatchState,
     Counters,
     EmitPace,
@@ -254,9 +255,22 @@ class Device:
         check(_native.lib.medius_device_clip(self._handle, ctypes.byref(out)))
         return ClipHandle(out.value, self)
 
-    def catch_events(self, mask: CatchMask = CatchMask.ALL) -> EventStream:
+    def catch_events(self, filters: Union[CatchFilter, Sequence[CatchFilter]]) -> EventStream:
+        """Subscribe to the catch stream for one filter or a sequence of them.
+
+        Overlapping subscriptions from different callers collapse into the one table the box holds,
+        and each consumer still receives everything it asked for.
+        """
+        seq = [filters] if isinstance(filters, CatchFilter) else list(filters)
+        if not seq:
+            raise InvalidArgError(Status.ERR_INVALID_ARG, "catch_events needs at least one filter")
+        arr = (_native.MediusCatchFilter * len(seq))(*[f._c for f in seq])
         out = ctypes.c_void_p()
-        check(_native.lib.medius_device_catch_events(self._handle, int(mask), ctypes.byref(out)))
+        check(
+            _native.lib.medius_device_catch_events(
+                self._handle, arr, len(seq), ctypes.byref(out)
+            )
+        )
         return EventStream(out.value, self)
 
     def logs(self) -> LogStream:

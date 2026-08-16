@@ -9,13 +9,18 @@ from typing import List, Optional, Union
 from . import _native
 from ._enums import (
     Blanket,
+    BusEventKind,
+    CatchClass,
     CatchEventKind,
     ClipAction,
     ClipState,
+    ClockDomain,
+    ControlStatus,
     DeviceKind,
     Edge,
     EmitMode,
     Class,
+    LockDirection,
     LockTargetKind,
     LogLevel,
 )
@@ -149,9 +154,43 @@ class Locks:
 
 
 @dataclass
+class ClockEstimate:
+    """The measured difference between the two chips' clocks, from RESP(CATCH)."""
+
+    offset_us: int = 0
+    rate_ppb: int = 0
+    delay_us: int = 0
+    # `None` is the box saying it has never measured, which an offset of zero also looks like.
+    age_ms: Optional[int] = None
+
+    @property
+    def error_bound_us(self) -> int:
+        """Half the measured round trip: the bound on how wrong `offset_us` can be."""
+        return self.delay_us // 2
+
+    def to_host_domain(self, device_us: int) -> Optional[int]:
+        """A device-chip stamp on the host chip's timeline, or `None` when there is no estimate to apply."""
+        if self.age_ms is None:
+            return None
+        return int(device_us) + self.offset_us
+
+
+@dataclass
+class CatchEntry:
+    """One row of the box's subscription table: a live subscription and what it has lost."""
+
+    filter: "CatchFilter"
+    dropped: int = 0
+
+
+@dataclass
 class CatchState:
-    mask: int
-    dropped: int
+    """Decoded RESP(CATCH): the live subscription table, its drop counts, and the inter-chip clock estimate."""
+
+    table_full: bool = False
+    dropped: int = 0
+    clock: ClockEstimate = field(default_factory=ClockEstimate)
+    entries: List[CatchEntry] = field(default_factory=list)
 
 
 @dataclass
@@ -244,18 +283,91 @@ class UsageSnapshot:
 
 
 @dataclass
+class BusEvent:
+    """A decoded bus lifecycle event; the payload fields are 0 for the kinds that carry none."""
+
+    kind: BusEventKind
+    configuration: int = 0
+    interface: int = 0
+    alt: int = 0
+
+
+@dataclass
+class TrafficEvent:
+    """One byte-oriented catch event: HID reports, vendor endpoints, control transactions, the bytes
+    the clone emitted, or bus lifecycle.
+
+    `bytes` is as much of the packet as the subscription's `snaplen` kept; `true_len` is its length
+    before that truncation, so set both when building one by hand.
+    """
+
+    catch_class: CatchClass
+    id: int
+    direction: LockDirection
+    flags: int = 0
+    true_len: int = 0
+    bytes: bytes = b""
+
+    def truncated(self) -> bool:
+        """Whether `snaplen` cut this packet short; without it a cut capture reads as a short packet."""
+        c = traffic_event_to_c(self)
+        return bool(_native.lib.medius_traffic_event_truncated(ctypes.byref(c)))
+
+    def setup(self) -> Optional[bytes]:
+        """The 8-byte setup packet of a CONTROL event; `None` for another class or a shorter capture."""
+        c = traffic_event_to_c(self)
+        p = _native.lib.medius_traffic_event_setup(ctypes.byref(c))
+        return bytes(p[:8]) if p else None
+
+    def data(self) -> bytes:
+        """The data stage of a CONTROL event, the whole packet for any other class."""
+        c = traffic_event_to_c(self)
+        n = _native.usize()
+        p = _native.lib.medius_traffic_event_data(ctypes.byref(c), ctypes.byref(n))
+        return bytes(p[: int(n.value)]) if p else b""
+
+    def control_status(self) -> Optional[ControlStatus]:
+        """What the real device answered; `None` for any class but CONTROL."""
+        c = traffic_event_to_c(self)
+        out = _native.u8()
+        if _native.lib.medius_traffic_event_control_status(ctypes.byref(c), ctypes.byref(out)):
+            return ControlStatus(out.value)
+        return None
+
+    def bus_event(self) -> Optional[BusEvent]:
+        """The lifecycle event; `None` for any class but BUS or an unknown kind."""
+        c = traffic_event_to_c(self)
+        out = _native.MediusBusEvent()
+        if _native.lib.medius_traffic_event_bus_event(ctypes.byref(c), ctypes.byref(out)):
+            return BusEvent(BusEventKind(out.kind), out.configuration, out.interface, out.alt)
+        return None
+
+    def bulk_end_of_transfer(self) -> bool:
+        """Whether this VENDOR_BULK event carries end-of-transfer."""
+        c = traffic_event_to_c(self)
+        return bool(_native.lib.medius_traffic_event_bulk_end_of_transfer(ctypes.byref(c)))
+
+    def bulk_zlp(self) -> bool:
+        """Whether this VENDOR_BULK event is a zero-length packet, which terminates a transfer."""
+        c = traffic_event_to_c(self)
+        return bool(_native.lib.medius_traffic_event_bulk_zlp(ctypes.byref(c)))
+
+
+@dataclass
 class CatchEvent:
     """One catch-stream event.
 
-    `ts_us` is when the real device's report arrived, in box microseconds. It is the box's own clock,
-    unrelated to any clock on this machine, so it is only meaningful compared against other events. It
-    wraps every ~71.6 minutes and restarts at zero if the box reboots, so a value below the previous one
-    is one or the other and the delta across that point is meaningless.
+    `ts_us` is in the `clock` chip's microseconds. Both chips boot independently, so a stamp is a
+    box-local value unrelated to any clock on this machine and only meaningful compared against
+    another from the same domain; to cross domains apply `CatchState.clock`. Each wraps every ~71.6
+    minutes and restarts at zero if that chip reboots, so a value below the previous one is a wrap, a
+    reboot, or a domain change, and the delta across it is meaningless.
     """
 
     kind: CatchEventKind
-    payload: Union[MotionEvent, UsageSnapshot]
+    payload: Union[MotionEvent, UsageSnapshot, TrafficEvent]
     ts_us: int = 0
+    clock: ClockDomain = ClockDomain.HOST_CHIP
 
     @property
     def motion(self) -> Optional[MotionEvent]:
@@ -264,6 +376,10 @@ class CatchEvent:
     @property
     def usages(self) -> Optional[UsageSnapshot]:
         return self.payload if self.kind == CatchEventKind.USAGES else None
+
+    @property
+    def traffic(self) -> Optional[TrafficEvent]:
+        return self.payload if self.kind == CatchEventKind.TRAFFIC else None
 
 
 @dataclass
@@ -379,6 +495,86 @@ class LockTarget:
         if self._c.kind == int(LockTargetKind.USAGE):
             return Usage(_native.MediusUsage(kind=self._c.usage.kind, id=self._c.usage.id))
         return None
+
+
+class CatchFilter:
+    """One CATCH subscription: what to observe, in which direction, and how much of each packet to keep.
+
+    Build with `CatchFilter.all` / `class_` / `addr`, then narrow with `with_direction` and
+    `with_snaplen`. Matching is most-specific-first, so an exact `(class, id)` beats a class blanket,
+    which beats the everything filter, and the winning entry supplies `snaplen` — which is what lets a
+    caller say "everything at 16 bytes, except this endpoint in full" in two entries.
+    """
+
+    def __init__(self, c):
+        self._c = c
+
+    @classmethod
+    def all(cls) -> "CatchFilter":
+        """Every class, every id, both directions, whole packets. One frame on the wire."""
+        return cls(_native.lib.medius_catch_filter_all())
+
+    @classmethod
+    def class_(cls, catch_class: CatchClass) -> "CatchFilter":
+        """Every id within one class."""
+        return cls(_native.lib.medius_catch_filter_class(int(catch_class)))
+
+    @classmethod
+    def addr(cls, catch_class: CatchClass, id: int) -> "CatchFilter":
+        """One exact address: an endpoint, an interface, or a usage."""
+        return cls(_native.lib.medius_catch_filter_addr(int(catch_class), int(id)))
+
+    def with_direction(self, direction: LockDirection) -> "CatchFilter":
+        """A copy restricted to one direction or edge."""
+        return CatchFilter(
+            _native.MediusCatchFilter(self._c.class_, self._c.id, int(direction), self._c.snaplen)
+        )
+
+    def with_snaplen(self, n: int) -> "CatchFilter":
+        """A copy keeping only the first `n` bytes of each event; 0 keeps the whole packet."""
+        return CatchFilter(
+            _native.MediusCatchFilter(self._c.class_, self._c.id, self._c.direction, int(n))
+        )
+
+    @property
+    def catch_class(self) -> Optional[CatchClass]:
+        """The class observed, or `None` for the every-class wildcard."""
+        if self._c.class_ == _native.MEDIUS_CATCH_CLASS_ANY:
+            return None
+        return CatchClass(self._c.class_)
+
+    @property
+    def id(self) -> Optional[int]:
+        """The class-specific id, or `None` for the every-id wildcard."""
+        if self._c.id == _native.MEDIUS_CATCH_ID_ANY:
+            return None
+        return int(self._c.id)
+
+    @property
+    def direction(self) -> LockDirection:
+        """For the input classes the press or release edge; for the traffic classes POSITIVE is IN and NEGATIVE is OUT."""
+        return LockDirection(self._c.direction)
+
+    @property
+    def snaplen(self) -> int:
+        return int(self._c.snaplen)
+
+    def _key(self):
+        return (int(self._c.class_), int(self._c.id), int(self._c.direction), int(self._c.snaplen))
+
+    def __eq__(self, other) -> bool:
+        return isinstance(other, CatchFilter) and self._key() == other._key()
+
+    def __hash__(self) -> int:
+        return hash(self._key())
+
+    def __repr__(self) -> str:
+        name = "ANY" if self.catch_class is None else self.catch_class.name
+        ident = "ANY" if self.id is None else self.id
+        return (
+            f"CatchFilter(class={name}, id={ident}, "
+            f"direction={self.direction.name}, snaplen={self.snaplen})"
+        )
 
 
 def version_from_c(c) -> Version:
@@ -545,12 +741,40 @@ def stats_to_c(s) -> "_native.MediusStats":
     )
 
 
+def catch_filter_from_c(c) -> CatchFilter:
+    # Copy: a filter read out of a state buffer must outlive the buffer it was read from.
+    return CatchFilter(_native.MediusCatchFilter(c.class_, c.id, c.direction, c.snaplen))
+
+
+def clock_estimate_from_c(c) -> ClockEstimate:
+    age = None if c.age_ms == _native.MEDIUS_CLOCK_AGE_NONE else int(c.age_ms)
+    return ClockEstimate(int(c.offset_us), int(c.rate_ppb), int(c.delay_us), age)
+
+
+def clock_estimate_to_c(e) -> "_native.MediusClockEstimate":
+    age = _native.MEDIUS_CLOCK_AGE_NONE if e.age_ms is None else int(e.age_ms)
+    return _native.MediusClockEstimate(e.offset_us, e.rate_ppb, e.delay_us, age)
+
+
 def catch_state_from_c(c) -> CatchState:
-    return CatchState(c.mask, c.dropped)
+    n = min(int(c.n), _native.MEDIUS_MAX_CATCH_ENTRIES)
+    entries = [
+        CatchEntry(catch_filter_from_c(c.entries[i].filter), int(c.entries[i].dropped))
+        for i in range(n)
+    ]
+    return CatchState(bool(c.table_full), int(c.dropped), clock_estimate_from_c(c.clock), entries)
 
 
-def catch_state_to_c(c) -> "_native.MediusCatchState":
-    return _native.MediusCatchState(mask=c.mask, dropped=c.dropped)
+def catch_state_to_c(s) -> "_native.MediusCatchState":
+    c = _native.MediusCatchState()
+    c.table_full = 1 if s.table_full else 0
+    c.dropped = s.dropped
+    c.clock = clock_estimate_to_c(s.clock)
+    n = min(len(s.entries), _native.MEDIUS_MAX_CATCH_ENTRIES)
+    c.n = n
+    for i in range(n):
+        c.entries[i] = _native.MediusCatchEntry(s.entries[i].filter._c, s.entries[i].dropped)
+    return c
 
 
 def imperfect_from_c(c) -> ImperfectStatus:
@@ -742,15 +966,44 @@ def usage_snapshot_to_c(s) -> "_native.MediusUsageEvent":
     return c
 
 
+def traffic_event_to_c(t) -> "_native.MediusTrafficEvent":
+    c = _native.MediusTrafficEvent()
+    c.class_ = int(t.catch_class)
+    c.id = int(t.id)
+    c.direction = int(t.direction)
+    c.flags = int(t.flags)
+    c.true_len = int(t.true_len)
+    raw = bytes(t.bytes)[: _native.MEDIUS_MAX_TRAFFIC_BYTES]
+    c.len = len(raw)
+    for i, b in enumerate(raw):
+        c.bytes[i] = b
+    return c
+
+
+def traffic_event_from_c(c) -> TrafficEvent:
+    n = min(int(c.len), _native.MEDIUS_MAX_TRAFFIC_BYTES)
+    return TrafficEvent(
+        CatchClass(c.class_),
+        int(c.id),
+        LockDirection(c.direction),
+        int(c.flags),
+        int(c.true_len),
+        bytes(c.bytes[:n]),
+    )
+
+
 def decode_catch_event(c) -> CatchEvent:
     kind = CatchEventKind(c.kind)
+    clock = ClockDomain(c.clock)
     if kind == CatchEventKind.MOTION:
         m = c.data.motion
-        return CatchEvent(kind, MotionEvent(m.dx, m.dy, m.dz), c.ts_us)
+        return CatchEvent(kind, MotionEvent(m.dx, m.dy, m.dz), c.ts_us, clock)
+    if kind == CatchEventKind.TRAFFIC:
+        return CatchEvent(kind, traffic_event_from_c(c.data.traffic), c.ts_us, clock)
     u = c.data.usages
     n = min(int(u.n), _native.MEDIUS_MAX_USAGES)
     usages = [_input_copy(u.usages[i]) for i in range(n)]
-    return CatchEvent(kind, UsageSnapshot(usages), c.ts_us)
+    return CatchEvent(kind, UsageSnapshot(usages), c.ts_us, clock)
 
 
 def decode_log_line(c) -> LogLine:
