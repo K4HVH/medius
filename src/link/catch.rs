@@ -8,7 +8,9 @@ use parking_lot::Mutex;
 use crate::error::Result;
 use crate::protocol::FrameType;
 use crate::protocol::command::catch_payload;
-use crate::types::{CatchEvent, CatchFilter, MotionEvent, TrafficEvent, UsageSnapshot};
+use crate::types::{
+    CatchClass, CatchEvent, CatchFilter, LockDirection, MotionEvent, TrafficEvent, UsageSnapshot,
+};
 use std::collections::BTreeSet;
 
 use super::Link;
@@ -51,13 +53,46 @@ fn decode_event(ty: FrameType, payload: &[u8]) -> Option<CatchEvent> {
     }
 }
 
-/// Broadcast one decoded catch frame to every subscriber, dropping the oldest on a full buffer.
+/// The address an event carries, for matching against a subscriber's own filters.
+///
+/// The input frames do not carry a class byte: a `MOTION_EVENT` is always an axis, and a
+/// `USAGE_EVENT` is whatever class its usages are. That is enough to route them.
+fn event_address(event: &CatchEvent) -> Option<(CatchClass, u16, LockDirection)> {
+    Some(match event {
+        CatchEvent::Motion(_) => (CatchClass::Axis, u16::MAX, LockDirection::Both),
+        CatchEvent::Usages(u) => {
+            let class = match u.class()? {
+                crate::types::Class::Button => CatchClass::Button,
+                crate::types::Class::Key => CatchClass::Key,
+                crate::types::Class::Media => CatchClass::Media,
+            };
+            (class, u16::MAX, LockDirection::Both)
+        }
+        CatchEvent::Traffic(t) => (t.class, t.id, t.direction),
+    })
+}
+
+/// Deliver one decoded catch frame to the subscribers that asked for it, dropping the oldest on a
+/// full buffer.
+///
+/// Matched against each subscriber's OWN filters, not just delivered to all of them. The box holds
+/// one table -- the union of every subscription -- so without this check a caller watching one
+/// endpoint would also receive everything every other caller in the process had subscribed to, and
+/// its stream would change shape depending on unrelated code elsewhere.
 pub(crate) fn deliver_event(reg: &Mutex<CatchReg>, ty: FrameType, payload: &[u8]) {
     let Some(event) = decode_event(ty, payload) else {
         return;
     };
+    let addr = event_address(&event);
     let reg = reg.lock();
     for sub in &reg.subs {
+        // An event whose address cannot be determined (an empty usage snapshot) goes to everyone
+        // subscribed to anything rather than being dropped: losing it silently would be worse.
+        if let Some((class, id, dir)) = addr {
+            if !sub.filters.iter().any(|f| f.matches(class, id, dir)) {
+                continue;
+            }
+        }
         match sub.tx.try_send(event.clone()) {
             Ok(()) => {}
             Err(flume::TrySendError::Full(e)) => {

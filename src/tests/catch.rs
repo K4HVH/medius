@@ -46,6 +46,22 @@ fn catch_classes_match_the_wire() {
 }
 
 #[test]
+fn snaplen_is_not_part_of_a_filter_s_identity() {
+    // The box dedups its table on (class, id, direction). If two filters differing only in snaplen
+    // counted as distinct here, two subscribers would each believe they had their own entry while
+    // the second silently overwrote the first's capture length.
+    use std::collections::BTreeSet;
+    let a = CatchFilter::addr(CatchClass::VendorBulk, 0x83).snaplen(0);
+    let b = CatchFilter::addr(CatchClass::VendorBulk, 0x83).snaplen(16);
+    assert_eq!(a, b);
+    let set: BTreeSet<CatchFilter> = [a, b].into_iter().collect();
+    assert_eq!(set.len(), 1);
+    // Direction still separates them, because the box treats it as part of the key.
+    let c = CatchFilter::addr(CatchClass::VendorBulk, 0x83).direction(LockDirection::Negative);
+    assert_ne!(a, c);
+}
+
+#[test]
 fn filter_builders_produce_the_right_wire_pair() {
     assert_eq!(CatchFilter::all().wire(), (CATCH_CLS_ANY, CATCH_ID_ANY));
     assert_eq!(
@@ -326,6 +342,97 @@ mod with_mock {
         let b = s.recv().unwrap();
         assert_eq!((a.ts_us(), a.clock()), (111, ClockDomain::HostChip));
         assert_eq!((b.ts_us(), b.clock()), (222, ClockDomain::DeviceChip));
+    }
+
+    #[test]
+    fn each_subscriber_gets_only_what_it_asked_for() {
+        // The box holds ONE table -- the union of every subscription -- so without per-subscriber
+        // matching a caller's stream would change shape whenever unrelated code elsewhere in the
+        // process subscribed to something else.
+        let mock = MockBox::new();
+        let dev = Device::with_mock(mock.clone());
+        let bulk = dev
+            .catch_events([CatchFilter::addr(CatchClass::VendorBulk, 0x83)])
+            .unwrap();
+        let bus = dev
+            .catch_events([CatchFilter::class(CatchClass::Bus)])
+            .unwrap();
+
+        mock.push_traffic(
+            0,
+            1,
+            ClockDomain::DeviceChip,
+            CatchClass::VendorBulk,
+            0x83,
+            LockDirection::Positive,
+            0,
+            2,
+            &[1, 2],
+        );
+        mock.push_traffic(
+            1,
+            2,
+            ClockDomain::DeviceChip,
+            CatchClass::Bus,
+            0xFFFF,
+            LockDirection::Both,
+            0,
+            2,
+            &[0, 0],
+        );
+
+        match bulk.recv().unwrap() {
+            CatchEvent::Traffic(t) => assert_eq!(t.class, CatchClass::VendorBulk),
+            other => panic!("expected vendor bulk, got {other:?}"),
+        }
+        assert!(
+            bulk.try_recv().is_none(),
+            "the bus event must not reach the bulk subscriber"
+        );
+
+        match bus.recv().unwrap() {
+            CatchEvent::Traffic(t) => assert_eq!(t.class, CatchClass::Bus),
+            other => panic!("expected bus, got {other:?}"),
+        }
+        assert!(
+            bus.try_recv().is_none(),
+            "the bulk event must not reach the bus subscriber"
+        );
+    }
+
+    #[test]
+    fn an_endpoint_filter_excludes_its_neighbours() {
+        let mock = MockBox::new();
+        let dev = Device::with_mock(mock.clone());
+        let s = dev
+            .catch_events([CatchFilter::addr(CatchClass::VendorBulk, 0x83)])
+            .unwrap();
+        mock.push_traffic(
+            0,
+            1,
+            ClockDomain::DeviceChip,
+            CatchClass::VendorBulk,
+            0x84,
+            LockDirection::Positive,
+            0,
+            1,
+            &[9],
+        );
+        mock.push_traffic(
+            1,
+            2,
+            ClockDomain::DeviceChip,
+            CatchClass::VendorBulk,
+            0x83,
+            LockDirection::Positive,
+            0,
+            1,
+            &[7],
+        );
+        match s.recv().unwrap() {
+            CatchEvent::Traffic(t) => assert_eq!((t.id, t.bytes[0]), (0x83, 7)),
+            other => panic!("expected 0x83, got {other:?}"),
+        }
     }
 
     #[test]
