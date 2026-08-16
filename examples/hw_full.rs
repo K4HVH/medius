@@ -18,6 +18,7 @@ mod linux {
     use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
     use std::time::{Duration, Instant};
 
+    use medius::PROTO_VER;
     use medius::{
         Action, Axis, Blanket, Button, CatchClass, CatchFilter, ClipAction, ClipBuilder, ClipState,
         ClipTrigger, Device, Edge, EmitPace, Key, LedMode, LedTarget, LockDirection, MediaKey,
@@ -237,7 +238,10 @@ mod linux {
             let dev = device.as_ref().unwrap();
             let ver = dev.query_version();
             let health = dev.query_health();
-            let ver_ok = ver.as_ref().map(|v| v.proto_ver == 3).unwrap_or(false);
+            let ver_ok = ver
+                .as_ref()
+                .map(|v| v.proto_ver == PROTO_VER)
+                .unwrap_or(false);
             let h_ok = health
                 .as_ref()
                 .map(|h| h.link_up && h.mouse_attached && h.clone_configured)
@@ -249,7 +253,7 @@ mod linux {
             check(
                 "handshake",
                 ver_ok && h_ok,
-                format!("proto_ver==3 ({fw})  health={health:?}"),
+                format!("proto_ver=={PROTO_VER} ({fw})  health={health:?}"),
             );
         }
 
@@ -524,10 +528,18 @@ mod linux {
         }
 
         {
-            // CATCH: subscribe, confirm CATCH_ON + mask via query_catch, idle stays quiet, and RESET
-            // clears catch AND disconnects the host stream (recv -> Err). Live delivery needs a hand.
+            // CATCH: subscribe, confirm CATCH_ON + the table via query_catch, and RESET clears catch
+            // AND disconnects the host stream.
+            //
+            // Subscribed to the INPUT classes, not everything. An idle mouse produces no input event,
+            // which is what makes "quiet while idle" a real assertion -- but CatchFilter::all() now
+            // covers HID_IN and EMIT, which fire on every report a streaming device sends, so against
+            // one of those the same check asserted that a working box was broken.
             let dev = device.as_ref().unwrap();
-            let stream = dev.catch_events([CatchFilter::all()]);
+            let stream = dev.catch_events([
+                CatchFilter::class(CatchClass::Axis),
+                CatchFilter::class(CatchClass::Button),
+            ]);
             std::thread::sleep(Duration::from_millis(100));
             let on = dev.query_health().map(|h| h.catch_on).unwrap_or(false);
             let entries = dev.query_catch().map(|c| c.entries.len()).unwrap_or(0);
@@ -539,10 +551,18 @@ mod linux {
             std::thread::sleep(Duration::from_millis(100));
             let off = dev.query_health().map(|h| !h.catch_on).unwrap_or(false);
             let cleared = dev.query_catch().map(|c| c.is_empty()).unwrap_or(false);
-            let stream_ended = stream.as_ref().map(|s| s.recv().is_err()).unwrap_or(false);
+            // Drain first: recv() returns what is already buffered before it reports the disconnect,
+            // so a stream that ended is one whose reads run OUT, not one that errors immediately.
+            let stream_ended = stream
+                .as_ref()
+                .map(|s| {
+                    while s.try_recv().is_some() {}
+                    s.recv().is_err()
+                })
+                .unwrap_or(false);
             check(
                 "catch: subscribe + reset",
-                on && entries == 1 && idle_quiet && off && cleared && stream_ended,
+                on && entries == 2 && idle_quiet && off && cleared && stream_ended,
                 format!(
                     "CATCH_ON={on} entries={entries} idle_quiet={idle_quiet}; reset->off={off} cleared={cleared} stream_ended={stream_ended}"
                 ),
@@ -1158,14 +1178,14 @@ mod linux {
             let dev = device.as_ref().unwrap();
             let _ = dev.reboot(RebootTarget::HostRun);
             std::thread::sleep(Duration::from_secs(2));
-            let mut recovered = matches!(dev.query_version(), Ok(v) if v.proto_ver == 3);
+            let mut recovered = matches!(dev.query_version(), Ok(v) if v.proto_ver == PROTO_VER);
             for _ in 0..10 {
                 if recovered {
                     break;
                 }
                 let _ = dev.reconnect();
                 std::thread::sleep(Duration::from_millis(500));
-                recovered = matches!(dev.query_version(), Ok(v) if v.proto_ver == 3);
+                recovered = matches!(dev.query_version(), Ok(v) if v.proto_ver == PROTO_VER);
             }
             reset_motion(&acc);
             let _ = dev.move_rel(10, 0);
@@ -1195,7 +1215,7 @@ mod linux {
             use futures::executor::block_on;
             let adev = device.as_ref().unwrap().clone().into_async();
             let av_ok = block_on(adev.query_version())
-                .map(|v| v.proto_ver == 3)
+                .map(|v| v.proto_ver == PROTO_VER)
                 .unwrap_or(false);
             let ah_ok = block_on(adev.query_health())
                 .map(|h| h.link_up)
@@ -1256,7 +1276,7 @@ mod linux {
             match reopened {
                 Ok(dev) => {
                     let base = dev.counters().reconnects;
-                    let up0 = matches!(dev.query_version(), Ok(v) if v.proto_ver == 3);
+                    let up0 = matches!(dev.query_version(), Ok(v) if v.proto_ver == PROTO_VER);
                     println!(
                         "\n>>> AUTO-RECONNECT: physically UNPLUG the box's control USB, wait ~2s, then \
                          replug.\n    Waiting up to 60s for the reader to self-heal; NO reconnect() is \
@@ -1267,7 +1287,7 @@ mod linux {
                     while Instant::now() < deadline {
                         std::thread::sleep(Duration::from_millis(500));
                         if dev.counters().reconnects > base
-                            && matches!(dev.query_version(), Ok(v) if v.proto_ver == 3)
+                            && matches!(dev.query_version(), Ok(v) if v.proto_ver == PROTO_VER)
                         {
                             healed = true;
                             break;

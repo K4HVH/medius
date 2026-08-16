@@ -29,6 +29,9 @@ pub use device::logs::LogStream;
 pub use device::options::{EMIT_MAX_HZ, NAME_MAX};
 pub use error::{Error, Result};
 pub use link::{DEFAULT_KEEPALIVE_CADENCE, DEFAULT_QUERY_TIMEOUT};
+/// The control-protocol version this build speaks. A box reporting anything else is refused at the
+/// handshake; exposing it lets a caller say so in its own words before connecting.
+pub use protocol::PROTO_VER;
 pub use protocol::{DecodedFrame, FrameType};
 pub use transport::scan::find_medius;
 pub use types::{
