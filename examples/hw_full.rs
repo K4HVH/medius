@@ -634,6 +634,41 @@ mod linux {
         }
 
         {
+            // An EXACT-ID input subscription, on hardware. Every check above uses a class blanket,
+            // and the per-id path shipped broken and invisible: the box accepted the entry, listed
+            // it, counted no drops, and the stream stayed empty forever. Only a filter that names one
+            // axis can tell that apart from a quiet mouse.
+            let dev = device.as_ref().unwrap();
+            let mut wanted = 0usize;
+            let mut unwanted = 0usize;
+            if let Ok(stream) = dev.catch_events([CatchFilter::addr(
+                CatchClass::Axis,
+                medius::Axis::X.as_u16(),
+            )]) {
+                let deadline = std::time::Instant::now() + Duration::from_secs(3);
+                while std::time::Instant::now() < deadline {
+                    if let Some(medius::CatchEvent::Motion(m)) =
+                        stream.recv_timeout(Duration::from_millis(100))
+                    {
+                        if m.dx != 0 {
+                            wanted += 1;
+                        } else {
+                            unwanted += 1;
+                        }
+                    }
+                }
+            }
+            let _ = dev.reset();
+            // Every event this subscription receives must have moved the axis it named. Nothing
+            // asserts a count here: the mouse may legitimately be still.
+            check(
+                "catch: exact-id input filter",
+                unwanted == 0,
+                format!("{wanted} moved X, {unwanted} did not (move the mouse if both are 0)"),
+            );
+        }
+
+        {
             // The measured inter-chip clock estimate. Both chips must be running current firmware for
             // this to converge; an absent estimate reads as age=None rather than a zero offset.
             let dev = device.as_ref().unwrap();
