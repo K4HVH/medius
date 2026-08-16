@@ -268,8 +268,15 @@ pub unsafe extern "C" fn medius_mock_push_usages(
         if event.is_null() {
             return;
         }
-        let usages = crate::convert::usage_event_to_medius(unsafe { &*event });
-        m.push_usages(seq, ts_us, &usages);
+        let e = unsafe { &*event };
+        let usages = crate::convert::usage_event_to_medius(e);
+        m.push_usages(
+            seq,
+            ts_us,
+            crate::convert::class_from_c(e.class),
+            e.direction.into(),
+            &usages,
+        );
     });
 }
 

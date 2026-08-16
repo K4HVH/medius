@@ -23,6 +23,9 @@ MEDIUS_MAX_TRAFFIC_BYTES = 180
 MEDIUS_CATCH_CLASS_ANY = 0xFF
 MEDIUS_CATCH_ID_ANY = 0xFFFF
 MEDIUS_CLOCK_AGE_NONE = 0xFFFFFFFF
+# MediusClockEstimate.rate_ppb when the box has fitted no drift rate. Different from a fitted 0, which
+# says the two crystals are matched.
+MEDIUS_CLOCK_RATE_NONE = -0x80000000
 
 u8 = ctypes.c_uint8
 u16 = ctypes.c_uint16
@@ -239,7 +242,15 @@ class MediusMotionEvent(ctypes.Structure):
 
 
 class MediusUsageEvent(ctypes.Structure):
-    _fields_ = [("n", u16), ("usages", MediusUsage * MEDIUS_MAX_USAGES)]
+    # Mirrors MediusUsageEvent in medius.h. A missing field here is not a decode bug, it is a buffer
+    # overrun: the library writes sizeof(MediusCatchEvent) bytes into whatever this allocates, so a
+    # struct short by one field lets every catch event write past the end of it.
+    _fields_ = [
+        ("class_", u8),
+        ("direction", u8),
+        ("n", u16),
+        ("usages", MediusUsage * MEDIUS_MAX_USAGES),
+    ]
 
 
 class MediusTrafficEvent(ctypes.Structure):

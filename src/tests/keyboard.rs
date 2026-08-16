@@ -2,7 +2,7 @@
 
 use crate::protocol::command::inject_payload;
 use crate::protocol::opcode::{INJ_KEY, INJ_MEDIA};
-use crate::types::{Class, Key, MediaKey};
+use crate::types::{Class, Key, LockDirection, MediaKey};
 
 #[test]
 fn key_inject_bytes() {
@@ -62,13 +62,20 @@ fn pushed_keyboard_and_media_events_arrive_on_the_stream() {
         0,
         1_000,
         Class::Key,
+        LockDirection::Positive,
         &[
             Usage::from(Key::LEFT_SHIFT),
             Usage::from(Key::A),
             Usage::from(Key::B),
         ],
     );
-    mock.push_usages(1, 2_000, Class::Media, &[Usage::from(MediaKey::VOLUME_UP)]);
+    mock.push_usages(
+        1,
+        2_000,
+        Class::Media,
+        LockDirection::Positive,
+        &[Usage::from(MediaKey::VOLUME_UP)],
+    );
 
     let CatchEvent::Usages(kb) = stream.recv_timeout(Duration::from_secs(1)).expect("keys") else {
         panic!("expected a usage event");

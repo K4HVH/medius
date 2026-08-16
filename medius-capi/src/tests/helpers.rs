@@ -130,6 +130,7 @@ fn rate_native_hz_divides_the_period() {
 fn usage_event(usages: &[MediusUsage]) -> MediusUsageEvent {
     let mut e = MediusUsageEvent {
         class: usages.first().map_or(MediusClass::Button, |u| u.kind),
+        direction: MediusLockDirection::Positive,
         n: usages.len() as u16,
         usages: [MediusUsage {
             kind: MediusClass::Button,
@@ -202,6 +203,7 @@ fn usage_snapshot_count_caps_at_capacity_without_wrapping() {
         ts_us: 0,
         clock: medius::ClockDomain::HostChip,
         class: medius::Class::Key,
+        direction: medius::LockDirection::Positive,
         usages: (0..(MEDIUS_MAX_USAGES as u16 + 44))
             .map(|i| medius::Usage::new(medius::Class::Key, i))
             .collect(),
@@ -225,6 +227,7 @@ fn an_empty_snapshot_crosses_the_c_boundary_still_naming_its_class() {
             ts_us: 7,
             clock: medius::ClockDomain::HostChip,
             class,
+            direction: medius::LockDirection::Negative,
             usages: Vec::new(),
         };
         let ev = MediusCatchEvent::from(medius::CatchEvent::Usages(snap));
@@ -324,12 +327,14 @@ fn traffic_event_splits_setup_from_the_data_stage() {
     );
     assert!(!unsafe { medius_traffic_event_truncated(&e) });
 
-    // A packet shorter than the setup stage has no setup to read, and its whole body is the data.
+    // A packet shorter than the setup stage has no setup to read AND no data stage: the bytes that
+    // survived snaplen are the request, and returning them as the answer labels a GET_DESCRIPTOR
+    // request as the descriptor. This asserted the opposite while the Rust side asserted this.
     let short = control_event(&[0x80, 0x06], 0x00);
     assert!(unsafe { medius_traffic_event_setup(&short) }.is_null());
     let d = unsafe { medius_traffic_event_data(&short, &mut len) };
-    assert_eq!(len, 2);
-    assert_eq!(unsafe { std::slice::from_raw_parts(d, len) }, &[0x80, 0x06]);
+    assert_eq!(len, 0, "a cut setup packet has no data stage");
+    let _ = d;
 
     // Any other class keeps the whole packet as data.
     let mut hid = control_event(&[1, 2, 3, 4, 5, 6, 7, 8, 9], 0);
@@ -352,6 +357,16 @@ fn traffic_event_decodes_control_status_and_bus_events() {
     let ok = control_event(&[0; 8], 0x00);
     assert!(unsafe { medius_traffic_event_control_status(&ok, &mut status) });
     assert_eq!(status, MediusControlStatus::Ok);
+
+    let naked = control_event(&[0; 8], 0xFE);
+    assert!(unsafe { medius_traffic_event_control_status(&naked, &mut status) });
+    assert_eq!(status, MediusControlStatus::Naked);
+
+    // An unknown status stays unknown. A catch-all arm reported it as a timeout, so a future
+    // firmware.s new status read as a device fault that never happened; the raw byte is in .flags.
+    let other = control_event(&[0; 8], 0x42);
+    assert!(unsafe { medius_traffic_event_control_status(&other, &mut status) });
+    assert_eq!(status, MediusControlStatus::Other);
 
     let mut hid = ok;
     hid.class = MEDIUS_CATCH_CLASS_HID_IN;

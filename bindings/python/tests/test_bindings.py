@@ -1,6 +1,9 @@
 """Mock-backed tests for the Python bindings."""
 
 import gc
+import pathlib
+import subprocess
+import tempfile
 import time
 
 import pytest
@@ -658,3 +661,61 @@ def test_clip_builder_gap_zero_is_noop():
         clip.append(b)
         appends = _clip_frames(d, mock, FrameType.CLIP_APPEND)
     assert appends == [], "an empty clip appends nothing"
+
+
+def test_ctypes_structs_match_the_c_header():
+    """Every shared struct must be the size the library thinks it is.
+
+    This is not a decode concern, it is memory safety: `medius_event_stream_recv` writes
+    `sizeof(MediusCatchEvent)` bytes into a buffer this module allocates, so a mirror short by one
+    field lets the library write past the end of it on every event. A field added to the header and
+    missed here is silent until it corrupts the heap -- which is exactly how it happened.
+    """
+    import ctypes
+    import re
+
+    from medius import _native
+
+    header = (
+        pathlib.Path(__file__).resolve().parents[3]
+        / "medius-capi"
+        / "include"
+        / "medius.h"
+    )
+    if not header.exists():
+        pytest.skip(f"{header} not present")
+    text = header.read_text()
+
+    # The C compiler is the authority; parse each struct out of the header and sizeof it for real.
+    probe = pathlib.Path(tempfile.mkdtemp()) / "sizes.c"
+    names = [
+        "MediusUsage",
+        "MediusMotionEvent",
+        "MediusUsageEvent",
+        "MediusTrafficEvent",
+        "MediusCatchEvent",
+        "MediusClockEstimate",
+        "MediusCatchEntry",
+        "MediusCatchFilter",
+    ]
+    present = [n for n in names if re.search(rf"\}} {n};", text)]
+    body = "\n".join(f'    printf("%s %zu\\n", "{n}", sizeof(struct {n}));' for n in present)
+    probe.write_text(
+        f'#include <stdio.h>\n#include "{header}"\nint main(void) {{\n{body}\n    return 0;\n}}\n'
+    )
+    exe = probe.with_suffix("")
+    if subprocess.run(["gcc", str(probe), "-o", str(exe)], capture_output=True).returncode != 0:
+        pytest.skip("no working C compiler for the layout probe")
+    out = subprocess.run([str(exe)], capture_output=True, text=True).stdout
+
+    mismatches = []
+    for line in out.split("\n"):
+        if not line.strip():
+            continue
+        name, size = line.split()
+        mirror = getattr(_native, name, None)
+        if mirror is None:
+            continue
+        if ctypes.sizeof(mirror) != int(size):
+            mismatches.append(f"{name}: C {size} vs python {ctypes.sizeof(mirror)}")
+    assert not mismatches, "ctypes mirrors drifted from medius.h: " + "; ".join(mismatches)

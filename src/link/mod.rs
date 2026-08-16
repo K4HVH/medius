@@ -128,6 +128,7 @@ impl Link {
                 desired: Arc::clone(&desired),
                 reconnect_lock: Arc::clone(&reconnect_lock),
                 identity: Arc::clone(&identity),
+                catch_lock: Arc::clone(&catch_lock),
             },
         );
 

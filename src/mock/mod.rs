@@ -293,11 +293,17 @@ fn motion_event_payload(ts_us: u32, dx: i16, dy: i16, dz: i16) -> Vec<u8> {
     p
 }
 
-fn usage_event_payload(ts_us: u32, class: Class, usages: &[Usage]) -> Vec<u8> {
-    let mut p = Vec::with_capacity(7 + 3 * usages.len());
+fn usage_event_payload(
+    ts_us: u32,
+    class: Class,
+    direction: LockDirection,
+    usages: &[Usage],
+) -> Vec<u8> {
+    let mut p = Vec::with_capacity(8 + 3 * usages.len());
     p.extend_from_slice(&ts_us.to_le_bytes());
     p.push(0); // clk: host chip, as for motion
     p.push(class.as_u8());
+    p.push(direction.as_u8());
     p.push(usages.len() as u8);
     for u in usages {
         u.push_le(&mut p);
@@ -602,11 +608,19 @@ impl MockBox {
     /// A held-usage snapshot. `class` is carried in the frame rather than inferred, so a test can
     /// push the EMPTY snapshot -- the release of the last held usage -- and still say which class
     /// went quiet.
-    pub fn push_usages(&self, seq: u8, ts_us: u32, class: Class, usages: &[Usage]) {
+    /// `direction` is the edge that produced the snapshot: the subscribed set grew or shrank.
+    pub fn push_usages(
+        &self,
+        seq: u8,
+        ts_us: u32,
+        class: Class,
+        direction: LockDirection,
+        usages: &[Usage],
+    ) {
         self.transport.push_frame(
             FrameType::UsageEvent,
             seq,
-            &usage_event_payload(ts_us, class, usages),
+            &usage_event_payload(ts_us, class, direction, usages),
         );
     }
 

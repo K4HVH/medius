@@ -39,6 +39,11 @@ pub(crate) struct ReconnectCtx {
     pub(crate) desired: Arc<Mutex<DesiredState>>,
     pub(crate) reconnect_lock: Arc<Mutex<()>>,
     pub(crate) identity: Arc<Mutex<Option<BoxIdentity>>>,
+    /// The lock subscribe and unsubscribe commit under. Held across the read of the desired catch set
+    /// AND the sends that replay it, for the same reason the keepalive holds it: an unsubscribe
+    /// committing in between leaves this path re-adding the entry it just removed, into a box whose
+    /// table no later diff will ever narrow again.
+    pub(crate) catch_lock: Arc<Mutex<()>>,
 }
 
 // Runs its own query loop (the reader thread isn't up yet) so a rescan confirms the MAC before adopting.
@@ -126,6 +131,7 @@ fn reconnect(ctx: &ReconnectCtx) -> Result<()> {
 }
 
 fn reapply_held(ctx: &ReconnectCtx) -> Result<()> {
+    let _serial = ctx.catch_lock.lock();
     let (held, held_locks, catch) = {
         let d = ctx.desired.lock();
         (
@@ -197,6 +203,7 @@ impl Link {
             desired: Arc::clone(&self.inner.desired),
             reconnect_lock: Arc::clone(&self.inner.reconnect_lock),
             identity: Arc::clone(&self.inner.identity),
+            catch_lock: Arc::clone(&self.inner.catch_lock),
         }
     }
 
