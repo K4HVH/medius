@@ -27,6 +27,12 @@ pub enum Error {
     #[error("frame payload too long (max {max} bytes)", max = crate::protocol::MAX_PAYLOAD)]
     FrameTooLong,
 
+    #[error(
+        "the box holds at most {max} catch entries and this subscription needs {needed}",
+        max = crate::protocol::opcode::CATCH_MAX_ENTRIES
+    )]
+    CatchTableFull { needed: usize },
+
     #[cfg(feature = "flash")]
     #[error("flash tool failed: {0}")]
     FlashTool(String),

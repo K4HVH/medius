@@ -562,6 +562,102 @@ mod with_mock {
     }
 
     #[test]
+    fn a_subscription_past_the_box_s_table_is_refused_not_truncated() {
+        // The box holds 32 entries and drops the rest, reporting it only in a flag nothing was
+        // obliged to read -- so the caller got a stream quietly missing whatever did not fit.
+        use crate::protocol::opcode::CATCH_MAX_ENTRIES;
+        let mock = MockBox::new();
+        let dev = Device::with_mock(mock.clone());
+        let fits: Vec<CatchFilter> = (0..CATCH_MAX_ENTRIES as u16)
+            .map(|i| CatchFilter::addr(CatchClass::VendorBulk, 0x80 + i))
+            .collect();
+        let _ok = dev
+            .catch_events(fits.clone())
+            .expect("exactly the table size fits");
+
+        let one_more = CatchFilter::addr(CatchClass::VendorInterrupt, 0x99);
+        let err = dev.catch_events([one_more]).unwrap_err();
+        assert!(
+            matches!(err, crate::Error::CatchTableFull { needed } if needed == CATCH_MAX_ENTRIES + 1),
+            "got {err:?}"
+        );
+        // And the refusal must not have left the registry holding it: the union is unchanged, so a
+        // later subscribe of something that DOES fit still works.
+        drop(_ok);
+        let _after = dev
+            .catch_events([CatchFilter::class(CatchClass::Bus)])
+            .expect("the refused subscription left nothing behind");
+    }
+
+    #[test]
+    fn an_unchanged_entry_is_not_re_sent() {
+        // catch_sync runs holding catch_lock, and every frame is a blocking serial write. Re-sending
+        // the whole table on any change made dropping one stream cost a write per entry, ahead of
+        // every other subscribe and the keepalive.
+        let mock = MockBox::new();
+        let dev = Device::with_mock(mock.clone());
+        let a = dev
+            .catch_events([
+                CatchFilter::addr(CatchClass::VendorBulk, 0x83),
+                CatchFilter::addr(CatchClass::VendorBulk, 0x84),
+                CatchFilter::class(CatchClass::Bus),
+            ])
+            .unwrap();
+        let b = dev
+            .catch_events([CatchFilter::addr(CatchClass::VendorInterrupt, 0x85)])
+            .unwrap();
+        let before = mock
+            .recorded_frames()
+            .iter()
+            .filter(|f| f.ty == FrameType::Catch)
+            .count();
+        drop(b);
+        let sent: Vec<Vec<u8>> = mock
+            .recorded_frames()
+            .iter()
+            .filter(|f| f.ty == FrameType::Catch)
+            .skip(before)
+            .map(|f| f.payload.clone())
+            .collect();
+        // Exactly one frame: the unsubscribe for what B alone wanted. A's three entries are already
+        // in the box at the right capture length and must not be rewritten.
+        assert_eq!(sent.len(), 1, "sent {sent:?}");
+        assert_eq!(sent[0][4], 0, "the one frame is an unsubscribe");
+        assert_eq!(sent[0][0], CatchClass::VendorInterrupt.as_u8());
+        drop(a);
+    }
+
+    #[test]
+    fn a_changed_snaplen_still_reaches_the_box() {
+        // The flip side: snaplen is deliberately not part of a filter's identity, so a set difference
+        // cannot see it move and it has to be compared explicitly.
+        let mock = MockBox::new();
+        let dev = Device::with_mock(mock.clone());
+        let a = dev
+            .catch_events([CatchFilter::addr(CatchClass::VendorBulk, 0x83).snaplen(8)])
+            .unwrap();
+        let before = mock
+            .recorded_frames()
+            .iter()
+            .filter(|f| f.ty == FrameType::Catch)
+            .count();
+        // A second subscriber wants whole packets on the same address: the entry must be rewritten.
+        let _b = dev
+            .catch_events([CatchFilter::addr(CatchClass::VendorBulk, 0x83).snaplen(0)])
+            .unwrap();
+        let sent: Vec<Vec<u8>> = mock
+            .recorded_frames()
+            .iter()
+            .filter(|f| f.ty == FrameType::Catch)
+            .skip(before)
+            .map(|f| f.payload.clone())
+            .collect();
+        assert_eq!(sent.len(), 1, "sent {sent:?}");
+        assert_eq!(sent[0][5], 0, "rewritten at the widest capture length");
+        drop(a);
+    }
+
+    #[test]
     fn duplicate_addresses_in_one_call_take_the_widest() {
         // The same rule inside a single subscribe. Collecting straight into a set kept whichever
         // duplicate happened to be listed last, so the two orderings of one pair disagreed.

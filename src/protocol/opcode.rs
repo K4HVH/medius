@@ -143,6 +143,11 @@ pub const CATCH_CLS_ANY: u8 = 0xFF;
 /// `CATCH` id wildcard: every id within the class (§3.9), the same sentinel `LOCK` uses.
 pub const CATCH_ID_ANY: u16 = 0xFFFF;
 
+/// Entries the box's subscription table holds (`CATCH_TAB_MAX`). Past this the box refuses the entry
+/// and says so only in `RESP(CATCH).table_full`, so a caller that never reads that flag would get a
+/// silently incomplete subscription.
+pub const CATCH_MAX_ENTRIES: usize = 32;
+
 /// `TRAFFIC_EVENT.flags` for a `CATCH_CLS_CONTROL` event: what the real device answered.
 pub const CATCH_CTRL_OK: u8 = 0x00;
 /// The device STALLed the transfer.
