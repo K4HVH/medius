@@ -23,6 +23,7 @@ mod tests;
 
 pub use device::Device;
 pub use device::catch::EventStream;
+pub use device::input::InputStream;
 pub use device::clip::ClipHandle;
 pub use device::discover::BoxInfo;
 pub use device::logs::LogStream;
@@ -35,13 +36,14 @@ pub use protocol::PROTO_VER;
 pub use protocol::{DecodedFrame, FrameType};
 pub use transport::scan::find_medius;
 pub use types::{
-    Action, Axis, Blanket, BusEvent, Button, CLIP_EDGES_MAX, Caps, CatchClass, CatchEntry,
+    Action, Axis, Blanket, BusEvent, Button, CLIP_EDGES_MAX, Caps, Capture, CatchClass, CatchEntry,
     CatchEvent, CatchFilter, CatchState, Class, ClipAction, ClipBuilder, ClipSettings, ClipState,
     ClipStatus, ClipTrigger, ClockDomain, ClockEstimate, ControlStatus, CountersSnapshot,
-    DeviceInfo, DeviceKind, Edge, EmitPace, EmitPaceStatus, Health, ImperfectStatus, KbdCaps, Key,
-    LedMode, LedTarget, LockDirection, LockEntry, LockScope, LockTarget, Locks, LogLevel, LogLine,
-    MediaKey, Motion, MotionEvent, MouseCaps, PortInfo, Rate, RebootTarget, Stats, TrafficEvent,
-    Usage, UsageSnapshot, Version,
+    DeviceInfo, DeviceKind, Direction, DirectionMeaning, Edge, EmitPace, EmitPaceStatus, Health,
+    ImperfectStatus, Input, InputEvent, KbdCaps, Key, LedMode, LedTarget, LockEntry, LockScope,
+    LockTarget, Locks, LogLevel, LogLine, MediaKey, Motion, MotionEvent, MouseCaps, PortInfo, Rate,
+    RebootTarget, Stamped, Stats, Timeline, Timestamped, TrafficClass, TrafficEvent, Usage,
+    UsageSnapshot, Version,
 };
 
 #[cfg(feature = "async")]

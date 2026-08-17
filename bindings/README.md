@@ -64,7 +64,7 @@ with medius.Device.find() as dev:
     print(dev.query_version())
     dev.move_rel(100, -50)
     dev.press(medius.Button.LEFT)
-    with dev.catch_events(medius.CatchMask.ALL) as events:
+    with dev.input_events(medius.CatchFilter.all_input()) as events:
         for event in events:
             ...
 ```

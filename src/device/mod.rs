@@ -6,6 +6,7 @@ pub(crate) mod clip;
 pub(crate) mod connect;
 pub(crate) mod discover;
 pub(crate) mod inject;
+pub(crate) mod input;
 pub(crate) mod led;
 pub(crate) mod lock;
 pub(crate) mod logs;

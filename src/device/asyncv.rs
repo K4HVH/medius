@@ -10,12 +10,13 @@ use crate::protocol::{Resp, parse_resp};
 use crate::types::{
     Action, Axis, Blanket, Caps, CatchFilter, CatchState, ClipBuilder, ClipSettings, ClipStatus,
     ClipTrigger, CountersSnapshot, DeviceInfo, Edge, EmitPace, EmitPaceStatus, Health,
-    ImperfectStatus, LedMode, LedTarget, LockDirection, LockTarget, Locks, Motion, Rate,
+    ImperfectStatus, LedMode, LedTarget, Direction, LockTarget, Locks, Motion, Rate,
     RebootTarget, Stats, Usage, Version,
 };
 
 use super::Device;
 use super::catch::EventStream;
+use super::input::InputStream;
 use super::clip::ClipHandle;
 use super::discover::BoxInfo;
 use super::logs::LogStream;
@@ -122,32 +123,32 @@ impl AsyncDevice {
     }
 
     /// `LOCK`: block a usage (button/key/media) or axis. Instant; see [`Device::lock`].
-    pub fn lock(&self, target: impl Into<LockTarget>, direction: LockDirection) -> Result<()> {
+    pub fn lock(&self, target: impl Into<LockTarget>, direction: Direction) -> Result<()> {
         self.dev().lock(target, direction)
     }
 
     /// `LOCK`: release a locked usage or axis. Instant; see [`Device::unlock`].
-    pub fn unlock(&self, target: impl Into<LockTarget>, direction: LockDirection) -> Result<()> {
+    pub fn unlock(&self, target: impl Into<LockTarget>, direction: Direction) -> Result<()> {
         self.dev().unlock(target, direction)
     }
 
     /// `LOCK`: block a relative axis by sign. Instant; see [`Device::lock_axis`].
-    pub fn lock_axis(&self, axis: Axis, direction: LockDirection) -> Result<()> {
+    pub fn lock_axis(&self, axis: Axis, direction: Direction) -> Result<()> {
         self.dev().lock_axis(axis, direction)
     }
 
     /// `LOCK`: release an axis lock. Instant; see [`Device::unlock_axis`].
-    pub fn unlock_axis(&self, axis: Axis, direction: LockDirection) -> Result<()> {
+    pub fn unlock_axis(&self, axis: Axis, direction: Direction) -> Result<()> {
         self.dev().unlock_axis(axis, direction)
     }
 
     /// `LOCK`: blanket-block a whole group. Instant; see [`Device::lock_all`].
-    pub fn lock_all(&self, what: Blanket, direction: LockDirection) -> Result<()> {
+    pub fn lock_all(&self, what: Blanket, direction: Direction) -> Result<()> {
         self.dev().lock_all(what, direction)
     }
 
     /// `LOCK`: release a blanket lock. Instant; see [`Device::unlock_all`].
-    pub fn unlock_all(&self, what: Blanket, direction: LockDirection) -> Result<()> {
+    pub fn unlock_all(&self, what: Blanket, direction: Direction) -> Result<()> {
         self.dev().unlock_all(what, direction)
     }
 
@@ -157,6 +158,14 @@ impl AsyncDevice {
         filters: impl IntoIterator<Item = CatchFilter>,
     ) -> Result<EventStream> {
         self.dev().catch_events(filters)
+    }
+
+    /// Subscribe to decoded input edges. Instant; see [`Device::input_events`].
+    pub fn input_events(
+        &self,
+        filters: impl IntoIterator<Item = CatchFilter>,
+    ) -> Result<InputStream> {
+        self.dev().input_events(filters)
     }
 
     /// `OPTION(IMPERFECT)`: opt into cloning an over-capacity device. Instant; see [`Device::allow_imperfect_clones`].

@@ -1,10 +1,9 @@
 //! `LOCK` control vocabulary (§3.8): what a lock addresses, its edge, blanket groups, and decoded locks.
 
 use crate::protocol::opcode::{
-    LOCK_AXIS_WHEEL, LOCK_AXIS_X, LOCK_AXIS_Y, LOCK_CLS_AXIS, LOCK_DIR_BOTH, LOCK_DIR_NEG,
-    LOCK_DIR_POS, LOCK_DIRBIT_NEG, LOCK_DIRBIT_POS,
+    LOCK_AXIS_WHEEL, LOCK_AXIS_X, LOCK_AXIS_Y, LOCK_CLS_AXIS, LOCK_DIRBIT_NEG, LOCK_DIRBIT_POS,
 };
-use crate::types::{Axis, Class, Usage};
+use crate::types::{Axis, Class, Direction, Usage};
 
 /// A whole-group blanket: the cursor aim (X+Y), the wheel, every mouse button, every key, or every media usage.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -56,32 +55,6 @@ pub(crate) fn blanket_from_scope(scope: u8) -> Vec<Blanket> {
         .copied()
         .filter(|b| scope & b.clip_lock_bit() != 0)
         .collect()
-}
-
-/// Which edge a `LOCK` covers: press/release for a usage, `+`/`-` sign for an axis.
-#[repr(u8)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub enum LockDirection {
-    Both = LOCK_DIR_BOTH,
-    Positive = LOCK_DIR_POS,
-    Negative = LOCK_DIR_NEG,
-}
-
-impl LockDirection {
-    /// The wire `direction` byte.
-    pub fn as_u8(self) -> u8 {
-        self as u8
-    }
-
-    /// Map a wire `direction` byte to a [`LockDirection`], or `None` if unknown.
-    pub fn from_u8(v: u8) -> Option<Self> {
-        Some(match v {
-            LOCK_DIR_BOTH => LockDirection::Both,
-            LOCK_DIR_POS => LockDirection::Positive,
-            LOCK_DIR_NEG => LockDirection::Negative,
-            _ => return None,
-        })
-    }
 }
 
 /// What a lock addresses: a relative axis or a momentary usage (button/key/media).
@@ -163,7 +136,7 @@ impl Locks {
     }
 
     /// Whether the given target is locked on the given edge, by a specific entry or a covering blanket.
-    pub fn is_locked(&self, target: impl Into<LockTarget>, dir: LockDirection) -> bool {
+    pub fn is_locked(&self, target: impl Into<LockTarget>, dir: Direction) -> bool {
         let target = target.into();
         self.entries.iter().any(|e| {
             let covers = match e.scope {
@@ -174,9 +147,9 @@ impl Locks {
             };
             covers
                 && match dir {
-                    LockDirection::Both => e.positive && e.negative,
-                    LockDirection::Positive => e.positive,
-                    LockDirection::Negative => e.negative,
+                    Direction::Both => e.positive && e.negative,
+                    Direction::Positive => e.positive,
+                    Direction::Negative => e.negative,
                 }
         })
     }

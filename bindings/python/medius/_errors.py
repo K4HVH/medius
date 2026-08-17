@@ -59,6 +59,34 @@ class PanicError(MediusError):
     pass
 
 
+class CatchTableFullError(MediusError):
+    """The subscription needs more entries than the box's table holds."""
+
+
+class EmptySubscriptionError(MediusError):
+    """A catch subscription with no filters, which would never yield an event."""
+
+
+class CaptureNotApplicableError(MediusError):
+    """A capture on an input class, which arrives decoded and carries no packet."""
+
+
+class NotAnInputFilterError(MediusError):
+    """A traffic class passed to `input_events`, which cannot decode one."""
+
+
+class WildcardNotInputError(MediusError):
+    """`CatchFilter.everything()` passed to `input_events`; it covers traffic too."""
+
+
+class HalfEdgeInputFilterError(MediusError):
+    """An input filter narrowed to one edge, which cannot be decoded into press and release."""
+
+
+class ReservedIdError(MediusError):
+    """An exact id equal to the blanket sentinel, which would address the whole class."""
+
+
 _STATUS_EXC = {
     Status.ERR_IO: IoError,
     Status.ERR_NOT_FOUND: NotFoundError,
@@ -70,6 +98,13 @@ _STATUS_EXC = {
     Status.ERR_FLASH_TOOL: FlashToolError,
     Status.ERR_INVALID_ARG: InvalidArgError,
     Status.ERR_PANIC: PanicError,
+    Status.ERR_CATCH_TABLE_FULL: CatchTableFullError,
+    Status.ERR_EMPTY_SUBSCRIPTION: EmptySubscriptionError,
+    Status.ERR_CAPTURE_NOT_APPLICABLE: CaptureNotApplicableError,
+    Status.ERR_NOT_AN_INPUT_FILTER: NotAnInputFilterError,
+    Status.ERR_WILDCARD_NOT_INPUT: WildcardNotInputError,
+    Status.ERR_HALF_EDGE_INPUT_FILTER: HalfEdgeInputFilterError,
+    Status.ERR_RESERVED_ID: ReservedIdError,
 }
 
 

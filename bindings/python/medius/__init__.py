@@ -6,6 +6,7 @@ from typing import List
 
 from . import _native
 from ._enums import (
+    Axis,
     Action,
     Blanket,
     BusEventKind,
@@ -24,30 +25,39 @@ from ._enums import (
     Key,
     LedMode,
     LedTarget,
-    LockDirection,
+    Direction,
     LockTargetKind,
     LogLevel,
     MediaKey,
     MotionKind,
     RebootTarget,
     Status,
+    InputKind,
+    TrafficClass,
 )
 from ._errors import (
     BadProtoVerError,
+    CaptureNotApplicableError,
+    CatchTableFullError,
     DisconnectedError,
+    EmptySubscriptionError,
     FlashToolError,
     FrameTooLongError,
+    HalfEdgeInputFilterError,
     InvalidArgError,
     IoError,
     MediusError,
     NoReplyError,
+    NotAnInputFilterError,
     NotFoundError,
     PanicError,
     QueryTimeoutError,
+    ReservedIdError,
+    WildcardNotInputError,
 )
 from ._device import Device
 from ._clip import ClipBuilder, ClipHandle
-from ._streams import EventStream, LogStream
+from ._streams import EventStream, InputStream, LogStream, Timeline
 from ._mock import MockBox
 from ._types import (
     BoxInfo,
@@ -84,6 +94,9 @@ from ._types import (
     UsageSnapshot,
     Version,
     box_from_c,
+    Capture,
+    InputEvent,
+    Stamped,
 )
 
 HAS_MOCK = _native.HAS_MOCK
@@ -159,7 +172,7 @@ __all__ = [
     "Key",
     "LedMode",
     "LedTarget",
-    "LockDirection",
+    "Direction",
     "LockTargetKind",
     "LogLevel",
     "MediaKey",
@@ -188,6 +201,21 @@ __all__ = [
     "Caps",
     "CatchEntry",
     "CatchEvent",
+    "Axis",
+    "Capture",
+    "InputEvent",
+    "InputKind",
+    "InputStream",
+    "Stamped",
+    "Timeline",
+    "TrafficClass",
+    "CatchTableFullError",
+    "EmptySubscriptionError",
+    "CaptureNotApplicableError",
+    "NotAnInputFilterError",
+    "WildcardNotInputError",
+    "HalfEdgeInputFilterError",
+    "ReservedIdError",
     "CatchFilter",
     "CatchState",
     "ClipSettings",

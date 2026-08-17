@@ -22,6 +22,20 @@ pub enum MediusStatus {
     ErrInvalidArg = 9,
     ErrPanic = 10,
     ErrUnknown = 11,
+    /// The subscription needs more entries than the box's table holds.
+    ErrCatchTableFull = 12,
+    /// A catch subscription with no filters, which would never yield an event.
+    ErrEmptySubscription = 13,
+    /// A non-zero `capture` on an input class, which carries no packet.
+    ErrCaptureNotApplicable = 14,
+    /// A traffic class passed to `medius_device_input_events`, which cannot decode one.
+    ErrNotAnInputFilter = 15,
+    /// The everything filter passed to `medius_device_input_events`; it covers traffic too.
+    ErrWildcardNotInput = 16,
+    /// An input filter narrowed to one edge, which cannot be decoded into press and release.
+    ErrHalfEdgeInputFilter = 17,
+    /// An exact id equal to the blanket sentinel, which would address the whole class.
+    ErrReservedId = 18,
 }
 
 #[derive(Default)]
@@ -59,6 +73,13 @@ fn status_for(err: &Error) -> MediusStatus {
         Error::QueryTimeout => MediusStatus::ErrQueryTimeout,
         Error::Disconnected => MediusStatus::ErrDisconnected,
         Error::FrameTooLong => MediusStatus::ErrFrameTooLong,
+        Error::CatchTableFull { .. } => MediusStatus::ErrCatchTableFull,
+        Error::EmptySubscription => MediusStatus::ErrEmptySubscription,
+        Error::CaptureNotApplicable { .. } => MediusStatus::ErrCaptureNotApplicable,
+        Error::NotAnInputFilter { .. } => MediusStatus::ErrNotAnInputFilter,
+        Error::WildcardNotInput => MediusStatus::ErrWildcardNotInput,
+        Error::HalfEdgeInputFilter => MediusStatus::ErrHalfEdgeInputFilter,
+        Error::ReservedId { .. } => MediusStatus::ErrReservedId,
         #[cfg(feature = "flash")]
         Error::FlashTool(_) => MediusStatus::ErrFlashTool,
         _ => MediusStatus::ErrUnknown,

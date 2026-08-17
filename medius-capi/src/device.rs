@@ -332,7 +332,7 @@ fn with_lock_target(
 pub unsafe extern "C" fn medius_device_lock(
     dev: *mut MediusDevice,
     target: MediusLockTarget,
-    dir: MediusLockDirection,
+    dir: MediusDirection,
 ) -> MediusStatus {
     with_lock_target(dev, target, |d, t| d.lock(t, dir.into()))
 }
@@ -342,7 +342,7 @@ pub unsafe extern "C" fn medius_device_lock(
 pub unsafe extern "C" fn medius_device_unlock(
     dev: *mut MediusDevice,
     target: MediusLockTarget,
-    dir: MediusLockDirection,
+    dir: MediusDirection,
 ) -> MediusStatus {
     with_lock_target(dev, target, |d, t| d.unlock(t, dir.into()))
 }
@@ -352,7 +352,7 @@ pub unsafe extern "C" fn medius_device_unlock(
 pub unsafe extern "C" fn medius_device_lock_all(
     dev: *mut MediusDevice,
     what: MediusBlanket,
-    dir: MediusLockDirection,
+    dir: MediusDirection,
 ) -> MediusStatus {
     with_device(dev, |d| d.lock_all(what.into(), dir.into()))
 }
@@ -362,7 +362,7 @@ pub unsafe extern "C" fn medius_device_lock_all(
 pub unsafe extern "C" fn medius_device_unlock_all(
     dev: *mut MediusDevice,
     what: MediusBlanket,
-    dir: MediusLockDirection,
+    dir: MediusDirection,
 ) -> MediusStatus {
     with_device(dev, |d| d.unlock_all(what.into(), dir.into()))
 }

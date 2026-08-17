@@ -4,10 +4,10 @@ use std::os::raw::c_char;
 use std::time::Duration;
 
 use medius::{
-    Action, Axis, Blanket, BoxInfo, Button, Caps, CatchClass, CatchEntry, CatchEvent, CatchFilter,
-    CatchState, Class, ClipState, ClipStatus, ClockDomain, ClockEstimate, CountersSnapshot,
-    DeviceInfo, DeviceKind, EmitPace, EmitPaceStatus, Health, ImperfectStatus, KbdCaps, Key,
-    LedMode, LedTarget, LockDirection, LockEntry, LockScope, LockTarget, Locks, LogLevel, LogLine,
+    Action, Axis, Blanket, BoxInfo, Button, Caps, CatchEntry, CatchEvent, CatchFilter, CatchState,
+    Class, ClipState, ClipStatus, ClockDomain, ClockEstimate, CountersSnapshot, DeviceInfo,
+    DeviceKind, Direction, EmitPace, EmitPaceStatus, Health, ImperfectStatus, Input, InputEvent,
+    KbdCaps, Key, LedMode, LedTarget, LockEntry, LockScope, LockTarget, Locks, LogLevel, LogLine,
     MediaKey, Motion, MouseCaps, PortInfo, Rate, RebootTarget, Stats, Usage, Version,
 };
 
@@ -106,21 +106,21 @@ impl From<MediusLedMode> for LedMode {
     }
 }
 
-impl From<MediusLockDirection> for LockDirection {
-    fn from(v: MediusLockDirection) -> Self {
+impl From<MediusDirection> for Direction {
+    fn from(v: MediusDirection) -> Self {
         match v {
-            MediusLockDirection::Both => LockDirection::Both,
-            MediusLockDirection::Positive => LockDirection::Positive,
-            MediusLockDirection::Negative => LockDirection::Negative,
+            MediusDirection::Both => Direction::Both,
+            MediusDirection::Positive => Direction::Positive,
+            MediusDirection::Negative => Direction::Negative,
         }
     }
 }
 
-fn lock_direction_to_c(d: LockDirection) -> MediusLockDirection {
+fn lock_direction_to_c(d: Direction) -> MediusDirection {
     match d {
-        LockDirection::Both => MediusLockDirection::Both,
-        LockDirection::Positive => MediusLockDirection::Positive,
-        LockDirection::Negative => MediusLockDirection::Negative,
+        Direction::Both => MediusDirection::Both,
+        Direction::Positive => MediusDirection::Positive,
+        Direction::Negative => MediusDirection::Negative,
     }
 }
 
@@ -200,7 +200,7 @@ fn kind_class(kind: MediusClass) -> Class {
     }
 }
 
-fn usage_to_c(u: Usage) -> MediusUsage {
+pub(crate) fn usage_to_c(u: Usage) -> MediusUsage {
     MediusUsage {
         kind: class_kind(u.class),
         id: u.id,
@@ -395,7 +395,6 @@ fn clock_domain_to_c(d: ClockDomain) -> MediusClockDomain {
     }
 }
 
-#[cfg(feature = "mock")]
 pub(crate) fn clock_domain_to_native(d: MediusClockDomain) -> ClockDomain {
     match d {
         MediusClockDomain::HostChip => ClockDomain::HostChip,
@@ -405,26 +404,42 @@ pub(crate) fn clock_domain_to_native(d: MediusClockDomain) -> ClockDomain {
 
 /// A [`CatchFilter`] to the C struct, wildcards resolved to their sentinels.
 pub(crate) fn catch_filter_to_c(f: CatchFilter) -> MediusCatchFilter {
+    let (class, id) = f.wire();
     MediusCatchFilter {
-        class: f.class.map_or(MEDIUS_CATCH_CLASS_ANY, CatchClass::as_u8),
-        id: f.id.unwrap_or(MEDIUS_CATCH_ID_ANY),
-        direction: lock_direction_to_c(f.direction),
-        snaplen: f.snaplen,
+        class,
+        id,
+        direction: lock_direction_to_c(f.direction()),
+        capture: f.capture().as_u8(),
     }
 }
 
-/// The C struct back to a [`CatchFilter`]; `None` when `class` names no known class.
+/// The C struct back to a [`CatchFilter`]; `None` when the four values address nothing the box would
+/// accept -- an unknown class, an unknown direction, or the wildcard class carrying a real id.
 pub(crate) fn catch_filter_from_c(f: MediusCatchFilter) -> Option<CatchFilter> {
-    Some(CatchFilter {
-        class: if f.class == MEDIUS_CATCH_CLASS_ANY {
-            None
-        } else {
-            Some(CatchClass::from_u8(f.class)?)
-        },
-        id: (f.id != MEDIUS_CATCH_ID_ANY).then_some(f.id),
-        direction: f.direction.into(),
-        snaplen: f.snaplen,
-    })
+    CatchFilter::from_wire(f.class, f.id, f.direction as u8, f.capture)
+}
+
+/// A decoded [`InputEvent`] to the C struct. The unused arms are zeroed rather than left undefined:
+/// a C caller reading `dx` on a press must see 0, not whatever was on the stack.
+pub(crate) fn input_event_to_c(e: InputEvent) -> MediusInputEvent {
+    let blank = MediusUsage {
+        kind: MediusClass::Button,
+        id: 0,
+    };
+    let (kind, usage, dx, dy, dz) = match e.input {
+        Input::Press(u) => (MediusInputKind::Press, usage_to_c(u), 0, 0, 0),
+        Input::Release(u) => (MediusInputKind::Release, usage_to_c(u), 0, 0, 0),
+        Input::Motion { dx, dy, dz } => (MediusInputKind::Motion, blank, dx, dy, dz),
+    };
+    MediusInputEvent {
+        kind,
+        ts_us: e.ts_us,
+        clock: clock_domain_to_c(e.clock),
+        usage,
+        dx,
+        dy,
+        dz,
+    }
 }
 
 fn clock_estimate_to_c(c: ClockEstimate) -> MediusClockEstimate {
@@ -451,7 +466,7 @@ fn clock_estimate_from_c(c: MediusClockEstimate) -> ClockEstimate {
 impl From<CatchState> for MediusCatchState {
     fn from(c: CatchState) -> Self {
         let blank = MediusCatchEntry {
-            filter: catch_filter_to_c(CatchFilter::all()),
+            filter: catch_filter_to_c(CatchFilter::everything()),
             dropped: 0,
         };
         let mut entries = [blank; MEDIUS_MAX_CATCH_ENTRIES];

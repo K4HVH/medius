@@ -167,7 +167,7 @@ fn reapply_held(ctx: &ReconnectCtx) -> Result<()> {
     }
     // Re-assert the catch table: a link drop past the firmware's ~1 s silence window makes the box
     // clear it, so without this the stream stays dead. Idempotent if the drop was short.
-    for f in &catch {
+    for f in catch.values() {
         let seq = ctx.seq.fetch_add(1, Ordering::Relaxed);
         let (class, id) = f.wire();
         write_frame(
@@ -176,7 +176,7 @@ fn reapply_held(ctx: &ReconnectCtx) -> Result<()> {
             &ctx.counters,
             seq,
             FrameType::Catch,
-            &catch_payload(class, id, f.direction.as_u8(), 1, f.snaplen),
+            &catch_payload(class, id, f.direction().as_u8(), 1, f.capture().as_u8()),
         )?;
     }
     Ok(())

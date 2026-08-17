@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::types::{Action, CatchFilter, Class, Usage};
+use crate::link::catch::FilterSet;
+use crate::types::{Action, Class, Usage};
 
 /// A lock the host wants held, keyed by its wire fields so a reapply is exact and idempotent.
 pub(crate) type LockKey = (u8, u16, u8);
@@ -36,7 +37,7 @@ impl Override {
 pub(crate) struct DesiredState {
     overrides: BTreeMap<(u8, u16), Override>, // never sits at None in the map
     locks: BTreeSet<LockKey>,
-    catch: BTreeSet<CatchFilter>,
+    catch: FilterSet,
 }
 
 impl DesiredState {
@@ -70,11 +71,11 @@ impl DesiredState {
     }
 
     /// The catch subscription table the box should be holding (re-asserted on reconnect).
-    pub(crate) fn set_catch(&mut self, filters: BTreeSet<CatchFilter>) {
+    pub(crate) fn set_catch(&mut self, filters: FilterSet) {
         self.catch = filters;
     }
 
-    pub(crate) fn catch(&self) -> BTreeSet<CatchFilter> {
+    pub(crate) fn catch(&self) -> FilterSet {
         self.catch.clone()
     }
 

@@ -187,7 +187,7 @@ class MediusLocks(ctypes.Structure):
 
 
 class MediusCatchFilter(ctypes.Structure):
-    _fields_ = [("class_", u8), ("id", u16), ("direction", u8), ("snaplen", u8)]
+    _fields_ = [("class_", u8), ("id", u16), ("direction", u8), ("capture", u8)]
 
 
 class MediusCatchEntry(ctypes.Structure):
@@ -279,6 +279,22 @@ class MediusCatchEventData(ctypes.Union):
 
 class MediusCatchEvent(ctypes.Structure):
     _fields_ = [("kind", u8), ("ts_us", u32), ("clock", u8), ("data", MediusCatchEventData)]
+
+
+class MediusInputEvent(ctypes.Structure):
+    _fields_ = [
+        ("kind", u8),
+        ("ts_us", u32),
+        ("clock", u8),
+        ("usage", MediusUsage),
+        ("dx", i16),
+        ("dy", i16),
+        ("dz", i16),
+    ]
+
+
+class MediusStamped(ctypes.Structure):
+    _fields_ = [("host_ns", u64), ("box_us", u64), ("excess_ns", u64)]
 
 
 class MediusLogLine(ctypes.Structure):
@@ -401,9 +417,23 @@ _decl("medius_lock_target_usage", MediusLockTarget, [MediusUsage])
 _decl("medius_locks_is_locked", c_bool, [ctypes.POINTER(MediusLocks), MediusLockTarget, u8])
 _decl("medius_rate_native_hz", c_bool, [MediusRate, ctypes.POINTER(ctypes.c_float)])
 _decl("medius_usage_event_is_held", c_bool, [ctypes.POINTER(MediusUsageEvent), MediusUsage])
-_decl("medius_catch_filter_all", MediusCatchFilter, [])
-_decl("medius_catch_filter_class", MediusCatchFilter, [u8])
-_decl("medius_catch_filter_addr", MediusCatchFilter, [u8, u16])
+_decl("medius_catch_filter_watch", MediusCatchFilter, [MediusUsage])
+_decl("medius_catch_filter_watch_axis", MediusCatchFilter, [u8])
+_decl("medius_catch_filter_watch_class", MediusCatchFilter, [u8])
+_decl("medius_catch_filter_watch_axes", MediusCatchFilter, [])
+_decl("medius_catch_filter_all_input", None, [ctypes.POINTER(MediusCatchFilter)])
+_decl("medius_catch_filter_traffic", MediusCatchFilter, [u8, u16])
+_decl("medius_catch_filter_traffic_class", MediusCatchFilter, [u8])
+_decl("medius_catch_filter_everything", MediusCatchFilter, [])
+_decl("medius_catch_filter_with_direction", MediusCatchFilter, [MediusCatchFilter, u8])
+_decl("medius_catch_filter_with_capture", MediusCatchFilter, [MediusCatchFilter, u8])
+_decl("medius_catch_filter_on_press", MediusCatchFilter, [MediusCatchFilter])
+_decl("medius_catch_filter_on_release", MediusCatchFilter, [MediusCatchFilter])
+_decl("medius_catch_filter_inbound", MediusCatchFilter, [MediusCatchFilter])
+_decl("medius_catch_filter_outbound", MediusCatchFilter, [MediusCatchFilter])
+_decl("medius_catch_filter_same_address", c_bool, [MediusCatchFilter, MediusCatchFilter])
+_decl("medius_catch_class_is_input", c_bool, [u8])
+_decl("medius_catch_class_is_traffic", c_bool, [u8])
 _decl("medius_traffic_event_truncated", c_bool, [ctypes.POINTER(MediusTrafficEvent)])
 _decl("medius_traffic_event_setup", ctypes.POINTER(u8), [ctypes.POINTER(MediusTrafficEvent)])
 _decl(
@@ -439,6 +469,37 @@ _decl("medius_event_stream_recv", i32, [HANDLE, ctypes.POINTER(MediusCatchEvent)
 _decl("medius_event_stream_try_recv", c_bool, [HANDLE, ctypes.POINTER(MediusCatchEvent)])
 _decl("medius_event_stream_recv_timeout", c_bool, [HANDLE, u64, ctypes.POINTER(MediusCatchEvent)])
 _decl("medius_event_stream_dropped", u64, [HANDLE])
+_decl("medius_event_stream_is_connected", c_bool, [HANDLE])
+_decl(
+    "medius_device_input_events",
+    i32,
+    [HANDLE, ctypes.POINTER(MediusCatchFilter), usize, PHANDLE],
+)
+_decl("medius_input_stream_free", None, [HANDLE])
+_decl("medius_input_stream_recv", i32, [HANDLE, ctypes.POINTER(MediusInputEvent)])
+_decl("medius_input_stream_try_recv", c_bool, [HANDLE, ctypes.POINTER(MediusInputEvent)])
+_decl("medius_input_stream_recv_timeout", c_bool, [HANDLE, u64, ctypes.POINTER(MediusInputEvent)])
+_decl("medius_input_stream_dropped", u64, [HANDLE])
+_decl("medius_input_stream_is_connected", c_bool, [HANDLE])
+_decl(
+    "medius_input_stream_held",
+    usize,
+    [HANDLE, u8, ctypes.POINTER(MediusUsage), usize],
+)
+_decl("medius_timeline_new", HANDLE, [])
+_decl("medius_timeline_free", None, [HANDLE])
+_decl(
+    "medius_timeline_observe",
+    c_bool,
+    [HANDLE, ctypes.POINTER(MediusCatchEvent), u64, ctypes.POINTER(MediusStamped)],
+)
+_decl(
+    "medius_timeline_observe_input",
+    c_bool,
+    [HANDLE, ctypes.POINTER(MediusInputEvent), u64, ctypes.POINTER(MediusStamped)],
+)
+_decl("medius_timeline_reset", None, [HANDLE, u8])
+_decl("medius_timeline_samples", u64, [HANDLE, u8])
 _decl("medius_device_logs", i32, [HANDLE, PHANDLE])
 _decl("medius_log_stream_clone", HANDLE, [HANDLE])
 _decl("medius_log_stream_free", None, [HANDLE])
