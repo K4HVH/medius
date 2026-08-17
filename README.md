@@ -155,28 +155,52 @@ let caps = device.caps()?;              // unified caps; caps.is_composite(), ca
 let rate = device.query_rate()?;        // live native report rate; rate.native_hz()
 let stats = device.query_stats()?;      // delivery counters; stats.tx_drops / stats.tx_wedges
 let locks = device.query_locks()?;      // active input locks; locks.is_locked(target, direction)
-let catch = device.query_catch()?;      // active catch mask + box-side dropped count
+let catch = device.query_catch()?;      // the live catch table, its drop counts, the inter-chip clock
 ```
 
-### Catch (physical input events)
+### Catch (observing what passes through the box)
 
-Subscribe to the user's real input (mouse buttons/wheel/motion, keyboard keys, and media keys) as it happens. The box reports each physical report *before* any lock suppression or injection, so you can intercept an input (lock it) and rebind it (catch it) in one loop. One device-class-generic stream yields a `CatchEvent`; match on the variant. Dropping the stream unsubscribes.
+Subscribe to what the box carries: the user's real input, the raw HID and vendor traffic either way,
+proxied control transfers, the bytes the clone emits, and bus lifecycle. Input is reported *before*
+any lock suppression or injection, so intercepting an input (lock it) and rebinding it (catch it) is
+one loop. Dropping the stream unsubscribes.
+
+For input, `input_events` decodes the box's held-usage snapshots into edges:
 
 ```rust
-use medius::{Button, CatchEvent, CatchMask, Key};
+use medius::{CatchFilter, Input, Key};
 
-let events = device.catch_events(CatchMask::all())?;  // MOTION | WHEEL | BUTTONS | KEYS | MEDIA
-while let Ok(event) = events.recv() {
-    match event {
-        CatchEvent::Usages(u) if u.is_held(Button::Side1) => { /* rebind the side button… */ }
-        CatchEvent::Usages(u) if u.is_held(Key::ESCAPE) => { /* … */ }
-        CatchEvent::Motion(m) => { /* relative motion: m.dx / m.dy / m.dz */ }
-        _ => {}
+for ev in device.input_events([CatchFilter::watch(Key::ESCAPE)])? {
+    match ev.input {
+        Input::Press(u) => println!("down {u:?}"),
+        Input::Release(u) => println!("up {u:?}"),
+        Input::Motion { dx, dy, dz } => println!("moved {dx},{dy},{dz}"),
     }
 }
 ```
 
-The mask picks which classes stream; each `CatchEvent` is either `Motion` (relative dx/dy/dz) or `Usages` (a held-usage snapshot for one class: buttons, keys, or media); so diff successive snapshots for edges. The stream is bounded and lossy under back-pressure (`events.dropped()`), and the subscription is held alive by the keepalive and re-asserted across a reconnect. Under `async`, `events.recv_async().await`.
+`CatchFilter::watch` takes what `lock` takes, so an input is addressed the same way in both. Use
+`CatchFilter::all_input()` for every class, or `watch_class` / `watch_axis` to narrow.
+
+For traffic, `catch_events` yields the raw frames. A `Capture` caps how much of each packet comes
+back, which matters because a vendor bulk pipe at whole packets saturates the 4 Mbaud control link on
+its own:
+
+```rust
+use medius::{Capture, CatchEvent, CatchFilter, TrafficClass};
+
+let events = device.catch_events([
+    CatchFilter::everything().with_capture(Capture::First(16)),
+    CatchFilter::traffic(TrafficClass::VendorInterrupt, 0x83),   // this endpoint, whole packets
+])?;
+while let Ok(CatchEvent::Traffic(t)) = events.recv() {
+    println!("{:?} 0x{:02X} {} bytes", t.class, t.id, t.true_len);
+}
+```
+
+Both streams are bounded and lossy under back-pressure (`dropped()`), held alive by the keepalive,
+and re-asserted across a reconnect. Under `async`, `recv_async().await`. `Timeline` puts a box stamp
+on this machine's clock, unwrapping the 32-bit rollover and both chips' domains.
 
 ### Box management
 

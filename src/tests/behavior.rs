@@ -142,13 +142,13 @@ fn reapply_re_emits_only_held_overrides() {
 
 #[test]
 fn reapply_re_emits_held_locks_but_not_released_ones() {
-    use crate::{Axis, Blanket, Key, LockDirection};
+    use crate::{Axis, Blanket, Direction, Key};
     let mock = MockBox::new();
     let device = Device::with_mock(mock.clone());
-    device.lock(Axis::X, LockDirection::Positive).unwrap();
-    device.lock(Key::A, LockDirection::Both).unwrap();
-    device.lock_all(Blanket::Keys, LockDirection::Both).unwrap();
-    device.unlock(Key::A, LockDirection::Both).unwrap();
+    device.lock(Axis::X, Direction::Positive).unwrap();
+    device.lock(Key::A, Direction::Both).unwrap();
+    device.lock_all(Blanket::Keys, Direction::Both).unwrap();
+    device.unlock(Key::A, Direction::Both).unwrap();
     mock.clear_recorded();
 
     device.reapply().unwrap();

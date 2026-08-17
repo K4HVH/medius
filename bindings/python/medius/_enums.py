@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from enum import IntEnum, IntFlag
+from enum import IntEnum
 
 
 class Status(IntEnum):
@@ -18,6 +18,13 @@ class Status(IntEnum):
     ERR_INVALID_ARG = 9
     ERR_PANIC = 10
     ERR_UNKNOWN = 11
+    ERR_CATCH_TABLE_FULL = 12
+    ERR_EMPTY_SUBSCRIPTION = 13
+    ERR_CAPTURE_NOT_APPLICABLE = 14
+    ERR_NOT_AN_INPUT_FILTER = 15
+    ERR_WILDCARD_NOT_INPUT = 16
+    ERR_HALF_EDGE_INPUT_FILTER = 17
+    ERR_RESERVED_ID = 18
 
 
 class DeviceKind(IntEnum):
@@ -40,6 +47,21 @@ class Action(IntEnum):
     SOFT_RELEASE = 0
     PRESS = 1
     FORCE_RELEASE = 2
+
+
+class MoveTiming(IntEnum):
+    """When a delta reaches the game PC, against movement riding."""
+
+    RIDE = 0
+    NOW = 1
+
+
+class PendingMotion(IntEnum):
+    """What a move does to the motion already held for a ride."""
+
+    KEEP = 0
+    FLUSH = 1
+    DISCARD = 2
 
 
 class ClipState(IntEnum):
@@ -96,10 +118,34 @@ class LedMode(IntEnum):
     BLINK = 3
 
 
-class LockDirection(IntEnum):
+class Direction(IntEnum):
+    """Which way, on the one byte LOCK, CLIP and CATCH all carry.
+
+    The members are named for the axis reading; `PRESS`/`RELEASE` and `IN`/`OUT` are the same two
+    values under names that read at the call site. Which applies is decided by the class.
+    """
+
     BOTH = 0
     POSITIVE = 1
     NEGATIVE = 2
+
+
+#: A momentary usage going down (`Direction.POSITIVE`).
+Direction.PRESS = Direction.POSITIVE
+#: A momentary usage coming up (`Direction.NEGATIVE`).
+Direction.RELEASE = Direction.NEGATIVE
+#: Traffic from the device to the PC (`Direction.POSITIVE`).
+Direction.IN = Direction.POSITIVE
+#: Traffic from the PC to the device (`Direction.NEGATIVE`).
+Direction.OUT = Direction.NEGATIVE
+
+
+class Axis(IntEnum):
+    """A relative axis. Values match the wire axis id a CATCH or LOCK entry carries."""
+
+    X = 0
+    Y = 1
+    WHEEL = 2
 
 
 class LockTargetKind(IntEnum):
@@ -129,6 +175,85 @@ class LogLevel(IntEnum):
 class CatchEventKind(IntEnum):
     MOTION = 0
     USAGES = 1
+    TRAFFIC = 2
+
+
+class CatchClass(IntEnum):
+    """What a `CatchFilter` addresses. 0-3 are the classes LOCK and INJECT address; 4-10 are relayed traffic."""
+
+    BUTTON = 0
+    KEY = 1
+    MEDIA = 2
+    AXIS = 3
+    HID_IN = 4
+    HID_OUT = 5
+    VENDOR_INTERRUPT = 6
+    VENDOR_BULK = 7
+    CONTROL = 8
+    EMIT = 9
+    BUS = 10
+
+    def is_input(self) -> bool:
+        """A parsed-input class: it arrives decoded and carries no packet, so a capture means nothing."""
+        return self <= CatchClass.AXIS
+
+    def is_traffic(self) -> bool:
+        """One of the seven byte-oriented traffic classes."""
+        return not self.is_input()
+
+
+class TrafficClass(IntEnum):
+    """The byte-oriented half of the catch address space, for the `traffic` constructors."""
+
+    HID_IN = 4
+    HID_OUT = 5
+    VENDOR_INTERRUPT = 6
+    VENDOR_BULK = 7
+    CONTROL = 8
+    EMIT = 9
+    BUS = 10
+
+
+class InputKind(IntEnum):
+    """Which arm of an `InputEvent` is populated."""
+
+    PRESS = 0
+    RELEASE = 1
+    MOTION = 2
+
+
+class ClockDomain(IntEnum):
+    """Which chip's clock stamped an event. The two boot independently, so never subtract across domains."""
+
+    HOST_CHIP = 0
+    DEVICE_CHIP = 1
+
+
+class ControlStatus(IntEnum):
+    """What the real device answered a proxied control transaction with."""
+
+    OK = 0
+    STALLED = 1
+    NAKED = 2
+    #: A status byte this build does not know; read `TrafficEvent.flags` for its value. Distinct from
+    #: the three, so a future firmware's new status is not reported as a device fault that never
+    #: happened -- and so decoding one does not raise.
+    OTHER = 3
+
+
+class BusEventKind(IntEnum):
+    """What a `CatchClass.BUS` event describes."""
+
+    RESET = 0
+    SUSPEND = 1
+    RESUME = 2
+    CONFIGURED = 3
+    DECONFIGURED = 4
+    SET_INTERFACE = 5
+    DEVICE_ATTACHED = 6
+    DEVICE_DETACHED = 7
+    CLONE_UP = 8
+    CLONE_DOWN = 9
 
 
 class MotionKind(IntEnum):
@@ -155,20 +280,12 @@ class FrameType(IntEnum):
     CATCH = 11
     MOTION_EVENT = 12
     USAGE_EVENT = 15
+    TRAFFIC_EVENT = 22
     OPTION = 17
     CLIP_APPEND = 18
     CLIP_CTRL = 19
     CLIP_SET = 20
     CLIP_TRIGGER = 21
-
-
-class CatchMask(IntFlag):
-    MOTION = 1
-    WHEEL = 2
-    BUTTONS = 4
-    KEYS = 8
-    MEDIA = 16
-    ALL = 31
 
 
 class Key(IntEnum):

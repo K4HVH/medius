@@ -7,7 +7,7 @@ from typing import Optional
 
 from . import _native
 from ._device import Device
-from ._enums import FrameType, LogLevel
+from ._enums import ClockDomain, FrameType, LogLevel
 from ._types import (
     Caps,
     CatchState,
@@ -24,6 +24,7 @@ from ._types import (
     Rate,
     RecordedFrame,
     Stats,
+    TrafficEvent,
     UsageSnapshot,
     Version,
     caps_to_c,
@@ -39,6 +40,7 @@ from ._types import (
     mouse_caps_to_c,
     rate_to_c,
     stats_to_c,
+    traffic_event_to_c,
     usage_snapshot_to_c,
     version_to_c,
 )
@@ -137,12 +139,17 @@ class MockBox:
     def push_log(self, level: LogLevel, text: str):
         _native.lib.medius_mock_push_log(self._handle, int(level), text.encode("utf-8"))
 
-    def push_motion(self, seq: int, event: MotionEvent):
-        _native.lib.medius_mock_push_motion(self._handle, seq, motion_event_to_c(event))
+    def push_motion(self, seq: int, ts_us: int, event: MotionEvent):
+        _native.lib.medius_mock_push_motion(self._handle, seq, ts_us, motion_event_to_c(event))
 
-    def push_usages(self, seq: int, event: UsageSnapshot):
+    def push_usages(self, seq: int, ts_us: int, event: UsageSnapshot):
         c = usage_snapshot_to_c(event)
-        _native.lib.medius_mock_push_usages(self._handle, seq, ctypes.byref(c))
+        _native.lib.medius_mock_push_usages(self._handle, seq, ts_us, ctypes.byref(c))
+
+    def push_traffic(self, seq: int, ts_us: int, clock: ClockDomain, event: TrafficEvent):
+        """Push a TRAFFIC_EVENT; a `true_len` above the byte count is how a cut capture looks."""
+        c = traffic_event_to_c(event)
+        _native.lib.medius_mock_push_traffic(self._handle, seq, ts_us, int(clock), ctypes.byref(c))
 
     def recorded(self) -> int:
         return int(_native.lib.medius_mock_recorded(self._handle))

@@ -8,17 +8,50 @@ from typing import List, Optional, Union
 
 from . import _native
 from ._enums import (
+    Axis,
     Blanket,
+    BusEventKind,
+    CatchClass,
     CatchEventKind,
+    Class,
     ClipAction,
     ClipState,
+    ClockDomain,
+    ControlStatus,
     DeviceKind,
+    Direction,
     Edge,
     EmitMode,
-    Class,
+    InputKind,
     LockTargetKind,
     LogLevel,
+    TrafficClass,
+    Button,
+    Key,
+    MediaKey,
 )
+
+
+def _as_usage(usage) -> "Usage":
+    """A `Usage`, a `Button` / `Key` / `MediaKey`, or a raw ctypes usage, as a `Usage`.
+
+    The three key enums are accepted directly so an input is addressed the same way here as in
+    `lock`: `CatchFilter.watch(Key.A)` rather than `CatchFilter.watch(Usage.key(Key.A))`. They are
+    distinct types, so there is no ambiguity about which class a bare id belongs to.
+    """
+    if isinstance(usage, Usage):
+        return usage
+    if isinstance(usage, _native.MediusUsage):
+        return Usage(usage)
+    if isinstance(usage, Button):
+        return Usage.button(usage)
+    if isinstance(usage, Key):
+        return Usage.key(usage)
+    if isinstance(usage, MediaKey):
+        return Usage.media(usage)
+    raise TypeError(
+        f"expected a Usage, Button, Key or MediaKey, got {type(usage).__name__}"
+    )
 
 
 def _cstr(buf) -> str:
@@ -149,9 +182,46 @@ class Locks:
 
 
 @dataclass
+class ClockEstimate:
+    """The measured difference between the two chips' clocks, from RESP(CATCH)."""
+
+    offset_us: int = 0
+    # None when the box has fitted no rate. Not the same as a fitted 0, which says the two crystals
+    # are matched: on a link too busy for enough clean exchanges no fit is made at all, which is
+    # exactly when assuming no drift costs the most.
+    rate_ppb: int | None = 0
+    delay_us: int = 0
+    # `None` is the box saying it has never measured, which an offset of zero also looks like.
+    age_ms: Optional[int] = None
+
+    @property
+    def error_bound_us(self) -> int:
+        """Half the measured round trip: the bound on how wrong `offset_us` can be."""
+        return self.delay_us // 2
+
+    def to_host_domain(self, device_us: int) -> Optional[int]:
+        """A device-chip stamp on the host chip's timeline, or `None` when there is no estimate to apply."""
+        if self.age_ms is None:
+            return None
+        return int(device_us) + self.offset_us
+
+
+@dataclass
+class CatchEntry:
+    """One row of the box's subscription table: a live subscription and what it has lost."""
+
+    filter: "CatchFilter"
+    dropped: int = 0
+
+
+@dataclass
 class CatchState:
-    mask: int
-    dropped: int
+    """Decoded RESP(CATCH): the live subscription table, its drop counts, and the inter-chip clock estimate."""
+
+    table_full: bool = False
+    dropped: int = 0
+    clock: ClockEstimate = field(default_factory=ClockEstimate)
+    entries: List[CatchEntry] = field(default_factory=list)
 
 
 @dataclass
@@ -235,18 +305,114 @@ class MotionEvent:
 
 @dataclass
 class UsageSnapshot:
-    """A held-usage snapshot for one class: every held usage (button, key, or media)."""
+    """A held-usage snapshot for one class: every held usage (button, key, or media).
+
+    `cls` and `direction` come from the frame header, not from the entries. The snapshot that most
+    needs them is the EMPTY one -- releasing the last held usage is the edge a caller waits for, and
+    it lists nothing to read a class or an edge from.
+    """
 
     usages: List["Usage"] = field(default_factory=list)
+    cls: Class = Class.BUTTON
+    direction: Direction = Direction.BOTH
+
+    def __post_init__(self) -> None:
+        # A snapshot carries one class, so its entries are what that class IS. Taking it from them
+        # keeps a hand-built snapshot from claiming a class its own usages contradict; the header
+        # field exists for the EMPTY snapshot, which has no entry to read it from.
+        if self.usages:
+            self.cls = Class(self.usages[0].kind)
 
     def is_held(self, usage: "Usage") -> bool:
         return any(u == usage for u in self.usages)
 
 
 @dataclass
+class BusEvent:
+    """A decoded bus lifecycle event; the payload fields are 0 for the kinds that carry none."""
+
+    kind: BusEventKind
+    configuration: int = 0
+    interface: int = 0
+    alt: int = 0
+
+
+@dataclass
+class TrafficEvent:
+    """One byte-oriented catch event: HID reports, vendor endpoints, control transactions, the bytes
+    the clone emitted, or bus lifecycle.
+
+    `bytes` is as much of the packet as the subscription's capture kept; `true_len` is its length
+    before that truncation, so set both when building one by hand.
+    """
+
+    catch_class: CatchClass
+    id: int
+    direction: Direction
+    flags: int = 0
+    true_len: int = 0
+    bytes: bytes = b""
+
+    def truncated(self) -> bool:
+        """Whether the capture cut this packet short; without it a cut capture reads as a short packet."""
+        c = traffic_event_to_c(self)
+        return bool(_native.lib.medius_traffic_event_truncated(ctypes.byref(c)))
+
+    def setup(self) -> Optional[bytes]:
+        """The 8-byte setup packet of a CONTROL event; `None` for another class or a shorter capture."""
+        c = traffic_event_to_c(self)
+        p = _native.lib.medius_traffic_event_setup(ctypes.byref(c))
+        return bytes(p[:8]) if p else None
+
+    def data(self) -> bytes:
+        """The data stage of a CONTROL event, the whole packet for any other class."""
+        c = traffic_event_to_c(self)
+        n = _native.usize()
+        p = _native.lib.medius_traffic_event_data(ctypes.byref(c), ctypes.byref(n))
+        return bytes(p[: int(n.value)]) if p else b""
+
+    def control_status(self) -> Optional[ControlStatus]:
+        """What the real device answered; `None` for any class but CONTROL."""
+        c = traffic_event_to_c(self)
+        out = _native.u8()
+        if _native.lib.medius_traffic_event_control_status(ctypes.byref(c), ctypes.byref(out)):
+            return ControlStatus(out.value)
+        return None
+
+    def bus_event(self) -> Optional[BusEvent]:
+        """The lifecycle event; `None` for any class but BUS or an unknown kind."""
+        c = traffic_event_to_c(self)
+        out = _native.MediusBusEvent()
+        if _native.lib.medius_traffic_event_bus_event(ctypes.byref(c), ctypes.byref(out)):
+            return BusEvent(BusEventKind(out.kind), out.configuration, out.interface, out.alt)
+        return None
+
+    def bulk_end_of_transfer(self) -> bool:
+        """Whether this VENDOR_BULK event carries end-of-transfer."""
+        c = traffic_event_to_c(self)
+        return bool(_native.lib.medius_traffic_event_bulk_end_of_transfer(ctypes.byref(c)))
+
+    def bulk_zlp(self) -> bool:
+        """Whether this VENDOR_BULK event is a zero-length packet, which terminates a transfer."""
+        c = traffic_event_to_c(self)
+        return bool(_native.lib.medius_traffic_event_bulk_zlp(ctypes.byref(c)))
+
+
+@dataclass
 class CatchEvent:
+    """One catch-stream event.
+
+    `ts_us` is in the `clock` chip's microseconds. Both chips boot independently, so a stamp is a
+    box-local value unrelated to any clock on this machine and only meaningful compared against
+    another from the same domain; to cross domains apply `CatchState.clock`. Each wraps every ~71.6
+    minutes and restarts at zero if that chip reboots, so a value below the previous one is a wrap, a
+    reboot, or a domain change, and the delta across it is meaningless.
+    """
+
     kind: CatchEventKind
-    payload: Union[MotionEvent, UsageSnapshot]
+    payload: Union[MotionEvent, UsageSnapshot, TrafficEvent]
+    ts_us: int = 0
+    clock: ClockDomain = ClockDomain.HOST_CHIP
 
     @property
     def motion(self) -> Optional[MotionEvent]:
@@ -255,6 +421,10 @@ class CatchEvent:
     @property
     def usages(self) -> Optional[UsageSnapshot]:
         return self.payload if self.kind == CatchEventKind.USAGES else None
+
+    @property
+    def traffic(self) -> Optional[TrafficEvent]:
+        return self.payload if self.kind == CatchEventKind.TRAFFIC else None
 
 
 @dataclass
@@ -370,6 +540,210 @@ class LockTarget:
         if self._c.kind == int(LockTargetKind.USAGE):
             return Usage(_native.MediusUsage(kind=self._c.usage.kind, id=self._c.usage.id))
         return None
+
+
+class Capture:
+    """How much of each packet to keep. Traffic classes only.
+
+    An input class carries no packet, so naming one together with a capture is refused rather than
+    ignored. It exists because the control link runs at 4 Mbaud and a vendor bulk pipe at whole
+    packets saturates it on its own. A ceiling request, not a guarantee: the box holds one entry per
+    address and cuts once, so another subscriber naming it more widely raises yours too.
+    """
+
+    #: Keep the whole packet.
+    WHOLE = 0
+
+    @staticmethod
+    def first(n: int) -> int:
+        """Keep the first `n` bytes; `first(0)` is `WHOLE`."""
+        return int(n)
+
+
+class CatchFilter:
+    """One CATCH subscription: what to observe, in which direction, and how much of each packet to keep.
+
+    The input constructors take what `Device.lock` takes, so hiding an input from the game and
+    watching it are written alike::
+
+        CatchFilter.watch(Key.A)                      # one key, both edges
+        CatchFilter.watch_class(Class.KEY)            # every key and modifier
+        CatchFilter.watch_axis(Axis.X)                # one axis
+        CatchFilter.all_input()                       # buttons, keys, media, axes
+
+        CatchFilter.traffic_class(TrafficClass.HID_IN)
+        CatchFilter.traffic(TrafficClass.VENDOR_BULK, 0x83).with_capture(16)
+        CatchFilter.everything().with_capture(16)
+
+    The box resolves each event to its most specific matching entry -- an exact `(class, id)` beats a
+    class blanket, which beats `everything()`, and a named direction beats `BOTH` -- and that entry
+    supplies the capture.
+    """
+
+    def __init__(self, c):
+        self._c = c
+
+    @classmethod
+    def watch(cls, usage) -> "CatchFilter":
+        """One momentary usage: a button, a key, or a media usage."""
+        return cls(_native.lib.medius_catch_filter_watch(_as_usage(usage)._c))
+
+    @classmethod
+    def watch_axis(cls, axis: Axis) -> "CatchFilter":
+        """One relative axis."""
+        return cls(_native.lib.medius_catch_filter_watch_axis(int(axis)))
+
+    @classmethod
+    def watch_class(cls, input_class: Class) -> "CatchFilter":
+        """Every usage in one momentary class."""
+        return cls(_native.lib.medius_catch_filter_watch_class(int(input_class)))
+
+    @classmethod
+    def watch_axes(cls) -> "CatchFilter":
+        """Every relative axis: X, Y and the wheel."""
+        return cls(_native.lib.medius_catch_filter_watch_axes())
+
+    @classmethod
+    def all_input(cls) -> List["CatchFilter"]:
+        """All four input classes, and the whole of what `Device.input_events` can report."""
+        buf = (_native.MediusCatchFilter * 4)()
+        _native.lib.medius_catch_filter_all_input(buf)
+        return [cls(_native.MediusCatchFilter(f.class_, f.id, f.direction, f.capture)) for f in buf]
+
+    @classmethod
+    def traffic(cls, traffic_class: TrafficClass, id: int) -> "CatchFilter":
+        """One traffic address: an endpoint, an interface, or a control endpoint number."""
+        return cls(_native.lib.medius_catch_filter_traffic(int(traffic_class), int(id)))
+
+    @classmethod
+    def traffic_class(cls, traffic_class: TrafficClass) -> "CatchFilter":
+        """Every id within one traffic class."""
+        return cls(_native.lib.medius_catch_filter_traffic_class(int(traffic_class)))
+
+    @classmethod
+    def everything(cls) -> "CatchFilter":
+        """Every class, every id, both directions, whole packets. One table entry, not an expansion.
+
+        This includes `TrafficClass.VENDOR_BULK`, which can saturate the control link by itself.
+        Pair it with `with_capture` unless you mean to trace bulk in full.
+        """
+        return cls(_native.lib.medius_catch_filter_everything())
+
+    def with_direction(self, direction: Direction) -> "CatchFilter":
+        """A copy restricted to one direction, sign or edge."""
+        return CatchFilter(
+            _native.lib.medius_catch_filter_with_direction(self._c, int(direction))
+        )
+
+    def with_capture(self, n: int) -> "CatchFilter":
+        """A copy keeping only the first `n` bytes of each packet; 0 keeps the whole packet."""
+        return CatchFilter(_native.lib.medius_catch_filter_with_capture(self._c, int(n)))
+
+    def on_press(self) -> "CatchFilter":
+        """A copy restricted to the press edge."""
+        return CatchFilter(_native.lib.medius_catch_filter_on_press(self._c))
+
+    def on_release(self) -> "CatchFilter":
+        """A copy restricted to the release edge."""
+        return CatchFilter(_native.lib.medius_catch_filter_on_release(self._c))
+
+    def inbound(self) -> "CatchFilter":
+        """A copy restricted to traffic from the device to the PC."""
+        return CatchFilter(_native.lib.medius_catch_filter_inbound(self._c))
+
+    def outbound(self) -> "CatchFilter":
+        """A copy restricted to traffic from the PC to the device."""
+        return CatchFilter(_native.lib.medius_catch_filter_outbound(self._c))
+
+    def same_address(self, other: "CatchFilter") -> bool:
+        """Whether both name the same box table entry, whatever their captures."""
+        return bool(_native.lib.medius_catch_filter_same_address(self._c, other._c))
+
+    @property
+    def catch_class(self) -> Optional[CatchClass]:
+        """The class observed, or `None` for the every-class wildcard."""
+        if self._c.class_ == _native.MEDIUS_CATCH_CLASS_ANY:
+            return None
+        return CatchClass(self._c.class_)
+
+    @property
+    def id(self) -> Optional[int]:
+        """The class-specific id, or `None` for the every-id wildcard."""
+        if self._c.id == _native.MEDIUS_CATCH_ID_ANY:
+            return None
+        return int(self._c.id)
+
+    @property
+    def direction(self) -> Direction:
+        """The edge, sign or flow this covers."""
+        return Direction(self._c.direction)
+
+    @property
+    def capture(self) -> int:
+        """Bytes kept per event; 0 keeps the whole packet."""
+        return int(self._c.capture)
+
+    def _key(self):
+        return (int(self._c.class_), int(self._c.id), int(self._c.direction), int(self._c.capture))
+
+    def __eq__(self, other) -> bool:
+        return isinstance(other, CatchFilter) and self._key() == other._key()
+
+    def __hash__(self) -> int:
+        return hash(self._key())
+
+    def __repr__(self) -> str:
+        name = "ANY" if self.catch_class is None else self.catch_class.name
+        ident = "ANY" if self.id is None else self.id
+        return (
+            f"CatchFilter(class={name}, id={ident}, "
+            f"direction={self.direction.name}, capture={self.capture})"
+        )
+
+
+@dataclass(frozen=True)
+class InputEvent:
+    """One decoded input event: a press or release edge, or a motion report."""
+
+    kind: InputKind
+    ts_us: int
+    clock: ClockDomain
+    #: The usage this is an edge on; `None` for `MOTION`.
+    usage: Optional["Usage"] = None
+    #: Relative X this report (right positive); 0 unless `kind` is `MOTION`.
+    dx: int = 0
+    #: Relative Y this report (down positive); 0 unless `kind` is `MOTION`.
+    dy: int = 0
+    #: Wheel delta this report (up positive); 0 unless `kind` is `MOTION`.
+    dz: int = 0
+
+    @property
+    def is_press(self) -> bool:
+        return self.kind == InputKind.PRESS
+
+    @property
+    def is_release(self) -> bool:
+        return self.kind == InputKind.RELEASE
+
+
+@dataclass(frozen=True)
+class Stamped:
+    """One event placed on the caller's clock by a `Timeline`."""
+
+    #: When the event happened, on the same monotonic scale passed as `now_ns`.
+    host_ns: int
+    #: The event's own stamp, unwrapped past the 32-bit rollover.
+    box_us: int
+    #: How much later than the measured floor this event arrived. Jitter, not latency.
+    excess_ns: int
+
+
+def input_event_from_c(c) -> InputEvent:
+    kind = InputKind(c.kind)
+    usage = None
+    if kind != InputKind.MOTION:
+        usage = Usage(_native.MediusUsage(kind=c.usage.kind, id=c.usage.id))
+    return InputEvent(kind, int(c.ts_us), ClockDomain(c.clock), usage, int(c.dx), int(c.dy), int(c.dz))
 
 
 def version_from_c(c) -> Version:
@@ -536,12 +910,42 @@ def stats_to_c(s) -> "_native.MediusStats":
     )
 
 
+def catch_filter_from_c(c) -> CatchFilter:
+    # Copy: a filter read out of a state buffer must outlive the buffer it was read from.
+    return CatchFilter(_native.MediusCatchFilter(c.class_, c.id, c.direction, c.capture))
+
+
+def clock_estimate_from_c(c) -> ClockEstimate:
+    age = None if c.age_ms == _native.MEDIUS_CLOCK_AGE_NONE else int(c.age_ms)
+    rate = None if c.rate_ppb == _native.MEDIUS_CLOCK_RATE_NONE else int(c.rate_ppb)
+    return ClockEstimate(int(c.offset_us), rate, int(c.delay_us), age)
+
+
+def clock_estimate_to_c(e) -> "_native.MediusClockEstimate":
+    age = _native.MEDIUS_CLOCK_AGE_NONE if e.age_ms is None else int(e.age_ms)
+    rate = _native.MEDIUS_CLOCK_RATE_NONE if e.rate_ppb is None else int(e.rate_ppb)
+    return _native.MediusClockEstimate(e.offset_us, rate, e.delay_us, age)
+
+
 def catch_state_from_c(c) -> CatchState:
-    return CatchState(c.mask, c.dropped)
+    n = min(int(c.n), _native.MEDIUS_MAX_CATCH_ENTRIES)
+    entries = [
+        CatchEntry(catch_filter_from_c(c.entries[i].filter), int(c.entries[i].dropped))
+        for i in range(n)
+    ]
+    return CatchState(bool(c.table_full), int(c.dropped), clock_estimate_from_c(c.clock), entries)
 
 
-def catch_state_to_c(c) -> "_native.MediusCatchState":
-    return _native.MediusCatchState(mask=c.mask, dropped=c.dropped)
+def catch_state_to_c(s) -> "_native.MediusCatchState":
+    c = _native.MediusCatchState()
+    c.table_full = 1 if s.table_full else 0
+    c.dropped = s.dropped
+    c.clock = clock_estimate_to_c(s.clock)
+    n = min(len(s.entries), _native.MEDIUS_MAX_CATCH_ENTRIES)
+    c.n = n
+    for i in range(n):
+        c.entries[i] = _native.MediusCatchEntry(s.entries[i].filter._c, s.entries[i].dropped)
+    return c
 
 
 def imperfect_from_c(c) -> ImperfectStatus:
@@ -628,6 +1032,7 @@ class ClipSettings:
     loop: bool = False
     retain: bool = False
     finalized: bool = False
+    ride: bool = False
     triggers: List[ClipTrigger] = field(default_factory=list)
 
 
@@ -657,6 +1062,7 @@ def clip_settings_from_c(c) -> ClipSettings:
         bool(c.loop_),
         bool(c.retain),
         bool(c.finalized),
+        bool(c.ride),
         triggers,
     )
 
@@ -668,6 +1074,7 @@ def clip_settings_to_c(s) -> "_native.MediusClipSettings":
     c.loop_ = 1 if s.loop else 0
     c.retain = 1 if s.retain else 0
     c.finalized = 1 if s.finalized else 0
+    c.ride = 1 if s.ride else 0
     n = min(len(s.triggers), _native.MEDIUS_CLIP_TRIG_MAX)
     c.n = n
     for i in range(n):
@@ -726,6 +1133,8 @@ def motion_event_to_c(e) -> "_native.MediusMotionEvent":
 
 def usage_snapshot_to_c(s) -> "_native.MediusUsageEvent":
     c = _native.MediusUsageEvent()
+    c.class_ = int(s.cls)
+    c.direction = int(s.direction)
     n = min(len(s.usages), _native.MEDIUS_MAX_USAGES)
     c.n = n
     for idx in range(n):
@@ -733,15 +1142,45 @@ def usage_snapshot_to_c(s) -> "_native.MediusUsageEvent":
     return c
 
 
+def traffic_event_to_c(t) -> "_native.MediusTrafficEvent":
+    c = _native.MediusTrafficEvent()
+    c.class_ = int(t.catch_class)
+    c.id = int(t.id)
+    c.direction = int(t.direction)
+    c.flags = int(t.flags)
+    c.true_len = int(t.true_len)
+    raw = bytes(t.bytes)[: _native.MEDIUS_MAX_TRAFFIC_BYTES]
+    c.len = len(raw)
+    for i, b in enumerate(raw):
+        c.bytes[i] = b
+    return c
+
+
+def traffic_event_from_c(c) -> TrafficEvent:
+    n = min(int(c.len), _native.MEDIUS_MAX_TRAFFIC_BYTES)
+    return TrafficEvent(
+        CatchClass(c.class_),
+        int(c.id),
+        Direction(c.direction),
+        int(c.flags),
+        int(c.true_len),
+        bytes(c.bytes[:n]),
+    )
+
+
 def decode_catch_event(c) -> CatchEvent:
     kind = CatchEventKind(c.kind)
+    clock = ClockDomain(c.clock)
     if kind == CatchEventKind.MOTION:
         m = c.data.motion
-        return CatchEvent(kind, MotionEvent(m.dx, m.dy, m.dz))
+        return CatchEvent(kind, MotionEvent(m.dx, m.dy, m.dz), c.ts_us, clock)
+    if kind == CatchEventKind.TRAFFIC:
+        return CatchEvent(kind, traffic_event_from_c(c.data.traffic), c.ts_us, clock)
     u = c.data.usages
     n = min(int(u.n), _native.MEDIUS_MAX_USAGES)
     usages = [_input_copy(u.usages[i]) for i in range(n)]
-    return CatchEvent(kind, UsageSnapshot(usages))
+    snap = UsageSnapshot(usages, Class(u.class_), Direction(u.direction))
+    return CatchEvent(kind, snap, c.ts_us, clock)
 
 
 def decode_log_line(c) -> LogLine:

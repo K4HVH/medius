@@ -2,6 +2,8 @@
 
 use crate::protocol::command::inject_payload;
 use crate::protocol::opcode::{INJ_KEY, INJ_MEDIA};
+#[cfg(feature = "mock")]
+use crate::types::{Class, Direction};
 use crate::types::{Key, MediaKey};
 
 #[test]
@@ -47,23 +49,35 @@ fn kbd_caps_decodes() {
 #[cfg(feature = "mock")]
 #[test]
 fn pushed_keyboard_and_media_events_arrive_on_the_stream() {
-    use crate::{CatchEvent, CatchMask, Device, Key, MediaKey, MockBox, Usage};
+    use crate::{CatchEvent, CatchFilter, Device, Key, MediaKey, MockBox, Usage};
     use std::time::Duration;
     let mock = MockBox::new();
     let device = Device::with_mock(mock.clone());
     let stream = device
-        .catch_events(CatchMask::KEYS | CatchMask::MEDIA)
+        .catch_events([
+            CatchFilter::watch_class(Class::Key),
+            CatchFilter::watch_class(Class::Media),
+        ])
         .unwrap();
 
     mock.push_usages(
         0,
+        1_000,
+        Class::Key,
+        Direction::Positive,
         &[
             Usage::from(Key::LEFT_SHIFT),
             Usage::from(Key::A),
             Usage::from(Key::B),
         ],
     );
-    mock.push_usages(1, &[Usage::from(MediaKey::VOLUME_UP)]);
+    mock.push_usages(
+        1,
+        2_000,
+        Class::Media,
+        Direction::Positive,
+        &[Usage::from(MediaKey::VOLUME_UP)],
+    );
 
     let CatchEvent::Usages(kb) = stream.recv_timeout(Duration::from_secs(1)).expect("keys") else {
         panic!("expected a usage event");

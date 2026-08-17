@@ -22,6 +22,13 @@ pub(crate) struct KeepaliveCtx {
     pub(crate) seq: Arc<AtomicU8>,
     pub(crate) counters: Arc<Counters>,
     pub(crate) desired: Arc<Mutex<DesiredState>>,
+    /// The same lock subscribe and unsubscribe commit under. Held across this thread's read of the
+    /// desired set AND its sends, because between the two an unsubscribe can commit -- and then this
+    /// thread re-adds the entry it just removed. The box would hold a table no subscriber wants and
+    /// the crate's own set does not contain, so no later diff would ever remove it, and because the
+    /// table stays non-empty the firmware's silence clear never fires either. On a vendor-bulk entry
+    /// that is a quarter of a megabyte a second the link cannot carry, for the life of the connection.
+    pub(crate) catch_lock: Arc<Mutex<()>>,
     pub(crate) stop: Arc<AtomicBool>,
     pub(crate) cadence: Duration,
 }
@@ -38,6 +45,7 @@ fn keepalive_loop(ctx: KeepaliveCtx) {
         if sleep_cadence(&ctx.stop, ctx.cadence) {
             return;
         }
+        let _serial = ctx.catch_lock.lock();
         let (idle, catch) = {
             let d = ctx.desired.lock();
             (d.is_idle(), d.catch())
@@ -45,14 +53,28 @@ fn keepalive_loop(ctx: KeepaliveCtx) {
         if idle {
             continue;
         }
+        // Both frames feed the firmware silence timer (§5.4) to keep a held override/subscription
+        // alive. Re-sending the CATCH entries (not a bare QUERY) also restores the table if a device
+        // blip cleared it box-side. Only subscribes go out, never an unsubscribe: a blanket clear and
+        // re-add here would punch a hole in the stream on every cadence.
+        if !catch.is_empty() {
+            for f in catch.values() {
+                let seq = ctx.seq.fetch_add(1, Ordering::Relaxed);
+                let (class, id) = f.wire();
+                let _ = write_frame(
+                    &ctx.transport,
+                    &ctx.write_lock,
+                    &ctx.counters,
+                    seq,
+                    FrameType::Catch,
+                    &catch_payload(class, id, f.direction().as_u8(), 1, f.capture().as_u8()),
+                );
+            }
+            continue;
+        }
         let seq = ctx.seq.fetch_add(1, Ordering::Relaxed);
-        // Both frames feed the firmware silence timer (§5.4) to keep a held override/subscription alive.
-        // Re-sending CATCH (not a bare QUERY) also restores the mask if a device blip cleared it box-side.
-        let (ty, payload): (FrameType, Vec<u8>) = if catch.is_empty() {
-            (FrameType::Query, query_payload(Q_HEALTH).to_vec())
-        } else {
-            (FrameType::Catch, catch_payload(catch.bits()).to_vec())
-        };
+        let (ty, payload): (FrameType, Vec<u8>) =
+            (FrameType::Query, query_payload(Q_HEALTH).to_vec());
         let _ = write_frame(
             &ctx.transport,
             &ctx.write_lock,

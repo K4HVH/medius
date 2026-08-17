@@ -25,19 +25,25 @@ pub use device::Device;
 pub use device::catch::EventStream;
 pub use device::clip::ClipHandle;
 pub use device::discover::BoxInfo;
+pub use device::input::InputStream;
 pub use device::logs::LogStream;
 pub use device::options::{EMIT_MAX_HZ, NAME_MAX};
 pub use error::{Error, Result};
 pub use link::{DEFAULT_KEEPALIVE_CADENCE, DEFAULT_QUERY_TIMEOUT};
+/// The control-protocol version this build speaks. A box reporting anything else is refused at the
+/// handshake; exposing it lets a caller say so in its own words before connecting.
+pub use protocol::PROTO_VER;
 pub use protocol::{DecodedFrame, FrameType};
 pub use transport::scan::find_medius;
 pub use types::{
-    Action, Axis, Blanket, Button, CLIP_EDGES_MAX, Caps, CatchEvent, CatchMask, CatchState, Class,
-    ClipAction, ClipBuilder, ClipSettings, ClipState, ClipStatus, ClipTrigger, CountersSnapshot,
-    DeviceInfo, DeviceKind, Edge, EmitPace, EmitPaceStatus, Health, ImperfectStatus, KbdCaps, Key,
-    LedMode, LedTarget, LockDirection, LockEntry, LockScope, LockTarget, Locks, LogLevel, LogLine,
-    MediaKey, Motion, MotionEvent, MouseCaps, PortInfo, Rate, RebootTarget, Stats, Usage,
-    UsageSnapshot, Version,
+    Action, Axis, Blanket, BusEvent, Button, CLIP_EDGES_MAX, Caps, Capture, CatchClass, CatchEntry,
+    CatchEvent, CatchFilter, CatchState, Class, ClipAction, ClipBuilder, ClipSettings, ClipState,
+    ClipStatus, ClipTrigger, ClockDomain, ClockEstimate, ControlStatus, CountersSnapshot,
+    DeviceInfo, DeviceKind, Direction, DirectionMeaning, Edge, EmitPace, EmitPaceStatus, Health,
+    ImperfectStatus, Input, InputEvent, KbdCaps, Key, LedMode, LedTarget, LockEntry, LockScope,
+    LockTarget, Locks, LogLevel, LogLine, MediaKey, Motion, MotionEvent, MouseCaps, MoveTiming,
+    PendingMotion, PortInfo, Rate, RebootTarget, Stamped, Stats, Timeline, Timestamped,
+    TrafficClass, TrafficEvent, Usage, UsageSnapshot, Version,
 };
 
 #[cfg(feature = "async")]

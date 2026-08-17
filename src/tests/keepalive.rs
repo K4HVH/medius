@@ -2,7 +2,7 @@
 
 use std::time::Duration;
 
-use crate::{Button, CatchMask, Device, FrameType, MockBox};
+use crate::{Button, CatchFilter, Device, FrameType, MockBox};
 
 const PAST_ONE_CADENCE: Duration = Duration::from_millis(650);
 
@@ -10,7 +10,7 @@ const PAST_ONE_CADENCE: Duration = Duration::from_millis(650);
 fn keepalive_reasserts_catch_while_subscribed() {
     let mock = MockBox::new();
     let device = Device::with_mock(mock.clone());
-    let _stream = device.catch_events(CatchMask::all()).unwrap();
+    let _stream = device.catch_events([CatchFilter::everything()]).unwrap();
     mock.clear_recorded();
     std::thread::sleep(PAST_ONE_CADENCE);
     assert!(

@@ -3,15 +3,17 @@
 from __future__ import annotations
 
 import ctypes
-from typing import Optional
+from typing import Optional, Sequence, Union
 
 from . import _native
-from ._enums import Action, Blanket, CatchMask, LedMode, LedTarget, LockDirection, RebootTarget, Status
-from ._errors import MediusError, check
+from ._enums import (Action, Blanket, LedMode, LedTarget, Direction, MoveTiming, PendingMotion,
+                     RebootTarget, Status)
+from ._errors import InvalidArgError, MediusError, check
 from ._clip import ClipHandle
-from ._streams import EventStream, LogStream
+from ._streams import EventStream, InputStream, LogStream
 from ._types import (
     Caps,
+    CatchFilter,
     CatchState,
     Counters,
     EmitPace,
@@ -116,8 +118,25 @@ class Device:
     def wheel(self, delta):
         check(_native.lib.medius_device_wheel(self._handle, delta))
 
-    def move_axis(self, motion: Motion):
-        check(_native.lib.medius_device_move_axis(self._handle, motion._c))
+    def move_rel_now(self, dx, dy):
+        """A cursor move that bypasses movement riding: it emits on the box's own clock."""
+        check(_native.lib.medius_device_move_rel_now(self._handle, dx, dy))
+
+    def wheel_now(self, delta):
+        """A wheel move that bypasses movement riding."""
+        check(_native.lib.medius_device_wheel_now(self._handle, delta))
+
+    def flush_motion(self):
+        """Emit the motion held for a ride now, ignoring the ride window."""
+        check(_native.lib.medius_device_flush_motion(self._handle))
+
+    def discard_motion(self):
+        """Drop the motion held for a ride."""
+        check(_native.lib.medius_device_discard_motion(self._handle))
+
+    def move_axis(self, motion: Motion, timing: MoveTiming = MoveTiming.RIDE,
+                  pending: PendingMotion = PendingMotion.KEEP):
+        check(_native.lib.medius_device_move_axis(self._handle, motion._c, int(timing), int(pending)))
 
     def inject(self, input: Usage, action: Action):
         check(_native.lib.medius_device_inject(self._handle, input._c, int(action)))
@@ -131,16 +150,16 @@ class Device:
     def force_release(self, input: Usage):
         check(_native.lib.medius_device_force_release(self._handle, input._c))
 
-    def lock(self, target: LockTarget, direction: LockDirection):
+    def lock(self, target: LockTarget, direction: Direction):
         check(_native.lib.medius_device_lock(self._handle, target._c, int(direction)))
 
-    def unlock(self, target: LockTarget, direction: LockDirection):
+    def unlock(self, target: LockTarget, direction: Direction):
         check(_native.lib.medius_device_unlock(self._handle, target._c, int(direction)))
 
-    def lock_all(self, what: Blanket, direction: LockDirection):
+    def lock_all(self, what: Blanket, direction: Direction):
         check(_native.lib.medius_device_lock_all(self._handle, int(what), int(direction)))
 
-    def unlock_all(self, what: Blanket, direction: LockDirection):
+    def unlock_all(self, what: Blanket, direction: Direction):
         check(_native.lib.medius_device_unlock_all(self._handle, int(what), int(direction)))
 
     def led(self, target: LedTarget, mode: LedMode, level):
@@ -254,10 +273,42 @@ class Device:
         check(_native.lib.medius_device_clip(self._handle, ctypes.byref(out)))
         return ClipHandle(out.value, self)
 
-    def catch_events(self, mask: CatchMask = CatchMask.ALL) -> EventStream:
+    def catch_events(self, filters: Union[CatchFilter, Sequence[CatchFilter]]) -> EventStream:
+        """Subscribe to the catch stream for one filter or a sequence of them.
+
+        Overlapping subscriptions from different callers collapse into the one table the box holds,
+        and each consumer still receives everything it asked for.
+        """
+        seq = [filters] if isinstance(filters, CatchFilter) else list(filters)
+        if not seq:
+            raise InvalidArgError(Status.ERR_INVALID_ARG, "catch_events needs at least one filter")
+        arr = (_native.MediusCatchFilter * len(seq))(*[f._c for f in seq])
         out = ctypes.c_void_p()
-        check(_native.lib.medius_device_catch_events(self._handle, int(mask), ctypes.byref(out)))
+        check(
+            _native.lib.medius_device_catch_events(
+                self._handle, arr, len(seq), ctypes.byref(out)
+            )
+        )
         return EventStream(out.value, self)
+
+    def input_events(self, filters: Union[CatchFilter, Sequence[CatchFilter]]) -> InputStream:
+        """Subscribe to decoded input: press and release edges, and motion.
+
+        Every filter must name an input class and cover both edges -- build them with
+        `CatchFilter.watch*` or `CatchFilter.all_input()`. A traffic class, `everything()`, or a
+        filter narrowed to one edge is refused rather than silently yielding nothing.
+        """
+        seq = [filters] if isinstance(filters, CatchFilter) else list(filters)
+        if not seq:
+            raise InvalidArgError(Status.ERR_INVALID_ARG, "input_events needs at least one filter")
+        arr = (_native.MediusCatchFilter * len(seq))(*[f._c for f in seq])
+        out = ctypes.c_void_p()
+        check(
+            _native.lib.medius_device_input_events(
+                self._handle, arr, len(seq), ctypes.byref(out)
+            )
+        )
+        return InputStream(out.value, self)
 
     def logs(self) -> LogStream:
         out = ctypes.c_void_p()

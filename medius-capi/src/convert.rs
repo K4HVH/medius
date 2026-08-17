@@ -1,13 +1,15 @@
 //! Conversions between the safe `medius` types and the `#[repr(C)]` mirrors.
 
 use std::os::raw::c_char;
+use std::time::Duration;
 
 use medius::{
-    Action, Axis, Blanket, BoxInfo, Button, Caps, CatchEvent, CatchMask, CatchState, Class,
-    ClipState, ClipStatus, CountersSnapshot, DeviceInfo, DeviceKind, EmitPace, EmitPaceStatus,
-    Health, ImperfectStatus, KbdCaps, Key, LedMode, LedTarget, LockDirection, LockEntry, LockScope,
-    LockTarget, Locks, LogLevel, LogLine, MediaKey, Motion, MouseCaps, PortInfo, Rate,
-    RebootTarget, Stats, Usage, Version,
+    Action, Axis, Blanket, BoxInfo, Button, Caps, CatchEntry, CatchEvent, CatchFilter, CatchState,
+    Class, ClipState, ClipStatus, ClockDomain, ClockEstimate, CountersSnapshot, DeviceInfo,
+    DeviceKind, Direction, EmitPace, EmitPaceStatus, Health, ImperfectStatus, Input, InputEvent,
+    KbdCaps, Key, LedMode, LedTarget, LockEntry, LockScope, LockTarget, Locks, LogLevel, LogLine,
+    MediaKey, Motion, MouseCaps, MoveTiming, PendingMotion, PortInfo, Rate, RebootTarget, Stats,
+    Usage, Version,
 };
 
 use crate::ctypes::*;
@@ -105,13 +107,21 @@ impl From<MediusLedMode> for LedMode {
     }
 }
 
-impl From<MediusLockDirection> for LockDirection {
-    fn from(v: MediusLockDirection) -> Self {
+impl From<MediusDirection> for Direction {
+    fn from(v: MediusDirection) -> Self {
         match v {
-            MediusLockDirection::Both => LockDirection::Both,
-            MediusLockDirection::Positive => LockDirection::Positive,
-            MediusLockDirection::Negative => LockDirection::Negative,
+            MediusDirection::Both => Direction::Both,
+            MediusDirection::Positive => Direction::Positive,
+            MediusDirection::Negative => Direction::Negative,
         }
+    }
+}
+
+fn lock_direction_to_c(d: Direction) -> MediusDirection {
+    match d {
+        Direction::Both => MediusDirection::Both,
+        Direction::Positive => MediusDirection::Positive,
+        Direction::Negative => MediusDirection::Negative,
     }
 }
 
@@ -158,6 +168,25 @@ impl From<MediusMotion> for Motion {
     }
 }
 
+impl From<MediusMoveTiming> for MoveTiming {
+    fn from(v: MediusMoveTiming) -> Self {
+        match v {
+            MediusMoveTiming::Ride => MoveTiming::Ride,
+            MediusMoveTiming::Now => MoveTiming::Now,
+        }
+    }
+}
+
+impl From<MediusPendingMotion> for PendingMotion {
+    fn from(v: MediusPendingMotion) -> Self {
+        match v {
+            MediusPendingMotion::Keep => PendingMotion::Keep,
+            MediusPendingMotion::Flush => PendingMotion::Flush,
+            MediusPendingMotion::Discard => PendingMotion::Discard,
+        }
+    }
+}
+
 /// `MediusUsage` to a [`Usage`]; `None` when a button/key id is out of range for its class.
 pub(crate) fn input_to_medius(v: MediusUsage) -> Option<Usage> {
     Some(match v.kind {
@@ -165,6 +194,14 @@ pub(crate) fn input_to_medius(v: MediusUsage) -> Option<Usage> {
         MediusClass::Key => Usage::from(Key::new(u8::try_from(v.id).ok()?)),
         MediusClass::Media => Usage::from(MediaKey::new(v.id)),
     })
+}
+
+pub(crate) fn class_from_c(c: MediusClass) -> Class {
+    match c {
+        MediusClass::Button => Class::Button,
+        MediusClass::Key => Class::Key,
+        MediusClass::Media => Class::Media,
+    }
 }
 
 fn class_kind(class: Class) -> MediusClass {
@@ -183,7 +220,7 @@ fn kind_class(kind: MediusClass) -> Class {
     }
 }
 
-fn usage_to_c(u: Usage) -> MediusUsage {
+pub(crate) fn usage_to_c(u: Usage) -> MediusUsage {
     MediusUsage {
         kind: class_kind(u.class),
         id: u.id,
@@ -371,11 +408,101 @@ impl From<Locks> for MediusLocks {
     }
 }
 
-impl From<medius::CatchState> for MediusCatchState {
-    fn from(c: medius::CatchState) -> Self {
+fn clock_domain_to_c(d: ClockDomain) -> MediusClockDomain {
+    match d {
+        ClockDomain::HostChip => MediusClockDomain::HostChip,
+        ClockDomain::DeviceChip => MediusClockDomain::DeviceChip,
+    }
+}
+
+pub(crate) fn clock_domain_to_native(d: MediusClockDomain) -> ClockDomain {
+    match d {
+        MediusClockDomain::HostChip => ClockDomain::HostChip,
+        MediusClockDomain::DeviceChip => ClockDomain::DeviceChip,
+    }
+}
+
+/// A [`CatchFilter`] to the C struct, wildcards resolved to their sentinels.
+pub(crate) fn catch_filter_to_c(f: CatchFilter) -> MediusCatchFilter {
+    let (class, id) = f.wire();
+    MediusCatchFilter {
+        class,
+        id,
+        direction: lock_direction_to_c(f.direction()),
+        capture: f.capture().as_u8(),
+    }
+}
+
+/// The C struct back to a [`CatchFilter`]; `None` when the four values address nothing the box would
+/// accept -- an unknown class, an unknown direction, or the wildcard class carrying a real id.
+pub(crate) fn catch_filter_from_c(f: MediusCatchFilter) -> Option<CatchFilter> {
+    CatchFilter::from_wire(f.class, f.id, f.direction as u8, f.capture)
+}
+
+/// A decoded [`InputEvent`] to the C struct. The unused arms are zeroed rather than left undefined:
+/// a C caller reading `dx` on a press must see 0, not whatever was on the stack.
+pub(crate) fn input_event_to_c(e: InputEvent) -> MediusInputEvent {
+    let blank = MediusUsage {
+        kind: MediusClass::Button,
+        id: 0,
+    };
+    let (kind, usage, dx, dy, dz) = match e.input {
+        Input::Press(u) => (MediusInputKind::Press, usage_to_c(u), 0, 0, 0),
+        Input::Release(u) => (MediusInputKind::Release, usage_to_c(u), 0, 0, 0),
+        Input::Motion { dx, dy, dz } => (MediusInputKind::Motion, blank, dx, dy, dz),
+    };
+    MediusInputEvent {
+        kind,
+        ts_us: e.ts_us,
+        clock: clock_domain_to_c(e.clock),
+        usage,
+        dx,
+        dy,
+        dz,
+    }
+}
+
+fn clock_estimate_to_c(c: ClockEstimate) -> MediusClockEstimate {
+    MediusClockEstimate {
+        offset_us: c.offset_us,
+        rate_ppb: c.rate_ppb.unwrap_or(MEDIUS_CLOCK_RATE_NONE),
+        delay_us: c.delay_us,
+        // Saturate one short of the sentinel so a real age can never read as "no estimate".
+        age_ms: c.age.map_or(MEDIUS_CLOCK_AGE_NONE, |d| {
+            d.as_millis().min(MEDIUS_CLOCK_AGE_NONE as u128 - 1) as u32
+        }),
+    }
+}
+
+fn clock_estimate_from_c(c: MediusClockEstimate) -> ClockEstimate {
+    ClockEstimate {
+        offset_us: c.offset_us,
+        rate_ppb: (c.rate_ppb != MEDIUS_CLOCK_RATE_NONE).then_some(c.rate_ppb),
+        delay_us: c.delay_us,
+        age: (c.age_ms != MEDIUS_CLOCK_AGE_NONE).then(|| Duration::from_millis(c.age_ms as u64)),
+    }
+}
+
+impl From<CatchState> for MediusCatchState {
+    fn from(c: CatchState) -> Self {
+        let blank = MediusCatchEntry {
+            filter: catch_filter_to_c(CatchFilter::everything()),
+            dropped: 0,
+        };
+        let mut entries = [blank; MEDIUS_MAX_CATCH_ENTRIES];
+        let n = c.entries.len().min(MEDIUS_MAX_CATCH_ENTRIES);
+        for (slot, e) in entries.iter_mut().zip(c.entries.iter()).take(n) {
+            *slot = MediusCatchEntry {
+                filter: catch_filter_to_c(e.filter),
+                dropped: e.dropped,
+            };
+        }
         MediusCatchState {
-            mask: c.mask.bits(),
+            table_full: b(c.table_full),
             dropped: c.dropped,
+            clock: clock_estimate_to_c(c.clock),
+            n: n as u16,
+            entries,
         }
     }
 }
@@ -473,6 +600,7 @@ pub(crate) fn clip_settings_to_c(s: &medius::ClipSettings) -> MediusClipSettings
         loop_: s.loop_ as u8,
         retain: s.retain as u8,
         finalized: s.finalized as u8,
+        ride: s.ride as u8,
         triggers,
         n: n as u8,
     }
@@ -530,6 +658,7 @@ pub(crate) fn clip_settings_from_c(c: &MediusClipSettings) -> medius::ClipSettin
         loop_: c.loop_ != 0,
         retain: c.retain != 0,
         finalized: c.finalized != 0,
+        ride: c.ride != 0,
         triggers,
     }
 }
@@ -598,6 +727,8 @@ impl From<CatchEvent> for MediusCatchEvent {
         match e {
             CatchEvent::Motion(m) => MediusCatchEvent {
                 kind: MediusCatchEventKind::Motion,
+                ts_us: m.ts_us,
+                clock: clock_domain_to_c(m.clock),
                 data: MediusCatchEventData {
                     motion: MediusMotionEvent {
                         dx: m.dx,
@@ -617,10 +748,35 @@ impl From<CatchEvent> for MediusCatchEvent {
                 }
                 MediusCatchEvent {
                     kind: MediusCatchEventKind::Usages,
+                    ts_us: s.ts_us,
+                    clock: clock_domain_to_c(s.clock),
                     data: MediusCatchEventData {
                         usages: MediusUsageEvent {
+                            class: class_kind(s.class),
+                            direction: lock_direction_to_c(s.direction),
                             n: n as u16,
                             usages,
+                        },
+                    },
+                }
+            }
+            CatchEvent::Traffic(t) => {
+                let mut bytes = [0u8; MEDIUS_MAX_TRAFFIC_BYTES];
+                let n = t.bytes.len().min(MEDIUS_MAX_TRAFFIC_BYTES);
+                bytes[..n].copy_from_slice(&t.bytes[..n]);
+                MediusCatchEvent {
+                    kind: MediusCatchEventKind::Traffic,
+                    ts_us: t.ts_us,
+                    clock: clock_domain_to_c(t.clock),
+                    data: MediusCatchEventData {
+                        traffic: MediusTrafficEvent {
+                            class: t.class.as_u8(),
+                            id: t.id,
+                            direction: lock_direction_to_c(t.direction),
+                            flags: t.flags,
+                            true_len: t.true_len,
+                            len: n as u16,
+                            bytes,
                         },
                     },
                 }
@@ -774,9 +930,21 @@ impl From<MediusLocks> for Locks {
 
 impl From<MediusCatchState> for CatchState {
     fn from(c: MediusCatchState) -> Self {
+        let n = (c.n as usize).min(MEDIUS_MAX_CATCH_ENTRIES);
+        let entries = c.entries[..n]
+            .iter()
+            .filter_map(|e| {
+                Some(CatchEntry {
+                    filter: catch_filter_from_c(e.filter)?,
+                    dropped: e.dropped,
+                })
+            })
+            .collect();
         CatchState {
-            mask: CatchMask::from_bits_truncate(c.mask),
+            table_full: nz(c.table_full),
             dropped: c.dropped,
+            clock: clock_estimate_from_c(c.clock),
+            entries,
         }
     }
 }
@@ -818,6 +986,7 @@ impl From<medius::FrameType> for MediusFrameType {
             F::Catch => MediusFrameType::Catch,
             F::MotionEvent => MediusFrameType::MotionEvent,
             F::UsageEvent => MediusFrameType::UsageEvent,
+            F::TrafficEvent => MediusFrameType::TrafficEvent,
             F::Option => MediusFrameType::Option,
             F::ClipAppend => MediusFrameType::ClipAppend,
             F::ClipCtrl => MediusFrameType::ClipCtrl,
