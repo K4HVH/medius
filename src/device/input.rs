@@ -128,7 +128,7 @@ impl InputStream {
     /// Block up to `timeout` for the next input event.
     ///
     /// `None` means "nothing yet" **or** "nothing ever again", and on a closed stream it returns at
-    /// once — so a poll loop that ignores [`Self::is_connected`] spins.
+    /// once, so a poll loop that ignores [`Self::is_connected`] spins.
     pub fn recv_timeout(&mut self, timeout: Duration) -> Option<InputEvent> {
         // A timeout too large to add to `now` is a caller asking to wait indefinitely, not one asking
         // to give up immediately -- which is what `?` on the overflow would have done.
@@ -206,8 +206,8 @@ impl Device {
     /// Every filter must name an input class and cover both edges. A traffic class gives
     /// [`Error::NotAnInputFilter`], [`CatchFilter::everything`] gives [`Error::WildcardNotInput`]
     /// (use [`CatchFilter::all_input`]), and a filter narrowed to one edge gives
-    /// [`Error::HalfEdgeInputFilter`] — the missing edge is what tells a fresh press from a chord, so
-    /// filter on [`Input::Press`] instead.
+    /// [`Error::HalfEdgeInputFilter`]. The missing edge is what tells a fresh press from a chord, so
+    /// match on [`Input::Press`] instead.
     pub fn input_events(
         &self,
         filters: impl IntoIterator<Item = CatchFilter>,
