@@ -6,10 +6,10 @@ import ctypes
 from typing import Optional, Sequence, Union
 
 from . import _native
-from ._enums import Action, Blanket, LedMode, LedTarget, LockDirection, RebootTarget, Status
+from ._enums import Action, Blanket, LedMode, LedTarget, Direction, RebootTarget, Status
 from ._errors import InvalidArgError, MediusError, check
 from ._clip import ClipHandle
-from ._streams import EventStream, LogStream
+from ._streams import EventStream, InputStream, LogStream
 from ._types import (
     Caps,
     CatchFilter,
@@ -132,16 +132,16 @@ class Device:
     def force_release(self, input: Usage):
         check(_native.lib.medius_device_force_release(self._handle, input._c))
 
-    def lock(self, target: LockTarget, direction: LockDirection):
+    def lock(self, target: LockTarget, direction: Direction):
         check(_native.lib.medius_device_lock(self._handle, target._c, int(direction)))
 
-    def unlock(self, target: LockTarget, direction: LockDirection):
+    def unlock(self, target: LockTarget, direction: Direction):
         check(_native.lib.medius_device_unlock(self._handle, target._c, int(direction)))
 
-    def lock_all(self, what: Blanket, direction: LockDirection):
+    def lock_all(self, what: Blanket, direction: Direction):
         check(_native.lib.medius_device_lock_all(self._handle, int(what), int(direction)))
 
-    def unlock_all(self, what: Blanket, direction: LockDirection):
+    def unlock_all(self, what: Blanket, direction: Direction):
         check(_native.lib.medius_device_unlock_all(self._handle, int(what), int(direction)))
 
     def led(self, target: LedTarget, mode: LedMode, level):
@@ -272,6 +272,25 @@ class Device:
             )
         )
         return EventStream(out.value, self)
+
+    def input_events(self, filters: Union[CatchFilter, Sequence[CatchFilter]]) -> InputStream:
+        """Subscribe to decoded input: press and release edges, and motion.
+
+        Every filter must name an input class and cover both edges -- build them with
+        `CatchFilter.watch*` or `CatchFilter.all_input()`. A traffic class, `everything()`, or a
+        filter narrowed to one edge is refused rather than silently yielding nothing.
+        """
+        seq = [filters] if isinstance(filters, CatchFilter) else list(filters)
+        if not seq:
+            raise InvalidArgError(Status.ERR_INVALID_ARG, "input_events needs at least one filter")
+        arr = (_native.MediusCatchFilter * len(seq))(*[f._c for f in seq])
+        out = ctypes.c_void_p()
+        check(
+            _native.lib.medius_device_input_events(
+                self._handle, arr, len(seq), ctypes.byref(out)
+            )
+        )
+        return InputStream(out.value, self)
 
     def logs(self) -> LogStream:
         out = ctypes.c_void_p()

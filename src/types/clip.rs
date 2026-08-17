@@ -6,9 +6,9 @@ use crate::protocol::opcode::{
     CLIP_OP_TOGGLE, CLIP_TAG_GAP, CLIP_TRIG_MAX, LOCK_DIR_BOTH, LOCK_DIR_NEG, LOCK_DIR_POS,
 };
 use crate::types::lock::blanket_from_scope;
-use crate::types::{Action, Blanket, Class, LockDirection, Usage};
+use crate::types::{Action, Blanket, Class, Direction, Usage};
 
-/// Which edge of a trigger usage fires its [`ClipTrigger`]. The wire encoding matches [`LockDirection`]
+/// Which edge of a trigger usage fires its [`ClipTrigger`]. The wire encoding matches [`Direction`]
 /// (`Both`=0, `Press`=1, `Release`=2).
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -35,12 +35,12 @@ impl Edge {
     }
 }
 
-impl From<Edge> for LockDirection {
-    fn from(e: Edge) -> LockDirection {
+impl From<Edge> for Direction {
+    fn from(e: Edge) -> Direction {
         match e {
-            Edge::Both => LockDirection::Both,
-            Edge::Press => LockDirection::Positive,
-            Edge::Release => LockDirection::Negative,
+            Edge::Both => Direction::Both,
+            Edge::Press => Direction::Positive,
+            Edge::Release => Direction::Negative,
         }
     }
 }

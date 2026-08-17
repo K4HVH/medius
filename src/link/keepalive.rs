@@ -58,7 +58,7 @@ fn keepalive_loop(ctx: KeepaliveCtx) {
         // blip cleared it box-side. Only subscribes go out, never an unsubscribe: a blanket clear and
         // re-add here would punch a hole in the stream on every cadence.
         if !catch.is_empty() {
-            for f in &catch {
+            for f in catch.values() {
                 let seq = ctx.seq.fetch_add(1, Ordering::Relaxed);
                 let (class, id) = f.wire();
                 let _ = write_frame(
@@ -67,7 +67,7 @@ fn keepalive_loop(ctx: KeepaliveCtx) {
                     &ctx.counters,
                     seq,
                     FrameType::Catch,
-                    &catch_payload(class, id, f.direction.as_u8(), 1, f.snaplen),
+                    &catch_payload(class, id, f.direction().as_u8(), 1, f.capture().as_u8()),
                 );
             }
             continue;

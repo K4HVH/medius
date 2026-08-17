@@ -4,16 +4,20 @@ use std::time::Duration;
 
 use crate::error::{Error, Result};
 use crate::link::Link;
+use crate::link::catch::{FilterSet, collapse};
 use crate::types::{CatchEvent, CatchFilter};
 
 use super::Device;
 
-/// A live stream of physical-input [`CatchEvent`]s from the box (the `CATCH` feature, §3.9).
+/// A live stream of [`CatchEvent`]s from the box (the `CATCH` feature, §3.9).
+///
+/// Unsubscribes when the last clone drops. For decoded press and release edges rather than held-usage
+/// snapshots, use [`Device::input_events`].
 #[derive(Clone, Debug)]
 pub struct EventStream {
     rx: flume::Receiver<CatchEvent>,
     dropped: Arc<AtomicU64>,
-    // Unsubscribes when the last clone drops; the Arc keeps it alive across clones.
+    // Reference-counted so a clone keeps the subscription alive.
     _guard: Arc<CatchGuard>,
 }
 
@@ -43,7 +47,7 @@ impl EventStream {
         }
     }
 
-    /// Block until the next physical-input event arrives.
+    /// Block until the next event arrives.
     pub fn recv(&self) -> Result<CatchEvent> {
         self.rx.recv().map_err(|_| Error::Disconnected)
     }
@@ -54,8 +58,16 @@ impl EventStream {
     }
 
     /// Block up to `timeout` for the next event; `None` on timeout (or a closed channel).
+    ///
+    /// A closed stream returns at once rather than waiting, so a poll loop that ignores
+    /// [`Self::is_connected`] spins once the box goes away.
     pub fn recv_timeout(&self, timeout: Duration) -> Option<CatchEvent> {
         self.rx.recv_timeout(timeout).ok()
+    }
+
+    /// A blocking iterator over the stream, ending when the box disconnects.
+    pub fn iter(&self) -> impl Iterator<Item = CatchEvent> + '_ {
+        self.rx.iter()
     }
 
     /// Drain every currently-buffered event without blocking.
@@ -69,39 +81,99 @@ impl EventStream {
         self.rx.recv_async().await.map_err(|_| Error::Disconnected)
     }
 
+    /// The stream as a [`Stream`](futures_core::Stream), for `.next().await` and the combinators.
+    #[cfg(feature = "async")]
+    pub fn stream(&self) -> impl futures_core::Stream<Item = CatchEvent> + '_ {
+        self.rx.stream()
+    }
+
     /// Events this stream dropped because the consumer fell behind (host-side back-pressure).
     pub fn dropped(&self) -> u64 {
         self.dropped.load(Ordering::Relaxed)
     }
+
+    /// Whether the box is still delivering to this stream.
+    ///
+    /// [`Self::recv_timeout`] and [`Self::try_recv`] both answer `None` for "nothing yet" and for
+    /// "nothing ever again", which are different situations: one means wait longer, the other means
+    /// stop. This separates them.
+    pub fn is_connected(&self) -> bool {
+        !self.rx.is_disconnected()
+    }
+}
+
+impl Iterator for EventStream {
+    type Item = CatchEvent;
+
+    fn next(&mut self) -> Option<CatchEvent> {
+        self.recv().ok()
+    }
+}
+
+impl<'a> IntoIterator for &'a EventStream {
+    type Item = CatchEvent;
+    type IntoIter = Box<dyn Iterator<Item = CatchEvent> + 'a>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        Box::new(self.iter())
+    }
+}
+
+/// Check a subscription and collapse it onto one entry per box table slot.
+pub(crate) fn prepare(filters: impl IntoIterator<Item = CatchFilter>) -> Result<FilterSet> {
+    let wanted: Vec<CatchFilter> = filters.into_iter().collect();
+    // An empty subscription is a stream that never yields, which reads as a dead box rather than as
+    // the mistake it is.
+    if wanted.is_empty() {
+        return Err(Error::EmptySubscription);
+    }
+    if let Some(f) = wanted.iter().find(|f| !f.capture_is_meaningful()) {
+        return Err(Error::CaptureNotApplicable {
+            class: f.class().expect("a meaningless capture names a class"),
+        });
+    }
+    // 0xFFFF is the every-id sentinel, so an exact subscription to it becomes the class blanket the
+    // moment it reaches the wire -- a much wider stream than the caller asked for, and silent. Only a
+    // media usage is wide enough to express it.
+    if let Some((class, id)) = wanted.iter().find_map(|f| {
+        let (_, id) = f.wire();
+        (f.id() == Some(id)).then(|| (f.class(), id))
+    }) && id == crate::protocol::opcode::CATCH_ID_ANY
+    {
+        return Err(Error::ReservedId {
+            class: class.expect("an exact id names a class"),
+            id,
+        });
+    }
+    Ok(collapse(wanted))
 }
 
 impl Device {
     /// Subscribe to the catch stream for the given filters (the `CATCH` feature, §3.9).
     ///
-    /// Each [`CatchFilter`] addresses a class, an id within it, or everything. Overlapping
-    /// subscriptions from different callers collapse into the one table the box holds, and each
-    /// consumer still receives everything it asked for.
+    /// Overlapping subscriptions from different callers collapse into the one table the box holds,
+    /// and each consumer still receives only what it asked for.
     ///
     /// ```no_run
-    /// # use medius::{Device, CatchClass, CatchFilter};
+    /// # use medius::{Capture, CatchFilter, Device, TrafficClass};
     /// # fn f(dev: &Device) -> medius::Result<()> {
-    /// // Everything, cut to 16 bytes per event, except one endpoint kept whole.
     /// let events = dev.catch_events([
-    ///     CatchFilter::all().snaplen(16),
-    ///     CatchFilter::addr(CatchClass::VendorBulk, 0x83),
+    ///     CatchFilter::everything().with_capture(Capture::First(16)),
+    ///     CatchFilter::traffic(TrafficClass::VendorBulk, 0x83),
     /// ])?;
     /// # Ok(()) }
     /// ```
+    ///
+    /// # Errors
+    ///
+    /// [`Error::EmptySubscription`] for no filters, [`Error::CaptureNotApplicable`] for a
+    /// [`Capture`](crate::Capture) on an input class, and [`Error::CatchTableFull`] when the union
+    /// with every other subscription in this process exceeds the box's table.
     pub fn catch_events(
         &self,
         filters: impl IntoIterator<Item = CatchFilter>,
     ) -> Result<EventStream> {
-        // Widest-wins within this one call too. Collecting straight into the set silently kept
-        // whichever duplicate address came last, so `[addr(x).snaplen(0), addr(x).snaplen(16)]` cut
-        // the caller's own captures to 16 while the reverse order gave whole packets -- a difference
-        // in the order two filters were listed, with nothing to say so.
-        let set = CatchFilter::widest(filters);
-        let (id, rx, dropped) = self.link.catch_subscribe(set)?;
+        let (id, rx, dropped) = self.link.catch_subscribe(prepare(filters)?)?;
         Ok(EventStream::new(rx, dropped, self.link.clone(), id))
     }
 }

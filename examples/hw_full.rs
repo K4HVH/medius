@@ -20,9 +20,9 @@ mod linux {
 
     use medius::PROTO_VER;
     use medius::{
-        Action, Axis, Blanket, Button, CatchClass, CatchFilter, ClipAction, ClipBuilder, ClipState,
-        ClipTrigger, Device, Edge, EmitPace, Key, LedMode, LedTarget, LockDirection, MediaKey,
-        RebootTarget,
+        Action, Axis, Blanket, Button, CatchClass, CatchFilter, Class, ClipAction, ClipBuilder,
+        ClipState, ClipTrigger, Device, Direction, Edge, EmitPace, Input, Key, LedMode, LedTarget,
+        MediaKey, RebootTarget, Timeline, TrafficClass,
     };
 
     const EVIOCGRAB: libc::c_ulong = 0x4004_4590;
@@ -418,7 +418,7 @@ mod linux {
             // mouse only). The 3 ms inject cadence doubles as the keepalive that holds the lock.
             let dev = device.as_ref().unwrap();
             let _ = dev.reset();
-            let _ = dev.lock(Axis::X, LockDirection::Both);
+            let _ = dev.lock(Axis::X, Direction::Both);
             reset_motion(&acc);
             for _ in 0..50 {
                 let _ = dev.move_rel(40, 0);
@@ -439,17 +439,17 @@ mod linux {
             // mask matches the wire layout (X+ = bit0, Left press = bit6 => 0x0041). LOCK_ON is set.
             let dev = device.as_ref().unwrap();
             let _ = dev.reset();
-            let _ = dev.lock(Axis::X, LockDirection::Positive);
-            let _ = dev.lock(Button::Left, LockDirection::Positive);
+            let _ = dev.lock(Axis::X, Direction::Positive);
+            let _ = dev.lock(Button::Left, Direction::Positive);
             let locks = dev.query_locks();
             let lock_on = dev.query_health().map(|h| h.lock_on).unwrap_or(false);
             let n = locks.as_ref().map(|l| l.entries().len()).unwrap_or(0);
             let q_ok = locks
                 .as_ref()
                 .map(|l| {
-                    l.is_locked(Axis::X, LockDirection::Positive)
-                        && !l.is_locked(Axis::X, LockDirection::Negative)
-                        && l.is_locked(Button::Left, LockDirection::Positive)
+                    l.is_locked(Axis::X, Direction::Positive)
+                        && !l.is_locked(Axis::X, Direction::Negative)
+                        && l.is_locked(Button::Left, Direction::Positive)
                         && l.entries().len() == 2
                 })
                 .unwrap_or(false);
@@ -465,7 +465,7 @@ mod linux {
             // LOCK: injection overrides a hand-locked button (block-press, but a forced press wins).
             let dev = device.as_ref().unwrap();
             let _ = dev.reset();
-            let _ = dev.lock(Button::Left, LockDirection::Positive);
+            let _ = dev.lock(Button::Left, Direction::Positive);
             let _ = dev.press(Button::Left);
             std::thread::sleep(Duration::from_millis(200));
             let down = btn_val(&acc, Button::Left);
@@ -482,11 +482,11 @@ mod linux {
             // LOCK safety: RESET clears every lock; the keepalive holds a lock alive while the client
             // runs, and the firmware self-clears only on true control-PC silence (a crash stops it).
             let dev = device.as_ref().unwrap();
-            let _ = dev.lock(Axis::Y, LockDirection::Both);
+            let _ = dev.lock(Axis::Y, Direction::Both);
             let _ = dev.reset();
             let after_reset = dev.query_locks().map(|l| l.entries().len()).unwrap_or(99);
 
-            let _ = dev.lock(Axis::Y, LockDirection::Both);
+            let _ = dev.lock(Axis::Y, Direction::Both);
             let before = dev.query_locks().map(|l| l.entries().len()).unwrap_or(0);
             std::thread::sleep(Duration::from_millis(1400)); // longer than the box silence window
             let after_hold = dev.query_locks().map(|l| l.entries().len()).unwrap_or(99);
@@ -506,10 +506,10 @@ mod linux {
             let dev = device.as_ref().unwrap();
             let has_kbd = dev.query_health().map(|h| h.kbd_attached).unwrap_or(false);
             if has_kbd {
-                let _ = dev.lock(Key::A, LockDirection::Both);
+                let _ = dev.lock(Key::A, Direction::Both);
                 let on1 = dev.query_health().map(|h| h.lock_on).unwrap_or(false);
-                let _ = dev.unlock(Key::A, LockDirection::Both);
-                let _ = dev.lock_all(Blanket::Keys, LockDirection::Both);
+                let _ = dev.unlock(Key::A, Direction::Both);
+                let _ = dev.lock_all(Blanket::Keys, Direction::Both);
                 let on2 = dev.query_health().map(|h| h.lock_on).unwrap_or(false);
                 let _ = dev.reset();
                 let off = dev.query_health().map(|h| !h.lock_on).unwrap_or(false);
@@ -532,13 +532,13 @@ mod linux {
             // AND disconnects the host stream.
             //
             // Subscribed to the INPUT classes, not everything. An idle mouse produces no input event,
-            // which is what makes "quiet while idle" a real assertion -- but CatchFilter::all() now
+            // which is what makes "quiet while idle" a real assertion -- but the everything filter
             // covers HID_IN and EMIT, which fire on every report a streaming device sends, so against
             // one of those the same check asserted that a working box was broken.
             let dev = device.as_ref().unwrap();
             let stream = dev.catch_events([
-                CatchFilter::class(CatchClass::Axis),
-                CatchFilter::class(CatchClass::Button),
+                CatchFilter::watch_axes(),
+                CatchFilter::watch_class(Class::Button),
             ]);
             std::thread::sleep(Duration::from_millis(100));
             let on = dev.query_health().map(|h| h.catch_on).unwrap_or(false);
@@ -576,8 +576,8 @@ mod linux {
             let dev = device.as_ref().unwrap();
             let mut stamps: Vec<u32> = Vec::new();
             if let Ok(stream) = dev.catch_events([
-                CatchFilter::class(CatchClass::Axis),
-                CatchFilter::class(CatchClass::Button),
+                CatchFilter::watch_axes(),
+                CatchFilter::watch_class(Class::Button),
             ]) {
                 let deadline = std::time::Instant::now() + Duration::from_secs(2);
                 while std::time::Instant::now() < deadline {
@@ -627,8 +627,8 @@ mod linux {
             let mut emit = 0usize;
             let mut domains_right = true;
             if let Ok(stream) = dev.catch_events([
-                CatchFilter::class(CatchClass::HidIn),
-                CatchFilter::class(CatchClass::Emit),
+                CatchFilter::traffic_class(TrafficClass::HidIn),
+                CatchFilter::traffic_class(TrafficClass::Emit),
             ]) {
                 let injector = {
                     let d = dev.clone();
@@ -692,10 +692,7 @@ mod linux {
             let dev = device.as_ref().unwrap();
             let mut wanted = 0usize;
             let mut unwanted = 0usize;
-            if let Ok(stream) = dev.catch_events([CatchFilter::addr(
-                CatchClass::Axis,
-                medius::Axis::X.as_u16(),
-            )]) {
+            if let Ok(stream) = dev.catch_events([CatchFilter::watch_axis(medius::Axis::X)]) {
                 let deadline = std::time::Instant::now() + Duration::from_secs(3);
                 while std::time::Instant::now() < deadline {
                     if let Some(medius::CatchEvent::Motion(m)) =
@@ -720,10 +717,110 @@ mod linux {
         }
 
         {
+            // Decoded input edges. A still device produces nothing, so no count is demanded here --
+            // but every edge that does arrive has to be well formed: a press of a usage already held,
+            // or a release of one that is not, means the snapshot diffing is wrong.
+            let dev = device.as_ref().unwrap();
+            let (mut presses, mut releases, mut motions) = (0usize, 0usize, 0usize);
+            let mut consistent = true;
+            let mut held: Vec<medius::Usage> = Vec::new();
+            if let Ok(mut input) = dev.input_events(CatchFilter::all_input()) {
+                let deadline = std::time::Instant::now() + Duration::from_secs(3);
+                while std::time::Instant::now() < deadline {
+                    let Some(ev) = input.recv_timeout(Duration::from_millis(100)) else {
+                        continue;
+                    };
+                    match ev.input {
+                        Input::Press(u) => {
+                            presses += 1;
+                            consistent &= !held.contains(&u);
+                            held.push(u);
+                        }
+                        Input::Release(u) => {
+                            releases += 1;
+                            consistent &= held.contains(&u);
+                            held.retain(|h| *h != u);
+                        }
+                        Input::Motion { dx, dy, dz } => {
+                            motions += 1;
+                            consistent &= (dx, dy, dz) != (0, 0, 0);
+                        }
+                    }
+                }
+            }
+            // The three refusals, on the shipped binary rather than only in the unit tests.
+            let refuses = matches!(
+                dev.input_events([CatchFilter::traffic_class(TrafficClass::VendorBulk)]),
+                Err(medius::Error::NotAnInputFilter { .. })
+            ) && matches!(
+                dev.input_events([CatchFilter::everything()]),
+                Err(medius::Error::WildcardNotInput)
+            ) && matches!(
+                dev.input_events([CatchFilter::watch(Button::Left).on_press()]),
+                Err(medius::Error::HalfEdgeInputFilter)
+            );
+            let _ = dev.reset();
+            check(
+                "catch: decoded input edges",
+                consistent && refuses,
+                format!(
+                    "{presses} press, {releases} release, {motions} motion; refusals_ok={refuses} \
+                     (move and click the mouse if all three are 0)"
+                ),
+            );
+        }
+
+        {
+            // Timeline: box microseconds unwrapped and mapped onto this machine's clock. EMIT is
+            // device-chip stamped and injection drives it, so this needs nothing touched.
+            let dev = device.as_ref().unwrap();
+            let mut time = Timeline::new();
+            let mut n = 0usize;
+            let mut monotonic = true;
+            let mut last: Option<(u64, std::time::Instant)> = None;
+            if let Ok(stream) = dev.catch_events([CatchFilter::traffic_class(TrafficClass::Emit)]) {
+                let stop = Arc::new(AtomicBool::new(false));
+                let injector = {
+                    let d = dev.clone();
+                    let flag = Arc::clone(&stop);
+                    std::thread::spawn(move || {
+                        while !flag.load(Ordering::Relaxed) {
+                            let _ = d.move_rel(1, 0);
+                            let _ = d.move_rel(-1, 0);
+                            std::thread::sleep(Duration::from_millis(4));
+                        }
+                    })
+                };
+                let deadline = std::time::Instant::now() + Duration::from_secs(2);
+                while std::time::Instant::now() < deadline {
+                    if let Some(ev) = stream.recv_timeout(Duration::from_millis(100)) {
+                        let st = time.observe(&ev);
+                        if let Some((prev_box, prev_host)) = last {
+                            monotonic &= st.box_us >= prev_box && st.host >= prev_host;
+                        }
+                        last = Some((st.box_us, st.host));
+                        n += 1;
+                    }
+                }
+                stop.store(true, Ordering::Relaxed);
+                let _ = injector.join();
+            }
+            let _ = dev.reset();
+            check(
+                "catch: host timeline",
+                n > 0 && monotonic,
+                format!(
+                    "{n} events mapped, monotonic={monotonic}, samples={}",
+                    time.samples(medius::ClockDomain::DeviceChip)
+                ),
+            );
+        }
+
+        {
             // The measured inter-chip clock estimate. Both chips must be running current firmware for
             // this to converge; an absent estimate reads as age=None rather than a zero offset.
             let dev = device.as_ref().unwrap();
-            let st = dev.catch_events([CatchFilter::all()]).ok().and_then(|_s| {
+            let st = dev.catch_events([CatchFilter::everything()]).ok().and_then(|_s| {
                 std::thread::sleep(Duration::from_millis(300));
                 dev.query_catch().ok()
             });

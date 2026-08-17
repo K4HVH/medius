@@ -182,26 +182,26 @@ fn press_media_parity() {
 fn lock_parity() {
     assert_parity(
         |d| {
-            d.lock(medius::Axis::X, medius::LockDirection::Both)
+            d.lock(medius::Axis::X, medius::Direction::Both)
                 .unwrap();
-            d.lock(medius::Button::Side1, medius::LockDirection::Positive)
+            d.lock(medius::Button::Side1, medius::Direction::Positive)
                 .unwrap();
-            d.unlock(medius::Axis::X, medius::LockDirection::Both)
+            d.unlock(medius::Axis::X, medius::Direction::Both)
                 .unwrap();
         },
         |dev| unsafe {
             let x = medius_lock_target_axis(MediusLockTargetKind::X);
             let side1 = medius_lock_target_usage(medius_usage_button(MediusButton::Side1));
             assert_eq!(
-                medius_device_lock(dev, x, MediusLockDirection::Both),
+                medius_device_lock(dev, x, MediusDirection::Both),
                 MediusStatus::Ok
             );
             assert_eq!(
-                medius_device_lock(dev, side1, MediusLockDirection::Positive),
+                medius_device_lock(dev, side1, MediusDirection::Positive),
                 MediusStatus::Ok
             );
             assert_eq!(
-                medius_device_unlock(dev, x, MediusLockDirection::Both),
+                medius_device_unlock(dev, x, MediusDirection::Both),
                 MediusStatus::Ok
             );
         },
@@ -212,14 +212,14 @@ fn lock_parity() {
 fn lock_all_and_led_parity() {
     assert_parity(
         |d| {
-            d.lock_all(medius::Blanket::Buttons, medius::LockDirection::Both)
+            d.lock_all(medius::Blanket::Buttons, medius::Direction::Both)
                 .unwrap();
             d.led(medius::LedTarget::Both, medius::LedMode::Blink, 128)
                 .unwrap();
         },
         |dev| unsafe {
             assert_eq!(
-                medius_device_lock_all(dev, MediusBlanket::Buttons, MediusLockDirection::Both),
+                medius_device_lock_all(dev, MediusBlanket::Buttons, MediusDirection::Both),
                 MediusStatus::Ok
             );
             assert_eq!(
@@ -395,7 +395,7 @@ fn query_locks_roundtrips_through_is_locked() {
         unsafe { medius_device_query_locks(dev, &mut locks) },
         MediusStatus::Ok
     );
-    assert!(unsafe { medius_locks_is_locked(&locks, x, MediusLockDirection::Both) });
+    assert!(unsafe { medius_locks_is_locked(&locks, x, MediusDirection::Both) });
     unsafe {
         medius_device_free(dev);
         medius_mock_free(mock);
@@ -453,7 +453,7 @@ fn catch_delivers_a_motion_event() {
         unsafe { medius_device_with_mock(mock, &mut dev) },
         MediusStatus::Ok
     );
-    let stream = unsafe { subscribe(dev, &[medius_catch_filter_all()]) };
+    let stream = unsafe { subscribe(dev, &[medius_catch_filter_everything()]) };
     unsafe {
         (*mock).inner.push_motion(1, 7_000, 12, -34, 1);
     }
@@ -481,13 +481,13 @@ fn catch_delivers_a_usage_event() {
         unsafe { medius_device_with_mock(mock, &mut dev) },
         MediusStatus::Ok
     );
-    let stream = unsafe { subscribe(dev, &[medius_catch_filter_class(MEDIUS_CATCH_CLASS_KEY)]) };
+    let stream = unsafe { subscribe(dev, &[medius_catch_filter_watch_class(MediusClass::Key)]) };
     unsafe {
         (*mock).inner.push_usages(
             1,
             7_000,
             medius::Class::Key,
-            medius::LockDirection::Positive,
+            medius::Direction::Positive,
             &[medius::Usage::from(medius::Key::ESCAPE)],
         );
     }
@@ -514,7 +514,7 @@ fn catch_delivers_a_traffic_event() {
     let stream = unsafe {
         subscribe(
             dev,
-            &[medius_catch_filter_addr(MEDIUS_CATCH_CLASS_VEND_BULK, 0x83)],
+            &[medius_catch_filter_traffic(MEDIUS_CATCH_CLASS_VENDOR_BULK, 0x83)],
         )
     };
     unsafe {
@@ -524,7 +524,7 @@ fn catch_delivers_a_traffic_event() {
             medius::ClockDomain::DeviceChip,
             medius::CatchClass::VendorBulk,
             0x83,
-            medius::LockDirection::Positive,
+            medius::Direction::Positive,
             0x01,
             64,
             &[0xDE, 0xAD, 0xBE, 0xEF],
@@ -536,9 +536,9 @@ fn catch_delivers_a_traffic_event() {
     assert_eq!(event.ts_us, 9_000);
     assert_eq!(event.clock, MediusClockDomain::DeviceChip);
     let t = unsafe { event.data.traffic };
-    assert_eq!(t.class, MEDIUS_CATCH_CLASS_VEND_BULK);
+    assert_eq!(t.class, MEDIUS_CATCH_CLASS_VENDOR_BULK);
     assert_eq!(t.id, 0x83);
-    assert_eq!(t.direction, MediusLockDirection::Positive);
+    assert_eq!(t.direction, MediusDirection::Positive);
     assert_eq!(t.flags, 0x01);
     assert_eq!(t.true_len, 64);
     assert_eq!(t.len, 4);
@@ -561,11 +561,11 @@ fn traffic_event_survives_the_mock_push_round_trip() {
         unsafe { medius_device_with_mock(mock, &mut dev) },
         MediusStatus::Ok
     );
-    let stream = unsafe { subscribe(dev, &[medius_catch_filter_all()]) };
+    let stream = unsafe { subscribe(dev, &[medius_catch_filter_everything()]) };
     let mut pushed: MediusTrafficEvent = unsafe { std::mem::zeroed() };
     pushed.class = MEDIUS_CATCH_CLASS_CONTROL;
     pushed.id = 0;
-    pushed.direction = MediusLockDirection::Positive;
+    pushed.direction = MediusDirection::Positive;
     pushed.flags = 0xFD;
     pushed.true_len = 10;
     pushed.len = 10;
@@ -596,7 +596,7 @@ fn catch_events_rejects_an_empty_or_unknown_filter_list() {
         MediusStatus::Ok
     );
     let mut stream: *mut MediusEventStream = ptr::null_mut();
-    let all = [medius_catch_filter_all()];
+    let all = [medius_catch_filter_everything()];
     assert_eq!(
         unsafe { medius_device_catch_events(dev, all.as_ptr(), 0, &mut stream) },
         MediusStatus::ErrInvalidArg
@@ -607,7 +607,7 @@ fn catch_events_rejects_an_empty_or_unknown_filter_list() {
     );
     // A class the box does not define must fail the whole call: a silently narrower subscription is
     // indistinguishable from a box producing no events.
-    let bogus = [medius_catch_filter_class(200)];
+    let bogus = [medius_catch_filter_traffic_class(200)];
     assert_eq!(
         unsafe { medius_device_catch_events(dev, bogus.as_ptr(), 1, &mut stream) },
         MediusStatus::ErrInvalidArg
@@ -617,6 +617,241 @@ fn catch_events_rejects_an_empty_or_unknown_filter_list() {
         medius_device_free(dev);
         medius_mock_free(mock);
     }
+}
+
+#[test]
+fn input_events_decode_edges_across_the_abi() {
+    let mock = medius_mock_new();
+    let mut dev: *mut MediusDevice = ptr::null_mut();
+    assert_eq!(
+        unsafe { medius_device_with_mock(mock, &mut dev) },
+        MediusStatus::Ok
+    );
+    let mut filters = [medius_catch_filter_everything(); 4];
+    unsafe { medius_catch_filter_all_input(filters.as_mut_ptr()) };
+    let mut stream: *mut MediusInputStream = ptr::null_mut();
+    assert_eq!(
+        unsafe { medius_device_input_events(dev, filters.as_ptr(), filters.len(), &mut stream) },
+        MediusStatus::Ok
+    );
+    let esc = medius::Usage::from(medius::Key::ESCAPE);
+    unsafe {
+        (*mock)
+            .inner
+            .push_usages(1, 7_000, medius::Class::Key, medius::Direction::PRESS, &[esc]);
+        (*mock)
+            .inner
+            .push_usages(2, 8_000, medius::Class::Key, medius::Direction::RELEASE, &[]);
+        (*mock).inner.push_motion(3, 9_000, 4, -5, 0);
+    }
+    let mut ev: MediusInputEvent = unsafe { std::mem::zeroed() };
+    assert!(unsafe { medius_input_stream_recv_timeout(stream, 2000, &mut ev) });
+    assert_eq!(ev.kind, MediusInputKind::Press);
+    assert_eq!(ev.ts_us, 7_000);
+    assert_eq!(ev.clock, MediusClockDomain::HostChip);
+    assert_eq!(ev.usage, medius_usage_key(MEDIUS_KEY_ESCAPE));
+    // The unused arm is zeroed, not left as whatever the caller's buffer held.
+    assert_eq!((ev.dx, ev.dy, ev.dz), (0, 0, 0));
+
+    assert!(unsafe { medius_input_stream_recv_timeout(stream, 2000, &mut ev) });
+    assert_eq!(ev.kind, MediusInputKind::Release);
+    assert_eq!(ev.usage, medius_usage_key(MEDIUS_KEY_ESCAPE));
+
+    assert!(unsafe { medius_input_stream_recv_timeout(stream, 2000, &mut ev) });
+    assert_eq!(ev.kind, MediusInputKind::Motion);
+    assert_eq!((ev.dx, ev.dy, ev.dz), (4, -5, 0));
+
+    // Nothing is held once the release has been reported.
+    let mut held = [MediusUsage {
+        kind: MediusClass::Button,
+        id: 0,
+    }; 4];
+    let n = unsafe { medius_input_stream_held(stream, MediusClass::Key, held.as_mut_ptr(), 4) };
+    assert_eq!(n, 0);
+    assert!(!unsafe { medius_input_stream_try_recv(stream, &mut ev) });
+    unsafe {
+        medius_input_stream_free(stream);
+        medius_device_free(dev);
+        medius_mock_free(mock);
+    }
+}
+
+#[test]
+fn input_events_report_each_refusal_with_its_own_status() {
+    // Folding these into ErrUnknown would leave a C caller with a failed subscribe and no way to
+    // tell a wrong filter from a dead link.
+    let mock = medius_mock_new();
+    let mut dev: *mut MediusDevice = ptr::null_mut();
+    assert_eq!(
+        unsafe { medius_device_with_mock(mock, &mut dev) },
+        MediusStatus::Ok
+    );
+    let mut stream: *mut MediusInputStream = ptr::null_mut();
+    let call = |f: &[MediusCatchFilter], stream: &mut *mut MediusInputStream| unsafe {
+        medius_device_input_events(dev, f.as_ptr(), f.len(), stream)
+    };
+    assert_eq!(
+        call(
+            &[medius_catch_filter_traffic_class(
+                MEDIUS_CATCH_CLASS_VENDOR_BULK
+            )],
+            &mut stream
+        ),
+        MediusStatus::ErrNotAnInputFilter
+    );
+    assert_eq!(
+        call(&[medius_catch_filter_everything()], &mut stream),
+        MediusStatus::ErrWildcardNotInput
+    );
+    assert_eq!(
+        call(
+            &[medius_catch_filter_on_press(medius_catch_filter_watch(
+                medius_usage_key(MEDIUS_KEY_ESCAPE)
+            ))],
+            &mut stream
+        ),
+        MediusStatus::ErrHalfEdgeInputFilter
+    );
+    // And the capture refusal on the catch side, which is the same class of mistake.
+    let mut ev_stream: *mut MediusEventStream = ptr::null_mut();
+    let capped = medius_catch_filter_with_capture(
+        medius_catch_filter_watch_class(MediusClass::Key),
+        8,
+    );
+    assert_eq!(
+        unsafe { medius_device_catch_events(dev, &capped, 1, &mut ev_stream) },
+        MediusStatus::ErrCaptureNotApplicable
+    );
+    assert!(stream.is_null() && ev_stream.is_null());
+    unsafe {
+        medius_device_free(dev);
+        medius_mock_free(mock);
+    }
+}
+
+#[test]
+fn every_new_entry_point_survives_a_null_and_respects_the_caller_s_buffer() {
+    // A dropped null check is an abort inside the caller's process, and an off-by-one in the one
+    // entry point that writes an unbounded-length result into a caller buffer is a heap smash. Both
+    // mutations passed the whole suite before this test existed.
+    let mock = medius_mock_new();
+    let mut dev: *mut MediusDevice = ptr::null_mut();
+    assert_eq!(
+        unsafe { medius_device_with_mock(mock, &mut dev) },
+        MediusStatus::Ok
+    );
+    let mut filters = [medius_catch_filter_everything(); 4];
+    unsafe { medius_catch_filter_all_input(filters.as_mut_ptr()) };
+    let mut stream: *mut MediusInputStream = ptr::null_mut();
+    assert_eq!(
+        unsafe { medius_device_input_events(dev, filters.as_ptr(), filters.len(), &mut stream) },
+        MediusStatus::Ok
+    );
+
+    // Nulls, everywhere they can be passed.
+    let mut ev: MediusInputEvent = unsafe { std::mem::zeroed() };
+    let mut st: MediusStamped = unsafe { std::mem::zeroed() };
+    unsafe {
+        medius_catch_filter_all_input(ptr::null_mut());
+        assert_eq!(
+            medius_device_input_events(dev, filters.as_ptr(), 4, ptr::null_mut()),
+            MediusStatus::ErrInvalidArg
+        );
+        assert_eq!(
+            medius_input_stream_recv(ptr::null_mut(), &mut ev),
+            MediusStatus::ErrInvalidArg
+        );
+        assert_eq!(
+            medius_input_stream_recv(stream, ptr::null_mut()),
+            MediusStatus::ErrInvalidArg
+        );
+        assert!(!medius_input_stream_try_recv(stream, ptr::null_mut()));
+        assert!(!medius_input_stream_try_recv(ptr::null_mut(), &mut ev));
+        assert!(!medius_input_stream_recv_timeout(stream, 0, ptr::null_mut()));
+        assert_eq!(medius_input_stream_dropped(ptr::null_mut()), 0);
+        assert!(!medius_input_stream_is_connected(ptr::null_mut()));
+        assert!(medius_input_stream_is_connected(stream));
+        assert_eq!(medius_input_stream_held(ptr::null_mut(), MediusClass::Key, ptr::null_mut(), 0), 0);
+        assert!(!medius_timeline_observe_input(ptr::null_mut(), &ev, 0, &mut st));
+        medius_input_stream_free(ptr::null_mut());
+        medius_timeline_free(ptr::null_mut());
+    }
+
+    // `held` must never write past `cap`, and must still report the true count so a caller can grow.
+    let esc = medius::Usage::from(medius::Key::ESCAPE);
+    let a = medius::Usage::from(medius::Key::A);
+    unsafe {
+        (*mock)
+            .inner
+            .push_usages(1, 1_000, medius::Class::Key, medius::Direction::PRESS, &[esc, a]);
+    }
+    assert!(unsafe { medius_input_stream_recv_timeout(stream, 2000, &mut ev) });
+    assert!(unsafe { medius_input_stream_recv_timeout(stream, 2000, &mut ev) });
+
+    const CANARY: u16 = 0xBEEF;
+    let mut buf = [MediusUsage {
+        kind: MediusClass::Button,
+        id: CANARY,
+    }; 4];
+    let n = unsafe { medius_input_stream_held(stream, MediusClass::Key, buf.as_mut_ptr(), 1) };
+    assert_eq!(n, 2, "the true count comes back even when the buffer is short");
+    assert_eq!(buf[1].id, CANARY, "nothing was written past cap");
+    assert_eq!(buf[2].id, CANARY);
+    // cap = 0 with a real pointer writes nothing at all.
+    let mut none = [MediusUsage {
+        kind: MediusClass::Button,
+        id: CANARY,
+    }; 2];
+    assert_eq!(
+        unsafe { medius_input_stream_held(stream, MediusClass::Key, none.as_mut_ptr(), 0) },
+        2
+    );
+    assert_eq!(none[0].id, CANARY);
+    // A null out is a size query.
+    assert_eq!(
+        unsafe { medius_input_stream_held(stream, MediusClass::Key, ptr::null_mut(), 4) },
+        2
+    );
+
+    unsafe {
+        medius_input_stream_free(stream);
+        medius_device_free(dev);
+        medius_mock_free(mock);
+    }
+}
+
+#[test]
+fn the_timeline_unwraps_and_maps_onto_the_callers_clock() {
+    let t = medius_timeline_new();
+    assert!(!t.is_null());
+    let mut ev = zeroed_event();
+    ev.kind = MediusCatchEventKind::Motion;
+    ev.clock = MediusClockDomain::HostChip;
+
+    let mut a: MediusStamped = unsafe { std::mem::zeroed() };
+    ev.ts_us = u32::MAX - 500;
+    assert!(unsafe { medius_timeline_observe(t, &ev, 50_000_000, &mut a) });
+    assert_eq!(a.box_us, (u32::MAX - 500) as u64);
+    assert_eq!(a.excess_ns, 0);
+
+    // Past the rollover: 32 bits of microseconds is 71.6 minutes, and a raw subtraction here would
+    // come out about 4295 seconds negative.
+    let mut b: MediusStamped = unsafe { std::mem::zeroed() };
+    ev.ts_us = 500;
+    assert!(unsafe { medius_timeline_observe(t, &ev, 51_001_000, &mut b) });
+    assert_eq!(b.box_us, (1u64 << 32) + 500);
+    assert!(b.host_ns > a.host_ns, "{} !> {}", b.host_ns, a.host_ns);
+    assert_eq!(b.host_ns - a.host_ns, 1_001_000, "1001 us on the box");
+    assert_eq!(unsafe { medius_timeline_samples(t, MediusClockDomain::HostChip) }, 2);
+
+    // A reboot restarts the clock at zero, which is not a wrap.
+    unsafe { medius_timeline_reset(t, MediusClockDomain::HostChip) };
+    let mut c: MediusStamped = unsafe { std::mem::zeroed() };
+    ev.ts_us = 7;
+    assert!(unsafe { medius_timeline_observe(t, &ev, 60_000_000, &mut c) });
+    assert_eq!(c.box_us, 7);
+    assert!(!unsafe { medius_timeline_observe(ptr::null_mut(), &ev, 0, &mut c) });
+    unsafe { medius_timeline_free(t) };
 }
 
 #[test]
@@ -634,13 +869,13 @@ fn query_catch_returns_the_table_and_the_clock_estimate() {
     set.n = 2;
     set.entries[0] = MediusCatchEntry {
         filter: MediusCatchFilter {
-            snaplen: 16,
-            ..medius_catch_filter_all()
+            capture: 16,
+            ..medius_catch_filter_everything()
         },
         dropped: 3,
     };
     set.entries[1] = MediusCatchEntry {
-        filter: medius_catch_filter_addr(MEDIUS_CATCH_CLASS_CONTROL, 0),
+        filter: medius_catch_filter_traffic(MEDIUS_CATCH_CLASS_CONTROL, 0),
         dropped: 0,
     };
     unsafe { medius_mock_set_catch_state(mock, set) };
@@ -859,7 +1094,7 @@ fn event_stream_clone_shares_the_subscription() {
         unsafe { medius_device_with_mock(mock, &mut dev) },
         MediusStatus::Ok
     );
-    let stream = unsafe { subscribe(dev, &[medius_catch_filter_all()]) };
+    let stream = unsafe { subscribe(dev, &[medius_catch_filter_everything()]) };
     let stream2 = unsafe { medius_event_stream_clone(stream) };
     assert!(!stream2.is_null());
     unsafe {

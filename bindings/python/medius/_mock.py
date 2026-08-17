@@ -147,7 +147,7 @@ class MockBox:
         _native.lib.medius_mock_push_usages(self._handle, seq, ts_us, ctypes.byref(c))
 
     def push_traffic(self, seq: int, ts_us: int, clock: ClockDomain, event: TrafficEvent):
-        """Push a TRAFFIC_EVENT; a `true_len` above the byte count is how a snaplen-cut capture looks."""
+        """Push a TRAFFIC_EVENT; a `true_len` above the byte count is how a cut capture looks."""
         c = traffic_event_to_c(event)
         _native.lib.medius_mock_push_traffic(self._handle, seq, ts_us, int(clock), ctypes.byref(c))
 

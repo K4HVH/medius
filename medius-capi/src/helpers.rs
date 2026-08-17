@@ -80,7 +80,7 @@ pub extern "C" fn medius_lock_target_usage(usage: MediusUsage) -> MediusLockTarg
 pub unsafe extern "C" fn medius_locks_is_locked(
     locks: *const MediusLocks,
     target: MediusLockTarget,
-    dir: MediusLockDirection,
+    dir: MediusDirection,
 ) -> bool {
     guard(false, || {
         if locks.is_null() {
@@ -101,9 +101,9 @@ pub unsafe extern "C" fn medius_locks_is_locked(
             };
             covers
                 && match dir {
-                    MediusLockDirection::Both => e.positive && e.negative,
-                    MediusLockDirection::Positive => e.positive,
-                    MediusLockDirection::Negative => e.negative,
+                    MediusDirection::Both => e.positive && e.negative,
+                    MediusDirection::Positive => e.positive,
+                    MediusDirection::Negative => e.negative,
                 }
         })
     })
@@ -142,40 +142,177 @@ pub unsafe extern "C" fn medius_usage_event_is_held(
     })
 }
 
-/// A filter matching every class, every id, both directions, whole packets. One frame on the wire.
+/// One momentary usage: a button, a key, or a media usage. The same thing `medius_device_lock` takes.
 #[unsafe(no_mangle)]
-pub extern "C" fn medius_catch_filter_all() -> MediusCatchFilter {
+pub extern "C" fn medius_catch_filter_watch(usage: MediusUsage) -> MediusCatchFilter {
+    exact(
+        match usage.kind {
+            MediusClass::Button => MEDIUS_CATCH_CLASS_BTN,
+            MediusClass::Key => MEDIUS_CATCH_CLASS_KEY,
+            MediusClass::Media => MEDIUS_CATCH_CLASS_MEDIA,
+        },
+        usage.id,
+    )
+}
+
+/// One relative axis.
+#[unsafe(no_mangle)]
+pub extern "C" fn medius_catch_filter_watch_axis(axis: MediusAxis) -> MediusCatchFilter {
+    exact(MEDIUS_CATCH_CLASS_AXIS, axis as u16)
+}
+
+/// Every usage in one momentary class.
+#[unsafe(no_mangle)]
+pub extern "C" fn medius_catch_filter_watch_class(class: MediusClass) -> MediusCatchFilter {
+    blanket(match class {
+        MediusClass::Button => MEDIUS_CATCH_CLASS_BTN,
+        MediusClass::Key => MEDIUS_CATCH_CLASS_KEY,
+        MediusClass::Media => MEDIUS_CATCH_CLASS_MEDIA,
+    })
+}
+
+/// Every relative axis: X, Y and the wheel.
+#[unsafe(no_mangle)]
+pub extern "C" fn medius_catch_filter_watch_axes() -> MediusCatchFilter {
+    blanket(MEDIUS_CATCH_CLASS_AXIS)
+}
+
+/// Write the four input-class filters to `out[0..4]`: buttons, keys, media and axes. This is the
+/// whole of what `medius_device_input_events` can report.
+///
+/// # Safety
+/// `out` must point to space for four `MediusCatchFilter`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn medius_catch_filter_all_input(out: *mut MediusCatchFilter) {
+    guard((), || {
+        if out.is_null() {
+            return;
+        }
+        let all = [
+            blanket(MEDIUS_CATCH_CLASS_BTN),
+            blanket(MEDIUS_CATCH_CLASS_KEY),
+            blanket(MEDIUS_CATCH_CLASS_MEDIA),
+            blanket(MEDIUS_CATCH_CLASS_AXIS),
+        ];
+        unsafe { std::ptr::copy_nonoverlapping(all.as_ptr(), out, all.len()) };
+    })
+}
+
+/// One traffic address: an endpoint, an interface, or a control endpoint number. `class` must be one
+/// of the traffic classes (`MEDIUS_CATCH_CLASS_HID_IN` upwards).
+#[unsafe(no_mangle)]
+pub extern "C" fn medius_catch_filter_traffic(
+    class: MediusCatchClass,
+    id: u16,
+) -> MediusCatchFilter {
+    exact(class, id)
+}
+
+/// Every id within one traffic class.
+#[unsafe(no_mangle)]
+pub extern "C" fn medius_catch_filter_traffic_class(class: MediusCatchClass) -> MediusCatchFilter {
+    blanket(class)
+}
+
+/// Every class, every id, both directions, whole packets. One table entry, not an expansion.
+///
+/// This includes `MEDIUS_CATCH_CLASS_VENDOR_BULK`, which can saturate the control link by itself.
+/// Pair it with `medius_catch_filter_with_capture` unless you mean to trace bulk in full.
+#[unsafe(no_mangle)]
+pub extern "C" fn medius_catch_filter_everything() -> MediusCatchFilter {
     MediusCatchFilter {
         class: MEDIUS_CATCH_CLASS_ANY,
         id: MEDIUS_CATCH_ID_ANY,
-        direction: MediusLockDirection::Both,
-        snaplen: 0,
+        direction: MediusDirection::Both,
+        capture: 0,
     }
 }
 
-/// A filter matching every id within one class. Set `direction`/`snaplen` on the result to narrow it.
-#[unsafe(no_mangle)]
-pub extern "C" fn medius_catch_filter_class(class: MediusCatchClass) -> MediusCatchFilter {
-    MediusCatchFilter {
-        class,
-        id: MEDIUS_CATCH_ID_ANY,
-        direction: MediusLockDirection::Both,
-        snaplen: 0,
-    }
-}
-
-/// A filter matching one exact address: an endpoint, an interface, or a usage.
-#[unsafe(no_mangle)]
-pub extern "C" fn medius_catch_filter_addr(class: MediusCatchClass, id: u16) -> MediusCatchFilter {
+fn exact(class: MediusCatchClass, id: u16) -> MediusCatchFilter {
     MediusCatchFilter {
         class,
         id,
-        direction: MediusLockDirection::Both,
-        snaplen: 0,
+        direction: MediusDirection::Both,
+        capture: 0,
     }
 }
 
-/// Whether `snaplen` cut this packet short. Without checking, a truncated capture and a genuinely
+fn blanket(class: MediusCatchClass) -> MediusCatchFilter {
+    MediusCatchFilter {
+        class,
+        id: MEDIUS_CATCH_ID_ANY,
+        direction: MediusDirection::Both,
+        capture: 0,
+    }
+}
+
+/// `f` restricted to one direction, sign or edge.
+#[unsafe(no_mangle)]
+pub extern "C" fn medius_catch_filter_with_direction(
+    f: MediusCatchFilter,
+    direction: MediusDirection,
+) -> MediusCatchFilter {
+    MediusCatchFilter { direction, ..f }
+}
+
+/// `f` keeping only the first `bytes` of each packet; 0 keeps the whole packet. Traffic classes only.
+#[unsafe(no_mangle)]
+pub extern "C" fn medius_catch_filter_with_capture(
+    f: MediusCatchFilter,
+    bytes: u8,
+) -> MediusCatchFilter {
+    MediusCatchFilter {
+        capture: bytes,
+        ..f
+    }
+}
+
+/// `f` restricted to the press edge.
+#[unsafe(no_mangle)]
+pub extern "C" fn medius_catch_filter_on_press(f: MediusCatchFilter) -> MediusCatchFilter {
+    medius_catch_filter_with_direction(f, MediusDirection::Positive)
+}
+
+/// `f` restricted to the release edge.
+#[unsafe(no_mangle)]
+pub extern "C" fn medius_catch_filter_on_release(f: MediusCatchFilter) -> MediusCatchFilter {
+    medius_catch_filter_with_direction(f, MediusDirection::Negative)
+}
+
+/// `f` restricted to traffic from the device to the PC.
+#[unsafe(no_mangle)]
+pub extern "C" fn medius_catch_filter_inbound(f: MediusCatchFilter) -> MediusCatchFilter {
+    medius_catch_filter_with_direction(f, MediusDirection::Positive)
+}
+
+/// `f` restricted to traffic from the PC to the device.
+#[unsafe(no_mangle)]
+pub extern "C" fn medius_catch_filter_outbound(f: MediusCatchFilter) -> MediusCatchFilter {
+    medius_catch_filter_with_direction(f, MediusDirection::Negative)
+}
+
+/// Whether two filters name the same box table entry, whatever their captures.
+#[unsafe(no_mangle)]
+pub extern "C" fn medius_catch_filter_same_address(
+    a: MediusCatchFilter,
+    b: MediusCatchFilter,
+) -> bool {
+    (a.class, a.id, a.direction) == (b.class, b.id, b.direction)
+}
+
+/// Whether `class` is one of the four parsed-input classes, which arrive decoded and carry no packet.
+#[unsafe(no_mangle)]
+pub extern "C" fn medius_catch_class_is_input(class: MediusCatchClass) -> bool {
+    class <= MEDIUS_CATCH_CLASS_AXIS
+}
+
+/// Whether `class` is one of the seven byte-oriented traffic classes.
+#[unsafe(no_mangle)]
+pub extern "C" fn medius_catch_class_is_traffic(class: MediusCatchClass) -> bool {
+    (MEDIUS_CATCH_CLASS_HID_IN..=MEDIUS_CATCH_CLASS_BUS).contains(&class)
+}
+
+/// Whether the capture cut this packet short. Without checking, a truncated capture and a genuinely
 /// short packet are indistinguishable. Mirrors `medius::TrafficEvent::truncated`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_traffic_event_truncated(event: *const MediusTrafficEvent) -> bool {
@@ -218,7 +355,7 @@ pub unsafe extern "C" fn medius_traffic_event_data(
         }
         let e = unsafe { &*event };
         let n = (e.len as usize).min(MEDIUS_MAX_TRAFFIC_BYTES);
-        // A control event whose own setup packet was cut short by snaplen has no data stage at all.
+        // A control event whose own setup packet was cut short has no data stage at all.
         // Falling through to "the whole buffer is the data" handed a decoder the surviving setup
         // bytes -- a GET_DESCRIPTOR request labelled as the descriptor it asked for.
         let (skip, n) = if e.class != MEDIUS_CATCH_CLASS_CONTROL {
@@ -333,7 +470,7 @@ pub unsafe extern "C" fn medius_traffic_event_bulk_end_of_transfer(
             return false;
         }
         let e = unsafe { &*event };
-        e.class == MEDIUS_CATCH_CLASS_VEND_BULK && e.flags & 0x01 != 0
+        e.class == MEDIUS_CATCH_CLASS_VENDOR_BULK && e.flags & 0x01 != 0
     })
 }
 
@@ -347,7 +484,7 @@ pub unsafe extern "C" fn medius_traffic_event_bulk_zlp(event: *const MediusTraff
             return false;
         }
         let e = unsafe { &*event };
-        e.class == MEDIUS_CATCH_CLASS_VEND_BULK && e.flags & 0x02 != 0
+        e.class == MEDIUS_CATCH_CLASS_VENDOR_BULK && e.flags & 0x02 != 0
     })
 }
 

@@ -17,7 +17,7 @@ use crate::transport::mock::MockTransport;
 use crate::types::lock::blanket_scope;
 use crate::types::{
     Caps, CatchClass, CatchState, Class, ClipSettings, ClipState, ClipStatus, ClockDomain,
-    DeviceInfo, DeviceKind, EmitPace, Health, ImperfectStatus, KbdCaps, LockDirection, Locks,
+    DeviceInfo, DeviceKind, EmitPace, Health, ImperfectStatus, KbdCaps, Direction, Locks,
     LogLevel, MouseCaps, Rate, Stats, Usage, Version,
 };
 
@@ -201,8 +201,8 @@ fn catch_resp_payload(c: &CatchState) -> Vec<u8> {
         let (class, id) = e.filter.wire();
         p.push(class);
         p.extend_from_slice(&id.to_le_bytes());
-        p.push(e.filter.direction.as_u8());
-        p.push(e.filter.snaplen);
+        p.push(e.filter.direction().as_u8());
+        p.push(e.filter.capture().as_u8());
         p.extend_from_slice(&e.dropped.to_le_bytes());
     }
     p
@@ -296,7 +296,7 @@ fn motion_event_payload(ts_us: u32, dx: i16, dy: i16, dz: i16) -> Vec<u8> {
 fn usage_event_payload(
     ts_us: u32,
     class: Class,
-    direction: LockDirection,
+    direction: Direction,
     usages: &[Usage],
 ) -> Vec<u8> {
     let mut p = Vec::with_capacity(8 + 3 * usages.len());
@@ -584,7 +584,7 @@ impl MockBox {
         clock: ClockDomain,
         class: CatchClass,
         id: u16,
-        direction: LockDirection,
+        direction: Direction,
         flags: u8,
         true_len: u16,
         bytes: &[u8],
@@ -614,7 +614,7 @@ impl MockBox {
         seq: u8,
         ts_us: u32,
         class: Class,
-        direction: LockDirection,
+        direction: Direction,
         usages: &[Usage],
     ) {
         self.transport.push_frame(

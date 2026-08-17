@@ -68,7 +68,7 @@ fn locks_with(entries: &[MediusLockEntry]) -> MediusLocks {
 
 #[test]
 fn is_locked_matches_entries() {
-    let locked = |l: *const MediusLocks, t: MediusLockTarget, d: MediusLockDirection| unsafe {
+    let locked = |l: *const MediusLocks, t: MediusLockTarget, d: MediusDirection| unsafe {
         medius_locks_is_locked(l, t, d)
     };
     let x = medius_lock_target_axis(MediusLockTargetKind::X);
@@ -87,12 +87,12 @@ fn is_locked_matches_entries() {
             negative: true,
         },
     ]);
-    assert!(locked(&locks, x, MediusLockDirection::Positive));
-    assert!(!locked(&locks, x, MediusLockDirection::Negative));
-    assert!(!locked(&locks, x, MediusLockDirection::Both));
-    assert!(locked(&locks, side2, MediusLockDirection::Negative));
-    assert!(!locked(&locks, side2, MediusLockDirection::Positive));
-    assert!(!locked(std::ptr::null(), x, MediusLockDirection::Positive));
+    assert!(locked(&locks, x, MediusDirection::Positive));
+    assert!(!locked(&locks, x, MediusDirection::Negative));
+    assert!(!locked(&locks, x, MediusDirection::Both));
+    assert!(locked(&locks, side2, MediusDirection::Negative));
+    assert!(!locked(&locks, side2, MediusDirection::Positive));
+    assert!(!locked(std::ptr::null(), x, MediusDirection::Positive));
 
     let blanket = locks_with(&[MediusLockEntry {
         target: medius_lock_target_usage(medius_usage_button(MediusButton::Left)),
@@ -101,9 +101,9 @@ fn is_locked_matches_entries() {
         negative: true,
     }]);
     let key_a = medius_lock_target_usage(medius_usage_key(MEDIUS_KEY_A));
-    assert!(locked(&blanket, side2, MediusLockDirection::Positive));
-    assert!(!locked(&blanket, key_a, MediusLockDirection::Positive));
-    assert!(!locked(&blanket, x, MediusLockDirection::Positive));
+    assert!(locked(&blanket, side2, MediusDirection::Positive));
+    assert!(!locked(&blanket, key_a, MediusDirection::Positive));
+    assert!(!locked(&blanket, x, MediusDirection::Positive));
 }
 
 #[test]
@@ -130,7 +130,7 @@ fn rate_native_hz_divides_the_period() {
 fn usage_event(usages: &[MediusUsage]) -> MediusUsageEvent {
     let mut e = MediusUsageEvent {
         class: usages.first().map_or(MediusClass::Button, |u| u.kind),
-        direction: MediusLockDirection::Positive,
+        direction: MediusDirection::Positive,
         n: usages.len() as u16,
         usages: [MediusUsage {
             kind: MediusClass::Button,
@@ -203,7 +203,7 @@ fn usage_snapshot_count_caps_at_capacity_without_wrapping() {
         ts_us: 0,
         clock: medius::ClockDomain::HostChip,
         class: medius::Class::Key,
-        direction: medius::LockDirection::Positive,
+        direction: medius::Direction::Positive,
         usages: (0..(MEDIUS_MAX_USAGES as u16 + 44))
             .map(|i| medius::Usage::new(medius::Class::Key, i))
             .collect(),
@@ -227,7 +227,7 @@ fn an_empty_snapshot_crosses_the_c_boundary_still_naming_its_class() {
             ts_us: 7,
             clock: medius::ClockDomain::HostChip,
             class,
-            direction: medius::LockDirection::Negative,
+            direction: medius::Direction::Negative,
             usages: Vec::new(),
         };
         let ev = MediusCatchEvent::from(medius::CatchEvent::Usages(snap));
@@ -243,7 +243,7 @@ fn traffic_payload_caps_at_capacity_without_wrapping() {
         clock: medius::ClockDomain::DeviceChip,
         class: medius::CatchClass::VendorBulk,
         id: 0x02,
-        direction: medius::LockDirection::Negative,
+        direction: medius::Direction::Negative,
         flags: 0,
         true_len: 1024,
         bytes: vec![0xAB; MEDIUS_MAX_TRAFFIC_BYTES + 40],
@@ -252,7 +252,7 @@ fn traffic_payload_caps_at_capacity_without_wrapping() {
     let t = unsafe { ev.data.traffic };
     assert_eq!(t.len as usize, MEDIUS_MAX_TRAFFIC_BYTES);
     assert_eq!(t.true_len, 1024);
-    assert_eq!(t.direction, MediusLockDirection::Negative);
+    assert_eq!(t.direction, MediusDirection::Negative);
 }
 
 #[test]
@@ -268,15 +268,15 @@ fn the_traffic_arm_does_not_grow_the_event_union() {
 
 #[test]
 fn catch_filter_wildcards_round_trip_through_the_sentinels() {
-    let all = medius_catch_filter_all();
+    let all = medius_catch_filter_everything();
     assert_eq!(all.class, MEDIUS_CATCH_CLASS_ANY);
     assert_eq!(all.id, MEDIUS_CATCH_ID_ANY);
 
-    let class_only = medius_catch_filter_class(MEDIUS_CATCH_CLASS_HID_IN);
+    let class_only = medius_catch_filter_traffic_class(MEDIUS_CATCH_CLASS_HID_IN);
     assert_eq!(class_only.class, MEDIUS_CATCH_CLASS_HID_IN);
     assert_eq!(class_only.id, MEDIUS_CATCH_ID_ANY);
 
-    let exact = medius_catch_filter_addr(MEDIUS_CATCH_CLASS_VEND_INTR, 0x81);
+    let exact = medius_catch_filter_traffic(MEDIUS_CATCH_CLASS_VENDOR_INTERRUPT, 0x81);
     assert_eq!(exact.id, 0x81);
 
     // A wildcard is `None` on the Rust side and the sentinel on the C side, and the pair has to come
@@ -287,19 +287,110 @@ fn catch_filter_wildcards_round_trip_through_the_sentinels() {
     }
     assert_eq!(
         crate::convert::catch_filter_from_c(all).unwrap(),
-        medius::CatchFilter::all()
+        medius::CatchFilter::everything()
     );
     assert_eq!(
         crate::convert::catch_filter_from_c(exact).unwrap(),
-        medius::CatchFilter::addr(medius::CatchClass::VendorInterrupt, 0x81)
+        medius::CatchFilter::traffic(medius::TrafficClass::VendorInterrupt, 0x81)
     );
-    assert!(crate::convert::catch_filter_from_c(medius_catch_filter_class(99)).is_none());
+    assert!(crate::convert::catch_filter_from_c(medius_catch_filter_traffic_class(99)).is_none());
+    // The wildcard class with a real id addresses nothing: `id` means something different in every
+    // class, so the box refuses it and so must this side.
+    let mut bad = all;
+    bad.id = 5;
+    assert!(crate::convert::catch_filter_from_c(bad).is_none());
+}
+
+#[test]
+fn the_input_filter_constructors_mirror_the_rust_ones() {
+    // Watching an input is written like locking it, on this side too.
+    let key = medius_catch_filter_watch(medius_usage_key(0x04));
+    assert_eq!((key.class, key.id), (MEDIUS_CATCH_CLASS_KEY, 0x04));
+    let btn = medius_catch_filter_watch(medius_usage_button(MediusButton::Left));
+    assert_eq!((btn.class, btn.id), (MEDIUS_CATCH_CLASS_BTN, 0));
+    let wheel = medius_catch_filter_watch_axis(MediusAxis::Wheel);
+    assert_eq!((wheel.class, wheel.id), (MEDIUS_CATCH_CLASS_AXIS, 2));
+    let keys = medius_catch_filter_watch_class(MediusClass::Key);
+    assert_eq!((keys.class, keys.id), (MEDIUS_CATCH_CLASS_KEY, MEDIUS_CATCH_ID_ANY));
+    let axes = medius_catch_filter_watch_axes();
+    assert_eq!((axes.class, axes.id), (MEDIUS_CATCH_CLASS_AXIS, MEDIUS_CATCH_ID_ANY));
+
+    let mut four = [medius_catch_filter_everything(); 4];
+    unsafe { medius_catch_filter_all_input(four.as_mut_ptr()) };
+    let classes: Vec<u8> = four.iter().map(|f| f.class).collect();
+    assert_eq!(
+        classes,
+        vec![
+            MEDIUS_CATCH_CLASS_BTN,
+            MEDIUS_CATCH_CLASS_KEY,
+            MEDIUS_CATCH_CLASS_MEDIA,
+            MEDIUS_CATCH_CLASS_AXIS
+        ]
+    );
+    assert!(four.iter().all(|f| f.id == MEDIUS_CATCH_ID_ANY));
+    // And they match what the Rust constructor produces, entry for entry.
+    for (c, r) in four.iter().zip(medius::CatchFilter::all_input()) {
+        assert_eq!(crate::convert::catch_filter_from_c(*c).unwrap(), r);
+    }
+}
+
+#[test]
+fn the_filter_setters_narrow_without_moving_the_address() {
+    let f = medius_catch_filter_traffic(MEDIUS_CATCH_CLASS_VENDOR_BULK, 0x83);
+    let capped = medius_catch_filter_with_capture(f, 16);
+    assert_eq!(capped.capture, 16);
+    assert!(medius_catch_filter_same_address(f, capped));
+
+    assert_eq!(
+        medius_catch_filter_on_press(f).direction,
+        MediusDirection::Positive
+    );
+    assert_eq!(
+        medius_catch_filter_on_release(f).direction,
+        MediusDirection::Negative
+    );
+    assert_eq!(
+        medius_catch_filter_inbound(f).direction,
+        MediusDirection::Positive
+    );
+    assert_eq!(
+        medius_catch_filter_outbound(f).direction,
+        MediusDirection::Negative
+    );
+    // Direction IS part of the address; capture is not.
+    assert!(!medius_catch_filter_same_address(
+        f,
+        medius_catch_filter_outbound(f)
+    ));
+}
+
+#[test]
+fn the_class_predicates_split_the_address_space_the_same_way() {
+    for c in [
+        MEDIUS_CATCH_CLASS_BTN,
+        MEDIUS_CATCH_CLASS_KEY,
+        MEDIUS_CATCH_CLASS_MEDIA,
+        MEDIUS_CATCH_CLASS_AXIS,
+    ] {
+        assert!(medius_catch_class_is_input(c));
+        assert!(!medius_catch_class_is_traffic(c));
+        assert!(medius::CatchClass::from_u8(c).unwrap().is_input());
+    }
+    for c in MEDIUS_CATCH_CLASS_HID_IN..=MEDIUS_CATCH_CLASS_BUS {
+        assert!(medius_catch_class_is_traffic(c));
+        assert!(!medius_catch_class_is_input(c));
+        assert!(medius::CatchClass::from_u8(c).unwrap().is_traffic());
+    }
+    // The wildcard is neither: it is not a class.
+    assert!(!medius_catch_class_is_input(MEDIUS_CATCH_CLASS_ANY));
+    assert!(!medius_catch_class_is_traffic(MEDIUS_CATCH_CLASS_ANY));
+
 }
 
 fn control_event(bytes: &[u8], flags: u8) -> MediusTrafficEvent {
     let mut e: MediusTrafficEvent = unsafe { std::mem::zeroed() };
     e.class = MEDIUS_CATCH_CLASS_CONTROL;
-    e.direction = MediusLockDirection::Positive;
+    e.direction = MediusDirection::Positive;
     e.flags = flags;
     e.len = bytes.len() as u16;
     e.true_len = bytes.len() as u16;
@@ -407,12 +498,12 @@ fn traffic_event_decodes_control_status_and_bus_events() {
 #[test]
 fn bulk_flags_only_apply_to_the_bulk_class() {
     let mut bulk = control_event(&[], 0x03);
-    bulk.class = MEDIUS_CATCH_CLASS_VEND_BULK;
+    bulk.class = MEDIUS_CATCH_CLASS_VENDOR_BULK;
     assert!(unsafe { medius_traffic_event_bulk_end_of_transfer(&bulk) });
     assert!(unsafe { medius_traffic_event_bulk_zlp(&bulk) });
 
     let mut intr = bulk;
-    intr.class = MEDIUS_CATCH_CLASS_VEND_INTR;
+    intr.class = MEDIUS_CATCH_CLASS_VENDOR_INTERRUPT;
     assert!(!unsafe { medius_traffic_event_bulk_end_of_transfer(&intr) });
     assert!(!unsafe { medius_traffic_event_bulk_zlp(&intr) });
 }

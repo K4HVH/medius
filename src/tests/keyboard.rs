@@ -2,7 +2,9 @@
 
 use crate::protocol::command::inject_payload;
 use crate::protocol::opcode::{INJ_KEY, INJ_MEDIA};
-use crate::types::{Class, Key, LockDirection, MediaKey};
+use crate::types::{Key, MediaKey};
+#[cfg(feature = "mock")]
+use crate::types::{Class, Direction};
 
 #[test]
 fn key_inject_bytes() {
@@ -47,14 +49,14 @@ fn kbd_caps_decodes() {
 #[cfg(feature = "mock")]
 #[test]
 fn pushed_keyboard_and_media_events_arrive_on_the_stream() {
-    use crate::{CatchClass, CatchEvent, CatchFilter, Device, Key, MediaKey, MockBox, Usage};
+    use crate::{CatchEvent, CatchFilter, Device, Key, MediaKey, MockBox, Usage};
     use std::time::Duration;
     let mock = MockBox::new();
     let device = Device::with_mock(mock.clone());
     let stream = device
         .catch_events([
-            CatchFilter::class(CatchClass::Key),
-            CatchFilter::class(CatchClass::Media),
+            CatchFilter::watch_class(Class::Key),
+            CatchFilter::watch_class(Class::Media),
         ])
         .unwrap();
 
@@ -62,7 +64,7 @@ fn pushed_keyboard_and_media_events_arrive_on_the_stream() {
         0,
         1_000,
         Class::Key,
-        LockDirection::Positive,
+        Direction::Positive,
         &[
             Usage::from(Key::LEFT_SHIFT),
             Usage::from(Key::A),
@@ -73,7 +75,7 @@ fn pushed_keyboard_and_media_events_arrive_on_the_stream() {
         1,
         2_000,
         Class::Media,
-        LockDirection::Positive,
+        Direction::Positive,
         &[Usage::from(MediaKey::VOLUME_UP)],
     );
 
