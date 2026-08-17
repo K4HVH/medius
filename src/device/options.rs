@@ -38,7 +38,10 @@ impl Device {
         self.link.send(FrameType::Option, &imperfect_payload(allow))
     }
 
-    /// `OPTION(MOVE_RIDE)`: injected motion rides a native motion report seen within `window` (else dropped) so its density matches the native mouse's; `None` off; persisted in NVS.
+    /// `OPTION(MOVE_RIDE)`: injected motion rides a native motion report seen within `window` (else dropped)
+    /// so its density matches the native mouse's; `None` off; persisted in NVS. A single move can override
+    /// it ([`MoveTiming::Now`](crate::MoveTiming), [`move_rel_now`](Self::move_rel_now)), and clip playback
+    /// bypasses it unless [`ClipHandle::set_ride`](crate::ClipHandle::set_ride) is on.
     pub fn set_movement_riding(&self, window: Option<Duration>) -> Result<()> {
         self.link.send(
             FrameType::Option,

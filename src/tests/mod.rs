@@ -8,6 +8,7 @@ mod keepalive;
 mod keyboard;
 mod led;
 mod lock;
+mod movement;
 mod options;
 mod robustness;
 

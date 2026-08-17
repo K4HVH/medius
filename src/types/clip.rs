@@ -1,9 +1,10 @@
 //! Buffered clip playback (§3.11 / §4.15): the per-frame entry stream a host preloads into the device-side ring, the trigger/config surface, and the ring/playback status.
 
 use crate::protocol::opcode::{
-    CLIP_CFG_F_FINALIZED, CLIP_CFG_F_LOOP, CLIP_CFG_F_RETAIN, CLIP_F_EDGES, CLIP_F_WHEEL,
-    CLIP_F_XY, CLIP_OP_PAUSE, CLIP_OP_RESTART, CLIP_OP_RESUME, CLIP_OP_START, CLIP_OP_STOP,
-    CLIP_OP_TOGGLE, CLIP_TAG_GAP, CLIP_TRIG_MAX, LOCK_DIR_BOTH, LOCK_DIR_NEG, LOCK_DIR_POS,
+    CLIP_CFG_F_FINALIZED, CLIP_CFG_F_LOOP, CLIP_CFG_F_RETAIN, CLIP_CFG_F_RIDE, CLIP_F_EDGES,
+    CLIP_F_WHEEL, CLIP_F_XY, CLIP_OP_PAUSE, CLIP_OP_RESTART, CLIP_OP_RESUME, CLIP_OP_START,
+    CLIP_OP_STOP, CLIP_OP_TOGGLE, CLIP_TAG_GAP, CLIP_TRIG_MAX, LOCK_DIR_BOTH, LOCK_DIR_NEG,
+    LOCK_DIR_POS,
 };
 use crate::types::lock::blanket_from_scope;
 use crate::types::{Action, Blanket, Class, Direction, Usage};
@@ -200,6 +201,8 @@ pub struct ClipSettings {
     pub retain: bool,
     /// Whether a retained clip has been finalized (its end fixed).
     pub finalized: bool,
+    /// Whether the clip's motion waits to ride a native report (`false` = the box's own clock, the default).
+    pub ride: bool,
     /// The trigger binding set.
     pub triggers: Vec<ClipTrigger>,
 }
@@ -245,6 +248,7 @@ impl ClipSettings {
             loop_: flags & CLIP_CFG_F_LOOP != 0,
             retain: flags & CLIP_CFG_F_RETAIN != 0,
             finalized: flags & CLIP_CFG_F_FINALIZED != 0,
+            ride: flags & CLIP_CFG_F_RIDE != 0,
             triggers,
         })
     }

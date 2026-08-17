@@ -6,7 +6,7 @@ use crate::protocol::opcode::{
 };
 use crate::protocol::{Resp, parse_resp};
 use crate::types::{
-    Axis, Button, Class, Health, Key, Direction, LockScope, LockTarget, Locks, Usage,
+    Axis, Button, Class, Direction, Health, Key, LockScope, LockTarget, Locks, Usage,
 };
 
 #[test]
@@ -41,11 +41,7 @@ fn lock_target_and_direction_wire() {
         ),
         (0, 1, 2)
     );
-    for d in [
-        Direction::Both,
-        Direction::Positive,
-        Direction::Negative,
-    ] {
+    for d in [Direction::Both, Direction::Positive, Direction::Negative] {
         assert_eq!(Direction::from_u8(d.as_u8()), Some(d));
     }
     assert_eq!(Direction::from_u8(3), None);

@@ -246,7 +246,11 @@ impl Link {
         }
         for (key, f) in next {
             // After a whole-table clear the box holds nothing, so every entry is new again.
-            if !wildcard_removed && prev.get(key).is_some_and(|had| had.capture() == f.capture()) {
+            if !wildcard_removed
+                && prev
+                    .get(key)
+                    .is_some_and(|had| had.capture() == f.capture())
+            {
                 continue;
             }
             let (class, id) = f.wire();

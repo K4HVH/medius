@@ -349,6 +349,62 @@ mod linux {
         }
 
         {
+            // The per-command override, observed on the wire: with riding on and the real mouse idle, a
+            // plain move never reaches the PC, a NOW move does, and FLUSH sends what was held while
+            // DISCARD drops it. Leaves the box back at the default (riding off).
+            let dev = device.as_ref().unwrap();
+            let window = Duration::from_millis(20);
+            let _ = dev.set_movement_riding(Some(window));
+            std::thread::sleep(Duration::from_millis(60));
+
+            reset_motion(&acc);
+            for _ in 0..5 {
+                let _ = dev.move_rel(40, 0);
+                std::thread::sleep(Duration::from_millis(30));
+            }
+            std::thread::sleep(Duration::from_millis(200));
+            let held = acc.rel_x.load(Ordering::Relaxed);
+
+            reset_motion(&acc);
+            let _ = dev.discard_motion();
+            for _ in 0..5 {
+                let _ = dev.move_rel_now(40, 0);
+                std::thread::sleep(Duration::from_millis(3));
+            }
+            std::thread::sleep(Duration::from_millis(300));
+            let bypassed = acc.rel_x.load(Ordering::Relaxed);
+
+            // Held motion is only ever cleared by a native cursor-motion report, and this block keeps the
+            // real mouse still on purpose, so every step has to drop the previous step's hoard first or
+            // FLUSH reads the running total instead of what the step deposited.
+            reset_motion(&acc);
+            let _ = dev.discard_motion();
+            let _ = dev.move_rel(70, 0);
+            let _ = dev.flush_motion();
+            std::thread::sleep(Duration::from_millis(300));
+            let flushed = acc.rel_x.load(Ordering::Relaxed);
+
+            reset_motion(&acc);
+            let _ = dev.discard_motion();
+            let _ = dev.move_rel(70, 0);
+            let _ = dev.discard_motion();
+            let _ = dev.flush_motion();
+            std::thread::sleep(Duration::from_millis(300));
+            let discarded = acc.rel_x.load(Ordering::Relaxed);
+
+            let _ = dev.set_movement_riding(None);
+            std::thread::sleep(Duration::from_millis(60));
+            check(
+                "movement riding override",
+                held == 0 && bypassed == 200 && flushed == 70 && discarded == 0,
+                format!(
+                    "held={held} (want 0), now={bypassed} (want 200), \
+                     flush={flushed} (want 70), discard={discarded} (want 0)"
+                ),
+            );
+        }
+
+        {
             // Wire round-trip + NVS-persistence check for the EMIT option; the pacing behaviour itself
             // needs the rig. Restores LEARNED (the default) afterward.
             let dev = device.as_ref().unwrap();
@@ -820,10 +876,13 @@ mod linux {
             // The measured inter-chip clock estimate. Both chips must be running current firmware for
             // this to converge; an absent estimate reads as age=None rather than a zero offset.
             let dev = device.as_ref().unwrap();
-            let st = dev.catch_events([CatchFilter::everything()]).ok().and_then(|_s| {
-                std::thread::sleep(Duration::from_millis(300));
-                dev.query_catch().ok()
-            });
+            let st = dev
+                .catch_events([CatchFilter::everything()])
+                .ok()
+                .and_then(|_s| {
+                    std::thread::sleep(Duration::from_millis(300));
+                    dev.query_catch().ok()
+                });
             let (converged, detail) = match st {
                 Some(c) => match c.clock.age {
                     Some(age) => (
@@ -1021,10 +1080,12 @@ mod linux {
                 .bind(ClipTrigger::new(Button::Side1, Edge::Release, ClipAction::Stop).consume())
                 .is_ok();
             let loop_set = clip.set_loop(true).is_ok();
+            let ride_set = clip.set_ride(true).is_ok();
             let cfg_ok = clip
                 .query_config()
                 .map(|c| {
                     c.loop_
+                        && c.ride
                         && c.triggers.len() == 2
                         && c.triggers.iter().any(|t| {
                             t.on == Key::A.into()
@@ -1047,11 +1108,13 @@ mod linux {
                 .map(|c| c.triggers.is_empty())
                 .unwrap_or(false);
             let _ = clip.set_loop(false);
+            let _ = clip.set_ride(false);
             check(
                 "clip trigger set + config readback",
                 bound_key
                     && bound_btn
                     && loop_set
+                    && ride_set
                     && cfg_ok
                     && unbound
                     && after_unbind

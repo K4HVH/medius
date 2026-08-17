@@ -42,7 +42,7 @@ pub use emit_pace::{EmitPace, EmitPaceStatus};
 pub use event::{BusEvent, CatchEvent, ControlStatus, MotionEvent, TrafficEvent, UsageSnapshot};
 pub use health::Health;
 pub use imperfect::ImperfectStatus;
-pub use inject::Motion;
+pub use inject::{Motion, MoveTiming, PendingMotion};
 pub use input::{Input, InputEvent};
 pub use kbd_caps::KbdCaps;
 pub use keyboard::Key;
