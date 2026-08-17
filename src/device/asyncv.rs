@@ -9,16 +9,16 @@ use crate::protocol::opcode::{
 use crate::protocol::{Resp, parse_resp};
 use crate::types::{
     Action, Axis, Blanket, Caps, CatchFilter, CatchState, ClipBuilder, ClipSettings, ClipStatus,
-    ClipTrigger, CountersSnapshot, DeviceInfo, Edge, EmitPace, EmitPaceStatus, Health,
-    ImperfectStatus, LedMode, LedTarget, Direction, LockTarget, Locks, Motion, Rate,
-    RebootTarget, Stats, Usage, Version,
+    ClipTrigger, CountersSnapshot, DeviceInfo, Direction, Edge, EmitPace, EmitPaceStatus, Health,
+    ImperfectStatus, LedMode, LedTarget, LockTarget, Locks, Motion, MoveTiming, PendingMotion,
+    Rate, RebootTarget, Stats, Usage, Version,
 };
 
 use super::Device;
 use super::catch::EventStream;
-use super::input::InputStream;
 use super::clip::ClipHandle;
 use super::discover::BoxInfo;
+use super::input::InputStream;
 use super::logs::LogStream;
 
 /// An async view over a [`Device`]: the same `Link` core, with `async` queries.
@@ -62,9 +62,34 @@ impl AsyncDevice {
         self.dev().wheel(delta)
     }
 
+    /// `MOVE` (cursor) bypassing movement riding. Instant; see [`Device::move_rel_now`].
+    pub fn move_rel_now(&self, dx: i16, dy: i16) -> Result<()> {
+        self.dev().move_rel_now(dx, dy)
+    }
+
+    /// `MOVE` (wheel) bypassing movement riding. Instant; see [`Device::wheel_now`].
+    pub fn wheel_now(&self, delta: i16) -> Result<()> {
+        self.dev().wheel_now(delta)
+    }
+
+    /// Emit the motion held for a ride now. Instant; see [`Device::flush_motion`].
+    pub fn flush_motion(&self) -> Result<()> {
+        self.dev().flush_motion()
+    }
+
+    /// Drop the motion held for a ride. Instant; see [`Device::discard_motion`].
+    pub fn discard_motion(&self) -> Result<()> {
+        self.dev().discard_motion()
+    }
+
     /// `MOVE`: field-generic relative axis (cursor or wheel). Instant; see [`Device::move_axis`].
-    pub fn move_axis(&self, motion: Motion) -> Result<()> {
-        self.dev().move_axis(motion)
+    pub fn move_axis(
+        &self,
+        motion: Motion,
+        timing: MoveTiming,
+        pending: PendingMotion,
+    ) -> Result<()> {
+        self.dev().move_axis(motion, timing, pending)
     }
 
     /// `INJECT`: momentary override for any usage (button, key, or media). Instant; see [`Device::inject`].
@@ -388,6 +413,11 @@ impl AsyncClipHandle {
     /// Set retained mode. Instant; see [`ClipHandle::set_retain`](crate::ClipHandle::set_retain).
     pub fn set_retain(&self, on: bool) -> Result<()> {
         self.inner.set_retain(on)
+    }
+
+    /// Set whether clip motion rides. Instant; see [`ClipHandle::set_ride`](crate::ClipHandle::set_ride).
+    pub fn set_ride(&self, on: bool) -> Result<()> {
+        self.inner.set_ride(on)
     }
 
     /// Add or overwrite a trigger binding. Instant; see [`ClipHandle::bind`](crate::ClipHandle::bind).

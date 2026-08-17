@@ -23,9 +23,9 @@ mod tests;
 
 pub use device::Device;
 pub use device::catch::EventStream;
-pub use device::input::InputStream;
 pub use device::clip::ClipHandle;
 pub use device::discover::BoxInfo;
+pub use device::input::InputStream;
 pub use device::logs::LogStream;
 pub use device::options::{EMIT_MAX_HZ, NAME_MAX};
 pub use error::{Error, Result};
@@ -41,9 +41,9 @@ pub use types::{
     ClipStatus, ClipTrigger, ClockDomain, ClockEstimate, ControlStatus, CountersSnapshot,
     DeviceInfo, DeviceKind, Direction, DirectionMeaning, Edge, EmitPace, EmitPaceStatus, Health,
     ImperfectStatus, Input, InputEvent, KbdCaps, Key, LedMode, LedTarget, LockEntry, LockScope,
-    LockTarget, Locks, LogLevel, LogLine, MediaKey, Motion, MotionEvent, MouseCaps, PortInfo, Rate,
-    RebootTarget, Stamped, Stats, Timeline, Timestamped, TrafficClass, TrafficEvent, Usage,
-    UsageSnapshot, Version,
+    LockTarget, Locks, LogLevel, LogLine, MediaKey, Motion, MotionEvent, MouseCaps, MoveTiming,
+    PendingMotion, PortInfo, Rate, RebootTarget, Stamped, Stats, Timeline, Timestamped,
+    TrafficClass, TrafficEvent, Usage, UsageSnapshot, Version,
 };
 
 #[cfg(feature = "async")]

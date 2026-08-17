@@ -10,15 +10,15 @@ use crate::protocol::opcode::{
     RATE_CONFIDENT,
 };
 use crate::protocol::opcode::{
-    CLIP_CFG_F_FINALIZED, CLIP_CFG_F_LOOP, CLIP_CFG_F_RETAIN, CLK_RATE_NONE,
+    CLIP_CFG_F_FINALIZED, CLIP_CFG_F_LOOP, CLIP_CFG_F_RETAIN, CLIP_CFG_F_RIDE, CLK_RATE_NONE,
 };
 use crate::protocol::{DecodedFrame, FrameType, encode};
 use crate::transport::mock::MockTransport;
 use crate::types::lock::blanket_scope;
 use crate::types::{
     Caps, CatchClass, CatchState, Class, ClipSettings, ClipState, ClipStatus, ClockDomain,
-    DeviceInfo, DeviceKind, EmitPace, Health, ImperfectStatus, KbdCaps, Direction, Locks,
-    LogLevel, MouseCaps, Rate, Stats, Usage, Version,
+    DeviceInfo, DeviceKind, Direction, EmitPace, Health, ImperfectStatus, KbdCaps, Locks, LogLevel,
+    MouseCaps, Rate, Stats, Usage, Version,
 };
 
 #[derive(Debug)]
@@ -268,7 +268,8 @@ fn clip_status_payload(c: &ClipStatus, cfg: &ClipSettings) -> Vec<u8> {
             CLIP_CFG_F_FINALIZED
         } else {
             0
-        });
+        })
+        | (if cfg.ride { CLIP_CFG_F_RIDE } else { 0 });
     p.push(flags);
     p.push(cfg.triggers.len() as u8);
     for t in &cfg.triggers {

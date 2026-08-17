@@ -40,7 +40,9 @@ pub enum Error {
     #[error("{class:?} is traffic and cannot be decoded to an input edge; use catch_events")]
     NotAnInputFilter { class: CatchClass },
 
-    #[error("CatchFilter::everything() covers traffic as well as input; use CatchFilter::all_input()")]
+    #[error(
+        "CatchFilter::everything() covers traffic as well as input; use CatchFilter::all_input()"
+    )]
     WildcardNotInput,
 
     #[error(

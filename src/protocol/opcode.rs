@@ -18,6 +18,10 @@ pub const INJ_MEDIA: u8 = 2;
 /// `MOVE` motion byte: the relative-axis field kind.
 pub const INJ_MOTION_CURSOR: u8 = 0;
 pub const INJ_MOTION_WHEEL: u8 = 1;
+/// `MOVE` flags byte: the per-command movement-riding override (§3.1).
+pub const MV_F_NOW: u8 = 0x01;
+pub const MV_F_FLUSH: u8 = 0x02;
+pub const MV_F_DISCARD: u8 = 0x04;
 
 pub const Q_VERSION: u8 = 0;
 pub const Q_HEALTH: u8 = 1;
@@ -61,6 +65,7 @@ pub const CLIP_OP_FINALIZE: u8 = 7;
 pub const CLIP_SET_AUTOLOCK: u8 = 0;
 pub const CLIP_SET_LOOP: u8 = 1;
 pub const CLIP_SET_RETAIN: u8 = 2;
+pub const CLIP_SET_RIDE: u8 = 3;
 /// `CLIP_TRIGGER` set: max bindings and the flags byte bits.
 pub const CLIP_TRIG_MAX: usize = 8;
 pub const CLIP_TRIG_F_PRESENT: u8 = 0x01;
@@ -69,6 +74,7 @@ pub const CLIP_TRIG_F_CONSUME: u8 = 0x02;
 pub const CLIP_CFG_F_LOOP: u8 = 0x01;
 pub const CLIP_CFG_F_RETAIN: u8 = 0x02;
 pub const CLIP_CFG_F_FINALIZED: u8 = 0x04;
+pub const CLIP_CFG_F_RIDE: u8 = 0x08;
 /// Autolock scope bits (`CLIP_SET(AUTOLOCK)` value): which physical-input classes the clip auto-locks (0 = none).
 pub const CLIP_LOCK_AIM: u8 = 0x01;
 pub const CLIP_LOCK_WHEEL: u8 = 0x02;

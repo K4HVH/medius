@@ -2,17 +2,17 @@ use super::opcode::{
     INJ_MOTION_CURSOR, INJ_MOTION_WHEEL, OPT_EMIT, OPT_IMPERFECT, OPT_MOVE_RIDE, OPT_NAME,
 };
 
-/// `MOVE` cursor (§3.1): `[motion=0][dx i16 LE][dy i16 LE]`, no clamp (firmware clamps with carry).
-pub fn move_cursor_payload(dx: i16, dy: i16) -> [u8; 5] {
+/// `MOVE` cursor (§3.1): `[motion=0][dx i16 LE][dy i16 LE][flags u8]`, no clamp (firmware clamps with carry).
+pub fn move_cursor_payload(dx: i16, dy: i16, flags: u8) -> [u8; 6] {
     let dx = dx.to_le_bytes();
     let dy = dy.to_le_bytes();
-    [INJ_MOTION_CURSOR, dx[0], dx[1], dy[0], dy[1]]
+    [INJ_MOTION_CURSOR, dx[0], dx[1], dy[0], dy[1], flags]
 }
 
-/// `MOVE` wheel (§3.1): `[motion=1][dz i16 LE]`, no clamp (firmware paces across frames with carry).
-pub fn move_wheel_payload(dz: i16) -> [u8; 3] {
+/// `MOVE` wheel (§3.1): `[motion=1][dz i16 LE][flags u8]`, no clamp (firmware paces across frames with carry).
+pub fn move_wheel_payload(dz: i16, flags: u8) -> [u8; 4] {
     let d = dz.to_le_bytes();
-    [INJ_MOTION_WHEEL, d[0], d[1]]
+    [INJ_MOTION_WHEEL, d[0], d[1], flags]
 }
 
 /// `INJECT` (§3.2): `[class u8][id u16 LE][action u8]`; class 0 button / 1 key / 2 media; tri-state action.

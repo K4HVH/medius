@@ -2,15 +2,15 @@
 //! bit and the EventStream lifecycle. Bytes are pinned to the firmware wire format in ctrl_proto.h.
 use std::time::Duration;
 
+#[cfg(feature = "mock")]
+use crate::Usage;
 use crate::protocol::command::catch_payload;
 use crate::protocol::opcode::{CATCH_CLS_ANY, CATCH_ID_ANY, H_CATCH_ON};
 use crate::protocol::response::{Resp, parse_resp};
 use crate::types::{
-    Axis, BusEvent, Capture, CatchClass, CatchFilter, CatchState, Class, ClockDomain, ControlStatus,
-    Direction, Health, MotionEvent, TrafficClass, TrafficEvent, UsageSnapshot,
+    Axis, BusEvent, Capture, CatchClass, CatchFilter, CatchState, Class, ClockDomain,
+    ControlStatus, Direction, Health, MotionEvent, TrafficClass, TrafficEvent, UsageSnapshot,
 };
-#[cfg(feature = "mock")]
-use crate::Usage;
 use crate::{Button, Key};
 
 #[test]
@@ -91,11 +91,21 @@ fn direction_reads_three_ways_over_two_values() {
 #[test]
 fn capture_normalises_and_widens() {
     assert_eq!(Capture::Whole.bytes(), None);
-    assert_eq!(Capture::First(0).bytes(), None, "First(0) is the whole packet");
+    assert_eq!(
+        Capture::First(0).bytes(),
+        None,
+        "First(0) is the whole packet"
+    );
     assert_eq!(Capture::First(16).bytes(), Some(16));
     // 0 on the wire means whole, so whole beats every finite length in both orders.
-    assert_eq!(Capture::First(16).widest(Capture::First(64)), Capture::First(64));
-    assert_eq!(Capture::First(64).widest(Capture::First(16)), Capture::First(64));
+    assert_eq!(
+        Capture::First(16).widest(Capture::First(64)),
+        Capture::First(64)
+    );
+    assert_eq!(
+        Capture::First(64).widest(Capture::First(16)),
+        Capture::First(64)
+    );
     assert_eq!(Capture::First(16).widest(Capture::Whole), Capture::Whole);
     assert_eq!(Capture::Whole.widest(Capture::First(16)), Capture::Whole);
     assert_eq!(Capture::First(0).widest(Capture::First(16)), Capture::Whole);
@@ -814,10 +824,8 @@ mod with_mock {
         let mock = MockBox::new();
         let dev = Device::with_mock(mock.clone());
         let _capped = dev
-            .catch_events([
-                CatchFilter::traffic_class(TrafficClass::VendorBulk)
-                    .with_capture(Capture::First(16)),
-            ])
+            .catch_events([CatchFilter::traffic_class(TrafficClass::VendorBulk)
+                .with_capture(Capture::First(16))])
             .unwrap();
         let _whole = dev.catch_events([bulk(0x83)]).unwrap();
         let sent: Vec<(u16, u8)> = mock
@@ -850,9 +858,7 @@ mod with_mock {
         let sent = |broad: Capture, narrow: Capture| {
             let mock = MockBox::new();
             let dev = Device::with_mock(mock.clone());
-            let _b = dev
-                .catch_events([bulk(0x83).with_capture(broad)])
-                .unwrap();
+            let _b = dev.catch_events([bulk(0x83).with_capture(broad)]).unwrap();
             let _n = dev
                 .catch_events([bulk(0x83).outbound().with_capture(narrow)])
                 .unwrap();
@@ -889,7 +895,9 @@ mod with_mock {
         use crate::protocol::opcode::CATCH_MAX_ENTRIES;
         let mock = MockBox::new();
         let dev = Device::with_mock(mock.clone());
-        let fits: Vec<CatchFilter> = (0..CATCH_MAX_ENTRIES as u16).map(|i| bulk(0x80 + i)).collect();
+        let fits: Vec<CatchFilter> = (0..CATCH_MAX_ENTRIES as u16)
+            .map(|i| bulk(0x80 + i))
+            .collect();
         let _ok = dev
             .catch_events(fits.clone())
             .expect("exactly the table size fits");
@@ -997,8 +1005,14 @@ mod with_mock {
         let f = Capture::First;
         assert_eq!(sent([a.with_capture(f(16)), a.with_capture(f(64))]), 64);
         assert_eq!(sent([a.with_capture(f(64)), a.with_capture(f(16))]), 64);
-        assert_eq!(sent([a.with_capture(f(16)), a.with_capture(Capture::Whole)]), 0);
-        assert_eq!(sent([a.with_capture(Capture::Whole), a.with_capture(f(16))]), 0);
+        assert_eq!(
+            sent([a.with_capture(f(16)), a.with_capture(Capture::Whole)]),
+            0
+        );
+        assert_eq!(
+            sent([a.with_capture(Capture::Whole), a.with_capture(f(16))]),
+            0
+        );
     }
 
     #[test]
@@ -1014,7 +1028,9 @@ mod with_mock {
         // usage is still held, so a single-subscriber test cannot see it.
         let mock = MockBox::new();
         let dev = Device::with_mock(mock.clone());
-        let s = dev.catch_events([CatchFilter::watch(Button::Left)]).unwrap();
+        let s = dev
+            .catch_events([CatchFilter::watch(Button::Left)])
+            .unwrap();
         let next = |what: &str| match s.recv_timeout(Duration::from_secs(1)) {
             Some(CatchEvent::Usages(u)) => u,
             other => panic!("expected {what}, got {other:?}"),
@@ -1104,7 +1120,9 @@ mod with_mock {
         let mock = MockBox::new();
         let dev = Device::with_mock(mock.clone());
         let up = dev
-            .catch_events([CatchFilter::watch_axis(Axis::Wheel).with_direction(Direction::Positive)])
+            .catch_events(
+                [CatchFilter::watch_axis(Axis::Wheel).with_direction(Direction::Positive)],
+            )
             .unwrap();
         mock.push_motion(0, 1_000, 0, 0, -1);
         assert!(up.try_recv().is_none());
@@ -1319,8 +1337,12 @@ mod with_mock {
         let dev = Device::with_mock(mock.clone());
         let f = Usage::from(Key::new(0x09));
         let g = Usage::from(Key::new(0x0A));
-        let mut narrow = dev.input_events([CatchFilter::watch(Key::new(0x09))]).unwrap();
-        let _wide = dev.catch_events([CatchFilter::watch_class(Class::Key)]).unwrap();
+        let mut narrow = dev
+            .input_events([CatchFilter::watch(Key::new(0x09))])
+            .unwrap();
+        let _wide = dev
+            .catch_events([CatchFilter::watch_class(Class::Key)])
+            .unwrap();
 
         mock.push_usages(0, 1_000, Class::Key, Direction::PRESS, &[g]);
         mock.push_usages(1, 2_000, Class::Key, Direction::PRESS, &[g, f]);
@@ -1355,7 +1377,10 @@ mod with_mock {
             s.recv_timeout(Duration::from_secs(1)).unwrap().input,
             Input::Press(a)
         );
-        assert!(s.recv_timeout(Duration::from_millis(100)).is_none(), "once, not twice");
+        assert!(
+            s.recv_timeout(Duration::from_millis(100)).is_none(),
+            "once, not twice"
+        );
         assert_eq!(s.held(Class::Key), &[a]);
 
         // A button riding inside a KEY snapshot is dropped, not filed under Key.
@@ -1431,7 +1456,9 @@ mod with_mock {
         let mock = MockBox::new();
         let dev = Device::with_mock(mock.clone());
         let f = Usage::from(Key::new(0x09));
-        let mut s = dev.input_events([CatchFilter::watch(Key::new(0x09))]).unwrap();
+        let mut s = dev
+            .input_events([CatchFilter::watch(Key::new(0x09))])
+            .unwrap();
         mock.push_usages(0, 1_000, Class::Key, Direction::PRESS, &[f]);
         mock.push_usages(1, 2_000, Class::Key, Direction::RELEASE, &[]);
         let next = |s: &mut crate::InputStream| s.recv_timeout(Duration::from_secs(1)).unwrap();
@@ -1466,7 +1493,10 @@ mod timeline {
         // 32 bits of microseconds is 71.6 minutes. A consumer subtracting two raw stamps across the
         // wrap gets a number about 4295 seconds wrong, in the negative direction.
         let mut t = Timeline::new();
-        assert_eq!(t.box_us(&motion_at(u32::MAX - 500)), (u32::MAX - 500) as u64);
+        assert_eq!(
+            t.box_us(&motion_at(u32::MAX - 500)),
+            (u32::MAX - 500) as u64
+        );
         assert_eq!(t.box_us(&motion_at(500)), (1u64 << 32) + 500);
         assert_eq!(t.box_us(&motion_at(1_500)), (1u64 << 32) + 1_500);
         // Re-reading the same event must not advance the epoch again.
@@ -1561,7 +1591,10 @@ mod timeline {
         let fast = t.observe_at(&motion_at(1_100), origin + Duration::from_millis(10));
         assert!(fast.host < slow.host, "a large correction re-anchors");
         let next = t.observe_at(&motion_at(2_100), origin + Duration::from_millis(11));
-        assert_eq!(next.host.duration_since(fast.host), Duration::from_millis(1));
+        assert_eq!(
+            next.host.duration_since(fast.host),
+            Duration::from_millis(1)
+        );
         assert_eq!(next.excess, Duration::ZERO);
     }
 
@@ -1602,7 +1635,11 @@ mod timeline {
         // turned a 1 us inversion into a permanent 71.6-minute jump that also destroyed the floor.
         let mut t = Timeline::new();
         assert_eq!(t.box_us(&motion_at(10_000)), 10_000);
-        assert_eq!(t.box_us(&motion_at(9_999)), 9_999, "1 us inversion, not a wrap");
+        assert_eq!(
+            t.box_us(&motion_at(9_999)),
+            9_999,
+            "1 us inversion, not a wrap"
+        );
         assert_eq!(t.box_us(&motion_at(11_000)), 11_000);
         // A whole second of reordering is still reordering.
         assert_eq!(t.box_us(&motion_at(10_000_000)), 10_000_000);
@@ -1610,7 +1647,13 @@ mod timeline {
         // And the real wrap still works. Walk up to it the way a running box does -- a single jump
         // of more than half the range is genuinely ambiguous and is read as reordering.
         let mut t = Timeline::new();
-        for step in [1_000u32, 1_000_000_000, 2_000_000_000, 3_000_000_000, u32::MAX - 5] {
+        for step in [
+            1_000u32,
+            1_000_000_000,
+            2_000_000_000,
+            3_000_000_000,
+            u32::MAX - 5,
+        ] {
             assert_eq!(t.box_us(&motion_at(step)), step as u64);
         }
         assert_eq!(t.box_us(&motion_at(20)), (1u64 << 32) + 20);
@@ -1631,7 +1674,10 @@ mod timeline {
         let h = t.observe_at(&motion_at(1_000), origin + Duration::from_millis(10));
         // Device chip: stamps an hour ahead, arriving at 11 ms. With a shared floor this lands an
         // hour away.
-        let d = t.observe_at(&traffic_at(3_600_001_000), origin + Duration::from_millis(11));
+        let d = t.observe_at(
+            &traffic_at(3_600_001_000),
+            origin + Duration::from_millis(11),
+        );
         assert_eq!(h.host.duration_since(origin), Duration::from_millis(10));
         assert_eq!(d.host.duration_since(origin), Duration::from_millis(11));
         assert_eq!(t.samples(ClockDomain::HostChip), 1);
@@ -1648,10 +1694,17 @@ mod timeline {
         t.observe_at(&traffic_at(1_000), origin + Duration::from_millis(20));
         t.reset(ClockDomain::HostChip);
         assert_eq!(t.samples(ClockDomain::HostChip), 0);
-        assert_eq!(t.samples(ClockDomain::DeviceChip), 1, "the other chip is untouched");
+        assert_eq!(
+            t.samples(ClockDomain::DeviceChip),
+            1,
+            "the other chip is untouched"
+        );
         // The rebooted chip's first event maps to its own arrival, not to the stale 500 ms floor.
         let after = t.observe_at(&motion_at(7), origin + Duration::from_millis(600));
-        assert_eq!(after.host.duration_since(origin), Duration::from_millis(600));
+        assert_eq!(
+            after.host.duration_since(origin),
+            Duration::from_millis(600)
+        );
         assert_eq!(after.box_us, 7);
         // And the surviving domain still has its floor: 1000 us on, 1 ms later.
         let other = t.observe_at(&traffic_at(2_000), origin + Duration::from_millis(30));
@@ -1675,7 +1728,11 @@ mod timeline {
             );
             last = s.excess;
         }
-        assert_eq!(last, Duration::ZERO, "the floor rose to the steady delivery");
+        assert_eq!(
+            last,
+            Duration::ZERO,
+            "the floor rose to the steady delivery"
+        );
     }
 
     #[test]
@@ -1688,8 +1745,11 @@ mod timeline {
         for (i, jitter) in [0u64, 7, 2, 31, 1].iter().enumerate() {
             let ts = 1_000 + i as u32 * 1_000;
             out.push(
-                t.observe_at(&motion_at(ts), origin + Duration::from_millis(10 + i as u64 + jitter))
-                    .host,
+                t.observe_at(
+                    &motion_at(ts),
+                    origin + Duration::from_millis(10 + i as u64 + jitter),
+                )
+                .host,
             );
         }
         for w in out.windows(2) {

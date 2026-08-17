@@ -2,9 +2,9 @@
 
 use crate::protocol::command::inject_payload;
 use crate::protocol::opcode::{INJ_KEY, INJ_MEDIA};
-use crate::types::{Key, MediaKey};
 #[cfg(feature = "mock")]
 use crate::types::{Class, Direction};
+use crate::types::{Key, MediaKey};
 
 #[test]
 fn key_inject_bytes() {
