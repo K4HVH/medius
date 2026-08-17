@@ -32,18 +32,54 @@
 // Capacity for a control adapter's serial string.
 #define MEDIUS_MAX_SERIAL 128
 
-// CATCH subscription class bits, OR them together (see `medius_device_catch_events`).
-#define MEDIUS_CATCH_MASK_MOTION 1
+// Largest CATCH subscription table the box holds (the firmware `CTRL_CATCH_MAXN`).
+#define MEDIUS_MAX_CATCH_ENTRIES 32
 
-#define MEDIUS_CATCH_MASK_WHEEL 2
+// Largest traffic payload one event carries (the firmware `CTRL_TRAFFIC_DATA_MAX`).
+#define MEDIUS_MAX_TRAFFIC_BYTES 180
 
-#define MEDIUS_CATCH_MASK_BUTTONS 4
+// CATCH classes, the `class` of a `MediusCatchFilter`. 0-3 are the classes `LOCK` and `INJECT`
+// address; 4-10 are the traffic the box relays.
+#define MEDIUS_CATCH_CLASS_BTN 0
 
-#define MEDIUS_CATCH_MASK_KEYS 8
+#define MEDIUS_CATCH_CLASS_KEY 1
 
-#define MEDIUS_CATCH_MASK_MEDIA 16
+#define MEDIUS_CATCH_CLASS_MEDIA 2
 
-#define MEDIUS_CATCH_MASK_ALL 31
+#define MEDIUS_CATCH_CLASS_AXIS 3
+
+// Raw HID input report bytes, keyed by interface number.
+#define MEDIUS_CATCH_CLASS_HID_IN 4
+
+// Interrupt-OUT report bytes the PC wrote, keyed by endpoint address.
+#define MEDIUS_CATCH_CLASS_HID_OUT 5
+
+// Vendor-interface interrupt traffic, keyed by endpoint address.
+#define MEDIUS_CATCH_CLASS_VENDOR_INTERRUPT 6
+
+// Vendor-interface bulk traffic, keyed by endpoint address.
+#define MEDIUS_CATCH_CLASS_VENDOR_BULK 7
+
+// A proxied control transaction, keyed by endpoint number (0 = EP0).
+#define MEDIUS_CATCH_CLASS_CONTROL 8
+
+// The bytes the clone put on the wire, keyed by endpoint address.
+#define MEDIUS_CATCH_CLASS_EMIT 9
+
+// Bus lifecycle: reset, suspend, configuration and interface changes, attach and detach.
+#define MEDIUS_CATCH_CLASS_BUS 10
+
+// Wildcard: every class.
+#define MEDIUS_CATCH_CLASS_ANY 255
+
+// Wildcard: every id within a class.
+#define MEDIUS_CATCH_ID_ANY 65535
+
+// `MediusClockEstimate::age_ms` when the box has no estimate yet.
+#define MEDIUS_CLOCK_AGE_NONE UINT32_MAX
+
+// `MediusClockEstimate::rate_ppb` when the box has fitted no drift rate.
+#define MEDIUS_CLOCK_RATE_NONE INT32_MIN
 
 // The max clip trigger bindings in a `MediusClipSettings` (matches the firmware `CLIP_TRIG_MAX`).
 #define MEDIUS_CLIP_TRIG_MAX 8
@@ -66,6 +102,20 @@ enum MediusStatus
     MEDIUS_STATUS_ERR_INVALID_ARG = 9,
     MEDIUS_STATUS_ERR_PANIC = 10,
     MEDIUS_STATUS_ERR_UNKNOWN = 11,
+    // The subscription needs more entries than the box's table holds.
+    MEDIUS_STATUS_ERR_CATCH_TABLE_FULL = 12,
+    // A catch subscription with no filters, which would never yield an event.
+    MEDIUS_STATUS_ERR_EMPTY_SUBSCRIPTION = 13,
+    // A non-zero `capture` on an input class, which carries no packet.
+    MEDIUS_STATUS_ERR_CAPTURE_NOT_APPLICABLE = 14,
+    // A traffic class passed to `medius_device_input_events`, which cannot decode one.
+    MEDIUS_STATUS_ERR_NOT_AN_INPUT_FILTER = 15,
+    // The everything filter passed to `medius_device_input_events`; it covers traffic too.
+    MEDIUS_STATUS_ERR_WILDCARD_NOT_INPUT = 16,
+    // An input filter narrowed to one edge, which cannot be decoded into press and release.
+    MEDIUS_STATUS_ERR_HALF_EDGE_INPUT_FILTER = 17,
+    // An exact id equal to the blanket sentinel, which would address the whole class.
+    MEDIUS_STATUS_ERR_RESERVED_ID = 18,
 };
 #ifndef __cplusplus
 #if __STDC_VERSION__ >= 202311L
@@ -228,6 +278,41 @@ typedef uint8_t MediusMotionKind;
 #endif // __STDC_VERSION__ >= 202311L
 #endif // __cplusplus
 
+// When a delta reaches the game PC, against movement riding.
+enum MediusMoveTiming
+#if defined(__cplusplus) || __STDC_VERSION__ >= 202311L
+  : uint8_t
+#endif // defined(__cplusplus) || __STDC_VERSION__ >= 202311L
+ {
+    MEDIUS_MOVE_TIMING_RIDE = 0,
+    MEDIUS_MOVE_TIMING_NOW = 1,
+};
+#ifndef __cplusplus
+#if __STDC_VERSION__ >= 202311L
+typedef enum MediusMoveTiming MediusMoveTiming;
+#else
+typedef uint8_t MediusMoveTiming;
+#endif // __STDC_VERSION__ >= 202311L
+#endif // __cplusplus
+
+// What a move does to the motion already held for a ride.
+enum MediusPendingMotion
+#if defined(__cplusplus) || __STDC_VERSION__ >= 202311L
+  : uint8_t
+#endif // defined(__cplusplus) || __STDC_VERSION__ >= 202311L
+ {
+    MEDIUS_PENDING_MOTION_KEEP = 0,
+    MEDIUS_PENDING_MOTION_FLUSH = 1,
+    MEDIUS_PENDING_MOTION_DISCARD = 2,
+};
+#ifndef __cplusplus
+#if __STDC_VERSION__ >= 202311L
+typedef enum MediusPendingMotion MediusPendingMotion;
+#else
+typedef uint8_t MediusPendingMotion;
+#endif // __STDC_VERSION__ >= 202311L
+#endif // __cplusplus
+
 // What a lock addresses: a relative axis, or a momentary usage (button/key/media).
 enum MediusLockTargetKind
 #if defined(__cplusplus) || __STDC_VERSION__ >= 202311L
@@ -252,20 +337,20 @@ typedef uint8_t MediusLockTargetKind;
 #endif // __cplusplus
 
 // Which edge of an axis/button a lock applies to.
-enum MediusLockDirection
+enum MediusDirection
 #if defined(__cplusplus) || __STDC_VERSION__ >= 202311L
   : uint8_t
 #endif // defined(__cplusplus) || __STDC_VERSION__ >= 202311L
  {
-    MEDIUS_LOCK_DIRECTION_BOTH = 0,
-    MEDIUS_LOCK_DIRECTION_POSITIVE = 1,
-    MEDIUS_LOCK_DIRECTION_NEGATIVE = 2,
+    MEDIUS_DIRECTION_BOTH = 0,
+    MEDIUS_DIRECTION_POSITIVE = 1,
+    MEDIUS_DIRECTION_NEGATIVE = 2,
 };
 #ifndef __cplusplus
 #if __STDC_VERSION__ >= 202311L
-typedef enum MediusLockDirection MediusLockDirection;
+typedef enum MediusDirection MediusDirection;
 #else
-typedef uint8_t MediusLockDirection;
+typedef uint8_t MediusDirection;
 #endif // __STDC_VERSION__ >= 202311L
 #endif // __cplusplus
 
@@ -363,6 +448,73 @@ typedef uint8_t MediusButton;
 #endif // __STDC_VERSION__ >= 202311L
 #endif // __cplusplus
 
+// A relative axis. Values match the wire axis id a `CATCH` or `LOCK` entry carries.
+enum MediusAxis
+#if defined(__cplusplus) || __STDC_VERSION__ >= 202311L
+  : uint8_t
+#endif // defined(__cplusplus) || __STDC_VERSION__ >= 202311L
+ {
+    MEDIUS_AXIS_X = 0,
+    MEDIUS_AXIS_Y = 1,
+    MEDIUS_AXIS_WHEEL = 2,
+};
+#ifndef __cplusplus
+#if __STDC_VERSION__ >= 202311L
+typedef enum MediusAxis MediusAxis;
+#else
+typedef uint8_t MediusAxis;
+#endif // __STDC_VERSION__ >= 202311L
+#endif // __cplusplus
+
+// What the real device answered a proxied control transaction with.
+enum MediusControlStatus
+#if defined(__cplusplus) || __STDC_VERSION__ >= 202311L
+  : uint8_t
+#endif // defined(__cplusplus) || __STDC_VERSION__ >= 202311L
+ {
+    MEDIUS_CONTROL_STATUS_OK = 0,
+    MEDIUS_CONTROL_STATUS_STALLED = 1,
+    MEDIUS_CONTROL_STATUS_NAKED = 2,
+    // A status byte this build does not know. Read `MediusTrafficEvent::flags` for its value. Kept
+    // distinct rather than folded into the nearest known one: a catch-all arm reported a future
+    // firmware's new status as a timeout, which reads as a device fault that never happened.
+    MEDIUS_CONTROL_STATUS_OTHER = 3,
+};
+#ifndef __cplusplus
+#if __STDC_VERSION__ >= 202311L
+typedef enum MediusControlStatus MediusControlStatus;
+#else
+typedef uint8_t MediusControlStatus;
+#endif // __STDC_VERSION__ >= 202311L
+#endif // __cplusplus
+
+// What a `MEDIUS_CATCH_CLASS_BUS` event describes.
+enum MediusBusEventKind
+#if defined(__cplusplus) || __STDC_VERSION__ >= 202311L
+  : uint8_t
+#endif // defined(__cplusplus) || __STDC_VERSION__ >= 202311L
+ {
+    MEDIUS_BUS_EVENT_KIND_RESET = 0,
+    MEDIUS_BUS_EVENT_KIND_SUSPEND = 1,
+    MEDIUS_BUS_EVENT_KIND_RESUME = 2,
+    // `SET_CONFIGURATION` selected `configuration`.
+    MEDIUS_BUS_EVENT_KIND_CONFIGURED = 3,
+    MEDIUS_BUS_EVENT_KIND_DECONFIGURED = 4,
+    // `SET_INTERFACE` selected `alt` on `interface`.
+    MEDIUS_BUS_EVENT_KIND_SET_INTERFACE = 5,
+    MEDIUS_BUS_EVENT_KIND_DEVICE_ATTACHED = 6,
+    MEDIUS_BUS_EVENT_KIND_DEVICE_DETACHED = 7,
+    MEDIUS_BUS_EVENT_KIND_CLONE_UP = 8,
+    MEDIUS_BUS_EVENT_KIND_CLONE_DOWN = 9,
+};
+#ifndef __cplusplus
+#if __STDC_VERSION__ >= 202311L
+typedef enum MediusBusEventKind MediusBusEventKind;
+#else
+typedef uint8_t MediusBusEventKind;
+#endif // __STDC_VERSION__ >= 202311L
+#endif // __cplusplus
+
 // Which arm of a [`MediusCatchEvent`] is populated.
 enum MediusCatchEventKind
 #if defined(__cplusplus) || __STDC_VERSION__ >= 202311L
@@ -373,12 +525,58 @@ enum MediusCatchEventKind
     MEDIUS_CATCH_EVENT_KIND_MOTION = 0,
     // A held-usage snapshot for one class (`data.usages`).
     MEDIUS_CATCH_EVENT_KIND_USAGES = 1,
+    // Byte-oriented traffic (`data.traffic`).
+    MEDIUS_CATCH_EVENT_KIND_TRAFFIC = 2,
 };
 #ifndef __cplusplus
 #if __STDC_VERSION__ >= 202311L
 typedef enum MediusCatchEventKind MediusCatchEventKind;
 #else
 typedef uint8_t MediusCatchEventKind;
+#endif // __STDC_VERSION__ >= 202311L
+#endif // __cplusplus
+
+// Which chip's clock stamped an event.
+//
+// The two chips boot independently, so nothing relates their timers: a stamp is only meaningful
+// against another from the same domain. To place both on one timeline, apply
+// `MediusClockEstimate::offset_us` and respect its error bound.
+enum MediusClockDomain
+#if defined(__cplusplus) || __STDC_VERSION__ >= 202311L
+  : uint8_t
+#endif // defined(__cplusplus) || __STDC_VERSION__ >= 202311L
+ {
+    // The device-facing chip: everything the real device produced.
+    MEDIUS_CLOCK_DOMAIN_HOST_CHIP = 0,
+    // The PC-facing chip: everything the PC produced and everything the clone emitted.
+    MEDIUS_CLOCK_DOMAIN_DEVICE_CHIP = 1,
+};
+#ifndef __cplusplus
+#if __STDC_VERSION__ >= 202311L
+typedef enum MediusClockDomain MediusClockDomain;
+#else
+typedef uint8_t MediusClockDomain;
+#endif // __STDC_VERSION__ >= 202311L
+#endif // __cplusplus
+
+// Which arm of a [`MediusInputEvent`] is populated.
+enum MediusInputKind
+#if defined(__cplusplus) || __STDC_VERSION__ >= 202311L
+  : uint8_t
+#endif // defined(__cplusplus) || __STDC_VERSION__ >= 202311L
+ {
+    // A momentary usage went down; read `usage`.
+    MEDIUS_INPUT_KIND_PRESS = 0,
+    // A momentary usage came up; read `usage`.
+    MEDIUS_INPUT_KIND_RELEASE = 1,
+    // A relative-motion report; read `dx`/`dy`/`dz`.
+    MEDIUS_INPUT_KIND_MOTION = 2,
+};
+#ifndef __cplusplus
+#if __STDC_VERSION__ >= 202311L
+typedef enum MediusInputKind MediusInputKind;
+#else
+typedef uint8_t MediusInputKind;
 #endif // __STDC_VERSION__ >= 202311L
 #endif // __cplusplus
 
@@ -420,6 +618,7 @@ enum MediusFrameType
     MEDIUS_FRAME_TYPE_CATCH = 11,
     MEDIUS_FRAME_TYPE_MOTION_EVENT = 12,
     MEDIUS_FRAME_TYPE_USAGE_EVENT = 15,
+    MEDIUS_FRAME_TYPE_TRAFFIC_EVENT = 22,
     MEDIUS_FRAME_TYPE_OPTION = 17,
     MEDIUS_FRAME_TYPE_CLIP_APPEND = 18,
     MEDIUS_FRAME_TYPE_CLIP_CTRL = 19,
@@ -446,6 +645,10 @@ typedef struct MediusDevice MediusDevice;
 // A live CATCH event stream; create with `medius_device_catch_events`, free with `medius_event_stream_free`.
 typedef struct MediusEventStream MediusEventStream;
 
+// A live decoded-input stream; create with `medius_device_input_events`, free with
+// `medius_input_stream_free`. Not clonable: it holds the per-class held sets it diffs.
+typedef struct MediusInputStream MediusInputStream;
+
 // A device LOG stream. Opaque; create with `medius_device_logs`, release with `medius_log_stream_free`.
 typedef struct MediusLogStream MediusLogStream;
 
@@ -453,6 +656,13 @@ typedef struct MediusLogStream MediusLogStream;
 // A scriptable fake box. Opaque; create with `medius_mock_new`, free with `medius_mock_free`.
 typedef struct MediusMockBox MediusMockBox;
 #endif
+
+// A host-side clock mapping; create with `medius_timeline_new`, free with `medius_timeline_free`.
+//
+// A catch stamp is microseconds on a chip that booted before this process did: it wraps every ~71.6
+// minutes and has no relation to any clock here. Feed every event in as it arrives, in order,
+// passing your own monotonic `now_ns`.
+typedef struct MediusTimeline MediusTimeline;
 
 // A momentary usage for `medius_device_inject`; build with the `medius_usage_*` helpers.
 typedef struct MediusUsage {
@@ -491,6 +701,8 @@ typedef struct MediusClipSettings {
     uint8_t loop_;
     uint8_t retain;
     uint8_t finalized;
+    // Whether the clip's motion waits to ride a native report (`medius_clip_set_ride`).
+    uint8_t ride;
     struct MediusClipTrigger triggers[MEDIUS_CLIP_TRIG_MAX];
     // The number of valid entries in `triggers`.
     uint8_t n;
@@ -622,10 +834,66 @@ typedef struct MediusLocks {
     struct MediusLockEntry entries[MEDIUS_MAX_LOCKS];
 } MediusLocks;
 
-// The active catch subscription mask plus the box-side dropped-event count.
+// The measured difference between the two chips' clocks, from `RESP(CATCH)`.
+typedef struct MediusClockEstimate {
+    // The host chip's clock minus the device chip's, in microseconds.
+    int32_t offset_us;
+    // Relative drift between the two crystals in parts per billion, or `MEDIUS_CLOCK_RATE_NONE`
+    // when the box has fitted none. That is a different answer from a fitted 0, which says the two
+    // crystals match: on a link too busy for enough clean exchanges no fit is made at all, which is
+    // exactly when assuming no drift is least safe.
+    int32_t rate_ppb;
+    // Best measured round trip in the window. The offset is good to about half of this.
+    uint16_t delay_us;
+    // Age of the estimate, or `MEDIUS_CLOCK_AGE_NONE` when the box has no estimate yet. The
+    // sentinel is load-bearing: an offset that was never measured also reads as zero, and applying
+    // it would silently shift every cross-domain stamp.
+    uint32_t age_ms;
+} MediusClockEstimate;
+
+// A CATCH class, one of the `MEDIUS_CATCH_CLASS_*` values.
+typedef uint8_t MediusCatchClass;
+
+// One CATCH subscription entry: what to observe, in which direction, and how much of each packet to
+// keep. Build one with a `medius_catch_filter_*` helper.
+//
+// The box resolves each event to its most specific matching entry -- an exact `(class, id)` beats a
+// class blanket, which beats the everything filter, and a named direction beats `Both` -- and that
+// entry supplies `capture`. The wildcards are sentinels rather than a separate flag:
+// `class = MEDIUS_CATCH_CLASS_ANY` matches every class and `id = MEDIUS_CATCH_ID_ANY` every id
+// within one. The wildcard class with a real id addresses nothing and is refused.
+typedef struct MediusCatchFilter {
+    // One of `MEDIUS_CATCH_CLASS_*`, or `MEDIUS_CATCH_CLASS_ANY`.
+    MediusCatchClass class_;
+    // The class-specific id, or `MEDIUS_CATCH_ID_ANY`.
+    uint16_t id;
+    // The press/release edge on the momentary classes, the sign of the delta on axes, and IN
+    // (`Positive`) / OUT (`Negative`) on the traffic classes.
+    MediusDirection direction;
+    // Bytes kept per event; 0 keeps the whole packet. Traffic classes only -- an input class carries
+    // no packet, and naming one with a non-zero capture is refused at subscribe time.
+    uint8_t capture;
+} MediusCatchFilter;
+
+// One row of a `MediusCatchState`: a live subscription and what it has lost.
+typedef struct MediusCatchEntry {
+    struct MediusCatchFilter filter;
+    // Events this entry could not queue. Per entry, because a box-wide count says you are losing
+    // events but not which ones, and those are different problems.
+    uint16_t dropped;
+} MediusCatchEntry;
+
+// Decoded `RESP(CATCH)`: the live subscription table in `entries[0..n]`, its drop counts, and the
+// measured inter-chip clock estimate.
 typedef struct MediusCatchState {
-    uint8_t mask;
+    // The box refused an entry because its table is full.
+    uint8_t table_full;
+    // Box-wide events dropped under back-pressure.
     uint32_t dropped;
+    struct MediusClockEstimate clock;
+    // The number of valid entries in `entries`.
+    uint16_t n;
+    struct MediusCatchEntry entries[MEDIUS_MAX_CATCH_ENTRIES];
 } MediusCatchState;
 
 // Imperfect-clone opt-in and over-capacity status (each field is 0 or 1).
@@ -658,12 +926,42 @@ typedef uint16_t MediusMediaKey;
 
 // One held-usage snapshot: every held usage of one class in `usages[0..n]`.
 typedef struct MediusUsageEvent {
+    // Which class this snapshot is of, one of `MEDIUS_CLASS_*`. Carried here rather than read off
+    // the first entry, because the snapshot that most needs it is the one with `n == 0`: releasing
+    // the last held usage is the edge a caller waits for, and it lists nothing to read a class from.
+    MediusClass class_;
+    // The edge that produced this snapshot: the subscribed set grew (`Positive`) or shrank
+    // (`Negative`). Without it a direction on an input filter cannot be honoured at all.
+    MediusDirection direction;
     uint16_t n;
     struct MediusUsage usages[MEDIUS_MAX_USAGES];
 } MediusUsageEvent;
 
-// A CATCH subscription mask, an OR of the `MEDIUS_CATCH_MASK_*` bits.
-typedef uint8_t MediusCatchMask;
+// One byte-oriented catch event: HID reports, vendor endpoints, control transactions, the bytes the
+// clone emitted, or bus lifecycle. `bytes[0..len]` is as much of the packet as `capture` kept.
+typedef struct MediusTrafficEvent {
+    // One of `MEDIUS_CATCH_CLASS_*`.
+    MediusCatchClass class_;
+    // Endpoint address, interface number, or endpoint number, per the class.
+    uint16_t id;
+    // `Positive` is IN (device to PC), `Negative` is OUT.
+    MediusDirection direction;
+    // Class-specific; read it with `medius_traffic_event_control_status` or `..._bus_event`.
+    uint8_t flags;
+    // The packet's length before `capture` truncated it.
+    uint16_t true_len;
+    // Valid bytes in `bytes`.
+    uint16_t len;
+    uint8_t bytes[MEDIUS_MAX_TRAFFIC_BYTES];
+} MediusTrafficEvent;
+
+// A decoded bus lifecycle event; the payload fields are 0 for the kinds that carry none.
+typedef struct MediusBusEvent {
+    MediusBusEventKind kind;
+    uint8_t configuration;
+    uint8_t interface;
+    uint8_t alt;
+} MediusBusEvent;
 
 // One relative-axis catch event: the user's real motion at the merge point, before lock suppression or injection.
 typedef struct MediusMotionEvent {
@@ -679,13 +977,49 @@ typedef struct MediusMotionEvent {
 typedef union MediusCatchEventData {
     struct MediusMotionEvent motion;
     struct MediusUsageEvent usages;
+    struct MediusTrafficEvent traffic;
 } MediusCatchEventData;
 
-// One catch-stream event. Read `data.motion` / `data.usages` per `kind`.
+// One catch-stream event. Read `data.motion` / `data.usages` / `data.traffic` per `kind`.
 typedef struct MediusCatchEvent {
     MediusCatchEventKind kind;
+    // When the event was stamped, in the `clock` chip's microseconds. A box-local clock, unrelated
+    // to any clock on this machine, so only meaningful compared against other events of the same
+    // domain. It wraps every ~71.6 minutes and restarts at zero if that chip reboots, so a value
+    // below the previous one is a wrap, a reboot, or a domain change, and the delta is meaningless.
+    uint32_t ts_us;
+    // Which chip's clock stamped `ts_us`.
+    MediusClockDomain clock;
     union MediusCatchEventData data;
 } MediusCatchEvent;
+
+// One decoded input event: a press or release edge, or a motion report. The held-usage snapshots the
+// box sends are diffed into these by `medius_device_input_events`.
+typedef struct MediusInputEvent {
+    MediusInputKind kind;
+    // The report's arrival stamp, in the `clock` chip's microseconds.
+    uint32_t ts_us;
+    // Which chip's clock stamped it; always `HostChip` for physical input.
+    MediusClockDomain clock;
+    // The usage this is an edge on; unset for `Motion`.
+    struct MediusUsage usage;
+    // Relative X this report (right positive); 0 unless `kind` is `Motion`.
+    int16_t dx;
+    // Relative Y this report (down positive); 0 unless `kind` is `Motion`.
+    int16_t dy;
+    // Wheel delta this report (up positive); 0 unless `kind` is `Motion`.
+    int16_t dz;
+} MediusInputEvent;
+
+// One event placed on this machine's clock by a `MediusTimeline`.
+typedef struct MediusStamped {
+    // When the event happened, on the same monotonic clock the caller passed as `now_ns`.
+    uint64_t host_ns;
+    // The event's own stamp, unwrapped past the 32-bit rollover.
+    uint64_t box_us;
+    // How much later than the measured floor this event reached the caller. Jitter, not latency.
+    uint64_t excess_ns;
+} MediusStamped;
 
 // One device log line. `text` is NUL-terminated.
 typedef struct MediusLogLine {
@@ -923,6 +1257,9 @@ MediusStatus medius_clip_set_loop(struct MediusClip *clip, uint8_t on);
 MediusStatus medius_clip_set_retain(struct MediusClip *clip,
                                     uint8_t on);
 
+// Make the clip's motion wait to ride a native report (0 = the box's own clock, the default).
+MediusStatus medius_clip_set_ride(struct MediusClip *clip, uint8_t on);
+
 // Add or overwrite a trigger binding.
 MediusStatus medius_clip_bind(struct MediusClip *clip, struct MediusClipTrigger trigger);
 
@@ -1000,7 +1337,22 @@ MediusStatus medius_device_move_rel(struct MediusDevice *dev, int16_t dx, int16_
 
 MediusStatus medius_device_wheel(struct MediusDevice *dev, int16_t delta);
 
-MediusStatus medius_device_move_axis(struct MediusDevice *dev, struct MediusMotion motion);
+// A cursor move that bypasses movement riding: it emits on the box's own clock.
+MediusStatus medius_device_move_rel_now(struct MediusDevice *dev, int16_t dx, int16_t dy);
+
+// A wheel move that bypasses movement riding.
+MediusStatus medius_device_wheel_now(struct MediusDevice *dev, int16_t delta);
+
+// Emit the motion held for a ride now, ignoring the ride window.
+MediusStatus medius_device_flush_motion(struct MediusDevice *dev);
+
+// Drop the motion held for a ride.
+MediusStatus medius_device_discard_motion(struct MediusDevice *dev);
+
+MediusStatus medius_device_move_axis(struct MediusDevice *dev,
+                                     struct MediusMotion motion,
+                                     MediusMoveTiming timing,
+                                     MediusPendingMotion pending);
 
 // Drive one momentary usage (button, key, or media) with an explicit action. The one injection verb.
 MediusStatus medius_device_inject(struct MediusDevice *dev,
@@ -1019,22 +1371,22 @@ MediusStatus medius_device_force_release(struct MediusDevice *dev, struct Medius
 // Lock a target (axis or usage) on an edge. A button, key, and media usage all lock the same way.
 MediusStatus medius_device_lock(struct MediusDevice *dev,
                                 struct MediusLockTarget target,
-                                MediusLockDirection dir);
+                                MediusDirection dir);
 
 // Release a lock set by `medius_device_lock`.
 MediusStatus medius_device_unlock(struct MediusDevice *dev,
                                   struct MediusLockTarget target,
-                                  MediusLockDirection dir);
+                                  MediusDirection dir);
 
 // Lock a whole class blanket (cursor aim, wheel, all buttons, all keys, or all media).
 MediusStatus medius_device_lock_all(struct MediusDevice *dev,
                                     MediusBlanket what,
-                                    MediusLockDirection dir);
+                                    MediusDirection dir);
 
 // Release a blanket lock set by `medius_device_lock_all`.
 MediusStatus medius_device_unlock_all(struct MediusDevice *dev,
                                       MediusBlanket what,
-                                      MediusLockDirection dir);
+                                      MediusDirection dir);
 
 MediusStatus medius_device_led(struct MediusDevice *dev,
                                MediusLedTarget target,
@@ -1139,7 +1491,7 @@ struct MediusLockTarget medius_lock_target_usage(struct MediusUsage usage);
 // Whether `target`/`dir` is locked in `locks` (`Both` requires both edges). Mirrors `medius::Locks::is_locked`.
 bool medius_locks_is_locked(const struct MediusLocks *locks,
                             struct MediusLockTarget target,
-                            MediusLockDirection dir);
+                            MediusDirection dir);
 
 // The native report rate in Hz written to `out_hz`, false when there is no continuous cadence. Delegates to `medius::Rate::native_hz`.
 bool medius_rate_native_hz(struct MediusRate rate,
@@ -1147,6 +1499,99 @@ bool medius_rate_native_hz(struct MediusRate rate,
 
 // Whether `usage` is held in a usage snapshot. Mirrors `medius::UsageSnapshot::is_held`.
 bool medius_usage_event_is_held(const struct MediusUsageEvent *event, struct MediusUsage usage);
+
+// One momentary usage: a button, a key, or a media usage. The same thing `medius_device_lock` takes.
+struct MediusCatchFilter medius_catch_filter_watch(struct MediusUsage usage);
+
+// One relative axis.
+struct MediusCatchFilter medius_catch_filter_watch_axis(MediusAxis axis);
+
+// Every usage in one momentary class.
+struct MediusCatchFilter medius_catch_filter_watch_class(MediusClass class_);
+
+// Every relative axis: X, Y and the wheel.
+struct MediusCatchFilter medius_catch_filter_watch_axes(void);
+
+// Write the four input-class filters to `out[0..4]`: buttons, keys, media and axes. This is the
+// whole of what `medius_device_input_events` can report.
+//
+// # Safety
+// `out` must point to space for four `MediusCatchFilter`.
+void medius_catch_filter_all_input(struct MediusCatchFilter *out);
+
+// One traffic address: an endpoint, an interface, or a control endpoint number. `class` must be one
+// of the traffic classes (`MEDIUS_CATCH_CLASS_HID_IN` upwards).
+struct MediusCatchFilter medius_catch_filter_traffic(MediusCatchClass class_, uint16_t id);
+
+// Every id within one traffic class.
+struct MediusCatchFilter medius_catch_filter_traffic_class(MediusCatchClass class_);
+
+// Every class, every id, both directions, whole packets. One table entry, not an expansion.
+//
+// This includes `MEDIUS_CATCH_CLASS_VENDOR_BULK`, which can saturate the control link by itself.
+// Pair it with `medius_catch_filter_with_capture` unless you mean to trace bulk in full.
+struct MediusCatchFilter medius_catch_filter_everything(void);
+
+// `f` restricted to one direction, sign or edge.
+struct MediusCatchFilter medius_catch_filter_with_direction(struct MediusCatchFilter f,
+                                                            MediusDirection direction);
+
+// `f` keeping only the first `bytes` of each packet; 0 keeps the whole packet. Traffic classes only.
+struct MediusCatchFilter medius_catch_filter_with_capture(struct MediusCatchFilter f,
+                                                          uint8_t bytes);
+
+// `f` restricted to the press edge.
+struct MediusCatchFilter medius_catch_filter_on_press(struct MediusCatchFilter f);
+
+// `f` restricted to the release edge.
+struct MediusCatchFilter medius_catch_filter_on_release(struct MediusCatchFilter f);
+
+// `f` restricted to traffic from the device to the PC.
+struct MediusCatchFilter medius_catch_filter_inbound(struct MediusCatchFilter f);
+
+// `f` restricted to traffic from the PC to the device.
+struct MediusCatchFilter medius_catch_filter_outbound(struct MediusCatchFilter f);
+
+// Whether two filters name the same box table entry, whatever their captures.
+bool medius_catch_filter_same_address(struct MediusCatchFilter a, struct MediusCatchFilter b);
+
+// Whether `class` is one of the four parsed-input classes, which arrive decoded and carry no packet.
+bool medius_catch_class_is_input(MediusCatchClass class_);
+
+// Whether `class` is one of the seven byte-oriented traffic classes.
+bool medius_catch_class_is_traffic(MediusCatchClass class_);
+
+// Whether the capture cut this packet short. Without checking, a truncated capture and a genuinely
+// short packet are indistinguishable. Mirrors `medius::TrafficEvent::truncated`.
+bool medius_traffic_event_truncated(const struct MediusTrafficEvent *event);
+
+// The 8-byte setup packet of a CONTROL event, or NULL for another class or a capture cut shorter
+// than the setup stage. Points into `event`. Mirrors `medius::TrafficEvent::setup`.
+const uint8_t *medius_traffic_event_setup(const struct MediusTrafficEvent *event);
+
+// The data stage of a CONTROL event, the whole packet for any other class; its length goes to
+// `*out_len`. Points into `event`. Mirrors `medius::TrafficEvent::data`.
+const uint8_t *medius_traffic_event_data(const struct MediusTrafficEvent *event,
+                                         uintptr_t *out_len);
+
+// What the real device answered, written to `*out`; false for any class but CONTROL. Mirrors
+// `medius::TrafficEvent::control_status`.
+bool medius_traffic_event_control_status(const struct MediusTrafficEvent *event,
+                                         MediusControlStatus *out);
+
+// The lifecycle event, written to `*out`; false for any class but BUS or an unknown kind. Mirrors
+// `medius::TrafficEvent::bus_event`.
+bool medius_traffic_event_bus_event(const struct MediusTrafficEvent *event,
+                                    struct MediusBusEvent *out);
+
+// Whether this event carries end-of-transfer, for a VEND_BULK event. Mirrors
+// `medius::TrafficEvent::bulk_end_of_transfer`.
+bool medius_traffic_event_bulk_end_of_transfer(const struct MediusTrafficEvent *event);
+
+// Whether this event is a zero-length packet, for a VEND_BULK event. A ZLP terminates a transfer
+// whose length is an exact multiple of the packet size, so it carries no bytes and still matters.
+// Mirrors `medius::TrafficEvent::bulk_zlp`.
+bool medius_traffic_event_bulk_zlp(const struct MediusTrafficEvent *event);
 
 // Whether the clip is currently holding `usage` down. Mirrors `medius::ClipStatus::is_held`.
 bool medius_clip_status_is_held(const struct MediusClipStatus *status, struct MediusUsage usage);
@@ -1160,9 +1605,10 @@ bool medius_caps_has_keyboard(struct MediusCaps caps);
 // Whether the clone is composite (multi-HID-interface). Delegates to `medius::Caps::is_composite`.
 bool medius_caps_is_composite(struct MediusCaps caps);
 
-// Subscribe to the physical-input event stream for class `mask` (`MEDIUS_CATCH_MASK_*` bits); writes the handle to `*out`.
+// Subscribe to the catch stream for `filters[0..n]` (build them with the `medius_catch_filter_*` helpers); writes the handle to `*out`.
 MediusStatus medius_device_catch_events(struct MediusDevice *dev,
-                                        MediusCatchMask mask,
+                                        const struct MediusCatchFilter *filters,
+                                        uintptr_t n,
                                         struct MediusEventStream **out);
 
 // Clone an event-stream handle onto the same subscription (shared queue); null in returns null out.
@@ -1185,6 +1631,122 @@ bool medius_event_stream_recv_timeout(struct MediusEventStream *stream,
 
 // Events this stream dropped because the consumer fell behind (host-side back-pressure).
 uint64_t medius_event_stream_dropped(struct MediusEventStream *stream);
+
+// Subscribe to decoded input edges for `filters[0..n]`, writing the handle to `*out`.
+//
+// Every filter must name an input class and cover both edges; build them with
+// `medius_catch_filter_watch*` or `medius_catch_filter_all_input`. A traffic class, the everything
+// filter, or a filter narrowed to one edge is refused rather than silently yielding nothing.
+//
+// # Safety
+// `filters` must point to `n` readable `MediusCatchFilter`; `dev` and `out` must be non-null.
+MediusStatus medius_device_input_events(struct MediusDevice *dev,
+                                        const struct MediusCatchFilter *filters,
+                                        uintptr_t n,
+                                        struct MediusInputStream **out);
+
+// Free an input-stream handle. Null is a no-op.
+//
+// # Safety
+// `stream` must come from `medius_device_input_events` and not be used afterwards.
+void medius_input_stream_free(struct MediusInputStream *stream);
+
+// Block until the next input event, writing it to `*out`; `ErrDisconnected` on close.
+//
+// # Safety
+// `stream` and `out` must be non-null and valid.
+MediusStatus medius_input_stream_recv(struct MediusInputStream *stream,
+                                      struct MediusInputEvent *out);
+
+// The next decoded event, written to `*out`; returns false if none is queued (never blocks).
+//
+// # Safety
+// `stream` and `out` must be non-null and valid.
+bool medius_input_stream_try_recv(struct MediusInputStream *stream, struct MediusInputEvent *out);
+
+// Block up to `timeout_ms` for the next input event; returns false on timeout or close.
+//
+// # Safety
+// `stream` and `out` must be non-null and valid.
+bool medius_input_stream_recv_timeout(struct MediusInputStream *stream,
+                                      uint64_t timeout_ms,
+                                      struct MediusInputEvent *out);
+
+// Events the underlying subscription dropped because the consumer fell behind.
+//
+// # Safety
+// `stream` must be non-null and valid, or null.
+uint64_t medius_input_stream_dropped(struct MediusInputStream *stream);
+
+// Write the usages of `class` this stream currently holds to `out[0..cap]` and return how many there
+// are. A return above `cap` means the buffer was too small and only `cap` were written.
+//
+// # Safety
+// `out` must point to space for `cap` `MediusUsage`.
+uintptr_t medius_input_stream_held(struct MediusInputStream *stream,
+                                   MediusClass class_,
+                                   struct MediusUsage *out,
+                                   uintptr_t cap);
+
+// A fresh timeline. Free with `medius_timeline_free`.
+struct MediusTimeline *medius_timeline_new(void);
+
+// Free a timeline. Null is a no-op.
+//
+// # Safety
+// `t` must come from `medius_timeline_new` and not be used afterwards.
+void medius_timeline_free(struct MediusTimeline *t);
+
+// Place `ev` on the caller's clock, writing the result to `*out`; returns false on a null argument.
+//
+// `now_ns` is the caller's own monotonic reading at the moment the event arrived, in nanoseconds
+// from any fixed origin. `MediusStamped::host_ns` comes back on that same scale.
+//
+// # Safety
+// `t`, `ev` and `out` must be non-null and valid.
+bool medius_timeline_observe(struct MediusTimeline *t,
+                             const struct MediusCatchEvent *ev,
+                             uint64_t now_ns,
+                             struct MediusStamped *out);
+
+// Place a decoded input event on the caller's clock; the input-stream counterpart of
+// `medius_timeline_observe`. Both share one timeline, so a caller reading both streams gets one
+// comparable ordering.
+//
+// # Safety
+// `t`, `ev` and `out` must be non-null and valid.
+bool medius_timeline_observe_input(struct MediusTimeline *t,
+                                   const struct MediusInputEvent *ev,
+                                   uint64_t now_ns,
+                                   struct MediusStamped *out);
+
+// Forget one domain's rollover count and measured floor, for a chip that rebooted.
+//
+// # Safety
+// `t` must be non-null and valid, or null.
+void medius_timeline_reset(struct MediusTimeline *t, MediusClockDomain domain);
+
+// Events observed for a domain. The floor is a minimum over these: a handful is a loose estimate.
+//
+// # Safety
+// `t` must be non-null and valid, or null.
+uint64_t medius_timeline_samples(struct MediusTimeline *t, MediusClockDomain domain);
+
+// Whether the box is still delivering to this stream.
+//
+// `medius_event_stream_recv_timeout` and `_try_recv` both return `false` for "nothing yet" and for
+// "nothing ever again". This separates them: one means wait longer, the other means stop.
+//
+// # Safety
+// `stream` must be non-null and valid, or null.
+bool medius_event_stream_is_connected(struct MediusEventStream *stream);
+
+// Whether the box is still delivering to this input stream. See
+// `medius_event_stream_is_connected`.
+//
+// # Safety
+// `stream` must be non-null and valid, or null.
+bool medius_input_stream_is_connected(struct MediusInputStream *stream);
 
 // Open the device LOG stream, writing the handle to `*out`.
 MediusStatus medius_device_logs(struct MediusDevice *dev, struct MediusLogStream **out);
@@ -1323,6 +1885,7 @@ void medius_mock_push_log(struct MediusMockBox *mock, MediusLogLevel level, cons
 // Push a MOTION_EVENT as if the box emitted it (surfaces as a `Motion` catch event).
 void medius_mock_push_motion(struct MediusMockBox *mock,
                              uint8_t seq,
+                             uint32_t ts_us,
                              struct MediusMotionEvent event);
 #endif
 
@@ -1330,7 +1893,18 @@ void medius_mock_push_motion(struct MediusMockBox *mock,
 // Push a USAGE_EVENT as if the box emitted it (surfaces as a `Usages` catch event).
 void medius_mock_push_usages(struct MediusMockBox *mock,
                              uint8_t seq,
+                             uint32_t ts_us,
                              const struct MediusUsageEvent *event);
+#endif
+
+#if defined(MEDIUS_FEATURE_MOCK)
+// Push a TRAFFIC_EVENT as if the box emitted it (surfaces as a `Traffic` catch event).
+// `true_len` above `len` is how a snaplen-truncated capture looks.
+void medius_mock_push_traffic(struct MediusMockBox *mock,
+                              uint8_t seq,
+                              uint32_t ts_us,
+                              MediusClockDomain clock,
+                              const struct MediusTrafficEvent *event);
 #endif
 
 #if defined(MEDIUS_FEATURE_MOCK)

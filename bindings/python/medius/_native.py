@@ -16,6 +16,16 @@ MEDIUS_MAX_PATH = 512
 MEDIUS_MAX_PRODUCT = 128
 MEDIUS_MAX_SERIAL = 128
 MEDIUS_MAX_NAME = 33
+MEDIUS_MAX_CATCH_ENTRIES = 32
+MEDIUS_MAX_TRAFFIC_BYTES = 180
+
+# The CATCH wildcards are sentinel values, not a separate flag byte.
+MEDIUS_CATCH_CLASS_ANY = 0xFF
+MEDIUS_CATCH_ID_ANY = 0xFFFF
+MEDIUS_CLOCK_AGE_NONE = 0xFFFFFFFF
+# MediusClockEstimate.rate_ppb when the box has fitted no drift rate. Different from a fitted 0, which
+# says the two crystals are matched.
+MEDIUS_CLOCK_RATE_NONE = -0x80000000
 
 u8 = ctypes.c_uint8
 u16 = ctypes.c_uint16
@@ -57,6 +67,7 @@ class MediusClipSettings(ctypes.Structure):
         ("loop_", u8),
         ("retain", u8),
         ("finalized", u8),
+        ("ride", u8),
         ("triggers", MediusClipTrigger * MEDIUS_CLIP_TRIG_MAX),
         ("n", u8),
     ]
@@ -176,8 +187,26 @@ class MediusLocks(ctypes.Structure):
     _fields_ = [("n", u16), ("entries", MediusLockEntry * MEDIUS_MAX_LOCKS)]
 
 
+class MediusCatchFilter(ctypes.Structure):
+    _fields_ = [("class_", u8), ("id", u16), ("direction", u8), ("capture", u8)]
+
+
+class MediusCatchEntry(ctypes.Structure):
+    _fields_ = [("filter", MediusCatchFilter), ("dropped", u16)]
+
+
+class MediusClockEstimate(ctypes.Structure):
+    _fields_ = [("offset_us", i32), ("rate_ppb", i32), ("delay_us", u16), ("age_ms", u32)]
+
+
 class MediusCatchState(ctypes.Structure):
-    _fields_ = [("mask", u8), ("dropped", u32)]
+    _fields_ = [
+        ("table_full", u8),
+        ("dropped", u32),
+        ("clock", MediusClockEstimate),
+        ("n", u16),
+        ("entries", MediusCatchEntry * MEDIUS_MAX_CATCH_ENTRIES),
+    ]
 
 
 class MediusImperfectStatus(ctypes.Structure):
@@ -214,18 +243,59 @@ class MediusMotionEvent(ctypes.Structure):
 
 
 class MediusUsageEvent(ctypes.Structure):
-    _fields_ = [("n", u16), ("usages", MediusUsage * MEDIUS_MAX_USAGES)]
+    # Mirrors MediusUsageEvent in medius.h. A missing field here is not a decode bug, it is a buffer
+    # overrun: the library writes sizeof(MediusCatchEvent) bytes into whatever this allocates, so a
+    # struct short by one field lets every catch event write past the end of it.
+    _fields_ = [
+        ("class_", u8),
+        ("direction", u8),
+        ("n", u16),
+        ("usages", MediusUsage * MEDIUS_MAX_USAGES),
+    ]
+
+
+class MediusTrafficEvent(ctypes.Structure):
+    _fields_ = [
+        ("class_", u8),
+        ("id", u16),
+        ("direction", u8),
+        ("flags", u8),
+        ("true_len", u16),
+        ("len", u16),
+        ("bytes", u8 * MEDIUS_MAX_TRAFFIC_BYTES),
+    ]
+
+
+class MediusBusEvent(ctypes.Structure):
+    _fields_ = [("kind", u8), ("configuration", u8), ("interface", u8), ("alt", u8)]
 
 
 class MediusCatchEventData(ctypes.Union):
     _fields_ = [
         ("motion", MediusMotionEvent),
         ("usages", MediusUsageEvent),
+        ("traffic", MediusTrafficEvent),
     ]
 
 
 class MediusCatchEvent(ctypes.Structure):
-    _fields_ = [("kind", u8), ("data", MediusCatchEventData)]
+    _fields_ = [("kind", u8), ("ts_us", u32), ("clock", u8), ("data", MediusCatchEventData)]
+
+
+class MediusInputEvent(ctypes.Structure):
+    _fields_ = [
+        ("kind", u8),
+        ("ts_us", u32),
+        ("clock", u8),
+        ("usage", MediusUsage),
+        ("dx", i16),
+        ("dy", i16),
+        ("dz", i16),
+    ]
+
+
+class MediusStamped(ctypes.Structure):
+    _fields_ = [("host_ns", u64), ("box_us", u64), ("excess_ns", u64)]
 
 
 class MediusLogLine(ctypes.Structure):
@@ -294,7 +364,11 @@ _decl("medius_list", usize, [ctypes.POINTER(MediusBoxInfo), usize, ctypes.POINTE
 
 _decl("medius_device_move_rel", i32, [HANDLE, i16, i16])
 _decl("medius_device_wheel", i32, [HANDLE, i16])
-_decl("medius_device_move_axis", i32, [HANDLE, MediusMotion])
+_decl("medius_device_move_rel_now", i32, [HANDLE, i16, i16])
+_decl("medius_device_wheel_now", i32, [HANDLE, i16])
+_decl("medius_device_flush_motion", i32, [HANDLE])
+_decl("medius_device_discard_motion", i32, [HANDLE])
+_decl("medius_device_move_axis", i32, [HANDLE, MediusMotion, u8, u8])
 _decl("medius_device_inject", i32, [HANDLE, MediusUsage, u8])
 _decl("medius_device_press", i32, [HANDLE, MediusUsage])
 _decl("medius_device_soft_release", i32, [HANDLE, MediusUsage])
@@ -348,18 +422,89 @@ _decl("medius_lock_target_usage", MediusLockTarget, [MediusUsage])
 _decl("medius_locks_is_locked", c_bool, [ctypes.POINTER(MediusLocks), MediusLockTarget, u8])
 _decl("medius_rate_native_hz", c_bool, [MediusRate, ctypes.POINTER(ctypes.c_float)])
 _decl("medius_usage_event_is_held", c_bool, [ctypes.POINTER(MediusUsageEvent), MediusUsage])
+_decl("medius_catch_filter_watch", MediusCatchFilter, [MediusUsage])
+_decl("medius_catch_filter_watch_axis", MediusCatchFilter, [u8])
+_decl("medius_catch_filter_watch_class", MediusCatchFilter, [u8])
+_decl("medius_catch_filter_watch_axes", MediusCatchFilter, [])
+_decl("medius_catch_filter_all_input", None, [ctypes.POINTER(MediusCatchFilter)])
+_decl("medius_catch_filter_traffic", MediusCatchFilter, [u8, u16])
+_decl("medius_catch_filter_traffic_class", MediusCatchFilter, [u8])
+_decl("medius_catch_filter_everything", MediusCatchFilter, [])
+_decl("medius_catch_filter_with_direction", MediusCatchFilter, [MediusCatchFilter, u8])
+_decl("medius_catch_filter_with_capture", MediusCatchFilter, [MediusCatchFilter, u8])
+_decl("medius_catch_filter_on_press", MediusCatchFilter, [MediusCatchFilter])
+_decl("medius_catch_filter_on_release", MediusCatchFilter, [MediusCatchFilter])
+_decl("medius_catch_filter_inbound", MediusCatchFilter, [MediusCatchFilter])
+_decl("medius_catch_filter_outbound", MediusCatchFilter, [MediusCatchFilter])
+_decl("medius_catch_filter_same_address", c_bool, [MediusCatchFilter, MediusCatchFilter])
+_decl("medius_catch_class_is_input", c_bool, [u8])
+_decl("medius_catch_class_is_traffic", c_bool, [u8])
+_decl("medius_traffic_event_truncated", c_bool, [ctypes.POINTER(MediusTrafficEvent)])
+_decl("medius_traffic_event_setup", ctypes.POINTER(u8), [ctypes.POINTER(MediusTrafficEvent)])
+_decl(
+    "medius_traffic_event_data",
+    ctypes.POINTER(u8),
+    [ctypes.POINTER(MediusTrafficEvent), ctypes.POINTER(usize)],
+)
+_decl(
+    "medius_traffic_event_control_status",
+    c_bool,
+    [ctypes.POINTER(MediusTrafficEvent), ctypes.POINTER(u8)],
+)
+_decl(
+    "medius_traffic_event_bus_event",
+    c_bool,
+    [ctypes.POINTER(MediusTrafficEvent), ctypes.POINTER(MediusBusEvent)],
+)
+_decl("medius_traffic_event_bulk_end_of_transfer", c_bool, [ctypes.POINTER(MediusTrafficEvent)])
+_decl("medius_traffic_event_bulk_zlp", c_bool, [ctypes.POINTER(MediusTrafficEvent)])
 _decl("medius_clip_status_is_held", c_bool, [ctypes.POINTER(MediusClipStatus), MediusUsage])
 _decl("medius_caps_has_mouse", c_bool, [MediusCaps])
 _decl("medius_caps_has_keyboard", c_bool, [MediusCaps])
 _decl("medius_caps_is_composite", c_bool, [MediusCaps])
 
-_decl("medius_device_catch_events", i32, [HANDLE, u8, PHANDLE])
+_decl(
+    "medius_device_catch_events",
+    i32,
+    [HANDLE, ctypes.POINTER(MediusCatchFilter), usize, PHANDLE],
+)
 _decl("medius_event_stream_clone", HANDLE, [HANDLE])
 _decl("medius_event_stream_free", None, [HANDLE])
 _decl("medius_event_stream_recv", i32, [HANDLE, ctypes.POINTER(MediusCatchEvent)])
 _decl("medius_event_stream_try_recv", c_bool, [HANDLE, ctypes.POINTER(MediusCatchEvent)])
 _decl("medius_event_stream_recv_timeout", c_bool, [HANDLE, u64, ctypes.POINTER(MediusCatchEvent)])
 _decl("medius_event_stream_dropped", u64, [HANDLE])
+_decl("medius_event_stream_is_connected", c_bool, [HANDLE])
+_decl(
+    "medius_device_input_events",
+    i32,
+    [HANDLE, ctypes.POINTER(MediusCatchFilter), usize, PHANDLE],
+)
+_decl("medius_input_stream_free", None, [HANDLE])
+_decl("medius_input_stream_recv", i32, [HANDLE, ctypes.POINTER(MediusInputEvent)])
+_decl("medius_input_stream_try_recv", c_bool, [HANDLE, ctypes.POINTER(MediusInputEvent)])
+_decl("medius_input_stream_recv_timeout", c_bool, [HANDLE, u64, ctypes.POINTER(MediusInputEvent)])
+_decl("medius_input_stream_dropped", u64, [HANDLE])
+_decl("medius_input_stream_is_connected", c_bool, [HANDLE])
+_decl(
+    "medius_input_stream_held",
+    usize,
+    [HANDLE, u8, ctypes.POINTER(MediusUsage), usize],
+)
+_decl("medius_timeline_new", HANDLE, [])
+_decl("medius_timeline_free", None, [HANDLE])
+_decl(
+    "medius_timeline_observe",
+    c_bool,
+    [HANDLE, ctypes.POINTER(MediusCatchEvent), u64, ctypes.POINTER(MediusStamped)],
+)
+_decl(
+    "medius_timeline_observe_input",
+    c_bool,
+    [HANDLE, ctypes.POINTER(MediusInputEvent), u64, ctypes.POINTER(MediusStamped)],
+)
+_decl("medius_timeline_reset", None, [HANDLE, u8])
+_decl("medius_timeline_samples", u64, [HANDLE, u8])
 _decl("medius_device_logs", i32, [HANDLE, PHANDLE])
 _decl("medius_log_stream_clone", HANDLE, [HANDLE])
 _decl("medius_log_stream_free", None, [HANDLE])
@@ -384,6 +529,7 @@ _decl("medius_clip_append", i32, [HANDLE, HANDLE])
 _decl("medius_clip_set_autolock", i32, [HANDLE, ctypes.POINTER(u8), usize])
 _decl("medius_clip_set_loop", i32, [HANDLE, u8])
 _decl("medius_clip_set_retain", i32, [HANDLE, u8])
+_decl("medius_clip_set_ride", i32, [HANDLE, u8])
 _decl("medius_clip_bind", i32, [HANDLE, MediusClipTrigger])
 _decl("medius_clip_unbind", i32, [HANDLE, MediusUsage, u8])
 _decl("medius_clip_clear_triggers", i32, [HANDLE])
@@ -422,8 +568,13 @@ if HAS_MOCK:
     _decl("medius_mock_silent", None, [HANDLE])
     _decl("medius_mock_push_raw", None, [HANDLE, ctypes.POINTER(u8), usize])
     _decl("medius_mock_push_log", None, [HANDLE, u8, ctypes.c_char_p])
-    _decl("medius_mock_push_motion", None, [HANDLE, u8, MediusMotionEvent])
-    _decl("medius_mock_push_usages", None, [HANDLE, u8, ctypes.POINTER(MediusUsageEvent)])
+    _decl("medius_mock_push_motion", None, [HANDLE, u8, u32, MediusMotionEvent])
+    _decl("medius_mock_push_usages", None, [HANDLE, u8, u32, ctypes.POINTER(MediusUsageEvent)])
+    _decl(
+        "medius_mock_push_traffic",
+        None,
+        [HANDLE, u8, u32, u8, ctypes.POINTER(MediusTrafficEvent)],
+    )
     _decl("medius_mock_recorded", usize, [HANDLE])
     _decl("medius_mock_saw", c_bool, [HANDLE, u8])
     _decl("medius_mock_clear_recorded", None, [HANDLE])

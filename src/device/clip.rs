@@ -7,8 +7,8 @@ use crate::protocol::command::{clip_op_payload, clip_set_payload, clip_trigger_p
 use crate::protocol::opcode::{
     CLIP_COND_ANY_CLASS, CLIP_COND_ANY_ID, CLIP_OP_CLEAR, CLIP_OP_FINALIZE, CLIP_OP_PAUSE,
     CLIP_OP_RESTART, CLIP_OP_RESUME, CLIP_OP_START, CLIP_OP_STOP, CLIP_OP_TOGGLE,
-    CLIP_SET_AUTOLOCK, CLIP_SET_LOOP, CLIP_SET_RETAIN, CLIP_TRIG_F_CONSUME, CLIP_TRIG_F_PRESENT,
-    LOCK_DIR_BOTH, MAX_PAYLOAD, Q_CLIP,
+    CLIP_SET_AUTOLOCK, CLIP_SET_LOOP, CLIP_SET_RETAIN, CLIP_SET_RIDE, CLIP_TRIG_F_CONSUME,
+    CLIP_TRIG_F_PRESENT, LOCK_DIR_BOTH, MAX_PAYLOAD, Q_CLIP,
 };
 use crate::protocol::{FrameType, Resp, parse_resp};
 use crate::types::lock::blanket_scope;
@@ -89,6 +89,14 @@ impl ClipHandle {
     /// Retain the loaded clip so it can rewind and replay (`false` = streaming, the default). Set it before the first [`append`](Self::append). Fire-and-forget.
     pub fn set_retain(&self, on: bool) -> Result<()> {
         self.set(CLIP_SET_RETAIN, on as u8)
+    }
+
+    /// `CLIP_SET(RIDE)`: make the clip's motion wait to ride a native report like live injection does,
+    /// instead of emitting on the box's own clock (`false`, the default). It picks which accumulator the
+    /// next entry's motion lands in, so it takes effect mid-playback, and what that means for delivery
+    /// is decided by [`set_movement_riding`](crate::Device::set_movement_riding). Fire-and-forget.
+    pub fn set_ride(&self, on: bool) -> Result<()> {
+        self.set(CLIP_SET_RIDE, on as u8)
     }
 
     // --- Trigger set (`CLIP_TRIGGER`), a managed set keyed by `(on, edge)`. ---

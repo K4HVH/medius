@@ -17,20 +17,48 @@ pub const MEDIUS_MAX_NAME: usize = 33;
 /// Capacity for a control adapter's serial string.
 pub const MEDIUS_MAX_SERIAL: usize = 128;
 
-/// CATCH subscription class bits, OR them together (see `medius_device_catch_events`).
-pub const MEDIUS_CATCH_MASK_MOTION: u8 = 0x01;
-pub const MEDIUS_CATCH_MASK_WHEEL: u8 = 0x02;
-pub const MEDIUS_CATCH_MASK_BUTTONS: u8 = 0x04;
-pub const MEDIUS_CATCH_MASK_KEYS: u8 = 0x08;
-pub const MEDIUS_CATCH_MASK_MEDIA: u8 = 0x10;
-pub const MEDIUS_CATCH_MASK_ALL: u8 = 0x1F;
+/// Largest CATCH subscription table the box holds (the firmware `CTRL_CATCH_MAXN`).
+pub const MEDIUS_MAX_CATCH_ENTRIES: usize = 32;
+/// Largest traffic payload one event carries (the firmware `CTRL_TRAFFIC_DATA_MAX`).
+pub const MEDIUS_MAX_TRAFFIC_BYTES: usize = 180;
+
+/// CATCH classes, the `class` of a `MediusCatchFilter`. 0-3 are the classes `LOCK` and `INJECT`
+/// address; 4-10 are the traffic the box relays.
+pub const MEDIUS_CATCH_CLASS_BTN: u8 = 0;
+pub const MEDIUS_CATCH_CLASS_KEY: u8 = 1;
+pub const MEDIUS_CATCH_CLASS_MEDIA: u8 = 2;
+pub const MEDIUS_CATCH_CLASS_AXIS: u8 = 3;
+/// Raw HID input report bytes, keyed by interface number.
+pub const MEDIUS_CATCH_CLASS_HID_IN: u8 = 4;
+/// Interrupt-OUT report bytes the PC wrote, keyed by endpoint address.
+pub const MEDIUS_CATCH_CLASS_HID_OUT: u8 = 5;
+/// Vendor-interface interrupt traffic, keyed by endpoint address.
+pub const MEDIUS_CATCH_CLASS_VENDOR_INTERRUPT: u8 = 6;
+/// Vendor-interface bulk traffic, keyed by endpoint address.
+pub const MEDIUS_CATCH_CLASS_VENDOR_BULK: u8 = 7;
+/// A proxied control transaction, keyed by endpoint number (0 = EP0).
+pub const MEDIUS_CATCH_CLASS_CONTROL: u8 = 8;
+/// The bytes the clone put on the wire, keyed by endpoint address.
+pub const MEDIUS_CATCH_CLASS_EMIT: u8 = 9;
+/// Bus lifecycle: reset, suspend, configuration and interface changes, attach and detach.
+pub const MEDIUS_CATCH_CLASS_BUS: u8 = 10;
+/// Wildcard: every class.
+pub const MEDIUS_CATCH_CLASS_ANY: u8 = 0xFF;
+/// Wildcard: every id within a class.
+pub const MEDIUS_CATCH_ID_ANY: u16 = 0xFFFF;
+
+/// `MediusClockEstimate::age_ms` when the box has no estimate yet.
+pub const MEDIUS_CLOCK_AGE_NONE: u32 = u32::MAX;
+
+/// `MediusClockEstimate::rate_ppb` when the box has fitted no drift rate.
+pub const MEDIUS_CLOCK_RATE_NONE: i32 = i32::MIN;
 
 /// A keyboard key, addressed by HID Keyboard/Keypad usage. Modifiers are `0xE0..=0xE7`.
 pub type MediusKey = u8;
 /// A media key, addressed by 16-bit HID Consumer usage.
 pub type MediusMediaKey = u16;
-/// A CATCH subscription mask, an OR of the `MEDIUS_CATCH_MASK_*` bits.
-pub type MediusCatchMask = u8;
+/// A CATCH class, one of the `MEDIUS_CATCH_CLASS_*` values.
+pub type MediusCatchClass = u8;
 
 /// A mouse button. Values match the firmware button id.
 #[repr(u8)]
@@ -93,7 +121,7 @@ pub enum MediusLedMode {
 /// Which edge of an axis/button a lock applies to.
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum MediusLockDirection {
+pub enum MediusDirection {
     Both = 0,
     Positive = 1,
     Negative = 2,
@@ -137,6 +165,7 @@ pub enum MediusFrameType {
     Catch = 0x0B,
     MotionEvent = 0x0C,
     UsageEvent = 0x0F,
+    TrafficEvent = 0x16,
     Option = 0x11,
     ClipAppend = 0x12,
     ClipCtrl = 0x13,
@@ -152,6 +181,22 @@ pub enum MediusCatchEventKind {
     Motion = 0,
     /// A held-usage snapshot for one class (`data.usages`).
     Usages = 1,
+    /// Byte-oriented traffic (`data.traffic`).
+    Traffic = 2,
+}
+
+/// Which chip's clock stamped an event.
+///
+/// The two chips boot independently, so nothing relates their timers: a stamp is only meaningful
+/// against another from the same domain. To place both on one timeline, apply
+/// `MediusClockEstimate::offset_us` and respect its error bound.
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MediusClockDomain {
+    /// The device-facing chip: everything the real device produced.
+    HostChip = 0,
+    /// The PC-facing chip: everything the PC produced and everything the clone emitted.
+    DeviceChip = 1,
 }
 
 /// The class of a [`MediusUsage`] (button / key / media).
@@ -161,6 +206,32 @@ pub enum MediusClass {
     Button = 0,
     Key = 1,
     Media = 2,
+}
+
+/// A relative axis. Values match the wire axis id a `CATCH` or `LOCK` entry carries.
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MediusAxis {
+    X = 0,
+    Y = 1,
+    Wheel = 2,
+}
+
+/// When a delta reaches the game PC, against movement riding.
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MediusMoveTiming {
+    Ride = 0,
+    Now = 1,
+}
+
+/// What a move does to the motion already held for a ride.
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MediusPendingMotion {
+    Keep = 0,
+    Flush = 1,
+    Discard = 2,
 }
 
 /// Which arm of a [`MediusMotion`] is populated.
@@ -366,12 +437,71 @@ pub struct MediusLocks {
     pub entries: [MediusLockEntry; MEDIUS_MAX_LOCKS],
 }
 
-/// The active catch subscription mask plus the box-side dropped-event count.
+/// One CATCH subscription entry: what to observe, in which direction, and how much of each packet to
+/// keep. Build one with a `medius_catch_filter_*` helper.
+///
+/// The box resolves each event to its most specific matching entry -- an exact `(class, id)` beats a
+/// class blanket, which beats the everything filter, and a named direction beats `Both` -- and that
+/// entry supplies `capture`. The wildcards are sentinels rather than a separate flag:
+/// `class = MEDIUS_CATCH_CLASS_ANY` matches every class and `id = MEDIUS_CATCH_ID_ANY` every id
+/// within one. The wildcard class with a real id addresses nothing and is refused.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MediusCatchFilter {
+    /// One of `MEDIUS_CATCH_CLASS_*`, or `MEDIUS_CATCH_CLASS_ANY`.
+    pub class: MediusCatchClass,
+    /// The class-specific id, or `MEDIUS_CATCH_ID_ANY`.
+    pub id: u16,
+    /// The press/release edge on the momentary classes, the sign of the delta on axes, and IN
+    /// (`Positive`) / OUT (`Negative`) on the traffic classes.
+    pub direction: MediusDirection,
+    /// Bytes kept per event; 0 keeps the whole packet. Traffic classes only -- an input class carries
+    /// no packet, and naming one with a non-zero capture is refused at subscribe time.
+    pub capture: u8,
+}
+
+/// One row of a `MediusCatchState`: a live subscription and what it has lost.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MediusCatchEntry {
+    pub filter: MediusCatchFilter,
+    /// Events this entry could not queue. Per entry, because a box-wide count says you are losing
+    /// events but not which ones, and those are different problems.
+    pub dropped: u16,
+}
+
+/// The measured difference between the two chips' clocks, from `RESP(CATCH)`.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MediusClockEstimate {
+    /// The host chip's clock minus the device chip's, in microseconds.
+    pub offset_us: i32,
+    /// Relative drift between the two crystals in parts per billion, or `MEDIUS_CLOCK_RATE_NONE`
+    /// when the box has fitted none. That is a different answer from a fitted 0, which says the two
+    /// crystals match: on a link too busy for enough clean exchanges no fit is made at all, which is
+    /// exactly when assuming no drift is least safe.
+    pub rate_ppb: i32,
+    /// Best measured round trip in the window. The offset is good to about half of this.
+    pub delay_us: u16,
+    /// Age of the estimate, or `MEDIUS_CLOCK_AGE_NONE` when the box has no estimate yet. The
+    /// sentinel is load-bearing: an offset that was never measured also reads as zero, and applying
+    /// it would silently shift every cross-domain stamp.
+    pub age_ms: u32,
+}
+
+/// Decoded `RESP(CATCH)`: the live subscription table in `entries[0..n]`, its drop counts, and the
+/// measured inter-chip clock estimate.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MediusCatchState {
-    pub mask: u8,
+    /// The box refused an entry because its table is full.
+    pub table_full: u8,
+    /// Box-wide events dropped under back-pressure.
     pub dropped: u32,
+    pub clock: MediusClockEstimate,
+    /// The number of valid entries in `entries`.
+    pub n: u16,
+    pub entries: [MediusCatchEntry; MEDIUS_MAX_CATCH_ENTRIES],
 }
 
 /// Imperfect-clone opt-in and over-capacity status (each field is 0 or 1).
@@ -436,6 +566,8 @@ pub struct MediusClipSettings {
     pub loop_: u8,
     pub retain: u8,
     pub finalized: u8,
+    /// Whether the clip's motion waits to ride a native report (`medius_clip_set_ride`).
+    pub ride: u8,
     pub triggers: [MediusClipTrigger; MEDIUS_CLIP_TRIG_MAX],
     /// The number of valid entries in `triggers`.
     pub n: u8,
@@ -488,8 +620,76 @@ pub struct MediusMotionEvent {
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct MediusUsageEvent {
+    /// Which class this snapshot is of, one of `MEDIUS_CLASS_*`. Carried here rather than read off
+    /// the first entry, because the snapshot that most needs it is the one with `n == 0`: releasing
+    /// the last held usage is the edge a caller waits for, and it lists nothing to read a class from.
+    pub class: MediusClass,
+    /// The edge that produced this snapshot: the subscribed set grew (`Positive`) or shrank
+    /// (`Negative`). Without it a direction on an input filter cannot be honoured at all.
+    pub direction: MediusDirection,
     pub n: u16,
     pub usages: [MediusUsage; MEDIUS_MAX_USAGES],
+}
+
+/// One byte-oriented catch event: HID reports, vendor endpoints, control transactions, the bytes the
+/// clone emitted, or bus lifecycle. `bytes[0..len]` is as much of the packet as `capture` kept.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MediusTrafficEvent {
+    /// One of `MEDIUS_CATCH_CLASS_*`.
+    pub class: MediusCatchClass,
+    /// Endpoint address, interface number, or endpoint number, per the class.
+    pub id: u16,
+    /// `Positive` is IN (device to PC), `Negative` is OUT.
+    pub direction: MediusDirection,
+    /// Class-specific; read it with `medius_traffic_event_control_status` or `..._bus_event`.
+    pub flags: u8,
+    /// The packet's length before `capture` truncated it.
+    pub true_len: u16,
+    /// Valid bytes in `bytes`.
+    pub len: u16,
+    pub bytes: [u8; MEDIUS_MAX_TRAFFIC_BYTES],
+}
+
+/// What the real device answered a proxied control transaction with.
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MediusControlStatus {
+    Ok = 0,
+    Stalled = 1,
+    Naked = 2,
+    /// A status byte this build does not know. Read `MediusTrafficEvent::flags` for its value. Kept
+    /// distinct rather than folded into the nearest known one: a catch-all arm reported a future
+    /// firmware's new status as a timeout, which reads as a device fault that never happened.
+    Other = 3,
+}
+
+/// What a `MEDIUS_CATCH_CLASS_BUS` event describes.
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MediusBusEventKind {
+    Reset = 0,
+    Suspend = 1,
+    Resume = 2,
+    /// `SET_CONFIGURATION` selected `configuration`.
+    Configured = 3,
+    Deconfigured = 4,
+    /// `SET_INTERFACE` selected `alt` on `interface`.
+    SetInterface = 5,
+    DeviceAttached = 6,
+    DeviceDetached = 7,
+    CloneUp = 8,
+    CloneDown = 9,
+}
+
+/// A decoded bus lifecycle event; the payload fields are 0 for the kinds that carry none.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MediusBusEvent {
+    pub kind: MediusBusEventKind,
+    pub configuration: u8,
+    pub interface: u8,
+    pub alt: u8,
 }
 
 /// The populated arm of a [`MediusCatchEvent`]; read the field matching the event's `kind`.
@@ -498,14 +698,66 @@ pub struct MediusUsageEvent {
 pub union MediusCatchEventData {
     pub motion: MediusMotionEvent,
     pub usages: MediusUsageEvent,
+    pub traffic: MediusTrafficEvent,
 }
 
-/// One catch-stream event. Read `data.motion` / `data.usages` per `kind`.
+/// One catch-stream event. Read `data.motion` / `data.usages` / `data.traffic` per `kind`.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct MediusCatchEvent {
     pub kind: MediusCatchEventKind,
+    /// When the event was stamped, in the `clock` chip's microseconds. A box-local clock, unrelated
+    /// to any clock on this machine, so only meaningful compared against other events of the same
+    /// domain. It wraps every ~71.6 minutes and restarts at zero if that chip reboots, so a value
+    /// below the previous one is a wrap, a reboot, or a domain change, and the delta is meaningless.
+    pub ts_us: u32,
+    /// Which chip's clock stamped `ts_us`.
+    pub clock: MediusClockDomain,
     pub data: MediusCatchEventData,
+}
+
+/// Which arm of a [`MediusInputEvent`] is populated.
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MediusInputKind {
+    /// A momentary usage went down; read `usage`.
+    Press = 0,
+    /// A momentary usage came up; read `usage`.
+    Release = 1,
+    /// A relative-motion report; read `dx`/`dy`/`dz`.
+    Motion = 2,
+}
+
+/// One decoded input event: a press or release edge, or a motion report. The held-usage snapshots the
+/// box sends are diffed into these by `medius_device_input_events`.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MediusInputEvent {
+    pub kind: MediusInputKind,
+    /// The report's arrival stamp, in the `clock` chip's microseconds.
+    pub ts_us: u32,
+    /// Which chip's clock stamped it; always `HostChip` for physical input.
+    pub clock: MediusClockDomain,
+    /// The usage this is an edge on; unset for `Motion`.
+    pub usage: MediusUsage,
+    /// Relative X this report (right positive); 0 unless `kind` is `Motion`.
+    pub dx: i16,
+    /// Relative Y this report (down positive); 0 unless `kind` is `Motion`.
+    pub dy: i16,
+    /// Wheel delta this report (up positive); 0 unless `kind` is `Motion`.
+    pub dz: i16,
+}
+
+/// One event placed on this machine's clock by a `MediusTimeline`.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MediusStamped {
+    /// When the event happened, on the same monotonic clock the caller passed as `now_ns`.
+    pub host_ns: u64,
+    /// The event's own stamp, unwrapped past the 32-bit rollover.
+    pub box_us: u64,
+    /// How much later than the measured floor this event reached the caller. Jitter, not latency.
+    pub excess_ns: u64,
 }
 
 /// One device log line. `text` is NUL-terminated.

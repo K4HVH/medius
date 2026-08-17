@@ -8,16 +8,17 @@ use crate::protocol::opcode::{
 };
 use crate::protocol::{Resp, parse_resp};
 use crate::types::{
-    Action, Axis, Blanket, Caps, CatchMask, CatchState, ClipBuilder, ClipSettings, ClipStatus,
-    ClipTrigger, CountersSnapshot, DeviceInfo, Edge, EmitPace, EmitPaceStatus, Health,
-    ImperfectStatus, LedMode, LedTarget, LockDirection, LockTarget, Locks, Motion, Rate,
-    RebootTarget, Stats, Usage, Version,
+    Action, Axis, Blanket, Caps, CatchFilter, CatchState, ClipBuilder, ClipSettings, ClipStatus,
+    ClipTrigger, CountersSnapshot, DeviceInfo, Direction, Edge, EmitPace, EmitPaceStatus, Health,
+    ImperfectStatus, LedMode, LedTarget, LockTarget, Locks, Motion, MoveTiming, PendingMotion,
+    Rate, RebootTarget, Stats, Usage, Version,
 };
 
 use super::Device;
 use super::catch::EventStream;
 use super::clip::ClipHandle;
 use super::discover::BoxInfo;
+use super::input::InputStream;
 use super::logs::LogStream;
 
 /// An async view over a [`Device`]: the same `Link` core, with `async` queries.
@@ -61,9 +62,34 @@ impl AsyncDevice {
         self.dev().wheel(delta)
     }
 
+    /// `MOVE` (cursor) bypassing movement riding. Instant; see [`Device::move_rel_now`].
+    pub fn move_rel_now(&self, dx: i16, dy: i16) -> Result<()> {
+        self.dev().move_rel_now(dx, dy)
+    }
+
+    /// `MOVE` (wheel) bypassing movement riding. Instant; see [`Device::wheel_now`].
+    pub fn wheel_now(&self, delta: i16) -> Result<()> {
+        self.dev().wheel_now(delta)
+    }
+
+    /// Emit the motion held for a ride now. Instant; see [`Device::flush_motion`].
+    pub fn flush_motion(&self) -> Result<()> {
+        self.dev().flush_motion()
+    }
+
+    /// Drop the motion held for a ride. Instant; see [`Device::discard_motion`].
+    pub fn discard_motion(&self) -> Result<()> {
+        self.dev().discard_motion()
+    }
+
     /// `MOVE`: field-generic relative axis (cursor or wheel). Instant; see [`Device::move_axis`].
-    pub fn move_axis(&self, motion: Motion) -> Result<()> {
-        self.dev().move_axis(motion)
+    pub fn move_axis(
+        &self,
+        motion: Motion,
+        timing: MoveTiming,
+        pending: PendingMotion,
+    ) -> Result<()> {
+        self.dev().move_axis(motion, timing, pending)
     }
 
     /// `INJECT`: momentary override for any usage (button, key, or media). Instant; see [`Device::inject`].
@@ -122,38 +148,49 @@ impl AsyncDevice {
     }
 
     /// `LOCK`: block a usage (button/key/media) or axis. Instant; see [`Device::lock`].
-    pub fn lock(&self, target: impl Into<LockTarget>, direction: LockDirection) -> Result<()> {
+    pub fn lock(&self, target: impl Into<LockTarget>, direction: Direction) -> Result<()> {
         self.dev().lock(target, direction)
     }
 
     /// `LOCK`: release a locked usage or axis. Instant; see [`Device::unlock`].
-    pub fn unlock(&self, target: impl Into<LockTarget>, direction: LockDirection) -> Result<()> {
+    pub fn unlock(&self, target: impl Into<LockTarget>, direction: Direction) -> Result<()> {
         self.dev().unlock(target, direction)
     }
 
     /// `LOCK`: block a relative axis by sign. Instant; see [`Device::lock_axis`].
-    pub fn lock_axis(&self, axis: Axis, direction: LockDirection) -> Result<()> {
+    pub fn lock_axis(&self, axis: Axis, direction: Direction) -> Result<()> {
         self.dev().lock_axis(axis, direction)
     }
 
     /// `LOCK`: release an axis lock. Instant; see [`Device::unlock_axis`].
-    pub fn unlock_axis(&self, axis: Axis, direction: LockDirection) -> Result<()> {
+    pub fn unlock_axis(&self, axis: Axis, direction: Direction) -> Result<()> {
         self.dev().unlock_axis(axis, direction)
     }
 
     /// `LOCK`: blanket-block a whole group. Instant; see [`Device::lock_all`].
-    pub fn lock_all(&self, what: Blanket, direction: LockDirection) -> Result<()> {
+    pub fn lock_all(&self, what: Blanket, direction: Direction) -> Result<()> {
         self.dev().lock_all(what, direction)
     }
 
     /// `LOCK`: release a blanket lock. Instant; see [`Device::unlock_all`].
-    pub fn unlock_all(&self, what: Blanket, direction: LockDirection) -> Result<()> {
+    pub fn unlock_all(&self, what: Blanket, direction: Direction) -> Result<()> {
         self.dev().unlock_all(what, direction)
     }
 
-    /// Subscribe to the physical-input event stream. Instant; see [`Device::catch_events`].
-    pub fn catch_events(&self, mask: CatchMask) -> Result<EventStream> {
-        self.dev().catch_events(mask)
+    /// Subscribe to the catch stream. Instant; see [`Device::catch_events`].
+    pub fn catch_events(
+        &self,
+        filters: impl IntoIterator<Item = CatchFilter>,
+    ) -> Result<EventStream> {
+        self.dev().catch_events(filters)
+    }
+
+    /// Subscribe to decoded input edges. Instant; see [`Device::input_events`].
+    pub fn input_events(
+        &self,
+        filters: impl IntoIterator<Item = CatchFilter>,
+    ) -> Result<InputStream> {
+        self.dev().input_events(filters)
     }
 
     /// `OPTION(IMPERFECT)`: opt into cloning an over-capacity device. Instant; see [`Device::allow_imperfect_clones`].
@@ -376,6 +413,11 @@ impl AsyncClipHandle {
     /// Set retained mode. Instant; see [`ClipHandle::set_retain`](crate::ClipHandle::set_retain).
     pub fn set_retain(&self, on: bool) -> Result<()> {
         self.inner.set_retain(on)
+    }
+
+    /// Set whether clip motion rides. Instant; see [`ClipHandle::set_ride`](crate::ClipHandle::set_ride).
+    pub fn set_ride(&self, on: bool) -> Result<()> {
+        self.inner.set_ride(on)
     }
 
     /// Add or overwrite a trigger binding. Instant; see [`ClipHandle::bind`](crate::ClipHandle::bind).

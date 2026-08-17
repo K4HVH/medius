@@ -219,10 +219,11 @@ dependencies = [
 
 [[package]]
 name = "medius"
-version = "3.0.1"
+version = "3.1.0"
 dependencies = [
  "flume",
  "futures",
+ "futures-core",
  "libc",
  "parking_lot",
  "serial2",
@@ -233,7 +234,7 @@ dependencies = [
 
 [[package]]
 name = "medius-capi"
-version = "3.0.1"
+version = "3.1.0"
 dependencies = [
  "medius",
 ]

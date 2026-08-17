@@ -2,8 +2,8 @@
 
 use crate::protocol::command::{clip_op_payload, clip_set_payload, clip_trigger_payload};
 use crate::protocol::opcode::{
-    CLIP_OP_CLEAR, CLIP_OP_FINALIZE, CLIP_OP_STOP, CLIP_SET_LOOP, CLIP_TRIG_F_CONSUME,
-    CLIP_TRIG_F_PRESENT,
+    CLIP_OP_CLEAR, CLIP_OP_FINALIZE, CLIP_OP_STOP, CLIP_SET_LOOP, CLIP_SET_RIDE,
+    CLIP_TRIG_F_CONSUME, CLIP_TRIG_F_PRESENT,
 };
 use crate::protocol::{Resp, parse_resp};
 use crate::types::{
@@ -69,6 +69,7 @@ fn clip_command_payload_bytes() {
     assert_eq!(clip_op_payload(CLIP_OP_CLEAR), [6]);
     assert_eq!(clip_op_payload(CLIP_OP_FINALIZE), [7]);
     assert_eq!(clip_set_payload(CLIP_SET_LOOP, 1), [1, 1]);
+    assert_eq!(clip_set_payload(CLIP_SET_RIDE, 1), [3, 1]);
     // CLIP_TRIGGER: [class][id u16 LE][edge][action][flags]
     let flags = CLIP_TRIG_F_PRESENT | CLIP_TRIG_F_CONSUME;
     assert_eq!(
@@ -95,7 +96,7 @@ fn decode_clip_status_and_settings_from_one_frame() {
         0x00, 0x04, 0x00, // Button::Side2
         0x01, 0xE1, 0x00, // Key 0xE1
         0x05, // autolock Aim|Buttons
-        0x06, // flags retain|finalized
+        0x0E, // flags retain|finalized|ride
         0x01, // n_trig
         0x01, 0x3A, 0x00, 0x01, 0x00, 0x01, // KEY 0x3A Press Start consume
     ];
@@ -124,6 +125,7 @@ fn decode_clip_status_and_settings_from_one_frame() {
             loop_: false,
             retain: true,
             finalized: true,
+            ride: true,
             triggers: vec![
                 ClipTrigger::new(Key::new(0x3A), Edge::Press, ClipAction::Start).consume()
             ],
@@ -176,6 +178,7 @@ fn clip_command_frames_carry_the_right_bytes() {
     clip.set_autolock(&[Blanket::Aim, Blanket::Buttons])
         .unwrap();
     clip.set_loop(true).unwrap();
+    clip.set_ride(true).unwrap();
     clip.start().unwrap();
     clip.pause().unwrap();
     clip.resume().unwrap();
@@ -204,7 +207,7 @@ fn clip_command_frames_carry_the_right_bytes() {
     };
     assert_eq!(
         by(FrameType::ClipSet),
-        vec![vec![2, 1], vec![0, 0x05], vec![1, 1]]
+        vec![vec![2, 1], vec![0, 0x05], vec![1, 1], vec![3, 1]]
     );
     assert_eq!(
         by(FrameType::ClipCtrl),
@@ -294,6 +297,7 @@ fn clip_status_and_config_roundtrip_through_the_mock() {
         loop_: true,
         retain: true,
         finalized: false,
+        ride: true,
         triggers: vec![
             ClipTrigger::new(Button::Right, Edge::Both, ClipAction::Toggle),
             ClipTrigger::new(Key::new(0x3A), Edge::Release, ClipAction::Stop).consume(),

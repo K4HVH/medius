@@ -9,7 +9,7 @@ pub const SOF: u8 = 0xA5;
 pub const MAX_PAYLOAD: usize = 512;
 
 /// Protocol version in `RESP(VERSION)` (§4.1); the handshake requires this exact value.
-pub const PROTO_VER: u8 = 3;
+pub const PROTO_VER: u8 = 4;
 
 /// `INJECT` class byte: the momentary-usage field kind.
 pub const INJ_BTN: u8 = 0;
@@ -18,6 +18,10 @@ pub const INJ_MEDIA: u8 = 2;
 /// `MOVE` motion byte: the relative-axis field kind.
 pub const INJ_MOTION_CURSOR: u8 = 0;
 pub const INJ_MOTION_WHEEL: u8 = 1;
+/// `MOVE` flags byte: the per-command movement-riding override (§3.1).
+pub const MV_F_NOW: u8 = 0x01;
+pub const MV_F_FLUSH: u8 = 0x02;
+pub const MV_F_DISCARD: u8 = 0x04;
 
 pub const Q_VERSION: u8 = 0;
 pub const Q_HEALTH: u8 = 1;
@@ -61,6 +65,7 @@ pub const CLIP_OP_FINALIZE: u8 = 7;
 pub const CLIP_SET_AUTOLOCK: u8 = 0;
 pub const CLIP_SET_LOOP: u8 = 1;
 pub const CLIP_SET_RETAIN: u8 = 2;
+pub const CLIP_SET_RIDE: u8 = 3;
 /// `CLIP_TRIGGER` set: max bindings and the flags byte bits.
 pub const CLIP_TRIG_MAX: usize = 8;
 pub const CLIP_TRIG_F_PRESENT: u8 = 0x01;
@@ -69,6 +74,7 @@ pub const CLIP_TRIG_F_CONSUME: u8 = 0x02;
 pub const CLIP_CFG_F_LOOP: u8 = 0x01;
 pub const CLIP_CFG_F_RETAIN: u8 = 0x02;
 pub const CLIP_CFG_F_FINALIZED: u8 = 0x04;
+pub const CLIP_CFG_F_RIDE: u8 = 0x08;
 /// Autolock scope bits (`CLIP_SET(AUTOLOCK)` value): which physical-input classes the clip auto-locks (0 = none).
 pub const CLIP_LOCK_AIM: u8 = 0x01;
 pub const CLIP_LOCK_WHEEL: u8 = 0x02;
@@ -116,20 +122,48 @@ pub const H_CATCH_ON: u8 = 0x40;
 /// A keyboard is attached on the host chip, cloned and injectable (§4.2, v2.0.0).
 pub const H_KBD_ATT: u8 = 0x80;
 
-/// `CATCH` mask: stream reports whose X or Y delta is non-zero (§3.9).
-pub const CATCH_MOTION: u8 = 0x01;
-/// `CATCH` mask: stream reports whose wheel delta is non-zero (§3.9).
-pub const CATCH_WHEEL: u8 = 0x02;
-/// `CATCH` mask: stream reports with a button edge (§3.9).
-pub const CATCH_BUTTONS: u8 = 0x04;
-/// `CATCH` mask: stream keyboard changes (§3.9).
-pub const CATCH_KEYS: u8 = 0x08;
-/// `CATCH` mask: stream media (Consumer) usage changes (§3.9, its own bit as of proto v3).
-pub const CATCH_MEDIA: u8 = 0x10;
-/// `CATCH` mask: every class (§3.9).
-pub const CATCH_ALL: u8 = 0x1F;
-/// Valid `CATCH` mask bits; the firmware ignores any others (§3.9).
-pub const CATCH_MASK: u8 = 0x1F;
+/// `CATCH` class: a mouse button (§3.9). Classes 0..3 are `LOCK`'s classes unchanged.
+pub const CATCH_CLS_BTN: u8 = 0;
+/// `CATCH` class: a keyboard key or modifier (§3.9).
+pub const CATCH_CLS_KEY: u8 = 1;
+/// `CATCH` class: a media (Consumer) usage (§3.9).
+pub const CATCH_CLS_MEDIA: u8 = 2;
+/// `CATCH` class: a relative axis (§3.9).
+pub const CATCH_CLS_AXIS: u8 = 3;
+/// `CATCH` class: raw HID input report bytes, keyed by interface number (§3.9).
+pub const CATCH_CLS_HID_IN: u8 = 4;
+/// `CATCH` class: interrupt-OUT report bytes, keyed by endpoint address (§3.9).
+pub const CATCH_CLS_HID_OUT: u8 = 5;
+/// `CATCH` class: vendor-interface interrupt traffic, keyed by endpoint address (§3.9).
+pub const CATCH_CLS_VEND_INTR: u8 = 6;
+/// `CATCH` class: vendor-interface bulk traffic, keyed by endpoint address (§3.9).
+pub const CATCH_CLS_VEND_BULK: u8 = 7;
+/// `CATCH` class: a proxied control transaction, keyed by endpoint number (§3.9).
+pub const CATCH_CLS_CONTROL: u8 = 8;
+/// `CATCH` class: the bytes the clone emitted, keyed by interface number (§3.9).
+pub const CATCH_CLS_EMIT: u8 = 9;
+/// `CATCH` class: bus lifecycle events (§3.9).
+pub const CATCH_CLS_BUS: u8 = 10;
+/// `CATCH` class wildcard: every class (§3.9).
+pub const CATCH_CLS_ANY: u8 = 0xFF;
+/// `CATCH` id wildcard: every id within the class (§3.9), the same sentinel `LOCK` uses.
+pub const CATCH_ID_ANY: u16 = 0xFFFF;
+
+/// Entries the box's subscription table holds (`CATCH_TAB_MAX`). Past this the box refuses the entry
+/// and says so only in `RESP(CATCH).table_full`, so a caller that never reads that flag would get a
+/// silently incomplete subscription.
+pub const CATCH_MAX_ENTRIES: usize = 32;
+
+/// `TRAFFIC_EVENT.flags` for a `CATCH_CLS_CONTROL` event: what the real device answered.
+pub const CATCH_CTRL_OK: u8 = 0x00;
+/// The device STALLed the transfer.
+pub const CATCH_CTRL_STALL: u8 = 0xFD;
+/// The device NAKed to timeout, or never answered.
+pub const CATCH_CTRL_NAK: u8 = 0xFE;
+
+/// `RESP(CATCH).clk_rate_ppb` sentinel: the box has fitted no drift rate. Distinct from a fitted 0,
+/// which says the two crystals are matched.
+pub const CLK_RATE_NONE: i32 = i32::MIN;
 
 /// `LOCK` class byte (§3.8): momentary usages share `INJECT`'s space, plus a relative-axis class.
 pub const LOCK_CLS_BTN: u8 = 0;
@@ -217,6 +251,8 @@ pub enum FrameType {
     MotionEvent = 0x0C,
     /// `USAGE_EVENT`: one unsolicited held-usage snapshot (class-tagged button/key/media); box→PC.
     UsageEvent = 0x0F,
+    /// `TRAFFIC_EVENT`: one unsolicited byte-oriented catch event (HID / vendor / control / emit / bus); box→PC.
+    TrafficEvent = 0x16,
     /// `OPTION`: set a persistent box option by id (imperfect-clone, movement riding, emit pacing, box name) (PC→box).
     Option = 0x11,
     /// `CLIP_APPEND`: append buffered-clip entries to the device ring; `SEQ` = append seq (PC→box).
@@ -258,6 +294,7 @@ impl TryFrom<u8> for FrameType {
             0x0B => FrameType::Catch,
             0x0C => FrameType::MotionEvent,
             0x0F => FrameType::UsageEvent,
+            0x16 => FrameType::TrafficEvent,
             0x11 => FrameType::Option,
             0x12 => FrameType::ClipAppend,
             0x13 => FrameType::ClipCtrl,

@@ -6,7 +6,7 @@ use crate::protocol::opcode::{
 };
 use crate::protocol::{Resp, parse_resp};
 use crate::types::{
-    Axis, Button, Class, Health, Key, LockDirection, LockScope, LockTarget, Locks, Usage,
+    Axis, Button, Class, Direction, Health, Key, LockScope, LockTarget, Locks, Usage,
 };
 
 #[test]
@@ -35,20 +35,16 @@ fn lock_target_and_direction_wire() {
 
     assert_eq!(
         (
-            LockDirection::Both.as_u8(),
-            LockDirection::Positive.as_u8(),
-            LockDirection::Negative.as_u8()
+            Direction::Both.as_u8(),
+            Direction::Positive.as_u8(),
+            Direction::Negative.as_u8()
         ),
         (0, 1, 2)
     );
-    for d in [
-        LockDirection::Both,
-        LockDirection::Positive,
-        LockDirection::Negative,
-    ] {
-        assert_eq!(LockDirection::from_u8(d.as_u8()), Some(d));
+    for d in [Direction::Both, Direction::Positive, Direction::Negative] {
+        assert_eq!(Direction::from_u8(d.as_u8()), Some(d));
     }
-    assert_eq!(LockDirection::from_u8(3), None);
+    assert_eq!(Direction::from_u8(3), None);
 }
 
 #[test]
@@ -67,17 +63,17 @@ fn locks_list_decode() {
     ])
     .unwrap();
     assert_eq!(l.entries().len(), 2);
-    assert!(l.is_locked(Axis::X, LockDirection::Positive));
-    assert!(!l.is_locked(Axis::X, LockDirection::Negative));
-    assert!(l.is_locked(Key::A, LockDirection::Negative));
+    assert!(l.is_locked(Axis::X, Direction::Positive));
+    assert!(!l.is_locked(Axis::X, Direction::Negative));
+    assert!(l.is_locked(Key::A, Direction::Negative));
 }
 
 #[test]
 fn locks_is_locked_both_needs_both_edges() {
     let both = Locks::from_payload(&[6, 1, 3, 0, 0, LOCK_DIRBIT_POS | LOCK_DIRBIT_NEG]).unwrap();
-    assert!(both.is_locked(Axis::X, LockDirection::Both));
+    assert!(both.is_locked(Axis::X, Direction::Both));
     let one = Locks::from_payload(&[6, 1, 3, 0, 0, LOCK_DIRBIT_POS]).unwrap();
-    assert!(!one.is_locked(Axis::X, LockDirection::Both));
+    assert!(!one.is_locked(Axis::X, Direction::Both));
 }
 
 #[test]
@@ -87,8 +83,8 @@ fn decode_locks_through_parse_resp() {
     else {
         panic!("expected Locks");
     };
-    assert!(l.is_locked(Axis::Y, LockDirection::Negative));
-    assert!(l.is_locked(Button::Side2, LockDirection::Negative));
+    assert!(l.is_locked(Axis::Y, Direction::Negative));
+    assert!(l.is_locked(Button::Side2, Direction::Negative));
 }
 
 #[test]
@@ -97,9 +93,9 @@ fn locks_blanket_entry_decodes() {
     let e = l.entries()[0];
     assert_eq!(e.scope, LockScope::Blanket(Class::Key));
     assert!(e.positive && !e.negative);
-    assert!(l.is_locked(crate::Key::A, LockDirection::Positive));
-    assert!(!l.is_locked(crate::Key::A, LockDirection::Negative));
-    assert!(!l.is_locked(Button::Left, LockDirection::Positive));
+    assert!(l.is_locked(crate::Key::A, Direction::Positive));
+    assert!(!l.is_locked(crate::Key::A, Direction::Negative));
+    assert!(!l.is_locked(Button::Left, Direction::Positive));
 }
 
 #[test]

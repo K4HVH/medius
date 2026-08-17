@@ -1,7 +1,7 @@
 use crate::error::Result;
 use crate::protocol::FrameType;
 use crate::protocol::command::inject_payload;
-use crate::types::{Action, Motion, Usage};
+use crate::types::{Action, Usage};
 
 use super::Device;
 
@@ -30,14 +30,6 @@ impl Device {
     /// Force-release any usage; forces it inactive, masking a physical hold too.
     pub fn force_release(&self, usage: impl Into<Usage>) -> Result<()> {
         self.inject(usage, Action::ForceRelease)
-    }
-
-    /// `MOVE`: drive a relative axis (cursor or wheel).
-    pub fn move_axis(&self, motion: Motion) -> Result<()> {
-        match motion {
-            Motion::Cursor { dx, dy } => self.move_rel(dx, dy),
-            Motion::Wheel(dz) => self.wheel(dz),
-        }
     }
 
     /// `RESET`: return to pure passthrough, clearing injection and ending any open catch stream.

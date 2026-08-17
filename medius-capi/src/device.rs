@@ -248,12 +248,47 @@ pub unsafe extern "C" fn medius_device_wheel(dev: *mut MediusDevice, delta: i16)
     with_device(dev, |d| d.wheel(delta))
 }
 
+/// A cursor move that bypasses movement riding: it emits on the box's own clock.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn medius_device_move_rel_now(
+    dev: *mut MediusDevice,
+    dx: i16,
+    dy: i16,
+) -> MediusStatus {
+    with_device(dev, |d| d.move_rel_now(dx, dy))
+}
+
+/// A wheel move that bypasses movement riding.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn medius_device_wheel_now(
+    dev: *mut MediusDevice,
+    delta: i16,
+) -> MediusStatus {
+    with_device(dev, |d| d.wheel_now(delta))
+}
+
+/// Emit the motion held for a ride now, ignoring the ride window.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn medius_device_flush_motion(dev: *mut MediusDevice) -> MediusStatus {
+    with_device(dev, |d| d.flush_motion())
+}
+
+/// Drop the motion held for a ride.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn medius_device_discard_motion(dev: *mut MediusDevice) -> MediusStatus {
+    with_device(dev, |d| d.discard_motion())
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_device_move_axis(
     dev: *mut MediusDevice,
     motion: MediusMotion,
+    timing: MediusMoveTiming,
+    pending: MediusPendingMotion,
 ) -> MediusStatus {
-    with_device(dev, |d| d.move_axis(motion.into()))
+    with_device(dev, |d| {
+        d.move_axis(motion.into(), timing.into(), pending.into())
+    })
 }
 
 fn with_input(
@@ -332,7 +367,7 @@ fn with_lock_target(
 pub unsafe extern "C" fn medius_device_lock(
     dev: *mut MediusDevice,
     target: MediusLockTarget,
-    dir: MediusLockDirection,
+    dir: MediusDirection,
 ) -> MediusStatus {
     with_lock_target(dev, target, |d, t| d.lock(t, dir.into()))
 }
@@ -342,7 +377,7 @@ pub unsafe extern "C" fn medius_device_lock(
 pub unsafe extern "C" fn medius_device_unlock(
     dev: *mut MediusDevice,
     target: MediusLockTarget,
-    dir: MediusLockDirection,
+    dir: MediusDirection,
 ) -> MediusStatus {
     with_lock_target(dev, target, |d, t| d.unlock(t, dir.into()))
 }
@@ -352,7 +387,7 @@ pub unsafe extern "C" fn medius_device_unlock(
 pub unsafe extern "C" fn medius_device_lock_all(
     dev: *mut MediusDevice,
     what: MediusBlanket,
-    dir: MediusLockDirection,
+    dir: MediusDirection,
 ) -> MediusStatus {
     with_device(dev, |d| d.lock_all(what.into(), dir.into()))
 }
@@ -362,7 +397,7 @@ pub unsafe extern "C" fn medius_device_lock_all(
 pub unsafe extern "C" fn medius_device_unlock_all(
     dev: *mut MediusDevice,
     what: MediusBlanket,
-    dir: MediusLockDirection,
+    dir: MediusDirection,
 ) -> MediusStatus {
     with_device(dev, |d| d.unlock_all(what.into(), dir.into()))
 }
@@ -598,7 +633,7 @@ pub extern "C" fn medius_default_keepalive_cadence_ms() -> u32 {
 /// The C ABI version, bumped on any breaking change to this header.
 #[unsafe(no_mangle)]
 pub extern "C" fn medius_abi_version() -> u32 {
-    3
+    4
 }
 
 /// The medius-capi crate version as a static NUL-terminated string.
