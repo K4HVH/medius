@@ -49,6 +49,21 @@ class Action(IntEnum):
     FORCE_RELEASE = 2
 
 
+class MoveTiming(IntEnum):
+    """When a delta reaches the game PC, against movement riding."""
+
+    RIDE = 0
+    NOW = 1
+
+
+class PendingMotion(IntEnum):
+    """What a move does to the motion already held for a ride."""
+
+    KEEP = 0
+    FLUSH = 1
+    DISCARD = 2
+
+
 class ClipState(IntEnum):
     """The device-side clip lifecycle state (`ClipStatus.state`)."""
 

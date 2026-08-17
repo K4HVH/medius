@@ -8,7 +8,8 @@ use medius::{
     Class, ClipState, ClipStatus, ClockDomain, ClockEstimate, CountersSnapshot, DeviceInfo,
     DeviceKind, Direction, EmitPace, EmitPaceStatus, Health, ImperfectStatus, Input, InputEvent,
     KbdCaps, Key, LedMode, LedTarget, LockEntry, LockScope, LockTarget, Locks, LogLevel, LogLine,
-    MediaKey, Motion, MouseCaps, PortInfo, Rate, RebootTarget, Stats, Usage, Version,
+    MediaKey, Motion, MouseCaps, MoveTiming, PendingMotion, PortInfo, Rate, RebootTarget, Stats,
+    Usage, Version,
 };
 
 use crate::ctypes::*;
@@ -163,6 +164,25 @@ impl From<MediusMotion> for Motion {
         match v.kind {
             MediusMotionKind::Cursor => Motion::Cursor { dx: v.dx, dy: v.dy },
             MediusMotionKind::Wheel => Motion::Wheel(v.wheel),
+        }
+    }
+}
+
+impl From<MediusMoveTiming> for MoveTiming {
+    fn from(v: MediusMoveTiming) -> Self {
+        match v {
+            MediusMoveTiming::Ride => MoveTiming::Ride,
+            MediusMoveTiming::Now => MoveTiming::Now,
+        }
+    }
+}
+
+impl From<MediusPendingMotion> for PendingMotion {
+    fn from(v: MediusPendingMotion) -> Self {
+        match v {
+            MediusPendingMotion::Keep => PendingMotion::Keep,
+            MediusPendingMotion::Flush => PendingMotion::Flush,
+            MediusPendingMotion::Discard => PendingMotion::Discard,
         }
     }
 }
@@ -580,6 +600,7 @@ pub(crate) fn clip_settings_to_c(s: &medius::ClipSettings) -> MediusClipSettings
         loop_: s.loop_ as u8,
         retain: s.retain as u8,
         finalized: s.finalized as u8,
+        ride: s.ride as u8,
         triggers,
         n: n as u8,
     }
@@ -637,6 +658,7 @@ pub(crate) fn clip_settings_from_c(c: &MediusClipSettings) -> medius::ClipSettin
         loop_: c.loop_ != 0,
         retain: c.retain != 0,
         finalized: c.finalized != 0,
+        ride: c.ride != 0,
         triggers,
     }
 }

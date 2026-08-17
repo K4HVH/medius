@@ -248,12 +248,47 @@ pub unsafe extern "C" fn medius_device_wheel(dev: *mut MediusDevice, delta: i16)
     with_device(dev, |d| d.wheel(delta))
 }
 
+/// A cursor move that bypasses movement riding: it emits on the box's own clock.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn medius_device_move_rel_now(
+    dev: *mut MediusDevice,
+    dx: i16,
+    dy: i16,
+) -> MediusStatus {
+    with_device(dev, |d| d.move_rel_now(dx, dy))
+}
+
+/// A wheel move that bypasses movement riding.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn medius_device_wheel_now(
+    dev: *mut MediusDevice,
+    delta: i16,
+) -> MediusStatus {
+    with_device(dev, |d| d.wheel_now(delta))
+}
+
+/// Emit the motion held for a ride now, ignoring the ride window.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn medius_device_flush_motion(dev: *mut MediusDevice) -> MediusStatus {
+    with_device(dev, |d| d.flush_motion())
+}
+
+/// Drop the motion held for a ride.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn medius_device_discard_motion(dev: *mut MediusDevice) -> MediusStatus {
+    with_device(dev, |d| d.discard_motion())
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_device_move_axis(
     dev: *mut MediusDevice,
     motion: MediusMotion,
+    timing: MediusMoveTiming,
+    pending: MediusPendingMotion,
 ) -> MediusStatus {
-    with_device(dev, |d| d.move_axis(motion.into()))
+    with_device(dev, |d| {
+        d.move_axis(motion.into(), timing.into(), pending.into())
+    })
 }
 
 fn with_input(

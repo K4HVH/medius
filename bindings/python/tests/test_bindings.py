@@ -55,7 +55,10 @@ from medius import (
     MediaKey,
     MediusError,
     MockBox,
+    Motion,
     MotionEvent,
+    MoveTiming,
+    PendingMotion,
     MouseCaps,
     Rate,
     Stats,
@@ -131,6 +134,27 @@ def test_recorded_frame_payload_readable():
         assert frame.type == FrameType.MOVE
         assert len(frame.payload) > 0
         assert mock.recorded_frame(99) is None
+
+
+def test_move_riding_override_frames_carry_their_flags():
+    with MockBox() as mock, Device.with_mock(mock) as d:
+        d.move_rel(7, -2)
+        d.move_rel_now(7, -2)
+        d.wheel_now(3)
+        d.flush_motion()
+        d.discard_motion()
+        d.move_axis(Motion.cursor(5, 5), MoveTiming.NOW, PendingMotion.FLUSH)
+        sent = [mock.recorded_frame(i) for i in range(6)]
+    payloads = [bytes(f.payload) for f in sent]
+    assert all(f.type == FrameType.MOVE for f in sent)
+    assert payloads == [
+        bytes([0, 7, 0, 0xFE, 0xFF, 0x00]),
+        bytes([0, 7, 0, 0xFE, 0xFF, 0x01]),
+        bytes([1, 3, 0, 0x01]),
+        bytes([0, 0, 0, 0, 0, 0x02]),
+        bytes([0, 0, 0, 0, 0, 0x04]),
+        bytes([0, 5, 0, 5, 0, 0x03]),
+    ]
 
 
 def test_caps_roundtrip():
@@ -639,6 +663,7 @@ def test_clip_status_and_config_roundtrip():
         loop=True,
         retain=True,
         finalized=False,
+        ride=True,
         triggers=[
             ClipTrigger(Usage.button(Button.RIGHT), Edge.BOTH, ClipAction.TOGGLE),
             ClipTrigger(Usage.key(0x3A), Edge.RELEASE, ClipAction.STOP, consume=True),
@@ -704,6 +729,10 @@ def test_ctypes_structs_match_the_c_header():
         "MediusCatchFilter",
         "MediusInputEvent",
         "MediusStamped",
+        # A struct whose LAYOUT this repo has changed: `ride` was inserted mid-struct, moving `triggers`
+        # and `n`, and medius_clip_query_config writes sizeof(MediusClipSettings) into the mirror.
+        "MediusClipSettings",
+        "MediusClipTrigger",
     ]
     present = [n for n in names if re.search(rf"\}} {n};", text)]
     # sizeof alone lets a same-size field REORDER through, which is a silent misread of every event

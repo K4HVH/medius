@@ -83,12 +83,54 @@ fn wheel_parity() {
 fn move_axis_parity() {
     assert_parity(
         |d| {
-            d.move_axis(medius::Motion::Cursor { dx: 7, dy: -9 })
-                .unwrap();
+            d.move_axis(
+                medius::Motion::Cursor { dx: 7, dy: -9 },
+                medius::MoveTiming::Ride,
+                medius::PendingMotion::Keep,
+            )
+            .unwrap();
         },
         |dev| unsafe {
             assert_eq!(
-                medius_device_move_axis(dev, medius_motion_cursor(7, -9)),
+                medius_device_move_axis(
+                    dev,
+                    medius_motion_cursor(7, -9),
+                    MediusMoveTiming::Ride,
+                    MediusPendingMotion::Keep
+                ),
+                MediusStatus::Ok
+            );
+        },
+    );
+}
+
+#[test]
+fn move_riding_override_parity() {
+    assert_parity(
+        |d| {
+            d.move_rel_now(7, -9).unwrap();
+            d.wheel_now(2).unwrap();
+            d.flush_motion().unwrap();
+            d.discard_motion().unwrap();
+            d.move_axis(
+                medius::Motion::Cursor { dx: 5, dy: 5 },
+                medius::MoveTiming::Now,
+                medius::PendingMotion::Flush,
+            )
+            .unwrap();
+        },
+        |dev| unsafe {
+            assert_eq!(medius_device_move_rel_now(dev, 7, -9), MediusStatus::Ok);
+            assert_eq!(medius_device_wheel_now(dev, 2), MediusStatus::Ok);
+            assert_eq!(medius_device_flush_motion(dev), MediusStatus::Ok);
+            assert_eq!(medius_device_discard_motion(dev), MediusStatus::Ok);
+            assert_eq!(
+                medius_device_move_axis(
+                    dev,
+                    medius_motion_cursor(5, 5),
+                    MediusMoveTiming::Now,
+                    MediusPendingMotion::Flush
+                ),
                 MediusStatus::Ok
             );
         },
@@ -182,12 +224,10 @@ fn press_media_parity() {
 fn lock_parity() {
     assert_parity(
         |d| {
-            d.lock(medius::Axis::X, medius::Direction::Both)
-                .unwrap();
+            d.lock(medius::Axis::X, medius::Direction::Both).unwrap();
             d.lock(medius::Button::Side1, medius::Direction::Positive)
                 .unwrap();
-            d.unlock(medius::Axis::X, medius::Direction::Both)
-                .unwrap();
+            d.unlock(medius::Axis::X, medius::Direction::Both).unwrap();
         },
         |dev| unsafe {
             let x = medius_lock_target_axis(MediusLockTargetKind::X);
@@ -514,7 +554,10 @@ fn catch_delivers_a_traffic_event() {
     let stream = unsafe {
         subscribe(
             dev,
-            &[medius_catch_filter_traffic(MEDIUS_CATCH_CLASS_VENDOR_BULK, 0x83)],
+            &[medius_catch_filter_traffic(
+                MEDIUS_CATCH_CLASS_VENDOR_BULK,
+                0x83,
+            )],
         )
     };
     unsafe {
@@ -636,12 +679,20 @@ fn input_events_decode_edges_across_the_abi() {
     );
     let esc = medius::Usage::from(medius::Key::ESCAPE);
     unsafe {
-        (*mock)
-            .inner
-            .push_usages(1, 7_000, medius::Class::Key, medius::Direction::PRESS, &[esc]);
-        (*mock)
-            .inner
-            .push_usages(2, 8_000, medius::Class::Key, medius::Direction::RELEASE, &[]);
+        (*mock).inner.push_usages(
+            1,
+            7_000,
+            medius::Class::Key,
+            medius::Direction::PRESS,
+            &[esc],
+        );
+        (*mock).inner.push_usages(
+            2,
+            8_000,
+            medius::Class::Key,
+            medius::Direction::RELEASE,
+            &[],
+        );
         (*mock).inner.push_motion(3, 9_000, 4, -5, 0);
     }
     let mut ev: MediusInputEvent = unsafe { std::mem::zeroed() };
@@ -714,10 +765,8 @@ fn input_events_report_each_refusal_with_its_own_status() {
     );
     // And the capture refusal on the catch side, which is the same class of mistake.
     let mut ev_stream: *mut MediusEventStream = ptr::null_mut();
-    let capped = medius_catch_filter_with_capture(
-        medius_catch_filter_watch_class(MediusClass::Key),
-        8,
-    );
+    let capped =
+        medius_catch_filter_with_capture(medius_catch_filter_watch_class(MediusClass::Key), 8);
     assert_eq!(
         unsafe { medius_device_catch_events(dev, &capped, 1, &mut ev_stream) },
         MediusStatus::ErrCaptureNotApplicable
@@ -767,12 +816,24 @@ fn every_new_entry_point_survives_a_null_and_respects_the_caller_s_buffer() {
         );
         assert!(!medius_input_stream_try_recv(stream, ptr::null_mut()));
         assert!(!medius_input_stream_try_recv(ptr::null_mut(), &mut ev));
-        assert!(!medius_input_stream_recv_timeout(stream, 0, ptr::null_mut()));
+        assert!(!medius_input_stream_recv_timeout(
+            stream,
+            0,
+            ptr::null_mut()
+        ));
         assert_eq!(medius_input_stream_dropped(ptr::null_mut()), 0);
         assert!(!medius_input_stream_is_connected(ptr::null_mut()));
         assert!(medius_input_stream_is_connected(stream));
-        assert_eq!(medius_input_stream_held(ptr::null_mut(), MediusClass::Key, ptr::null_mut(), 0), 0);
-        assert!(!medius_timeline_observe_input(ptr::null_mut(), &ev, 0, &mut st));
+        assert_eq!(
+            medius_input_stream_held(ptr::null_mut(), MediusClass::Key, ptr::null_mut(), 0),
+            0
+        );
+        assert!(!medius_timeline_observe_input(
+            ptr::null_mut(),
+            &ev,
+            0,
+            &mut st
+        ));
         medius_input_stream_free(ptr::null_mut());
         medius_timeline_free(ptr::null_mut());
     }
@@ -781,9 +842,13 @@ fn every_new_entry_point_survives_a_null_and_respects_the_caller_s_buffer() {
     let esc = medius::Usage::from(medius::Key::ESCAPE);
     let a = medius::Usage::from(medius::Key::A);
     unsafe {
-        (*mock)
-            .inner
-            .push_usages(1, 1_000, medius::Class::Key, medius::Direction::PRESS, &[esc, a]);
+        (*mock).inner.push_usages(
+            1,
+            1_000,
+            medius::Class::Key,
+            medius::Direction::PRESS,
+            &[esc, a],
+        );
     }
     assert!(unsafe { medius_input_stream_recv_timeout(stream, 2000, &mut ev) });
     assert!(unsafe { medius_input_stream_recv_timeout(stream, 2000, &mut ev) });
@@ -794,7 +859,10 @@ fn every_new_entry_point_survives_a_null_and_respects_the_caller_s_buffer() {
         id: CANARY,
     }; 4];
     let n = unsafe { medius_input_stream_held(stream, MediusClass::Key, buf.as_mut_ptr(), 1) };
-    assert_eq!(n, 2, "the true count comes back even when the buffer is short");
+    assert_eq!(
+        n, 2,
+        "the true count comes back even when the buffer is short"
+    );
     assert_eq!(buf[1].id, CANARY, "nothing was written past cap");
     assert_eq!(buf[2].id, CANARY);
     // cap = 0 with a real pointer writes nothing at all.
@@ -842,7 +910,10 @@ fn the_timeline_unwraps_and_maps_onto_the_callers_clock() {
     assert_eq!(b.box_us, (1u64 << 32) + 500);
     assert!(b.host_ns > a.host_ns, "{} !> {}", b.host_ns, a.host_ns);
     assert_eq!(b.host_ns - a.host_ns, 1_001_000, "1001 us on the box");
-    assert_eq!(unsafe { medius_timeline_samples(t, MediusClockDomain::HostChip) }, 2);
+    assert_eq!(
+        unsafe { medius_timeline_samples(t, MediusClockDomain::HostChip) },
+        2
+    );
 
     // A reboot restarts the clock at zero, which is not a wrap.
     unsafe { medius_timeline_reset(t, MediusClockDomain::HostChip) };
@@ -1132,6 +1203,7 @@ fn clip_control_parity() {
                 .unwrap();
             clip.set_loop(true).unwrap();
             clip.set_retain(true).unwrap();
+            clip.set_ride(true).unwrap();
             clip.bind(medius::ClipTrigger::new(
                 medius::Button::Right,
                 medius::Edge::Press,
@@ -1169,6 +1241,7 @@ fn clip_control_parity() {
             );
             assert_eq!(medius_clip_set_loop(clip, 1), MediusStatus::Ok);
             assert_eq!(medius_clip_set_retain(clip, 1), MediusStatus::Ok);
+            assert_eq!(medius_clip_set_ride(clip, 1), MediusStatus::Ok);
             assert_eq!(
                 medius_clip_bind(
                     clip,
