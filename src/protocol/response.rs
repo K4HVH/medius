@@ -85,7 +85,7 @@ pub fn parse_resp(payload: &[u8]) -> Option<Resp> {
     }
 }
 
-/// Parse a `LOG` payload (§4.7): `[level u8][text UTF-8 (LEN−1)]`.
+/// Parse a `LOG` payload (§4.7): `[level u8][text UTF-8 (LEN-1)]`.
 pub fn parse_log(payload: &[u8]) -> LogLine {
     match payload.split_first() {
         Some((&level, text)) => LogLine {

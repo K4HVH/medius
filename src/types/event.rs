@@ -57,7 +57,7 @@ impl MotionEvent {
 /// A snapshot is the class's state, not one usage's: it lists what is held, so the release of usage U
 /// is the snapshot that does not contain U.
 ///
-/// It lists what the BOX's table matched, which is the union of every subscription in this process —
+/// It lists what the BOX's table matched, which is the union of every subscription in this process,
 /// so a stream watching one key sees the others as soon as unrelated code widens the table.
 /// [`Device::input_events`](crate::Device::input_events) filters against your own addresses and turns
 /// these into press and release edges; decode them yourself only if you want the raw held set.
@@ -67,8 +67,8 @@ pub struct UsageSnapshot {
     pub ts_us: u32,
     /// Always [`ClockDomain::HostChip`].
     pub clock: ClockDomain,
-    /// Which class this snapshot is of. Carried in the frame because the empty snapshot — the release
-    /// of the last held usage — has no usages to read it from.
+    /// Which class this snapshot is of. Carried in the frame because the empty snapshot, the release
+    /// of the last held usage, has no usages to read it from.
     pub class: Class,
     /// The edge that produced this snapshot: the subscribed set grew ([`Direction::PRESS`]) or shrank
     /// ([`Direction::RELEASE`]).
@@ -195,7 +195,7 @@ impl TrafficEvent {
 
     /// The data stage, for a [`CatchClass::Control`] event; the whole packet for any other class.
     ///
-    /// Empty when the capture cut the setup packet itself short — the surviving bytes are the request,
+    /// Empty when the capture cut the setup packet itself short. The surviving bytes are the request,
     /// and returning them would label a GET_DESCRIPTOR request as the descriptor.
     pub fn data(&self) -> &[u8] {
         if self.class != CatchClass::Control {

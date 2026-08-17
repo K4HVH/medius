@@ -149,7 +149,7 @@ fn decode_event(ty: FrameType, payload: &[u8]) -> Option<CatchEvent> {
 ///
 /// A traffic event carries its own `(class, id, direction)` and matches directly. The two input
 /// frames do not: they carry content, and the addresses they represent have to be read out of it.
-/// Passing `u16::MAX` for an input event — the wildcard on the wire but not on this side — made every
+/// Passing `u16::MAX` for an input event, the wildcard on the wire but not on this side, made every
 /// exact-id input subscription match nothing, silently: the box accepted the entry, `RESP(CATCH)`
 /// listed it, its drop count stayed zero, and the stream was empty forever.
 fn wanted(sub: &CatchSub, event: &CatchEvent) -> bool {
@@ -182,8 +182,8 @@ fn wanted(sub: &CatchSub, event: &CatchEvent) -> bool {
 /// Deliver one decoded catch frame to the subscribers that asked for it, dropping the oldest on a
 /// full buffer.
 ///
-/// Matched against each subscriber's own filters, not broadcast: the box holds one table — the union
-/// of every subscription — so without this check a caller watching one endpoint would also receive
+/// Matched against each subscriber's own filters, not broadcast: the box holds one table, the union
+/// of every subscription, so without this check a caller watching one endpoint would also receive
 /// everything every other caller in the process had subscribed to.
 pub(crate) fn deliver_event(reg: &Mutex<CatchReg>, ty: FrameType, payload: &[u8]) {
     let Some(event) = decode_event(ty, payload) else {

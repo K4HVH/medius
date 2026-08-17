@@ -9,7 +9,7 @@ use crate::types::{Axis, Class, ClockEstimate, Direction, Usage};
 
 /// What a [`CatchFilter`] addresses.
 ///
-/// Classes 0–3 are `LOCK`'s own classes at the same byte values. Classes 4–10 are the byte-oriented
+/// Classes 0 to 3 are `LOCK`'s own classes at the same byte values. Classes 4 to 10 are the byte-oriented
 /// traffic the box relays; [`TrafficClass`] is that half alone.
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -182,7 +182,7 @@ impl From<Class> for CatchClass {
 
 /// How much of each packet to keep.
 ///
-/// Traffic classes only — an input class carries no packet, and naming one together with a capture is
+/// Traffic classes only. An input class carries no packet, so naming one together with a capture is
 /// refused rather than ignored. It exists because the control link runs at 4 Mbaud and a vendor bulk
 /// pipe at whole packets saturates it on its own.
 ///
@@ -256,9 +256,9 @@ pub(crate) struct FilterKey {
 /// CatchFilter::everything().with_capture(Capture::First(16));
 /// ```
 ///
-/// The box resolves each event to its most specific matching entry — exact `(class, id)` beats a
+/// The box resolves each event to its most specific matching entry: an exact `(class, id)` beats a
 /// class blanket, which beats [`CatchFilter::everything`], and a named direction beats
-/// [`Direction::Both`] — and that entry supplies the [`Capture`].
+/// [`Direction::Both`]. That entry supplies the [`Capture`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct CatchFilter {
     class: Option<CatchClass>,
@@ -472,8 +472,8 @@ pub struct CatchEntry {
 /// Decoded `RESP(CATCH)` (§4.9): the live subscription table, its drop counts, and the inter-chip
 /// clock estimate.
 ///
-/// The table is the union of every subscription in this process, because the box holds one — not what
-/// any single [`EventStream`](crate::EventStream) asked for.
+/// The table is the union of every subscription in this process, because the box holds one. It is not
+/// what any single [`EventStream`](crate::EventStream) asked for.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct CatchState {
     /// The box refused an entry because its table is full.

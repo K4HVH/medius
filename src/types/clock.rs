@@ -17,7 +17,7 @@ pub enum ClockDomain {
     /// completed. Everything the real device produced carries this.
     HostChip,
     /// The PC-facing chip, stamped at the tap. Everything the PC produced, and everything the clone
-    /// emitted, carries this — the host chip never saw those bytes.
+    /// emitted, carries this: the host chip never saw those bytes.
     DeviceChip,
 }
 
@@ -44,7 +44,7 @@ impl ClockDomain {
 /// The measured difference between the two chips' clocks, from `RESP(CATCH)` (§4.9).
 ///
 /// Measured with a four-timestamp exchange over the inter-chip link, stamped as each frame reaches
-/// the wire rather than when it is queued — queueing is the largest and most variable delay on that
+/// the wire rather than when it is queued. Queueing is the largest and most variable delay on that
 /// link, so stamping late removes it from the measurement instead of filtering around it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ClockEstimate {
@@ -53,11 +53,11 @@ pub struct ClockEstimate {
     /// Relative drift between the two crystals in parts per billion, or `None` when the box has not
     /// fitted one. That is a different answer from a fitted zero, which says the two crystals match:
     /// on a link busy enough that too few clean exchanges reach the box's filter, no fit is made at
-    /// all — precisely when assuming no drift is least safe.
+    /// all, precisely when assuming no drift is least safe.
     pub rate_ppb: Option<i32>,
     /// Best measured round trip in the window. The offset is good to about half of this.
     pub delay_us: u16,
-    /// Age of the estimate, or `None` if the box has no estimate yet — which is how a caller tells
+    /// Age of the estimate, or `None` if the box has no estimate yet, which is how a caller tells
     /// that apart from an offset that happens to be zero.
     pub age: Option<Duration>,
 }
@@ -94,7 +94,7 @@ impl ClockEstimate {
     /// Translate a device-chip stamp into the host chip's domain. `None` when there is no estimate.
     ///
     /// This applies the offset alone. The box corrects for drift against the moment IT measured the
-    /// offset, which is a reference this side does not have — so over a long-lived stream the two
+    /// offset, which is a reference this side does not have, so over a long-lived stream the two
     /// crystals pull apart at up to 20 ppm, roughly 20 us per second of estimate age. Re-read
     /// [`Device::query_catch`](crate::Device::query_catch) when [`Self::age`] has grown large
     /// relative to [`Self::error_bound_us`], and use [`Self::drift_us_over`] to see how much it costs.
@@ -117,7 +117,7 @@ impl ClockEstimate {
 ///
 /// [`Timeline`] takes this rather than one concrete event, so a decoded
 /// [`InputEvent`] can be placed on the host clock exactly like a raw
-/// [`CatchEvent`] — the two features compose.
+/// [`CatchEvent`], so the two features compose.
 pub trait Timestamped {
     /// The stamp, in the producing chip's microseconds.
     fn ts_us(&self) -> u32;
@@ -183,7 +183,7 @@ pub struct Stamped {
 }
 
 /// Samples per floor block. The floor is the minimum over the current block plus the previous one,
-/// so its age is bounded by two blocks — about 8 s at 1 kHz. An all-time minimum cannot be right: the
+/// so its age is bounded by two blocks, about 8 s at 1 kHz. An all-time minimum cannot be right: the
 /// two crystals drift at up to 20 ppm, so a floor from an hour ago is 72 ms wrong and only ever gets
 /// worse. Bounding the window lets the floor rise as well as fall.
 const FLOOR_BLOCK: u32 = 4096;
@@ -252,7 +252,7 @@ impl DomainState {
 ///
 /// # What it is good for, and what it is not
 ///
-/// The mapping keeps a per-domain **minimum** of (elapsed here − elapsed on the box) over a bounded
+/// The mapping keeps a per-domain minimum of (elapsed here minus elapsed on the box) over a bounded
 /// window, rather than an average: an event can be delivered late but never early, so the fastest
 /// recent delivery is the closest thing to the truth.
 ///
@@ -286,7 +286,7 @@ impl Timeline {
     }
 
     /// Place an event on this machine's clock, taking the arrival as now. Call it as soon as the
-    /// event arrives — [`Stamped::excess`] includes however long you waited.
+    /// event arrives. [`Stamped::excess`] includes however long you waited.
     pub fn observe(&mut self, event: &impl Timestamped) -> Stamped {
         self.observe_at(event, Instant::now())
     }
