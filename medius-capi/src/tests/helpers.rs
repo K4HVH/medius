@@ -311,9 +311,15 @@ fn the_input_filter_constructors_mirror_the_rust_ones() {
     let wheel = medius_catch_filter_watch_axis(MediusAxis::Wheel);
     assert_eq!((wheel.class, wheel.id), (MEDIUS_CATCH_CLASS_AXIS, 2));
     let keys = medius_catch_filter_watch_class(MediusClass::Key);
-    assert_eq!((keys.class, keys.id), (MEDIUS_CATCH_CLASS_KEY, MEDIUS_CATCH_ID_ANY));
+    assert_eq!(
+        (keys.class, keys.id),
+        (MEDIUS_CATCH_CLASS_KEY, MEDIUS_CATCH_ID_ANY)
+    );
     let axes = medius_catch_filter_watch_axes();
-    assert_eq!((axes.class, axes.id), (MEDIUS_CATCH_CLASS_AXIS, MEDIUS_CATCH_ID_ANY));
+    assert_eq!(
+        (axes.class, axes.id),
+        (MEDIUS_CATCH_CLASS_AXIS, MEDIUS_CATCH_ID_ANY)
+    );
 
     let mut four = [medius_catch_filter_everything(); 4];
     unsafe { medius_catch_filter_all_input(four.as_mut_ptr()) };
@@ -384,7 +390,6 @@ fn the_class_predicates_split_the_address_space_the_same_way() {
     // The wildcard is neither: it is not a class.
     assert!(!medius_catch_class_is_input(MEDIUS_CATCH_CLASS_ANY));
     assert!(!medius_catch_class_is_traffic(MEDIUS_CATCH_CLASS_ANY));
-
 }
 
 fn control_event(bytes: &[u8], flags: u8) -> MediusTrafficEvent {

@@ -1032,6 +1032,7 @@ class ClipSettings:
     loop: bool = False
     retain: bool = False
     finalized: bool = False
+    ride: bool = False
     triggers: List[ClipTrigger] = field(default_factory=list)
 
 
@@ -1061,6 +1062,7 @@ def clip_settings_from_c(c) -> ClipSettings:
         bool(c.loop_),
         bool(c.retain),
         bool(c.finalized),
+        bool(c.ride),
         triggers,
     )
 
@@ -1072,6 +1074,7 @@ def clip_settings_to_c(s) -> "_native.MediusClipSettings":
     c.loop_ = 1 if s.loop else 0
     c.retain = 1 if s.retain else 0
     c.finalized = 1 if s.finalized else 0
+    c.ride = 1 if s.ride else 0
     n = min(len(s.triggers), _native.MEDIUS_CLIP_TRIG_MAX)
     c.n = n
     for i in range(n):

@@ -278,6 +278,41 @@ typedef uint8_t MediusMotionKind;
 #endif // __STDC_VERSION__ >= 202311L
 #endif // __cplusplus
 
+// When a delta reaches the game PC, against movement riding.
+enum MediusMoveTiming
+#if defined(__cplusplus) || __STDC_VERSION__ >= 202311L
+  : uint8_t
+#endif // defined(__cplusplus) || __STDC_VERSION__ >= 202311L
+ {
+    MEDIUS_MOVE_TIMING_RIDE = 0,
+    MEDIUS_MOVE_TIMING_NOW = 1,
+};
+#ifndef __cplusplus
+#if __STDC_VERSION__ >= 202311L
+typedef enum MediusMoveTiming MediusMoveTiming;
+#else
+typedef uint8_t MediusMoveTiming;
+#endif // __STDC_VERSION__ >= 202311L
+#endif // __cplusplus
+
+// What a move does to the motion already held for a ride.
+enum MediusPendingMotion
+#if defined(__cplusplus) || __STDC_VERSION__ >= 202311L
+  : uint8_t
+#endif // defined(__cplusplus) || __STDC_VERSION__ >= 202311L
+ {
+    MEDIUS_PENDING_MOTION_KEEP = 0,
+    MEDIUS_PENDING_MOTION_FLUSH = 1,
+    MEDIUS_PENDING_MOTION_DISCARD = 2,
+};
+#ifndef __cplusplus
+#if __STDC_VERSION__ >= 202311L
+typedef enum MediusPendingMotion MediusPendingMotion;
+#else
+typedef uint8_t MediusPendingMotion;
+#endif // __STDC_VERSION__ >= 202311L
+#endif // __cplusplus
+
 // What a lock addresses: a relative axis, or a momentary usage (button/key/media).
 enum MediusLockTargetKind
 #if defined(__cplusplus) || __STDC_VERSION__ >= 202311L
@@ -666,6 +701,8 @@ typedef struct MediusClipSettings {
     uint8_t loop_;
     uint8_t retain;
     uint8_t finalized;
+    // Whether the clip's motion waits to ride a native report (`medius_clip_set_ride`).
+    uint8_t ride;
     struct MediusClipTrigger triggers[MEDIUS_CLIP_TRIG_MAX];
     // The number of valid entries in `triggers`.
     uint8_t n;
@@ -1220,6 +1257,9 @@ MediusStatus medius_clip_set_loop(struct MediusClip *clip, uint8_t on);
 MediusStatus medius_clip_set_retain(struct MediusClip *clip,
                                     uint8_t on);
 
+// Make the clip's motion wait to ride a native report (0 = the box's own clock, the default).
+MediusStatus medius_clip_set_ride(struct MediusClip *clip, uint8_t on);
+
 // Add or overwrite a trigger binding.
 MediusStatus medius_clip_bind(struct MediusClip *clip, struct MediusClipTrigger trigger);
 
@@ -1297,7 +1337,22 @@ MediusStatus medius_device_move_rel(struct MediusDevice *dev, int16_t dx, int16_
 
 MediusStatus medius_device_wheel(struct MediusDevice *dev, int16_t delta);
 
-MediusStatus medius_device_move_axis(struct MediusDevice *dev, struct MediusMotion motion);
+// A cursor move that bypasses movement riding: it emits on the box's own clock.
+MediusStatus medius_device_move_rel_now(struct MediusDevice *dev, int16_t dx, int16_t dy);
+
+// A wheel move that bypasses movement riding.
+MediusStatus medius_device_wheel_now(struct MediusDevice *dev, int16_t delta);
+
+// Emit the motion held for a ride now, ignoring the ride window.
+MediusStatus medius_device_flush_motion(struct MediusDevice *dev);
+
+// Drop the motion held for a ride.
+MediusStatus medius_device_discard_motion(struct MediusDevice *dev);
+
+MediusStatus medius_device_move_axis(struct MediusDevice *dev,
+                                     struct MediusMotion motion,
+                                     MediusMoveTiming timing,
+                                     MediusPendingMotion pending);
 
 // Drive one momentary usage (button, key, or media) with an explicit action. The one injection verb.
 MediusStatus medius_device_inject(struct MediusDevice *dev,

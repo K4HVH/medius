@@ -141,6 +141,10 @@ class ClipHandle:
         """Retain the loaded clip so it can rewind and replay (False = streaming, the default). Set before the first append."""
         check(_native.lib.medius_clip_set_retain(self._handle, 1 if on else 0))
 
+    def set_ride(self, on: bool):
+        """Make the clip's motion wait to ride a native report (False = the box's own clock, the default)."""
+        check(_native.lib.medius_clip_set_ride(self._handle, 1 if on else 0))
+
     def bind(self, trigger: ClipTrigger):
         """Add or overwrite a trigger binding: `trigger.on`'s edge fires its action on the box, no host round-trip."""
         t = _native.MediusClipTrigger(

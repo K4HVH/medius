@@ -67,6 +67,7 @@ class MediusClipSettings(ctypes.Structure):
         ("loop_", u8),
         ("retain", u8),
         ("finalized", u8),
+        ("ride", u8),
         ("triggers", MediusClipTrigger * MEDIUS_CLIP_TRIG_MAX),
         ("n", u8),
     ]
@@ -363,7 +364,11 @@ _decl("medius_list", usize, [ctypes.POINTER(MediusBoxInfo), usize, ctypes.POINTE
 
 _decl("medius_device_move_rel", i32, [HANDLE, i16, i16])
 _decl("medius_device_wheel", i32, [HANDLE, i16])
-_decl("medius_device_move_axis", i32, [HANDLE, MediusMotion])
+_decl("medius_device_move_rel_now", i32, [HANDLE, i16, i16])
+_decl("medius_device_wheel_now", i32, [HANDLE, i16])
+_decl("medius_device_flush_motion", i32, [HANDLE])
+_decl("medius_device_discard_motion", i32, [HANDLE])
+_decl("medius_device_move_axis", i32, [HANDLE, MediusMotion, u8, u8])
 _decl("medius_device_inject", i32, [HANDLE, MediusUsage, u8])
 _decl("medius_device_press", i32, [HANDLE, MediusUsage])
 _decl("medius_device_soft_release", i32, [HANDLE, MediusUsage])
@@ -524,6 +529,7 @@ _decl("medius_clip_append", i32, [HANDLE, HANDLE])
 _decl("medius_clip_set_autolock", i32, [HANDLE, ctypes.POINTER(u8), usize])
 _decl("medius_clip_set_loop", i32, [HANDLE, u8])
 _decl("medius_clip_set_retain", i32, [HANDLE, u8])
+_decl("medius_clip_set_ride", i32, [HANDLE, u8])
 _decl("medius_clip_bind", i32, [HANDLE, MediusClipTrigger])
 _decl("medius_clip_unbind", i32, [HANDLE, MediusUsage, u8])
 _decl("medius_clip_clear_triggers", i32, [HANDLE])

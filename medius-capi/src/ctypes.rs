@@ -217,6 +217,23 @@ pub enum MediusAxis {
     Wheel = 2,
 }
 
+/// When a delta reaches the game PC, against movement riding.
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MediusMoveTiming {
+    Ride = 0,
+    Now = 1,
+}
+
+/// What a move does to the motion already held for a ride.
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MediusPendingMotion {
+    Keep = 0,
+    Flush = 1,
+    Discard = 2,
+}
+
 /// Which arm of a [`MediusMotion`] is populated.
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -549,6 +566,8 @@ pub struct MediusClipSettings {
     pub loop_: u8,
     pub retain: u8,
     pub finalized: u8,
+    /// Whether the clip's motion waits to ride a native report (`medius_clip_set_ride`).
+    pub ride: u8,
     pub triggers: [MediusClipTrigger; MEDIUS_CLIP_TRIG_MAX],
     /// The number of valid entries in `triggers`.
     pub n: u8,

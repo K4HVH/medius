@@ -6,7 +6,8 @@ import ctypes
 from typing import Optional, Sequence, Union
 
 from . import _native
-from ._enums import Action, Blanket, LedMode, LedTarget, Direction, RebootTarget, Status
+from ._enums import (Action, Blanket, LedMode, LedTarget, Direction, MoveTiming, PendingMotion,
+                     RebootTarget, Status)
 from ._errors import InvalidArgError, MediusError, check
 from ._clip import ClipHandle
 from ._streams import EventStream, InputStream, LogStream
@@ -117,8 +118,25 @@ class Device:
     def wheel(self, delta):
         check(_native.lib.medius_device_wheel(self._handle, delta))
 
-    def move_axis(self, motion: Motion):
-        check(_native.lib.medius_device_move_axis(self._handle, motion._c))
+    def move_rel_now(self, dx, dy):
+        """A cursor move that bypasses movement riding: it emits on the box's own clock."""
+        check(_native.lib.medius_device_move_rel_now(self._handle, dx, dy))
+
+    def wheel_now(self, delta):
+        """A wheel move that bypasses movement riding."""
+        check(_native.lib.medius_device_wheel_now(self._handle, delta))
+
+    def flush_motion(self):
+        """Emit the motion held for a ride now, ignoring the ride window."""
+        check(_native.lib.medius_device_flush_motion(self._handle))
+
+    def discard_motion(self):
+        """Drop the motion held for a ride."""
+        check(_native.lib.medius_device_discard_motion(self._handle))
+
+    def move_axis(self, motion: Motion, timing: MoveTiming = MoveTiming.RIDE,
+                  pending: PendingMotion = PendingMotion.KEEP):
+        check(_native.lib.medius_device_move_axis(self._handle, motion._c, int(timing), int(pending)))
 
     def inject(self, input: Usage, action: Action):
         check(_native.lib.medius_device_inject(self._handle, input._c, int(action)))
