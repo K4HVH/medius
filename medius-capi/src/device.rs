@@ -362,6 +362,35 @@ fn with_lock_target(
     })
 }
 
+/// Weigh physical input on a target and direction. `scale` is the percent of the physical value the
+/// box keeps: `MEDIUS_LOCK_SCALE_BLOCK` blocks it, `MEDIUS_LOCK_SCALE_PASS` passes it untouched, and
+/// above that amplifies to `MEDIUS_LOCK_SCALE_MAX` (2.55x). Lock and unlock are its two ends.
+///
+/// A delta picks up at most two scales, its absolute direction's and its relative direction's, and
+/// they multiply. `MEDIUS_DIRECTION_WITH` / `_AGAINST` need a live bearing; see
+/// `medius_device_set_bearing`. A momentary usage carries one bit, so any scale below a full pass
+/// locks it and there is nothing in between.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn medius_device_scale(
+    dev: *mut MediusDevice,
+    target: MediusLockTarget,
+    dir: MediusDirection,
+    scale: u8,
+) -> MediusStatus {
+    with_lock_target(dev, target, |d, t| d.scale(t, dir.into(), scale))
+}
+
+/// Weigh a whole class blanket (cursor aim, wheel, all buttons, all keys, or all media).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn medius_device_scale_all(
+    dev: *mut MediusDevice,
+    what: MediusBlanket,
+    dir: MediusDirection,
+    scale: u8,
+) -> MediusStatus {
+    with_device(dev, |d| d.scale_all(what.into(), dir.into(), scale))
+}
+
 /// Lock a target (axis or usage) on an edge. A button, key, and media usage all lock the same way.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_device_lock(
@@ -452,6 +481,19 @@ pub unsafe extern "C" fn medius_device_set_movement_riding(
 ) -> MediusStatus {
     let window = enabled.then(|| Duration::from_millis(window_ms as u64));
     with_device(dev, |d| d.set_movement_riding(window))
+}
+
+/// Set the bearing: what `MEDIUS_DIRECTION_WITH` / `_AGAINST` are measured against. `window_ms` is how
+/// long the last injected delta's direction stays the bearing; 0 turns it off, leaving the relative
+/// directions inert whatever their scale. The box boots at `MEDIUS_BEARING_WINDOW_DEFAULT_MS`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn medius_device_set_bearing(
+    dev: *mut MediusDevice,
+    window_ms: u16,
+    mode: MediusBearingMode,
+) -> MediusStatus {
+    let window = (window_ms != 0).then(|| Duration::from_millis(window_ms as u64));
+    with_device(dev, |d| d.set_bearing(window, mode.into()))
 }
 
 /// Set what paces injected motion; `hz` is the target rate for `Fixed` and ignored otherwise.
@@ -558,6 +600,15 @@ pub unsafe extern "C" fn medius_device_query_imperfect(
     out: *mut MediusImperfectStatus,
 ) -> MediusStatus {
     query(dev, out, |d| d.query_imperfect())
+}
+
+/// Query the bearing into `*out`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn medius_device_query_bearing(
+    dev: *mut MediusDevice,
+    out: *mut MediusBearing,
+) -> MediusStatus {
+    query(dev, out, |d| d.query_bearing())
 }
 
 /// Query the movement-riding window into `*out_enabled` and `*out_window_ms` (0 when off).

@@ -4,12 +4,12 @@ use std::os::raw::c_char;
 use std::time::Duration;
 
 use medius::{
-    Action, Axis, Blanket, BoxInfo, Button, Caps, CatchEntry, CatchEvent, CatchFilter, CatchState,
-    Class, ClipState, ClipStatus, ClockDomain, ClockEstimate, CountersSnapshot, DeviceInfo,
-    DeviceKind, Direction, EmitPace, EmitPaceStatus, Health, ImperfectStatus, Input, InputEvent,
-    KbdCaps, Key, LedMode, LedTarget, LockEntry, LockScope, LockTarget, Locks, LogLevel, LogLine,
-    MediaKey, Motion, MouseCaps, MoveTiming, PendingMotion, PortInfo, Rate, RebootTarget, Stats,
-    Usage, Version,
+    Action, Axis, Bearing, BearingMode, Blanket, BoxInfo, Button, Caps, CatchEntry, CatchEvent,
+    CatchFilter, CatchState, Class, ClipState, ClipStatus, ClockDomain, ClockEstimate,
+    CountersSnapshot, DeviceInfo, DeviceKind, Direction, EmitPace, EmitPaceStatus, Health,
+    ImperfectStatus, Input, InputEvent, KbdCaps, Key, LedMode, LedTarget, LockEntry, LockScope,
+    LockTarget, Locks, LogLevel, LogLine, MediaKey, Motion, MouseCaps, MoveTiming, PendingMotion,
+    PortInfo, Rate, RebootTarget, Stats, Usage, Version,
 };
 
 use crate::ctypes::*;
@@ -113,6 +113,8 @@ impl From<MediusDirection> for Direction {
             MediusDirection::Both => Direction::Both,
             MediusDirection::Positive => Direction::Positive,
             MediusDirection::Negative => Direction::Negative,
+            MediusDirection::With => Direction::With,
+            MediusDirection::Against => Direction::Against,
         }
     }
 }
@@ -122,6 +124,31 @@ fn lock_direction_to_c(d: Direction) -> MediusDirection {
         Direction::Both => MediusDirection::Both,
         Direction::Positive => MediusDirection::Positive,
         Direction::Negative => MediusDirection::Negative,
+        Direction::With => MediusDirection::With,
+        Direction::Against => MediusDirection::Against,
+    }
+}
+
+impl From<MediusBearingMode> for BearingMode {
+    fn from(v: MediusBearingMode) -> Self {
+        match v {
+            MediusBearingMode::PerAxis => BearingMode::PerAxis,
+            MediusBearingMode::Vector => BearingMode::Vector,
+        }
+    }
+}
+
+impl From<Bearing> for MediusBearing {
+    fn from(b: Bearing) -> Self {
+        MediusBearing {
+            window_ms: b
+                .window
+                .map_or(0, |d| d.as_millis().min(u16::MAX as u128) as u16),
+            mode: match b.mode {
+                BearingMode::PerAxis => MediusBearingMode::PerAxis,
+                BearingMode::Vector => MediusBearingMode::Vector,
+            },
+        }
     }
 }
 
@@ -372,8 +399,8 @@ impl From<Locks> for MediusLocks {
         let blank = MediusLockEntry {
             target: axis_target(MediusLockTargetKind::X),
             is_blanket: false,
-            positive: false,
-            negative: false,
+            direction: MediusDirection::Both,
+            scale: MEDIUS_LOCK_SCALE_PASS,
         };
         let mut out = MediusLocks {
             n: 0,
@@ -399,8 +426,8 @@ impl From<Locks> for MediusLocks {
             out.entries[out.n as usize] = MediusLockEntry {
                 target,
                 is_blanket,
-                positive: e.positive,
-                negative: e.negative,
+                direction: lock_direction_to_c(e.direction),
+                scale: e.scale,
             };
             out.n += 1;
         }
@@ -919,8 +946,8 @@ impl From<MediusLocks> for Locks {
                 };
                 Some(LockEntry {
                     scope,
-                    positive: e.positive,
-                    negative: e.negative,
+                    direction: e.direction.into(),
+                    scale: e.scale,
                 })
             })
             .collect();

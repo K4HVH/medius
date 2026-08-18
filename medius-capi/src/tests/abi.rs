@@ -417,12 +417,18 @@ fn query_locks_roundtrips_through_is_locked() {
     let mock = medius_mock_new();
     let x = medius_lock_target_axis(MediusLockTargetKind::X);
     let mut set: MediusLocks = unsafe { std::mem::zeroed() };
-    set.n = 1;
+    set.n = 2;
     set.entries[0] = MediusLockEntry {
         target: x,
         is_blanket: false,
-        positive: true,
-        negative: true,
+        direction: MediusDirection::Positive,
+        scale: MEDIUS_LOCK_SCALE_BLOCK,
+    };
+    set.entries[1] = MediusLockEntry {
+        target: x,
+        is_blanket: false,
+        direction: MediusDirection::Negative,
+        scale: MEDIUS_LOCK_SCALE_BLOCK,
     };
     unsafe { medius_mock_set_locks(mock, set) };
     let mut dev: *mut MediusDevice = ptr::null_mut();
@@ -436,6 +442,40 @@ fn query_locks_roundtrips_through_is_locked() {
         MediusStatus::Ok
     );
     assert!(unsafe { medius_locks_is_locked(&locks, x, MediusDirection::Both) });
+    unsafe {
+        medius_device_free(dev);
+        medius_mock_free(mock);
+    }
+}
+
+#[test]
+fn scale_and_bearing_cross_the_boundary() {
+    let mock = medius_mock_new();
+    let mut dev: *mut MediusDevice = ptr::null_mut();
+    assert_eq!(
+        unsafe { medius_device_with_mock(mock, &mut dev) },
+        MediusStatus::Ok
+    );
+    let x = medius_lock_target_axis(MediusLockTargetKind::X);
+    assert_eq!(
+        unsafe { medius_device_scale(dev, x, MediusDirection::Against, 40) },
+        MediusStatus::Ok
+    );
+    assert_eq!(
+        unsafe { medius_device_scale_all(dev, MediusBlanket::Aim, MediusDirection::With, 130) },
+        MediusStatus::Ok
+    );
+    assert_eq!(
+        unsafe { medius_device_set_bearing(dev, 20, MediusBearingMode::Vector) },
+        MediusStatus::Ok
+    );
+    // The mock answers the default bearing, which is what the box boots holding.
+    let mut bearing: MediusBearing = unsafe { std::mem::zeroed() };
+    assert_eq!(
+        unsafe { medius_device_query_bearing(dev, &mut bearing) },
+        MediusStatus::Ok
+    );
+    assert_eq!(bearing.mode, MediusBearingMode::PerAxis);
     unsafe {
         medius_device_free(dev);
         medius_mock_free(mock);

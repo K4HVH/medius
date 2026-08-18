@@ -75,7 +75,51 @@ pub extern "C" fn medius_lock_target_usage(usage: MediusUsage) -> MediusLockTarg
     }
 }
 
-/// Whether `target`/`dir` is locked in `locks` (`Both` requires both edges). Mirrors `medius::Locks::is_locked`.
+// A blanket covers any usage of its class; a specific entry matches its exact target. For an axis
+// target only the kind is significant (the usage field is an unused sentinel).
+fn lock_entry_covers(e: &MediusLockEntry, target: MediusLockTarget) -> bool {
+    let is_usage = target.kind == MediusLockTargetKind::Usage;
+    if e.is_blanket {
+        is_usage
+            && e.target.kind == MediusLockTargetKind::Usage
+            && e.target.usage.kind == target.usage.kind
+    } else {
+        e.target.kind == target.kind && (!is_usage || e.target.usage == target.usage)
+    }
+}
+
+/// The scale in effect on `target`/`dir`: percent of the physical value kept, so
+/// `MEDIUS_LOCK_SCALE_PASS` when nothing weighs it. `Both` reports the lowest across every direction.
+/// Mirrors `medius::Locks::scale_of`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn medius_locks_scale_of(
+    locks: *const MediusLocks,
+    target: MediusLockTarget,
+    dir: MediusDirection,
+) -> u8 {
+    guard(MEDIUS_LOCK_SCALE_PASS, || {
+        if locks.is_null() {
+            return MEDIUS_LOCK_SCALE_PASS;
+        }
+        let locks = unsafe { &*locks };
+        let n = (locks.n as usize).min(MEDIUS_MAX_LOCKS);
+        locks.entries[..n]
+            .iter()
+            .filter(|e| {
+                lock_entry_covers(e, target)
+                    && (dir == MediusDirection::Both
+                        || e.direction == MediusDirection::Both
+                        || e.direction == dir)
+            })
+            .map(|e| e.scale)
+            .min()
+            .unwrap_or(MEDIUS_LOCK_SCALE_PASS)
+    })
+}
+
+/// Whether `target`/`dir` is blocked outright in `locks`. A direction merely weighed is not locked.
+/// `Both` asks about the two fixed signs, the pair it has always named; ask for a relative direction
+/// by name. Mirrors `medius::Locks::is_locked`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_locks_is_locked(
     locks: *const MediusLocks,
@@ -83,29 +127,15 @@ pub unsafe extern "C" fn medius_locks_is_locked(
     dir: MediusDirection,
 ) -> bool {
     guard(false, || {
-        if locks.is_null() {
-            return false;
-        }
-        let locks = unsafe { &*locks };
-        let n = (locks.n as usize).min(MEDIUS_MAX_LOCKS);
-        let is_usage = target.kind == MediusLockTargetKind::Usage;
-        locks.entries[..n].iter().any(|e| {
-            // A blanket covers any usage of its class; a specific entry matches its exact target. For an
-            // axis target only the kind is significant (the usage field is an unused sentinel).
-            let covers = if e.is_blanket {
-                is_usage
-                    && e.target.kind == MediusLockTargetKind::Usage
-                    && e.target.usage.kind == target.usage.kind
-            } else {
-                e.target.kind == target.kind && (!is_usage || e.target.usage == target.usage)
+        if dir == MediusDirection::Both {
+            return unsafe {
+                medius_locks_scale_of(locks, target, MediusDirection::Positive)
+                    == MEDIUS_LOCK_SCALE_BLOCK
+                    && medius_locks_scale_of(locks, target, MediusDirection::Negative)
+                        == MEDIUS_LOCK_SCALE_BLOCK
             };
-            covers
-                && match dir {
-                    MediusDirection::Both => e.positive && e.negative,
-                    MediusDirection::Positive => e.positive,
-                    MediusDirection::Negative => e.negative,
-                }
-        })
+        }
+        unsafe { medius_locks_scale_of(locks, target, dir) == MEDIUS_LOCK_SCALE_BLOCK }
     })
 }
 

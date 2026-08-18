@@ -53,8 +53,8 @@ fn locks_with(entries: &[MediusLockEntry]) -> MediusLocks {
     let blank = MediusLockEntry {
         target: medius_lock_target_axis(MediusLockTargetKind::X),
         is_blanket: false,
-        positive: false,
-        negative: false,
+        direction: MediusDirection::Both,
+        scale: MEDIUS_LOCK_SCALE_PASS,
     };
     let mut l = MediusLocks {
         n: entries.len() as u16,
@@ -77,14 +77,14 @@ fn is_locked_matches_entries() {
         MediusLockEntry {
             target: x,
             is_blanket: false,
-            positive: true,
-            negative: false,
+            direction: MediusDirection::Positive,
+            scale: MEDIUS_LOCK_SCALE_BLOCK,
         },
         MediusLockEntry {
             target: side2,
             is_blanket: false,
-            positive: false,
-            negative: true,
+            direction: MediusDirection::Negative,
+            scale: MEDIUS_LOCK_SCALE_BLOCK,
         },
     ]);
     assert!(locked(&locks, x, MediusDirection::Positive));
@@ -97,13 +97,57 @@ fn is_locked_matches_entries() {
     let blanket = locks_with(&[MediusLockEntry {
         target: medius_lock_target_usage(medius_usage_button(MediusButton::Left)),
         is_blanket: true,
-        positive: true,
-        negative: true,
+        direction: MediusDirection::Both,
+        scale: MEDIUS_LOCK_SCALE_BLOCK,
     }]);
     let key_a = medius_lock_target_usage(medius_usage_key(MEDIUS_KEY_A));
     assert!(locked(&blanket, side2, MediusDirection::Positive));
     assert!(!locked(&blanket, key_a, MediusDirection::Positive));
     assert!(!locked(&blanket, x, MediusDirection::Positive));
+}
+
+#[test]
+fn scale_of_reports_the_percentage_and_is_locked_does_not() {
+    let scale_of = |l: *const MediusLocks, t: MediusLockTarget, d: MediusDirection| unsafe {
+        medius_locks_scale_of(l, t, d)
+    };
+    let locked = |l: *const MediusLocks, t: MediusLockTarget, d: MediusDirection| unsafe {
+        medius_locks_is_locked(l, t, d)
+    };
+    let x = medius_lock_target_axis(MediusLockTargetKind::X);
+    let y = medius_lock_target_axis(MediusLockTargetKind::Y);
+    let locks = locks_with(&[
+        MediusLockEntry {
+            target: x,
+            is_blanket: false,
+            direction: MediusDirection::Against,
+            scale: 40,
+        },
+        MediusLockEntry {
+            target: x,
+            is_blanket: false,
+            direction: MediusDirection::With,
+            scale: 130,
+        },
+    ]);
+    assert_eq!(scale_of(&locks, x, MediusDirection::Against), 40);
+    assert_eq!(scale_of(&locks, x, MediusDirection::With), 130);
+    // A weighed direction is not a locked one, and an uncovered target passes untouched.
+    assert!(!locked(&locks, x, MediusDirection::Against));
+    assert_eq!(
+        scale_of(&locks, x, MediusDirection::Positive),
+        MEDIUS_LOCK_SCALE_PASS
+    );
+    assert_eq!(
+        scale_of(&locks, y, MediusDirection::Against),
+        MEDIUS_LOCK_SCALE_PASS
+    );
+    // Both takes the lowest of everything covering the target.
+    assert_eq!(scale_of(&locks, x, MediusDirection::Both), 40);
+    assert_eq!(
+        scale_of(std::ptr::null(), x, MediusDirection::Both),
+        MEDIUS_LOCK_SCALE_PASS
+    );
 }
 
 #[test]
