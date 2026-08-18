@@ -59,6 +59,7 @@ from ._errors import (
     NotFoundError,
     PanicError,
     QueryTimeoutError,
+    RelativeDirectionError,
     ReservedIdError,
     WildcardNotInputError,
 )
@@ -229,6 +230,7 @@ __all__ = [
     "WildcardNotInputError",
     "HalfEdgeInputFilterError",
     "ReservedIdError",
+    "RelativeDirectionError",
     "CatchFilter",
     "CatchState",
     "Bearing",

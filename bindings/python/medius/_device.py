@@ -13,6 +13,9 @@ from ._clip import ClipHandle
 from ._streams import EventStream, InputStream, LogStream
 from ._types import (
     Bearing,
+    _enum,
+    _u8,
+    _window_ms,
     Caps,
     CatchFilter,
     CatchState,
@@ -153,9 +156,11 @@ class Device:
         check(_native.lib.medius_device_force_release(self._handle, input._c))
 
     def lock(self, target: LockTarget, direction: Direction):
+        direction = _enum(direction, Direction, "direction")
         check(_native.lib.medius_device_lock(self._handle, target._c, int(direction)))
 
     def unlock(self, target: LockTarget, direction: Direction):
+        direction = _enum(direction, Direction, "direction")
         check(_native.lib.medius_device_unlock(self._handle, target._c, int(direction)))
 
     def scale(self, target: LockTarget, direction: Direction, scale: int):
@@ -165,28 +170,46 @@ class Device:
         untouched, above that amplifies to 255 (2.55x). `lock` and `unlock` are its two ends.
 
         A delta picks up at most two scales, its absolute direction's and its relative direction's,
-        and they multiply, so a block anywhere wins. `Direction.WITH` and `Direction.AGAINST` need a
-        live bearing (see `set_bearing`). A momentary usage carries one bit, so any scale below a
-        full pass locks it and there is nothing in between.
+        and they multiply, so a block anywhere wins. `Direction.BOTH` is the exception: it writes the
+        scale to the two fixed signs and a full pass to the relative pair, so a `BOTH` of 50 is 50%
+        with or without a bearing rather than 25% with one. Name a relative direction to weigh it.
+
+        `Direction.WITH` and `Direction.AGAINST` need a live bearing (see `set_bearing`) and only an
+        axis has one, so either on a button, key or media usage raises `RelativeDirectionError`. A
+        momentary usage carries one bit, so any scale below a full pass locks it and any scale at or
+        above one unlocks it. A media usage has no edges and is sent as `Direction.BOTH` whatever
+        edge is named, which is what `query_locks` reports it as.
         """
+        direction = _enum(direction, Direction, "direction")
         check(
             _native.lib.medius_device_scale(
-                self._handle, target._c, int(direction), int(scale)
+                self._handle, target._c, int(direction), _u8(scale, "scale")
             )
         )
 
     def scale_all(self, what: Blanket, direction: Direction, scale: int):
         """Weigh a whole class blanket; see `scale` for what the number means."""
+        what = _enum(what, Blanket, "what")
+        direction = _enum(direction, Direction, "direction")
         check(
             _native.lib.medius_device_scale_all(
-                self._handle, int(what), int(direction), int(scale)
+                self._handle, int(what), int(direction), _u8(scale, "scale")
             )
         )
 
     def lock_all(self, what: Blanket, direction: Direction):
+        """Block a whole class blanket.
+
+        `Blanket.KEYS` honours the direction: `POSITIVE` blocks press edges only, `NEGATIVE` release
+        edges only.
+        """
+        what = _enum(what, Blanket, "what")
+        direction = _enum(direction, Direction, "direction")
         check(_native.lib.medius_device_lock_all(self._handle, int(what), int(direction)))
 
     def unlock_all(self, what: Blanket, direction: Direction):
+        what = _enum(what, Blanket, "what")
+        direction = _enum(direction, Direction, "direction")
         check(_native.lib.medius_device_unlock_all(self._handle, int(what), int(direction)))
 
     def led(self, target: LedTarget, mode: LedMode, level):
@@ -212,19 +235,24 @@ class Device:
         enabled = window_ms is not None
         check(
             _native.lib.medius_device_set_movement_riding(
-                self._handle, enabled, int(window_ms) if enabled else 0
+                self._handle, enabled, _window_ms(window_ms)
             )
         )
 
-    def set_bearing(self, window_ms: Optional[int], mode: BearingMode = BearingMode.PER_AXIS):
+    def set_bearing(self, window_ms: Optional[int], mode: BearingMode):
         """Set what `Direction.WITH` and `Direction.AGAINST` are measured against.
 
         `window_ms` is how long the last injected delta's direction stays the bearing; `None` turns
-        it off, leaving the relative directions inert whatever their scale.
+        it off, leaving the relative directions inert whatever their scale. It saturates at 65535 ms,
+        as the Rust API does.
+
+        Both fields ride one frame and the box persists them together, so `mode` is required: a
+        default here would revert a box configured for `VECTOR` on any window change.
         """
+        mode = _enum(mode, BearingMode, "mode")
         check(
             _native.lib.medius_device_set_bearing(
-                self._handle, int(window_ms) if window_ms else 0, int(mode)
+                self._handle, _window_ms(window_ms), int(mode)
             )
         )
 

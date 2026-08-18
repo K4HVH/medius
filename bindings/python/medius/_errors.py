@@ -87,6 +87,10 @@ class ReservedIdError(MediusError):
     """An exact id equal to the blanket sentinel, which would address the whole class."""
 
 
+class RelativeDirectionError(MediusError):
+    """`Direction.WITH` / `AGAINST` on something with no bearing to measure them against."""
+
+
 _STATUS_EXC = {
     Status.ERR_IO: IoError,
     Status.ERR_NOT_FOUND: NotFoundError,
@@ -105,6 +109,7 @@ _STATUS_EXC = {
     Status.ERR_WILDCARD_NOT_INPUT: WildcardNotInputError,
     Status.ERR_HALF_EDGE_INPUT_FILTER: HalfEdgeInputFilterError,
     Status.ERR_RESERVED_ID: ReservedIdError,
+    Status.ERR_RELATIVE_DIRECTION: RelativeDirectionError,
 }
 
 

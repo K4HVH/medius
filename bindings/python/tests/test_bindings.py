@@ -12,6 +12,8 @@ import medius
 from medius import (
     Axis,
     BadProtoVerError,
+    BEARING_WINDOW_DEFAULT_MS,
+    Bearing,
     BearingMode,
     BusEventKind,
     Button,
@@ -80,7 +82,7 @@ def test_mock_feature_present():
 def test_meta_functions():
     # These are a hand-written mirror of the C structs, so a bumped ABI means they are stale until
     # someone re-reads the header. Pin it rather than accept anything newer.
-    assert medius.abi_version() == 4
+    assert medius.abi_version() == 5
     assert medius.version_string()
     assert medius.default_query_timeout_ms() > 0
     assert medius.default_keepalive_cadence_ms() > 0
@@ -240,11 +242,208 @@ def test_scale_and_bearing_reach_the_device():
         d.scale_all(Blanket.AIM, Direction.WITH, 130)
         d.lock(x, Direction.POSITIVE)
         d.unlock(x, Direction.POSITIVE)
+        d.set_bearing(35, BearingMode.VECTOR)
+        d.set_bearing(None, BearingMode.PER_AXIS)
+        locks = _clip_frames(d, mock, FrameType.LOCK)
+        options = _clip_frames(d, mock, FrameType.OPTION)
+    # The payload bytes, from ctrl_proto.h: LOCK is [class][id u16 LE][direction][scale] and
+    # OPTION(BEARING) is [4][window u16 LE][mode]. A status of OK proves only that the call returned.
+    assert locks == [
+        bytes([3, 0, 0, 4, 40]),    # AXIS X, AGAINST, 40%
+        bytes([3, 0, 0, 3, 130]),   # AXIS X, WITH, 130%  (Blanket.AIM is X then Y)
+        bytes([3, 1, 0, 3, 130]),   # AXIS Y, WITH, 130%
+        bytes([3, 0, 0, 1, 0]),     # AXIS X, POSITIVE, block
+        bytes([3, 0, 0, 1, 100]),   # AXIS X, POSITIVE, pass
+    ]
+    assert options == [bytes([4, 35, 0, 1]), bytes([4, 0, 0, 0])]
+
+
+def test_the_box_lock_table_answers_query_locks():
+    x, y = LockTarget.x(), LockTarget.y()
+    with MockBox() as mock, Device.with_mock(mock) as d:
+        d.scale(x, Direction.BOTH, 50)
+        locks = d.query_locks()
+        # BOTH is the fixed pair only: the relative pair keeps passing, so a BOTH of 50 means 50%
+        # whether or not a bearing is live.
+        assert len(locks.entries) == 2
+        assert locks.scale_of(x, Direction.POSITIVE) == 50
+        assert locks.scale_of(x, Direction.NEGATIVE) == 50
+        assert locks.scale_of(x, Direction.WITH) == LOCK_SCALE_PASS
+        assert locks.scale_of(x, Direction.AGAINST) == LOCK_SCALE_PASS
+
+        # In vector mode one relative scale governs the whole aim, the lower of the two, and the box
+        # reports that number on both axes rather than each axis's stored byte.
+        d.unlock(x, Direction.BOTH)
+        d.scale(x, Direction.WITH, 130)
+        d.scale(y, Direction.WITH, 60)
+        d.set_bearing(20, BearingMode.PER_AXIS)
+        locks = d.query_locks()
+        assert (locks.scale_of(x, Direction.WITH), locks.scale_of(y, Direction.WITH)) == (130, 60)
         d.set_bearing(20, BearingMode.VECTOR)
-        d.set_bearing(None)
-        bearing = d.query_bearing()
-    # The mock answers the default, which is what the box boots holding.
-    assert bearing.mode == BearingMode.PER_AXIS
+        locks = d.query_locks()
+        assert (locks.scale_of(x, Direction.WITH), locks.scale_of(y, Direction.WITH)) == (60, 60)
+
+
+def test_a_key_blanket_reports_the_edges_it_blocks():
+    with MockBox() as mock, Device.with_mock(mock) as d:
+        d.lock_all(Blanket.KEYS, Direction.POSITIVE)
+        entries = d.query_locks().entries
+        assert [(e.is_blanket, e.direction, e.scale) for e in entries] == [
+            (True, Direction.POSITIVE, LOCK_SCALE_BLOCK)
+        ]
+        # Both edges are two entries, never one BOTH the box is not holding.
+        d.lock_all(Blanket.KEYS, Direction.NEGATIVE)
+        assert [e.direction for e in d.query_locks().entries] == [
+            Direction.POSITIVE,
+            Direction.NEGATIVE,
+        ]
+
+
+def test_a_one_bit_class_stores_the_block_or_pass_it_renders():
+    left = LockTarget.usage(Usage.button(Button.LEFT))
+    with MockBox() as mock, Device.with_mock(mock) as d:
+        d.scale(left, Direction.POSITIVE, 50)
+        # Under a full pass a button truncates to a block, so that is what reads back.
+        assert d.query_locks().scale_of(left, Direction.POSITIVE) == LOCK_SCALE_BLOCK
+        # 150% is an amplification one bit cannot carry, so the box truncates it to a pass.
+        d.scale(left, Direction.POSITIVE, 150)
+        assert d.query_locks().entries == []
+
+
+def test_a_media_lock_is_sent_and_reported_as_both():
+    mute = LockTarget.usage(Usage.media(0xE2))
+    with MockBox() as mock, Device.with_mock(mock) as d:
+        d.lock(mute, Direction.PRESS)
+        sent = _clip_frames(d, mock, FrameType.LOCK)
+        entries = d.query_locks().entries
+    # A media usage has no edges: it is suppressed whole, so the frame carries BOTH rather than an
+    # edge the readback would disagree with.
+    assert sent == [bytes([2, 0xE2, 0x00, 0, 0])]
+    assert [e.direction for e in entries] == [Direction.BOTH]
+
+
+def test_a_relative_direction_needs_a_bearing_and_only_an_axis_has_one():
+    with MockBox() as mock, Device.with_mock(mock) as d:
+        for direction in (Direction.WITH, Direction.AGAINST):
+            with pytest.raises(medius.RelativeDirectionError):
+                d.lock(LockTarget.usage(Usage.button(Button.LEFT)), direction)
+            with pytest.raises(medius.RelativeDirectionError):
+                d.scale(LockTarget.usage(Usage.key(Key.A)), direction, 40)
+            with pytest.raises(medius.RelativeDirectionError):
+                d.lock_all(Blanket.KEYS, direction)
+            with pytest.raises(medius.RelativeDirectionError):
+                d.lock_all(Blanket.MEDIA, direction)
+            d.scale(LockTarget.x(), direction, 130)
+        # Nothing refused reached the wire; only the two axis scales did.
+        assert len(_clip_frames(d, mock, FrameType.LOCK)) == 2
+
+
+def test_scalars_are_checked_before_ctypes_truncates_them():
+    x = LockTarget.x()
+    with MockBox() as mock, Device.with_mock(mock) as d:
+        # 300 would arrive as 44 and -1 as 255, the widest amplification the byte carries.
+        for bad in (300, -1, 256):
+            with pytest.raises(ValueError):
+                d.scale(x, Direction.AGAINST, bad)
+            with pytest.raises(ValueError):
+                d.scale_all(Blanket.AIM, Direction.AGAINST, bad)
+        # A direction byte outside the enum reaches an exhaustive match on the Rust side.
+        with pytest.raises(ValueError):
+            d.scale(x, 40, 50)
+        with pytest.raises(ValueError):
+            d.lock_all(99, Direction.BOTH)
+        with pytest.raises(ValueError):
+            d.set_bearing(20, 7)
+        with pytest.raises(ValueError):
+            d.set_bearing(-1, BearingMode.PER_AXIS)
+        # The window saturates rather than wrapping, as the Rust API does: 70000 ms would arrive as
+        # 4464 through a u16.
+        d.set_bearing(70_000, BearingMode.VECTOR)
+        assert _clip_frames(d, mock, FrameType.OPTION) == [bytes([4, 0xFF, 0xFF, 1])]
+        # Nothing that raised reached the wire.
+        assert _clip_frames(d, mock, FrameType.LOCK) == []
+
+
+def test_mock_set_locks_checks_each_entry_before_ctypes_truncates_it():
+    x = LockTarget.x()
+    with MockBox() as mock:
+        with pytest.raises(ValueError):
+            mock.set_locks(Locks([LockEntry(x, is_blanket=False, direction=40, scale=0)]))
+        for bad in (300, -1):
+            with pytest.raises(ValueError):
+                mock.set_locks(
+                    Locks([LockEntry(x, is_blanket=False, direction=Direction.POSITIVE, scale=bad)])
+                )
+        # The same byte reaches the two readers, which take it as a plain u8 as well.
+        good = Locks([LockEntry(x, is_blanket=False, direction=Direction.POSITIVE, scale=0)])
+        with pytest.raises(ValueError):
+            good.is_locked(x, 40)
+        with pytest.raises(ValueError):
+            good.scale_of(x, 40)
+        # and the named values still work
+        mock.set_locks(good)
+        with Device.with_mock(mock) as d:
+            assert d.query_locks().is_locked(x, Direction.POSITIVE)
+
+
+def test_catch_filter_scalars_are_checked_before_ctypes_truncates_them():
+    f = CatchFilter.watch(Usage.button(Button.LEFT))
+    # A direction byte no constant names would ride the filter to the box, where the subscription is
+    # refused -- a stream that never yields, reported nowhere near the mistake.
+    with pytest.raises(ValueError):
+        f.with_direction(40)
+    with pytest.raises(ValueError):
+        f.with_direction(-1)
+    for bad in (300, -1, 256):
+        with pytest.raises(ValueError):
+            f.with_capture(bad)
+    with pytest.raises(ValueError):
+        CatchFilter.watch_axis(9)
+    with pytest.raises(ValueError):
+        CatchFilter.watch_class(9)
+    with pytest.raises(ValueError):
+        CatchFilter.traffic_class(99)
+    with pytest.raises(ValueError):
+        CatchFilter.traffic(TrafficClass.HID_IN, 0x1_0000)
+    with pytest.raises(ValueError):
+        CatchFilter.traffic(TrafficClass.HID_IN, -1)
+    # and the named values still build the filter they always did
+    assert f.with_direction(Direction.PRESS).direction == Direction.POSITIVE
+    assert f.with_capture(16).capture == 16
+
+
+def test_an_unnamed_direction_byte_never_reaches_a_subscription():
+    # The C struct field is a plain byte, so a filter built past the Python guard still has to be
+    # refused at subscribe time rather than narrowing the stream to nothing.
+    with MockBox() as mock, Device.with_mock(mock) as d:
+        f = CatchFilter.watch(Usage.button(Button.LEFT))
+        f._c.direction = 40
+        with pytest.raises(InvalidArgError):
+            d.catch_events(f)
+        with pytest.raises(InvalidArgError):
+            d.input_events(f)
+        # A named direction on the same filter subscribes.
+        with d.catch_events(f.with_direction(Direction.PRESS)) as s:
+            assert s is not None
+
+
+def test_set_bearing_requires_the_mode():
+    # Both fields ride one frame and the box persists them together, so a Python-only default would
+    # revert a box configured for VECTOR on any window change.
+    with MockBox() as mock, Device.with_mock(mock) as d:
+        with pytest.raises(TypeError):
+            d.set_bearing(50)
+
+
+def test_mock_set_bearing_answers_a_vector_bearing():
+    with MockBox() as mock, Device.with_mock(mock) as d:
+        # The default is what a real box boots holding.
+        assert d.query_bearing() == Bearing(BEARING_WINDOW_DEFAULT_MS, BearingMode.PER_AXIS)
+        mock.set_bearing(Bearing(250, BearingMode.VECTOR))
+        assert d.query_bearing() == Bearing(250, BearingMode.VECTOR)
+        mock.set_bearing(Bearing(None, BearingMode.PER_AXIS))
+        got = d.query_bearing()
+        assert got.window_ms is None and not got.is_live
 
 
 def test_relative_directions_report_themselves():
@@ -771,24 +970,14 @@ def test_ctypes_structs_match_the_c_header():
     text = header.read_text()
 
     # The C compiler is the authority; parse each struct out of the header and sizeof it for real.
+    # Derived from the header rather than listed here: a hardcoded list silently skips whatever it
+    # does not name, which is how MediusLockEntry went uncovered through a field-meaning change.
+    # cbindgen closes a typedef'd struct with `} Name;` at column 0; an enum closes with a bare `};`
+    # and a nested member is indented, so neither is picked up.
     probe = pathlib.Path(tempfile.mkdtemp()) / "sizes.c"
-    names = [
-        "MediusUsage",
-        "MediusMotionEvent",
-        "MediusUsageEvent",
-        "MediusTrafficEvent",
-        "MediusCatchEvent",
-        "MediusClockEstimate",
-        "MediusCatchEntry",
-        "MediusCatchFilter",
-        "MediusInputEvent",
-        "MediusStamped",
-        # A struct whose LAYOUT this repo has changed: `ride` was inserted mid-struct, moving `triggers`
-        # and `n`, and medius_clip_query_config writes sizeof(MediusClipSettings) into the mirror.
-        "MediusClipSettings",
-        "MediusClipTrigger",
-    ]
-    present = [n for n in names if re.search(rf"\}} {n};", text)]
+    present = re.findall(r"^\} (Medius\w+);$", text, re.M)
+    for must in ("MediusLockEntry", "MediusLocks", "MediusBearing", "MediusClipSettings"):
+        assert must in present, f"the header no longer declares {must}"
     # sizeof alone lets a same-size field REORDER through, which is a silent misread of every event
     # rather than a crash. Compare each field's offset too.
     fields = {
@@ -796,12 +985,14 @@ def test_ctypes_structs_match_the_c_header():
         for n in present
         if hasattr(_native, n)
     }
-    lines = [f'    printf("%s %zu\\n", "{n}", sizeof(struct {n}));' for n in present]
+    # The typedef name, not `struct N`: cbindgen typedefs both structs and unions, and one of them
+    # (MediusCatchEventData) is a union.
+    lines = [f'    printf("%s %zu\\n", "{n}", sizeof({n}));' for n in present]
     for n, fs in fields.items():
         for f in fs:
             cname = "class_" if f == "class_" else f
             lines.append(
-                f'    printf("%s.%s %zu\\n", "{n}", "{f}", offsetof(struct {n}, {cname}));'
+                f'    printf("%s.%s %zu\\n", "{n}", "{f}", offsetof({n}, {cname}));'
             )
     body = "\n".join(lines)
     probe.write_text(
@@ -836,7 +1027,12 @@ def test_ctypes_structs_match_the_c_header():
             if ctypes.sizeof(mirror) != value:
                 mismatches.append(f"{what}: C {value} vs python {ctypes.sizeof(mirror)}")
     assert not mismatches, "ctypes mirrors drifted from medius.h: " + "; ".join(mismatches)
-    assert checked > 40, f"the probe only compared {checked} things; it stopped covering the structs"
+    assert checked > 150, f"the probe only compared {checked} things; it stopped covering the structs"
+    # Every struct in the header that this module mirrors must have been compared; a mirror that
+    # stops matching its name is a mirror that stops being checked.
+    mirrored = {n for n in present if hasattr(_native, n)}
+    compared = {line.split()[0].split(".", 1)[0] for line in out.split("\n") if line.strip()}
+    assert mirrored <= compared, f"never compared: {sorted(mirrored - compared)}"
 
 
 def test_input_events_decode_snapshots_into_edges():

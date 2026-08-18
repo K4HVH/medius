@@ -7,9 +7,12 @@ from typing import Optional
 
 from . import _native
 from ._device import Device
-from ._enums import ClockDomain, FrameType, LogLevel
+from ._enums import BearingMode, ClockDomain, FrameType, LogLevel
 from ._types import (
+    Bearing,
     Caps,
+    _enum,
+    _window_ms,
     CatchState,
     ClipSettings,
     ClipStatus,
@@ -113,6 +116,14 @@ class MockBox:
         enabled = window_ms is not None
         _native.lib.medius_mock_set_movement_riding(
             self._handle, enabled, int(window_ms) if enabled else 0
+        )
+
+    def set_bearing(self, bearing: Bearing):
+        """Set the `Bearing` the mock answers to `Device.query_bearing`."""
+        _native.lib.medius_mock_set_bearing(
+            self._handle,
+            _window_ms(bearing.window_ms),
+            int(_enum(bearing.mode, BearingMode, "mode")),
         )
 
     def set_emit_pace(self, pace: EmitPace):
