@@ -27,7 +27,7 @@ Same MAKCU box, different firmware. Both clone your mouse's USB descriptor byte 
 
 ```toml
 [dependencies]
-medius = "1.6"
+medius = "3.2"
 ```
 
 ```rust
@@ -58,7 +58,7 @@ The base crate is the lean sync core. Optional features:
 | `tracing` | per-frame TX/RX `tracing` instrumentation |
 
 ```toml
-medius = { version = "3.0", features = ["async", "mock"] }
+medius = { version = "3.2", features = ["async", "mock"] }
 ```
 
 ## API
@@ -128,6 +128,41 @@ for _ in 0..1000 {
 }
 ```
 
+### Weighing the user's own input
+
+`lock` blocks the physical device on one input while injection still drives it. `scale` is the same
+command with the number exposed: a percent of the physical value the box keeps, so 0 is a lock, 100 is
+an unlock, and everything between is reachable. Above 100 amplifies.
+
+```rust
+use medius::{Axis, Blanket, Direction};
+
+device.lock(Axis::X, Direction::Both)?;          // block horizontal motion (scale 0)
+device.scale(Axis::Y, Direction::Negative, 60)?; // keep 60% of upward motion
+device.unlock(Axis::X, Direction::Both)?;        // back to passing untouched (scale 100)
+```
+
+`Direction::With` and `Direction::Against` are measured against the **bearing**, the direction the box
+is currently injecting, rather than a fixed sign. That makes the merge asymmetric: motion helping the
+aim passes while motion fighting it is damped, decided on the box at the merge point where the pending
+injection and the arriving report are in hand at once. Set how long a bearing is held with
+`set_bearing`; past that window an axis has no bearing, the relative directions stand down, and the aim
+goes back to the user with no host command.
+
+```rust
+use medius::{Axis, BearingMode, Direction};
+use std::time::Duration;
+
+device.set_bearing(Some(Duration::from_millis(20)), BearingMode::PerAxis)?;
+device.scale(Axis::X, Direction::Against, 40)?;  // counter-aim damped to 40%
+device.scale(Axis::X, Direction::With, 130)?;    // and helping motion given a push
+```
+
+A delta picks up at most two scales, its fixed direction's and its relative direction's, and they
+multiply, so a block in either wins. `BearingMode::Vector` projects onto the injected vector instead,
+leaving motion across it untouched. A button, key, or media usage carries one bit, so any scale under
+100 simply locks it.
+
 ### Buffered clip playback
 
 For jitter-free playback, preload per-frame input into a device-side ring and let the box drain one entry per native frame, box-clocked, so it carries none of the host's scheduling jitter and none of the per-command send floor. Motion is a per-frame delta, edges (buttons/keys/media) are sticky until changed, and a gap run emits nothing for N frames. Pace top-ups off `query_status().free`.
@@ -154,7 +189,7 @@ let info = device.device_info()?;       // cloned device identity: vid:pid, bcd,
 let caps = device.caps()?;              // unified caps; caps.is_composite(), caps.mouse.n_buttons, caps.keyboard.nkro, caps.keyboard.has_consumer, caps.keyboard.n_keys
 let rate = device.query_rate()?;        // live native report rate; rate.native_hz()
 let stats = device.query_stats()?;      // delivery counters; stats.tx_drops / stats.tx_wedges
-let locks = device.query_locks()?;      // active input locks; locks.is_locked(target, direction)
+let locks = device.query_locks()?;      // active input scales; locks.scale_of(...) / locks.is_locked(...)
 let catch = device.query_catch()?;      // the live catch table, its drop counts, the inter-chip clock
 ```
 
