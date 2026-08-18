@@ -18,12 +18,12 @@ mod linux {
     use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
     use std::time::{Duration, Instant};
 
-    use medius::{BEARING_WINDOW_DEFAULT, PROTO_VER};
     use medius::{
         Action, Axis, BearingMode, Blanket, Button, CatchClass, CatchFilter, Class, ClipAction,
-        ClipBuilder, ClipState, ClipTrigger, Device, Direction, Edge, EmitPace, Input, Key, LedMode,
-        LedTarget, MediaKey, RebootTarget, Timeline, TrafficClass,
+        ClipBuilder, ClipState, ClipTrigger, Device, Direction, Edge, EmitPace, Input, Key,
+        LedMode, LedTarget, MediaKey, RebootTarget, Timeline, TrafficClass,
     };
+    use medius::{BEARING_WINDOW_DEFAULT, PROTO_VER};
 
     const EVIOCGRAB: libc::c_ulong = 0x4004_4590;
     const EV_KEY: u16 = 0x01;

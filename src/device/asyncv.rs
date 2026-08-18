@@ -147,7 +147,6 @@ impl AsyncDevice {
         self.dev().led(target, mode, level)
     }
 
-    /// `LOCK`: block a usage (button/key/media) or axis. Instant; see [`Device::lock`].
     /// `LOCK`: weigh physical input on a target. Instant; see [`Device::scale`].
     pub fn scale(
         &self,
@@ -168,6 +167,7 @@ impl AsyncDevice {
         self.dev().scale_all(what, direction, scale)
     }
 
+    /// `LOCK`: block a usage (button/key/media) or axis. Instant; see [`Device::lock`].
     pub fn lock(&self, target: impl Into<LockTarget>, direction: Direction) -> Result<()> {
         self.dev().lock(target, direction)
     }

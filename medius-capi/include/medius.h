@@ -863,7 +863,8 @@ typedef struct MediusLockEntry {
     // Which direction of the target this entry weighs.
     MediusDirection direction;
     // Percent of the physical value kept: 0 blocks, 100 passes, above 100 amplifies. A momentary
-    // usage carries one bit and so only ever reports 0.
+    // usage carries one bit, so the box stores the block or pass it renders and one never reports a
+    // value in between.
     uint8_t scale;
 } MediusLockEntry;
 
@@ -1531,6 +1532,11 @@ uint32_t medius_default_query_timeout_ms(void);
 uint32_t medius_default_keepalive_cadence_ms(void);
 
 // The C ABI version, bumped on any breaking change to this header.
+//
+// Held at 4 through the 3.2.0 scale change on purpose, alongside the protocol version it tracks.
+// `MediusLockEntry` kept its size but not its meaning: the two edge booleans became a direction and a
+// scale, so a binary built against the 3.1.x header reads `direction` where it expects `positive` and
+// gets no version to check. Rebuild against this header; the version will not tell you to.
 uint32_t medius_abi_version(void);
 
 // The medius-capi crate version as a static NUL-terminated string.

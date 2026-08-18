@@ -682,6 +682,11 @@ pub extern "C" fn medius_default_keepalive_cadence_ms() -> u32 {
 }
 
 /// The C ABI version, bumped on any breaking change to this header.
+///
+/// Held at 4 through the 3.2.0 scale change on purpose, alongside the protocol version it tracks.
+/// `MediusLockEntry` kept its size but not its meaning: the two edge booleans became a direction and a
+/// scale, so a binary built against the 3.1.x header reads `direction` where it expects `positive` and
+/// gets no version to check. Rebuild against this header; the version will not tell you to.
 #[unsafe(no_mangle)]
 pub extern "C" fn medius_abi_version() -> u32 {
     4

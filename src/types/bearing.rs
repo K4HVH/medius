@@ -36,14 +36,28 @@ impl BearingMode {
 }
 
 /// The configured bearing (`RESP(OPTIONS, BEARING)`, §4.14).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+///
+/// [`Default`] is what a box holds out of the box, so a [`MockBox`](crate::MockBox) answers what real
+/// hardware would: [`BEARING_WINDOW_DEFAULT`](crate::BEARING_WINDOW_DEFAULT) in
+/// [`BearingMode::PerAxis`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Bearing {
     /// How long the direction of the last injected delta stays the thing
     /// [`Direction::With`](crate::Direction) and [`Direction::Against`](crate::Direction) are measured
-    /// against. `None` = never, so the relative directions are inert whatever their scale.
+    /// against. `None` = never, so the relative directions are inert whatever their scale. Whole
+    /// milliseconds on the wire, so this reads back rounded.
     pub window: Option<Duration>,
     /// Whether the bearing is read per axis or as one vector.
     pub mode: BearingMode,
+}
+
+impl Default for Bearing {
+    fn default() -> Bearing {
+        Bearing {
+            window: Some(crate::BEARING_WINDOW_DEFAULT),
+            mode: BearingMode::PerAxis,
+        }
+    }
 }
 
 impl Bearing {

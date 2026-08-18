@@ -9,6 +9,7 @@ from typing import List, Optional, Union
 from . import _native
 from ._enums import (
     Axis,
+    BEARING_WINDOW_DEFAULT_MS,
     BearingMode,
     Blanket,
     BusEventKind,
@@ -166,12 +167,13 @@ class LockEntry:
     """One weighed direction: what it addresses, which way, and how much of it survives.
 
     `scale` is a percent of the physical value: 0 blocks, 100 passes untouched, above 100 amplifies.
-    A momentary usage carries one bit and so only ever reports 0.
+    A momentary usage carries one bit, so the box stores the block or pass it renders and one never
+    reports a value in between.
     """
 
     target: "LockTarget"
     is_blanket: bool
-    direction: int
+    direction: Direction
     scale: int
 
     @property
@@ -261,7 +263,7 @@ class Bearing:
     which leaves the relative directions inert whatever their scale.
     """
 
-    window_ms: Optional[int] = None
+    window_ms: Optional[int] = BEARING_WINDOW_DEFAULT_MS
     mode: BearingMode = BearingMode.PER_AXIS
 
     @property
