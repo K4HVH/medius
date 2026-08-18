@@ -2,13 +2,13 @@ use std::time::Duration;
 
 use crate::error::{Error, Result};
 use crate::protocol::opcode::{
-    OPT_EMIT, OPT_IMPERFECT, OPT_MOVE_RIDE, Q_CAPS, Q_CATCH, Q_DEVICE_INFO, Q_HEALTH, Q_LOCKS,
-    Q_RATE, Q_STATS, Q_VERSION,
+    OPT_BEARING, OPT_EMIT, OPT_IMPERFECT, OPT_MOVE_RIDE, Q_CAPS, Q_CATCH, Q_DEVICE_INFO, Q_HEALTH,
+    Q_LOCKS, Q_RATE, Q_STATS, Q_VERSION,
 };
 use crate::protocol::{Resp, parse_resp};
 use crate::types::{
-    Caps, CatchState, DeviceInfo, EmitPaceStatus, Health, ImperfectStatus, Locks, Rate, Stats,
-    Version,
+    Bearing, Caps, CatchState, DeviceInfo, EmitPaceStatus, Health, ImperfectStatus, Locks, Rate,
+    Stats, Version,
 };
 
 use super::Device;
@@ -100,6 +100,15 @@ impl Device {
         let payload = self.link.query_option(OPT_MOVE_RIDE)?;
         match parse_resp(&payload) {
             Some(Resp::MovementRiding(w)) => Ok(w),
+            _ => Err(Error::NoReply),
+        }
+    }
+
+    /// Query the bearing (§4.14): the window `Direction::With`/`Against` are held over, and how it is read.
+    pub fn query_bearing(&self) -> Result<Bearing> {
+        let payload = self.link.query_option(OPT_BEARING)?;
+        match parse_resp(&payload) {
+            Some(Resp::Bearing(b)) => Ok(b),
             _ => Err(Error::NoReply),
         }
     }

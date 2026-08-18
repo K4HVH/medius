@@ -1,5 +1,6 @@
 use super::opcode::{
-    INJ_MOTION_CURSOR, INJ_MOTION_WHEEL, OPT_EMIT, OPT_IMPERFECT, OPT_MOVE_RIDE, OPT_NAME,
+    INJ_MOTION_CURSOR, INJ_MOTION_WHEEL, OPT_BEARING, OPT_EMIT, OPT_IMPERFECT, OPT_MOVE_RIDE,
+    OPT_NAME,
 };
 
 /// `MOVE` cursor (§3.1): `[motion=0][dx i16 LE][dy i16 LE][flags u8]`, no clamp (firmware clamps with carry).
@@ -31,10 +32,10 @@ pub fn led_payload(target: u8, mode: u8, level: u8) -> [u8; 3] {
     [target, mode, level]
 }
 
-/// `LOCK` (§3.8): `[class u8][usage u16 LE][direction u8][state u8]`; state 0 unlock / 1 lock.
-pub fn lock_payload(class: u8, usage: u16, direction: u8, state: u8) -> [u8; 5] {
+/// `LOCK` (§3.8): `[class u8][usage u16 LE][direction u8][scale u8]`; scale 0 blocks, 100 passes, above 100 amplifies.
+pub fn lock_payload(class: u8, usage: u16, direction: u8, scale: u8) -> [u8; 5] {
     let u = usage.to_le_bytes();
-    [class, u[0], u[1], direction, state]
+    [class, u[0], u[1], direction, scale]
 }
 
 /// `CATCH` (§3.9): `[class u8][id u16 LE][dir u8][state u8][snaplen u8]`; add or remove one
@@ -47,6 +48,12 @@ pub fn catch_payload(class: u8, id: u16, direction: u8, state: u8, snaplen: u8) 
 /// `OPTION(IMPERFECT)` (§3.10): `[id=0][allow u8]`; 1 = opt into cloning over-capacity devices, 0 = faithful-only.
 pub fn imperfect_payload(allow: bool) -> [u8; 2] {
     [OPT_IMPERFECT, allow as u8]
+}
+
+/// `OPTION(BEARING)` (§3.12): `[id=4][window u16 LE ms][mode u8]`; 0 = the relative directions never engage.
+pub fn bearing_payload(window_ms: u16, mode: u8) -> [u8; 4] {
+    let w = window_ms.to_le_bytes();
+    [OPT_BEARING, w[0], w[1], mode]
 }
 
 /// `OPTION(MOVE_RIDE)` (§3.10): `[id=1][timeout u16 LE ms]`; 0 = off, N = ride window in milliseconds.

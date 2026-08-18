@@ -3,12 +3,12 @@
 use std::time::Duration;
 
 use super::opcode::{
-    OPT_EMIT, OPT_IMPERFECT, OPT_MOVE_RIDE, Q_CAPS, Q_CATCH, Q_CLIP, Q_DEVICE_INFO, Q_HEALTH,
-    Q_LOCKS, Q_OPTIONS, Q_RATE, Q_STATS, Q_VERSION,
+    OPT_BEARING, OPT_EMIT, OPT_IMPERFECT, OPT_MOVE_RIDE, Q_CAPS, Q_CATCH, Q_CLIP, Q_DEVICE_INFO,
+    Q_HEALTH, Q_LOCKS, Q_OPTIONS, Q_RATE, Q_STATS, Q_VERSION,
 };
 use crate::types::{
-    Caps, CatchState, ClipStatus, DeviceInfo, EmitPaceStatus, Health, ImperfectStatus, Locks,
-    LogLevel, LogLine, Rate, Stats, Version,
+    Bearing, Caps, CatchState, ClipStatus, DeviceInfo, EmitPaceStatus, Health, ImperfectStatus,
+    Locks, LogLevel, LogLine, Rate, Stats, Version,
 };
 
 /// A decoded `RESP` (§4.1), keyed by the `what` selector at `payload[0]`.
@@ -27,6 +27,8 @@ pub enum Resp {
     MovementRiding(Option<Duration>),
     /// `RESP(OPTIONS, EMIT)`: the emit-rate pacing mode and the rate in effect.
     EmitPace(EmitPaceStatus),
+    /// `RESP(OPTIONS, BEARING)`: the bearing window and how it is read.
+    Bearing(Bearing),
     /// `RESP(CLIP)`: the device-side clip ring and playback status.
     Clip(ClipStatus),
 }
@@ -78,6 +80,7 @@ pub fn parse_resp(payload: &[u8]) -> Option<Resp> {
                     Some(Resp::MovementRiding(dur))
                 }
                 OPT_EMIT => EmitPaceStatus::from_payload(payload).map(Resp::EmitPace),
+                OPT_BEARING => Bearing::from_payload(payload).map(Resp::Bearing),
                 _ => None,
             }
         }

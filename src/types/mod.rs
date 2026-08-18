@@ -1,3 +1,4 @@
+mod bearing;
 mod button;
 mod caps;
 pub(crate) mod catch;
@@ -26,6 +27,7 @@ mod stats;
 mod usage;
 mod version;
 
+pub use bearing::{Bearing, BearingMode};
 pub use button::{Action, Button};
 pub use caps::Caps;
 pub use catch::{

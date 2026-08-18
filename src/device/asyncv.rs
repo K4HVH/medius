@@ -3,15 +3,15 @@ use std::time::Duration;
 use crate::error::{Error, Result};
 use crate::link::Link;
 use crate::protocol::opcode::{
-    OPT_EMIT, OPT_IMPERFECT, OPT_MOVE_RIDE, Q_CAPS, Q_CATCH, Q_CLIP, Q_DEVICE_INFO, Q_HEALTH,
-    Q_LOCKS, Q_RATE, Q_STATS, Q_VERSION,
+    OPT_BEARING, OPT_EMIT, OPT_IMPERFECT, OPT_MOVE_RIDE, Q_CAPS, Q_CATCH, Q_CLIP, Q_DEVICE_INFO,
+    Q_HEALTH, Q_LOCKS, Q_RATE, Q_STATS, Q_VERSION,
 };
 use crate::protocol::{Resp, parse_resp};
 use crate::types::{
-    Action, Axis, Blanket, Caps, CatchFilter, CatchState, ClipBuilder, ClipSettings, ClipStatus,
-    ClipTrigger, CountersSnapshot, DeviceInfo, Direction, Edge, EmitPace, EmitPaceStatus, Health,
-    ImperfectStatus, LedMode, LedTarget, LockTarget, Locks, Motion, MoveTiming, PendingMotion,
-    Rate, RebootTarget, Stats, Usage, Version,
+    Action, Axis, Bearing, BearingMode, Blanket, Caps, CatchFilter, CatchState, ClipBuilder,
+    ClipSettings, ClipStatus, ClipTrigger, CountersSnapshot, DeviceInfo, Direction, Edge, EmitPace,
+    EmitPaceStatus, Health, ImperfectStatus, LedMode, LedTarget, LockTarget, Locks, Motion,
+    MoveTiming, PendingMotion, Rate, RebootTarget, Stats, Usage, Version,
 };
 
 use super::Device;
@@ -148,6 +148,26 @@ impl AsyncDevice {
     }
 
     /// `LOCK`: block a usage (button/key/media) or axis. Instant; see [`Device::lock`].
+    /// `LOCK`: weigh physical input on a target. Instant; see [`Device::scale`].
+    pub fn scale(
+        &self,
+        target: impl Into<LockTarget>,
+        direction: Direction,
+        scale: u8,
+    ) -> Result<()> {
+        self.dev().scale(target, direction, scale)
+    }
+
+    /// `LOCK`: weigh a relative axis by sign. Instant; see [`Device::scale_axis`].
+    pub fn scale_axis(&self, axis: Axis, direction: Direction, scale: u8) -> Result<()> {
+        self.dev().scale_axis(axis, direction, scale)
+    }
+
+    /// `LOCK`: weigh a whole [`Blanket`] group. Instant; see [`Device::scale_all`].
+    pub fn scale_all(&self, what: Blanket, direction: Direction, scale: u8) -> Result<()> {
+        self.dev().scale_all(what, direction, scale)
+    }
+
     pub fn lock(&self, target: impl Into<LockTarget>, direction: Direction) -> Result<()> {
         self.dev().lock(target, direction)
     }
@@ -201,6 +221,11 @@ impl AsyncDevice {
     /// `OPTION(MOVE_RIDE)`: movement riding. Instant; see [`Device::set_movement_riding`].
     pub fn set_movement_riding(&self, window: Option<Duration>) -> Result<()> {
         self.dev().set_movement_riding(window)
+    }
+
+    /// `OPTION(BEARING)`: what `With`/`Against` are measured against. Instant; see [`Device::set_bearing`].
+    pub fn set_bearing(&self, window: Option<Duration>, mode: BearingMode) -> Result<()> {
+        self.dev().set_bearing(window, mode)
     }
 
     /// `OPTION(EMIT)`: emit-rate pacing. Instant; see [`Device::set_emit_pace`].
@@ -334,6 +359,18 @@ impl AsyncDevice {
             .await?;
         match parse_resp(&payload) {
             Some(Resp::MovementRiding(w)) => Ok(w),
+            _ => Err(Error::NoReply),
+        }
+    }
+
+    /// Query the bearing (§4.14), awaiting the correlated `RESP`.
+    pub async fn query_bearing(&self) -> Result<Bearing> {
+        let payload = self
+            .link
+            .query_option_async(OPT_BEARING, self.link.query_timeout_default())
+            .await?;
+        match parse_resp(&payload) {
+            Some(Resp::Bearing(b)) => Ok(b),
             _ => Err(Error::NoReply),
         }
     }

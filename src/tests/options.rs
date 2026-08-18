@@ -190,3 +190,135 @@ fn set_name_sends_the_value_raw_for_the_box_to_sanitize() {
         .unwrap();
     assert_eq!(frame.payload, vec![3, b'A', b'\t', b'B']);
 }
+
+#[test]
+fn bearing_payload_bytes() {
+    use crate::protocol::command::bearing_payload;
+    use crate::protocol::opcode::{BEARING_PER_AXIS, BEARING_VECTOR};
+    assert_eq!(bearing_payload(20, BEARING_PER_AXIS), [4, 20, 0, 0]);
+    assert_eq!(bearing_payload(500, BEARING_VECTOR), [4, 0xF4, 0x01, 1]);
+    assert_eq!(bearing_payload(0, BEARING_PER_AXIS), [4, 0, 0, 0]);
+}
+
+#[test]
+fn bearing_decodes_from_a_resp() {
+    use crate::protocol::{Resp, parse_resp};
+    use crate::types::BearingMode;
+    use std::time::Duration;
+    let Some(Resp::Bearing(b)) = parse_resp(&[9, 4, 20, 0, 0]) else {
+        panic!("expected Bearing");
+    };
+    assert_eq!(b.window, Some(Duration::from_millis(20)));
+    assert_eq!(b.mode, BearingMode::PerAxis);
+    assert!(b.is_live());
+
+    // A zero window is off, not a zero-length one: the relative directions do nothing at all.
+    let Some(Resp::Bearing(off)) = parse_resp(&[9, 4, 0, 0, 1]) else {
+        panic!("expected Bearing");
+    };
+    assert_eq!(off.window, None);
+    assert_eq!(off.mode, BearingMode::Vector);
+    assert!(!off.is_live());
+
+    // An unknown mode is not silently read as per-axis.
+    assert!(parse_resp(&[9, 4, 20, 0, 7]).is_none());
+    assert!(parse_resp(&[9, 4, 20, 0]).is_none());
+}
+
+#[cfg(feature = "mock")]
+#[test]
+fn set_bearing_sends_the_option_frame() {
+    use crate::types::BearingMode;
+    use crate::{Device, MockBox};
+    use std::time::Duration;
+    let mock = MockBox::new();
+    let device = Device::with_mock(mock.clone());
+    device
+        .set_bearing(Some(Duration::from_millis(20)), BearingMode::Vector)
+        .unwrap();
+    let frame = mock
+        .recorded_frames()
+        .into_iter()
+        .find(|f| f.ty == FrameType::Option)
+        .unwrap();
+    assert_eq!(frame.payload, vec![4, 20, 0, 1]);
+
+    device.set_bearing(None, BearingMode::PerAxis).unwrap();
+    let off = mock
+        .recorded_frames()
+        .into_iter()
+        .rfind(|f| f.ty == FrameType::Option)
+        .unwrap();
+    assert_eq!(off.payload, vec![4, 0, 0, 0]);
+}
+
+#[cfg(feature = "mock")]
+#[test]
+fn query_bearing_round_trips_through_the_mock() {
+    use crate::types::{Bearing, BearingMode};
+    use crate::{Device, MockBox};
+    use std::time::Duration;
+    let want = Bearing {
+        window: Some(Duration::from_millis(35)),
+        mode: BearingMode::Vector,
+    };
+    let mock = MockBox::new().with_bearing(want);
+    let device = Device::with_mock(mock);
+    assert_eq!(device.query_bearing().unwrap(), want);
+}
+
+#[cfg(feature = "mock")]
+#[test]
+fn scale_sends_the_lock_frame_with_the_percentage() {
+    use crate::{Axis, Device, Direction, MockBox};
+    let mock = MockBox::new();
+    let device = Device::with_mock(mock.clone());
+    device.scale(Axis::X, Direction::Against, 40).unwrap();
+    device.scale(Axis::Y, Direction::With, 130).unwrap();
+    let frames: Vec<Vec<u8>> = mock
+        .recorded_frames()
+        .into_iter()
+        .filter(|f| f.ty == FrameType::Lock)
+        .map(|f| f.payload)
+        .collect();
+    assert_eq!(frames, vec![vec![3, 0, 0, 4, 40], vec![3, 1, 0, 3, 130]]);
+}
+
+#[cfg(feature = "mock")]
+#[test]
+fn lock_and_unlock_are_the_two_ends_of_the_scale() {
+    use crate::{Axis, Device, Direction, MockBox};
+    let mock = MockBox::new();
+    let device = Device::with_mock(mock.clone());
+    device.lock(Axis::X, Direction::Positive).unwrap();
+    device.unlock(Axis::X, Direction::Positive).unwrap();
+    let frames: Vec<Vec<u8>> = mock
+        .recorded_frames()
+        .into_iter()
+        .filter(|f| f.ty == FrameType::Lock)
+        .map(|f| f.payload)
+        .collect();
+    assert_eq!(frames, vec![vec![3, 0, 0, 1, 0], vec![3, 0, 0, 1, 100]]);
+}
+
+#[cfg(feature = "mock")]
+#[test]
+fn a_relative_direction_is_refused_on_a_catch_subscription() {
+    use crate::{CatchFilter, Device, Direction, Error, MockBox, TrafficClass};
+    let device = Device::with_mock(MockBox::new());
+    let err = device
+        .catch_events([
+            CatchFilter::traffic(TrafficClass::VendorBulk, 0x83).with_direction(Direction::Against)
+        ])
+        .unwrap_err();
+    assert!(
+        matches!(
+            err,
+            Error::RelativeDirection {
+                direction: Direction::Against,
+                ..
+            }
+        ),
+        "expected RelativeDirection, got {err:?}"
+    );
+}

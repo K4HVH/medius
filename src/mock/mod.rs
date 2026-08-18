@@ -6,8 +6,8 @@ use parking_lot::Mutex;
 
 use crate::protocol::opcode::{
     CAP_REPORT_ID, CAP_WHEEL, CAP_X, CAP_Y, CAPS_CD_KBD, CAPS_CD_MOUSE, DI_HAS_BOS, DI_HAS_SERIAL,
-    KBC_CONSUMER, KBC_NKRO, KBC_REPORT_ID, KBC_SYSTEM, OPT_EMIT, OPT_IMPERFECT, OPT_MOVE_RIDE,
-    RATE_CONFIDENT,
+    KBC_CONSUMER, KBC_NKRO, KBC_REPORT_ID, KBC_SYSTEM, OPT_BEARING, OPT_EMIT, OPT_IMPERFECT,
+    OPT_MOVE_RIDE, RATE_CONFIDENT,
 };
 use crate::protocol::opcode::{
     CLIP_CFG_F_FINALIZED, CLIP_CFG_F_LOOP, CLIP_CFG_F_RETAIN, CLIP_CFG_F_RIDE, CLK_RATE_NONE,
@@ -16,7 +16,7 @@ use crate::protocol::{DecodedFrame, FrameType, encode};
 use crate::transport::mock::MockTransport;
 use crate::types::lock::blanket_scope;
 use crate::types::{
-    Caps, CatchClass, CatchState, Class, ClipSettings, ClipState, ClipStatus, ClockDomain,
+    Bearing, Caps, CatchClass, CatchState, Class, ClipSettings, ClipState, ClipStatus, ClockDomain,
     DeviceInfo, DeviceKind, Direction, EmitPace, Health, ImperfectStatus, KbdCaps, Locks, LogLevel,
     MouseCaps, Rate, Stats, Usage, Version,
 };
@@ -33,6 +33,7 @@ struct State {
     catch: CatchState,
     imperfect: ImperfectStatus,
     move_ride_ms: u16,
+    bearing: Bearing,
     emit_pace: EmitPace,
     clip: ClipStatus,
     clip_settings: ClipSettings,
@@ -64,6 +65,7 @@ impl Default for State {
             .unwrap(),
             imperfect: ImperfectStatus::default(),
             move_ride_ms: 0,
+            bearing: Bearing::default(),
             emit_pace: EmitPace::Learned,
             clip: ClipStatus::default(),
             clip_settings: ClipSettings::default(),
@@ -165,7 +167,7 @@ fn stats_payload(s: Stats) -> Vec<u8> {
 }
 
 fn locks_payload(l: &Locks) -> Vec<u8> {
-    use crate::protocol::opcode::{LOCK_CLS_AXIS, LOCK_DIRBIT_NEG, LOCK_DIRBIT_POS, LOCK_ID_ALL};
+    use crate::protocol::opcode::{LOCK_CLS_AXIS, LOCK_ID_ALL};
     use crate::types::{LockScope, LockTarget};
     let entries = l.entries();
     let mut p = vec![6u8, entries.len() as u8];
@@ -175,11 +177,10 @@ fn locks_payload(l: &Locks) -> Vec<u8> {
             LockScope::Target(LockTarget::Axis(a)) => (LOCK_CLS_AXIS, a.as_u16()),
             LockScope::Target(LockTarget::Usage(u)) => u.class_id(),
         };
-        let dirbits = (if e.positive { LOCK_DIRBIT_POS } else { 0 })
-            | (if e.negative { LOCK_DIRBIT_NEG } else { 0 });
         p.push(class);
         p.extend_from_slice(&id.to_le_bytes());
-        p.push(dirbits);
+        p.push(e.direction.as_u8());
+        p.push(e.scale);
     }
     p
 }
@@ -221,6 +222,13 @@ fn options_imperfect_payload(i: ImperfectStatus) -> Vec<u8> {
 fn options_move_ride_payload(ms: u16) -> Vec<u8> {
     let mut p = vec![9u8, OPT_MOVE_RIDE];
     p.extend_from_slice(&ms.to_le_bytes());
+    p
+}
+
+fn options_bearing_payload(b: Bearing) -> Vec<u8> {
+    let mut p = vec![9u8, OPT_BEARING];
+    p.extend_from_slice(&crate::device::options::ride_window_ms(b.window).to_le_bytes());
+    p.push(b.mode.as_u8());
     p
 }
 
@@ -379,6 +387,10 @@ impl MockBox {
                             &options_move_ride_payload(st.move_ride_ms),
                         )
                         .expect("resp fits"),
+                        Some(OPT_BEARING) => {
+                            encode(FrameType::Resp, seq, &options_bearing_payload(st.bearing))
+                                .expect("resp fits")
+                        }
                         Some(OPT_EMIT) => {
                             encode(FrameType::Resp, seq, &options_emit_payload(st.emit_pace))
                                 .expect("resp fits")
@@ -506,6 +518,18 @@ impl MockBox {
     /// Update the configured movement-riding window in place; `None` = off.
     pub fn set_movement_riding(&self, window: Option<std::time::Duration>) {
         self.state.lock().move_ride_ms = crate::device::options::ride_window_ms(window);
+    }
+
+    /// Set the [`Bearing`] answered to `QUERY(OPTIONS, BEARING)` (builder style).
+    #[must_use]
+    pub fn with_bearing(self, bearing: Bearing) -> Self {
+        self.state.lock().bearing = bearing;
+        self
+    }
+
+    /// Update the configured [`Bearing`] answered to `QUERY(OPTIONS, BEARING)` in place.
+    pub fn set_bearing(&self, bearing: Bearing) {
+        self.state.lock().bearing = bearing;
     }
 
     /// Set the [`EmitPace`] answered to `QUERY(OPTIONS, EMIT)` (builder style).
