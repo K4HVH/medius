@@ -3,9 +3,9 @@ use std::time::Duration;
 use crate::error::Result;
 use crate::protocol::FrameType;
 use crate::protocol::command::{
-    emit_pace_payload, imperfect_payload, move_ride_payload, name_payload,
+    bearing_payload, emit_pace_payload, imperfect_payload, move_ride_payload, name_payload,
 };
-use crate::types::EmitPace;
+use crate::types::{BearingMode, EmitPace};
 
 use super::Device;
 
@@ -22,6 +22,9 @@ pub(crate) fn ride_window_ms(window: Option<Duration>) -> u16 {
         Some(d) => (d.as_millis().min(u16::MAX as u128) as u16).max(1),
     }
 }
+
+/// The bearing window the box holds out of the box, before any host sets one.
+pub const BEARING_WINDOW_DEFAULT: Duration = Duration::from_millis(20);
 
 /// Encode an [`EmitPace`] to the wire `(mode, rate_hz)`: `Fixed(hz)` carries its rate, the other modes send 0.
 pub(crate) fn emit_pace_wire(pace: EmitPace) -> (u8, u16) {
@@ -46,6 +49,30 @@ impl Device {
         self.link.send(
             FrameType::Option,
             &move_ride_payload(ride_window_ms(window)),
+        )
+    }
+
+    /// `OPTION(BEARING)`: how long the direction of the last injected delta stays the thing
+    /// [`Direction::With`](crate::Direction) and [`Direction::Against`](crate::Direction) are measured
+    /// against, and whether it is read per axis or as one vector; persisted in NVS.
+    ///
+    /// `None` turns the bearing off, which leaves the relative directions inert whatever their scale;
+    /// the absolute ones are unaffected. The box boots at [`BEARING_WINDOW_DEFAULT`] with
+    /// [`BearingMode::PerAxis`], so nothing engages until a scale is set.
+    ///
+    /// ```no_run
+    /// # use medius::{Axis, BearingMode, Device, Direction, Result};
+    /// # use std::time::Duration;
+    /// # fn main() -> Result<()> {
+    /// let device = Device::find()?;
+    /// device.set_bearing(Some(Duration::from_millis(20)), BearingMode::PerAxis)?;
+    /// device.scale(Axis::X, Direction::Against, 40)?;
+    /// # Ok(()) }
+    /// ```
+    pub fn set_bearing(&self, window: Option<Duration>, mode: BearingMode) -> Result<()> {
+        self.link.send(
+            FrameType::Option,
+            &bearing_payload(ride_window_ms(window), mode.as_u8()),
         )
     }
 

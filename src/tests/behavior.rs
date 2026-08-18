@@ -158,9 +158,58 @@ fn reapply_re_emits_held_locks_but_not_released_ones() {
         .filter(|f| f.ty == FrameType::Lock)
         .map(|f| f.payload.clone())
         .collect();
-    // Only the two still-held locks, each re-asserted with state=1; key A is gone. Ordered by the
-    // desired-set key (class,id,dir): the KEY blanket (1, 0xFFFF, both) before the AXIS X+ (3, 0, pos).
-    assert_eq!(locks, vec![vec![1, 0xFF, 0xFF, 0, 1], vec![3, 0, 0, 1, 1]]);
+    // Only the two still-held locks, each re-asserted at the scale it was set to; key A is gone.
+    // Ordered by the desired-set key (class,id,dir): the KEY blanket (1, 0xFFFF, both) before the
+    // AXIS X+ (3, 0, pos).
+    assert_eq!(locks, vec![vec![1, 0xFF, 0xFF, 0, 0], vec![3, 0, 0, 1, 0]]);
+    drop(device);
+}
+
+#[test]
+fn reapply_re_emits_a_scale_at_its_own_value() {
+    use crate::{Axis, Direction};
+    let mock = MockBox::new();
+    let device = Device::with_mock(mock.clone());
+    device.scale(Axis::X, Direction::Against, 40).unwrap();
+    device.scale(Axis::Y, Direction::With, 130).unwrap();
+    mock.clear_recorded();
+
+    device.reapply().unwrap();
+    let locks: Vec<Vec<u8>> = mock
+        .recorded_frames()
+        .iter()
+        .filter(|f| f.ty == FrameType::Lock)
+        .map(|f| f.payload.clone())
+        .collect();
+    // A weighing comes back weighing, not blocked: re-sending these as a blanket lock would turn a
+    // 40% damp into a dead axis across a reconnect the user never saw.
+    assert_eq!(locks, vec![vec![3, 0, 0, 4, 40], vec![3, 1, 0, 3, 130]]);
+    drop(device);
+}
+
+#[test]
+fn unlocking_both_forgets_the_relative_scales_too() {
+    use crate::{Axis, Direction};
+    let mock = MockBox::new();
+    let device = Device::with_mock(mock.clone());
+    device.scale(Axis::X, Direction::Against, 40).unwrap();
+    device.scale(Axis::X, Direction::Positive, 60).unwrap();
+    device.unlock(Axis::X, Direction::Both).unwrap();
+    mock.clear_recorded();
+
+    device.reapply().unwrap();
+    let locks: Vec<Vec<u8>> = mock
+        .recorded_frames()
+        .iter()
+        .filter(|f| f.ty == FrameType::Lock)
+        .map(|f| f.payload.clone())
+        .collect();
+    // Both sweeps the whole target on the box, so the shadow must sweep it too. Re-sending the 40%
+    // here would restore a weighing the caller had already cleared.
+    assert!(
+        locks.is_empty(),
+        "expected nothing re-asserted, got {locks:?}"
+    );
     drop(device);
 }
 

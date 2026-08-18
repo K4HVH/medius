@@ -152,9 +152,11 @@ fn reapply_held(ctx: &ReconnectCtx) -> Result<()> {
             &inject_payload(class, id, action.as_u8()),
         )?;
     }
-    // Re-assert held locks: like injection, the firmware silence-clears every lock after the ~1 s
-    // window, so a blip past it would unlock physical input without this.
-    for (class, usage, direction) in held_locks {
+    // Re-assert held scales: like injection, the firmware silence-clears every one after the ~1 s
+    // window, so a blip past it would leave physical input passing untouched without this. The scale is
+    // re-sent at the value the host set, not as a blanket block, or a 40% weighing would come back as a
+    // hard lock.
+    for ((class, usage, direction), scale) in held_locks {
         let seq = ctx.seq.fetch_add(1, Ordering::Relaxed);
         write_frame(
             &ctx.transport,
@@ -162,7 +164,7 @@ fn reapply_held(ctx: &ReconnectCtx) -> Result<()> {
             &ctx.counters,
             seq,
             FrameType::Lock,
-            &lock_payload(class, usage, direction, 1),
+            &lock_payload(class, usage, direction, scale),
         )?;
     }
     // Re-assert the catch table: a link drop past the firmware's ~1 s silence window makes the box

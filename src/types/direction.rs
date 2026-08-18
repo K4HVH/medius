@@ -1,8 +1,15 @@
 //! The protocol's direction byte, shared by `LOCK`, `CLIP` and `CATCH`.
 
-use crate::protocol::opcode::{LOCK_DIR_BOTH, LOCK_DIR_NEG, LOCK_DIR_POS};
+use crate::protocol::opcode::{
+    LOCK_DIR_AGAINST, LOCK_DIR_BOTH, LOCK_DIR_NEG, LOCK_DIR_POS, LOCK_DIR_WITH,
+};
 
 /// Which way, on the one byte `LOCK`, `CLIP` and `CATCH` all carry.
+///
+/// [`Positive`](Direction::Positive) and [`Negative`](Direction::Negative) name a fixed sign or edge.
+/// [`With`](Direction::With) and [`Against`](Direction::Against) name a sign relative to the bearing,
+/// the direction the box is currently injecting, so they follow the aim instead of the axis; see
+/// [`Device::scale`](crate::Device::scale) and [`Device::set_bearing`](crate::Device::set_bearing).
 ///
 /// The variants are named for the axis reading; the other two are the same values under names that
 /// read at the call site. Which applies is decided by the class, and no class carries two.
@@ -16,13 +23,23 @@ use crate::protocol::opcode::{LOCK_DIR_BOTH, LOCK_DIR_NEG, LOCK_DIR_POS};
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Default)]
 pub enum Direction {
-    /// Both edges, both signs, or both flows.
+    /// Every direction of the target: both edges, both signs, both flows, and both relative senses.
+    ///
+    /// On a `LOCK` scale it writes the scale to the two fixed signs and a full pass to the relative
+    /// pair, since the two multiply and writing both would square the number; only an unlock, a full
+    /// pass, reaches the relative pair with its own value.
     #[default]
     Both = LOCK_DIR_BOTH,
     /// The press edge, the positive sign, or the IN flow.
     Positive = LOCK_DIR_POS,
     /// The release edge, the negative sign, or the OUT flow.
     Negative = LOCK_DIR_NEG,
+    /// An axis sign pointing the way the box is injecting. Relative to the bearing, so it follows the
+    /// aim rather than the axis; inert while no bearing is live. Axes only.
+    With = LOCK_DIR_WITH,
+    /// An axis sign opposing the way the box is injecting. Relative to the bearing, so it follows the
+    /// aim rather than the axis; inert while no bearing is live. Axes only.
+    Against = LOCK_DIR_AGAINST,
 }
 
 impl Direction {
@@ -46,8 +63,18 @@ impl Direction {
             LOCK_DIR_BOTH => Direction::Both,
             LOCK_DIR_POS => Direction::Positive,
             LOCK_DIR_NEG => Direction::Negative,
+            LOCK_DIR_WITH => Direction::With,
+            LOCK_DIR_AGAINST => Direction::Against,
             _ => return None,
         })
+    }
+
+    /// Whether this direction is measured against the bearing rather than a fixed sign.
+    ///
+    /// Only the relative-axis class reads one. A subscription or a trigger is addressed before there
+    /// is any injection to be with or against, so those reject a relative direction.
+    pub fn is_relative(self) -> bool {
+        matches!(self, Direction::With | Direction::Against)
     }
 
     /// Whether an event on `other` is one this direction asked for. Either side naming `Both`

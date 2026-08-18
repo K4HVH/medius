@@ -46,6 +46,15 @@ pub enum Error {
     WildcardNotInput,
 
     #[error(
+        "{direction:?} is measured against the bearing at emit time, which a {what} is addressed \
+         before; use Both, Positive or Negative"
+    )]
+    RelativeDirection {
+        direction: crate::types::Direction,
+        what: &'static str,
+    },
+
+    #[error(
         "id 0x{id:04X} is the blanket sentinel on the wire, so an exact {class:?} subscription to it \
          would address the whole class instead"
     )]

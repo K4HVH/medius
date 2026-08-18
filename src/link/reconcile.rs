@@ -1,6 +1,7 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 use crate::link::catch::FilterSet;
+use crate::protocol::opcode::{LOCK_DIR_BOTH, LOCK_SCALE_PASS};
 use crate::types::{Action, Class, Usage};
 
 /// A lock the host wants held, keyed by its wire fields so a reapply is exact and idempotent.
@@ -36,7 +37,9 @@ impl Override {
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub(crate) struct DesiredState {
     overrides: BTreeMap<(u8, u16), Override>, // never sits at None in the map
-    locks: BTreeSet<LockKey>,
+    // Value = the wire scale. A key at LOCK_SCALE_PASS is not held at all and is dropped, so `locks`
+    // stays exactly the set a reconnect has to re-send.
+    locks: BTreeMap<LockKey, u8>,
     catch: FilterSet,
 }
 
@@ -54,12 +57,21 @@ impl DesiredState {
         }
     }
 
-    /// Track a lock (any class) so a reconnect re-asserts it. `on=false` forgets it.
-    pub(crate) fn apply_lock(&mut self, key: LockKey, on: bool) {
-        if on {
-            self.locks.insert(key);
-        } else {
+    /// Track a scale (any class) so a reconnect re-asserts it. A full pass is the absence of one, so
+    /// it forgets the key instead of recording it.
+    ///
+    /// `Direction::Both` is the whole target on the box, so it forgets that target's other directions
+    /// too. Without this a reapply would re-send a per-direction scale the caller had already swept
+    /// away, and the box would come back weighed when the host believes it is clear.
+    pub(crate) fn apply_lock(&mut self, key: LockKey, scale: u8) {
+        let (class, id, dir) = key;
+        if dir == LOCK_DIR_BOTH {
+            self.locks.retain(|&(c, i, _), _| (c, i) != (class, id));
+        }
+        if scale == LOCK_SCALE_PASS {
             self.locks.remove(&key);
+        } else {
+            self.locks.insert(key, scale);
         }
     }
 
@@ -93,7 +105,8 @@ impl DesiredState {
         })
     }
 
-    pub(crate) fn held_locks(&self) -> impl Iterator<Item = LockKey> + '_ {
-        self.locks.iter().copied()
+    /// Every held scale, as `(key, scale)`, for the reconnect reapply.
+    pub(crate) fn held_locks(&self) -> impl Iterator<Item = (LockKey, u8)> + '_ {
+        self.locks.iter().map(|(&k, &v)| (k, v))
     }
 }

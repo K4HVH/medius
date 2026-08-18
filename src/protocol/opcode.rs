@@ -49,6 +49,12 @@ pub const OPT_MOVE_RIDE: u8 = 1;
 pub const OPT_EMIT: u8 = 2;
 /// `OPTION` id: box name. Value `[name ascii]` 1..32 printable ASCII (0 bytes clears to default); set-only, read off `RESP(VERSION)`.
 pub const OPT_NAME: u8 = 3;
+/// `OPTION` id: the bearing. Value `[window u16 LE ms][mode u8]`; what `LOCK_DIR_WITH`/`AGAINST` are measured against (§3.12).
+pub const OPT_BEARING: u8 = 4;
+/// `OPTION(BEARING)` mode: each axis reads its own sign against its own bearing.
+pub const BEARING_PER_AXIS: u8 = 0;
+/// `OPTION(BEARING)` mode: the aim is projected onto the injected XY vector; motion across it is untouched.
+pub const BEARING_VECTOR: u8 = 1;
 
 /// Buffered-clip status selector: `QUERY [Q_CLIP]` → `RESP(CLIP)` (§4.15).
 pub const Q_CLIP: u8 = 10;
@@ -176,13 +182,18 @@ pub const LOCK_ID_ALL: u16 = 0xFFFF;
 pub const LOCK_AXIS_X: u16 = 0;
 pub const LOCK_AXIS_Y: u16 = 1;
 pub const LOCK_AXIS_WHEEL: u16 = 2;
-/// `LOCK` direction byte: both / positive-or-press / negative-or-release.
+/// `LOCK` direction byte: both / positive-or-press / negative-or-release, then the two measured
+/// against the bearing rather than a fixed sign (§3.12).
 pub const LOCK_DIR_BOTH: u8 = 0;
 pub const LOCK_DIR_POS: u8 = 1;
 pub const LOCK_DIR_NEG: u8 = 2;
-/// `RESP(LOCKS)` per-entry dirbits (§4.8): b0 = positive/press locked, b1 = negative/release locked.
-pub const LOCK_DIRBIT_POS: u8 = 0x01;
-pub const LOCK_DIRBIT_NEG: u8 = 0x02;
+pub const LOCK_DIR_WITH: u8 = 3;
+pub const LOCK_DIR_AGAINST: u8 = 4;
+/// `LOCK` scale byte (§3.8): percent of the physical value kept. 0 blocks, 100 passes it untouched,
+/// above 100 amplifies, to a ceiling of 255 (2.55x).
+pub const LOCK_SCALE_BLOCK: u8 = 0;
+pub const LOCK_SCALE_PASS: u8 = 100;
+pub const LOCK_SCALE_MAX: u8 = 255;
 
 /// `CAPS` kbd_flags: keys are an NKRO bitmap (`n_keys` = 0xFF), else a keycode array (§4.4).
 pub const KBC_NKRO: u8 = 0x01;
