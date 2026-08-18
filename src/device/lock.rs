@@ -1,4 +1,4 @@
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::protocol::FrameType;
 use crate::protocol::command::lock_payload;
 use crate::protocol::opcode::{
@@ -11,7 +11,7 @@ use super::Device;
 
 impl Device {
     fn send_lock(&self, class: u8, id: u16, direction: Direction, scale: u8) -> Result<()> {
-        let dir = direction.as_u8();
+        let dir = lock_direction(class, direction)?.as_u8();
         self.link
             .desired()
             .lock()
@@ -38,8 +38,14 @@ impl Device {
     /// weigh it.
     ///
     /// [`Direction::With`] and [`Direction::Against`] are measured against the bearing and do nothing
-    /// until one is live; see [`set_bearing`](Self::set_bearing). A momentary usage carries one bit, so
-    /// any scale below a full pass locks it and there is nothing in between.
+    /// until one is live; see [`set_bearing`](Self::set_bearing). Only an axis has a bearing, so a
+    /// relative direction on a button, key or media usage is
+    /// [`Error::RelativeDirection`](crate::Error::RelativeDirection) rather than a frame the box
+    /// discards. A momentary usage carries one bit, so any scale below a full pass locks it and there
+    /// is nothing in between; a scale at or above a full pass on one is an unlock.
+    ///
+    /// A media usage has no edges -- it is suppressed whole -- so an edge direction on one is sent as
+    /// [`Direction::Both`], which is what `RESP(LOCKS)` reports it as.
     ///
     /// ```no_run
     /// # use medius::{Axis, Device, Direction, Result};
@@ -91,6 +97,9 @@ impl Device {
     }
 
     /// `LOCK` a whole [`Blanket`] group (the aim, the wheel, or every button / key / media usage).
+    ///
+    /// [`Blanket::Keys`] honours the direction: `Positive` blocks press edges only, `Negative`
+    /// release edges only.
     pub fn lock_all(&self, what: Blanket, direction: Direction) -> Result<()> {
         self.blanket(what, direction, LOCK_SCALE_BLOCK)
     }
@@ -124,4 +133,28 @@ fn target_class_id(target: LockTarget) -> (u8, u16) {
         LockTarget::Axis(a) => (LOCK_CLS_AXIS, a.as_u16()),
         LockTarget::Usage(u) => u.class_id(),
     }
+}
+
+// Only an axis has a bearing to be with or against; the box drops a relative direction on any other
+// class without a word. A media usage has no edges either -- it is suppressed whole, and RESP(LOCKS)
+// reports every media lock as Both -- so an edge there becomes the Both the box will report back.
+fn lock_direction(class: u8, direction: Direction) -> Result<Direction> {
+    if class == LOCK_CLS_AXIS {
+        return Ok(direction);
+    }
+    if direction.is_relative() {
+        return Err(Error::RelativeDirection {
+            direction,
+            what: match class {
+                LOCK_CLS_BTN => "button lock",
+                LOCK_CLS_KEY => "key lock",
+                _ => "media lock",
+            },
+        });
+    }
+    Ok(if class == LOCK_CLS_MEDIA {
+        Direction::Both
+    } else {
+        direction
+    })
 }

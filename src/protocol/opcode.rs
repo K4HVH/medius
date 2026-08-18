@@ -9,7 +9,7 @@ pub const SOF: u8 = 0xA5;
 pub const MAX_PAYLOAD: usize = 512;
 
 /// Protocol version in `RESP(VERSION)` (§4.1); the handshake requires this exact value.
-pub const PROTO_VER: u8 = 4;
+pub const PROTO_VER: u8 = 5;
 
 /// `INJECT` class byte: the momentary-usage field kind.
 pub const INJ_BTN: u8 = 0;
@@ -101,7 +101,6 @@ pub const BTN_RIGHT: u8 = 1;
 pub const BTN_MIDDLE: u8 = 2;
 pub const BTN_SIDE1: u8 = 3;
 pub const BTN_SIDE2: u8 = 4;
-#[allow(dead_code)]
 pub const BTN_COUNT: u8 = 5;
 
 /// Clear our injected press; defer to physical state.
