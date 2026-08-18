@@ -518,13 +518,18 @@ mod linux {
         }
 
         {
-            // SCALE: a partial scale reads back as itself, not as a lock. The physical weighing needs a
-            // hand on the mouse (tools/validate_lock.py drives that); what the box can prove alone is
-            // that the value survives the round trip and that a weighed direction is not a locked one.
+            // SCALE: what the box stores is what it renders. Weighing the physical mouse itself needs
+            // a hand on it (tools/validate_lock.py drives that); everything here is a box behaviour
+            // the host's own bookkeeping could not fake, because the numbers read back differ from
+            // the numbers written.
             let dev = device.as_ref().unwrap();
             let _ = dev.reset();
             let _ = dev.scale(Axis::X, Direction::Negative, 40);
             let _ = dev.scale(Axis::Y, Direction::With, 130);
+            // A one-bit field truncates: under a full pass it stores a block, at or above one a pass,
+            // so 50% on a button reads back as 0 and 150% reads back as nothing at all.
+            let _ = dev.scale(Button::Left, Direction::Positive, 50);
+            let _ = dev.scale(Button::Right, Direction::Positive, 150);
             let locks = dev.query_locks();
             let s_ok = locks
                 .as_ref()
@@ -533,20 +538,23 @@ mod linux {
                         && l.scale_of(Axis::Y, Direction::With) == 130
                         && l.scale_of(Axis::X, Direction::Positive) == medius::LOCK_SCALE_PASS
                         && !l.is_locked(Axis::X, Direction::Negative)
+                        && l.scale_of(Button::Left, Direction::Positive) == medius::LOCK_SCALE_BLOCK
+                        && l.scale_of(Button::Right, Direction::Positive) == medius::LOCK_SCALE_PASS
                 })
                 .unwrap_or(false);
             let on = dev.query_health().map(|h| h.lock_on).unwrap_or(false);
             check(
-                "scale: round trip + weighed is not locked",
+                "scale: round trip + one-bit truncation",
                 s_ok && on,
-                format!("40%/130% read back ok={s_ok} lock_on={on}"),
+                format!("40%/130% kept, 50%/150% on a button truncated ok={s_ok} lock_on={on}"),
             );
             let _ = dev.reset();
         }
 
         {
-            // SCALE: a Both-direction scale must mean the same number whether or not a bearing is live,
-            // so the box stores it on the fixed pair only and leaves the relative pair passing.
+            // SCALE: a Both-direction scale must mean the same number whether or not a bearing is
+            // live, so the box stores it on the fixed pair only and leaves the relative pair passing.
+            // The host sent one number for four slots; only the box can say which slots took it.
             let dev = device.as_ref().unwrap();
             let _ = dev.reset();
             let _ = dev.scale(Axis::X, Direction::Both, 50);
@@ -558,6 +566,7 @@ mod linux {
                         && l.scale_of(Axis::X, Direction::Negative) == 50
                         && l.scale_of(Axis::X, Direction::With) == medius::LOCK_SCALE_PASS
                         && l.scale_of(Axis::X, Direction::Against) == medius::LOCK_SCALE_PASS
+                        && l.entries().len() == 2
                 })
                 .unwrap_or(false);
             // and an unlock is total: it reaches the relative pair too
@@ -568,6 +577,105 @@ mod linux {
                 "scale: Both weighs the fixed pair, unlock clears all four",
                 b_ok && cleared == 0,
                 format!("both_ok={b_ok} entries after unlock={cleared}"),
+            );
+            let _ = dev.reset();
+        }
+
+        {
+            // BEARING: the mode changes what the box reports for the relative pair. In VECTOR one
+            // scale governs the whole aim -- the lower of X's and Y's -- so the readback names that
+            // number on both axes, and switching back to PER_AXIS names each axis's own again. A host
+            // echoing its own writes would report 130/60 in both modes.
+            let dev = device.as_ref().unwrap();
+            let _ = dev.reset();
+            let _ = dev.set_bearing(Some(BEARING_WINDOW_DEFAULT), BearingMode::PerAxis);
+            let _ = dev.scale(Axis::X, Direction::With, 130);
+            let _ = dev.scale(Axis::Y, Direction::With, 60);
+            let per_axis = dev.query_locks();
+            let _ = dev.set_bearing(Some(BEARING_WINDOW_DEFAULT), BearingMode::Vector);
+            let vector = dev.query_locks();
+            let m_ok = matches!(&per_axis, Ok(l)
+                if l.scale_of(Axis::X, Direction::With) == 130
+                    && l.scale_of(Axis::Y, Direction::With) == 60)
+                && matches!(&vector, Ok(l)
+                    if l.scale_of(Axis::X, Direction::With) == 60
+                        && l.scale_of(Axis::Y, Direction::With) == 60);
+            check(
+                "bearing: vector mode reports the scale it applies to the aim",
+                m_ok,
+                format!(
+                    "per-axis X/Y = {:?}/{:?}, vector X/Y = {:?}/{:?} (want 130/60 then 60/60)",
+                    per_axis
+                        .as_ref()
+                        .map(|l| l.scale_of(Axis::X, Direction::With)),
+                    per_axis
+                        .as_ref()
+                        .map(|l| l.scale_of(Axis::Y, Direction::With)),
+                    vector
+                        .as_ref()
+                        .map(|l| l.scale_of(Axis::X, Direction::With)),
+                    vector
+                        .as_ref()
+                        .map(|l| l.scale_of(Axis::Y, Direction::With)),
+                ),
+            );
+            let _ = dev.reset();
+        }
+
+        {
+            // LOCK: the key blanket honours its direction. One blanket per edge, reported as the
+            // edges it blocks and never as a Both the box is not holding.
+            let dev = device.as_ref().unwrap();
+            let _ = dev.reset();
+            let _ = dev.lock_all(Blanket::Keys, Direction::Positive);
+            let press_only = dev.query_locks();
+            let _ = dev.lock_all(Blanket::Keys, Direction::Negative);
+            let both_edges = dev.query_locks();
+            let _ = dev.unlock_all(Blanket::Keys, Direction::Positive);
+            let release_only = dev.query_locks();
+            let dirs = |l: &Result<medius::Locks, medius::Error>| {
+                l.as_ref()
+                    .map(|l| l.entries().iter().map(|e| e.direction).collect::<Vec<_>>())
+                    .unwrap_or_default()
+            };
+            let k_ok = dirs(&press_only) == vec![Direction::Positive]
+                && dirs(&both_edges) == vec![Direction::Positive, Direction::Negative]
+                && dirs(&release_only) == vec![Direction::Negative];
+            check(
+                "lock: the key blanket carries the edges it blocks",
+                k_ok,
+                format!(
+                    "press-only {:?}, both {:?}, release-only {:?}",
+                    dirs(&press_only),
+                    dirs(&both_edges),
+                    dirs(&release_only)
+                ),
+            );
+            let _ = dev.reset();
+        }
+
+        {
+            // LOCK: a media usage has no edges. Whatever edge is asked for, the box suppresses the
+            // usage whole and reports it as Both.
+            let dev = device.as_ref().unwrap();
+            let _ = dev.reset();
+            let _ = dev.lock(MediaKey::MUTE, Direction::RELEASE);
+            let l = dev.query_locks();
+            let m_ok = matches!(&l, Ok(l)
+                if l.entries().iter().any(|e| e.direction == Direction::Both)
+                    && l.is_locked(MediaKey::MUTE, Direction::Both));
+            // and a relative direction is refused by the crate rather than dropped by the box
+            let refused = matches!(
+                dev.lock(MediaKey::MUTE, Direction::Against),
+                Err(medius::Error::RelativeDirection { .. })
+            ) && matches!(
+                dev.lock(Button::Left, Direction::With),
+                Err(medius::Error::RelativeDirection { .. })
+            );
+            check(
+                "lock: media has no edges, and a relative direction is refused",
+                m_ok && refused,
+                format!("media reported Both ok={m_ok} relative refused={refused}"),
             );
             let _ = dev.reset();
         }
@@ -1508,6 +1616,26 @@ mod linux {
                 && block_on(adev.query_emit_pace()).is_ok();
             // async name setter parity: set then clear (leaves the box on its synth default)
             let aname_ok = adev.set_name("async box").is_ok() && adev.clear_name().is_ok();
+            // async scale + bearing: the same box behaviours the sync checks pin, driven from the
+            // async surface. Read back through the box, not through the write.
+            let _ = adev.reset();
+            let _ = adev.scale(Axis::X, Direction::Both, 50);
+            let _ = adev.scale_axis(Axis::Y, Direction::With, 60);
+            let _ = adev.scale_all(Blanket::Wheel, Direction::Negative, 25);
+            let _ = adev.set_bearing(Some(Duration::from_millis(35)), BearingMode::Vector);
+            let ascale_ok = matches!(block_on(adev.query_locks()), Ok(l)
+                if l.scale_of(Axis::X, Direction::Positive) == 50
+                    && l.scale_of(Axis::X, Direction::With) == medius::LOCK_SCALE_PASS
+                    && l.scale_of(Axis::Y, Direction::With) == 60
+                    && l.scale_of(Axis::Wheel, Direction::Negative) == 25);
+            let abear_ok = matches!(block_on(adev.query_bearing()), Ok(b)
+                if b.window == Some(Duration::from_millis(35)) && b.mode == BearingMode::Vector);
+            let arel_ok = matches!(
+                adev.lock(Button::Left, Direction::Against),
+                Err(medius::Error::RelativeDirection { .. })
+            );
+            let _ = adev.set_bearing(Some(BEARING_WINDOW_DEFAULT), BearingMode::PerAxis);
+            let _ = adev.reset();
             reset_motion(&acc);
             let _ = adev.move_rel(12, 0);
             std::thread::sleep(Duration::from_millis(200));
@@ -1520,9 +1648,17 @@ mod linux {
             let arecon_ok = adev.reconnect().is_ok() && adev.counters().reconnects > arecon_base;
             check(
                 "async",
-                av_ok && ah_ok && aopt_ok && aname_ok && amoved == 12 && arecon_ok,
+                av_ok
+                    && ah_ok
+                    && aopt_ok
+                    && aname_ok
+                    && ascale_ok
+                    && abear_ok
+                    && arel_ok
+                    && amoved == 12
+                    && arecon_ok,
                 format!(
-                    "AsyncDevice: version_ok={av_ok}, health_ok={ah_ok}, option_queries_ok={aopt_ok}, name_ok={aname_ok}, reconnect_ok={arecon_ok}, async_logs_drained={alog_n}, async move REL_X={amoved}"
+                    "AsyncDevice: version_ok={av_ok}, health_ok={ah_ok}, option_queries_ok={aopt_ok}, name_ok={aname_ok}, scale_ok={ascale_ok}, bearing_ok={abear_ok}, relative_refused={arel_ok}, reconnect_ok={arecon_ok}, async_logs_drained={alog_n}, async move REL_X={amoved}"
                 ),
             );
         }
