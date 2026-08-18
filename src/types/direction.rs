@@ -71,8 +71,10 @@ impl Direction {
 
     /// Whether this direction is measured against the bearing rather than a fixed sign.
     ///
-    /// Only the relative-axis class reads one. A subscription or a trigger is addressed before there
-    /// is any injection to be with or against, so those reject a relative direction.
+    /// Only the relative-axis class reads one. A catch subscription is addressed before there is any
+    /// injection to be with or against, so it refuses one with
+    /// [`Error::RelativeDirection`](crate::Error::RelativeDirection). A clip trigger cannot express one
+    /// at all: its edge is the separate three-variant [`Edge`](crate::Edge).
     pub fn is_relative(self) -> bool {
         matches!(self, Direction::With | Direction::Against)
     }

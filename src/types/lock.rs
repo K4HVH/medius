@@ -98,7 +98,8 @@ pub struct LockEntry {
     /// Which direction of it.
     pub direction: Direction,
     /// Percent of the physical value kept: 0 blocks, 100 passes, above 100 amplifies. A momentary
-    /// usage carries one bit and so only ever reports 0.
+    /// usage carries one bit, so the box stores the block or pass it renders and one never reports a
+    /// value in between.
     pub scale: u8,
 }
 
@@ -169,9 +170,12 @@ impl Locks {
     /// The scale in effect on one target and direction: percent of the physical value kept, so
     /// [`LOCK_SCALE_PASS`] when nothing weighs it.
     ///
-    /// [`Direction::Both`] reports the lowest scale across every direction, so the worst case a delta
-    /// on that target could meet. A covering blanket counts, and where several entries cover the same
-    /// direction the lowest wins, matching the box multiplying them.
+    /// [`Direction::Both`] reports the lowest scale across any direction. That is not what a delta
+    /// meets: a delta picks up one fixed-direction scale and one bearing-relative one, and the box
+    /// multiplies them, so `Negative` 50 with `Against` 40 lands at 20% while this returns 40. Ask by
+    /// direction and multiply if you need the figure a delta actually sees.
+    ///
+    /// A covering blanket counts, and where several entries cover the same direction the lowest wins.
     pub fn scale_of(&self, target: impl Into<LockTarget>, dir: Direction) -> u8 {
         let target = target.into();
         let covers = |e: &LockEntry| match e.scope {

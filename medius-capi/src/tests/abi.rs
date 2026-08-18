@@ -469,13 +469,15 @@ fn scale_and_bearing_cross_the_boundary() {
         unsafe { medius_device_set_bearing(dev, 20, MediusBearingMode::Vector) },
         MediusStatus::Ok
     );
-    // The mock answers the default bearing, which is what the box boots holding.
+    // The mock answers the default bearing, which is what a real box boots holding: the 20 ms window
+    // in per-axis mode, not the zero a bare struct would leave.
     let mut bearing: MediusBearing = unsafe { std::mem::zeroed() };
     assert_eq!(
         unsafe { medius_device_query_bearing(dev, &mut bearing) },
         MediusStatus::Ok
     );
     assert_eq!(bearing.mode, MediusBearingMode::PerAxis);
+    assert_eq!(bearing.window_ms, MEDIUS_BEARING_WINDOW_DEFAULT_MS);
     unsafe {
         medius_device_free(dev);
         medius_mock_free(mock);

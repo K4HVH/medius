@@ -60,6 +60,9 @@ impl Device {
     /// the absolute ones are unaffected. The box boots at [`BEARING_WINDOW_DEFAULT`] with
     /// [`BearingMode::PerAxis`], so nothing engages until a scale is set.
     ///
+    /// The window rounds to whole milliseconds; a non-zero `Some` is at least 1 ms and saturates at
+    /// 65535 ms.
+    ///
     /// ```no_run
     /// # use medius::{Axis, BearingMode, Device, Direction, Result};
     /// # use std::time::Duration;

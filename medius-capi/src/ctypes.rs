@@ -462,7 +462,8 @@ pub struct MediusLockEntry {
     /// Which direction of the target this entry weighs.
     pub direction: MediusDirection,
     /// Percent of the physical value kept: 0 blocks, 100 passes, above 100 amplifies. A momentary
-    /// usage carries one bit and so only ever reports 0.
+    /// usage carries one bit, so the box stores the block or pass it renders and one never reports a
+    /// value in between.
     pub scale: u8,
 }
 
