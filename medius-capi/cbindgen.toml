@@ -19,10 +19,30 @@ parse_deps = false
 
 [export]
 prefix = ""
-# No field or parameter is typed MediusDirection any more -- every direction on the boundary is a
-# uint8_t the crate validates -- but the enum and its MEDIUS_DIRECTION_* constants are still what
-# callers pass, and cbindgen prunes a type nothing references.
-include = ["MediusDirection"]
+# Every enum a caller supplies crosses the boundary as a uint8_t the crate validates, so nothing in
+# the ABI is typed as one any more -- but the enums and their constants are still what callers pass,
+# and cbindgen prunes a type nothing references. Dropping one of these from the header compiles clean
+# on the Rust side and breaks every C caller, so each is pinned by name.
+include = [
+    "MediusAction",
+    "MediusAxis",
+    "MediusBearingMode",
+    "MediusBlanket",
+    "MediusButton",
+    "MediusClass",
+    "MediusClipAction",
+    "MediusClipState",
+    "MediusDeviceKind",
+    "MediusDirection",
+    "MediusEdge",
+    "MediusLedMode",
+    "MediusLedTarget",
+    "MediusLockTargetKind",
+    "MediusMotionKind",
+    "MediusMoveTiming",
+    "MediusPendingMotion",
+    "MediusRebootTarget",
+]
 
 [enum]
 rename_variants = "QualifiedScreamingSnakeCase"

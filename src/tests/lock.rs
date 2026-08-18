@@ -492,3 +492,113 @@ fn the_reply_truncates_granular_keys_and_never_the_bounded_classes() {
     assert!(!l.is_locked(crate::Key::new(0x33), Direction::Negative));
     assert!(!l.is_locked(crate::Key::new(0x34), Direction::Positive));
 }
+
+#[test]
+fn a_lock_that_never_reached_the_wire_is_not_held() {
+    // A send failure means the box was never told, so the desired state must not claim the lock:
+    // one held here keeps `is_idle` false and the keepalive open for a lock nothing is applying.
+    use crate::transport::Disconnected;
+    let dev = crate::Device::from_transport(std::sync::Arc::new(Disconnected));
+    assert!(dev.lock(Axis::X, Direction::Both).is_err());
+    assert!(dev.link.desired().lock().is_idle());
+    assert!(dev.link.desired().lock().held_locks().is_empty());
+}
+
+// The box's granular media locks live in a fixed slot array, not a set: INPUT_MEDIA_MAX
+// (= CTRL_CONS_EVENT_MAX = 8) slots, and `media_set` takes the first free one.
+#[cfg(feature = "mock")]
+fn media_ids(l: &Locks) -> Vec<u16> {
+    l.entries()
+        .iter()
+        .filter_map(|e| match e.scope {
+            LockScope::Target(LockTarget::Usage(u)) if u.class == Class::Media => Some(u.id),
+            _ => None,
+        })
+        .collect()
+}
+
+#[cfg(feature = "mock")]
+#[test]
+fn the_ninth_granular_media_lock_is_dropped() {
+    // media_set walks the eight slots for a free one and returns without taking anything when every
+    // slot is full, so the ninth distinct usage never reaches the table and never reads back.
+    use crate::types::MediaKey;
+    let dev = crate::Device::with_mock(crate::MockBox::new());
+    let taken = [0xEAu16, 0xE9, 0x30, 0xB5, 0xB6, 0xCD, 0xE2, 0xB7];
+    for id in taken {
+        dev.lock(MediaKey::new(id), Direction::Both).unwrap();
+    }
+    dev.lock(MediaKey::new(0x223), Direction::Both).unwrap();
+    let l = dev.query_locks().unwrap();
+    assert_eq!(media_ids(&l), taken);
+    assert!(l.is_locked(MediaKey::new(0xB7), Direction::Both));
+    assert!(!l.is_locked(MediaKey::new(0x223), Direction::Both));
+}
+
+#[cfg(feature = "mock")]
+#[test]
+fn a_released_media_slot_is_refilled_before_the_end() {
+    // Unlocking clears the slot the usage sat in and the next lock takes the first free one, so a
+    // replacement lands where the released usage was, ahead of the ones that outlived it. Appending
+    // instead would report the same set in a different order and, once full, drop a different usage.
+    use crate::types::MediaKey;
+    let dev = crate::Device::with_mock(crate::MockBox::new());
+    for id in [0xEAu16, 0xE9, 0x30] {
+        dev.lock(MediaKey::new(id), Direction::Both).unwrap();
+    }
+    dev.unlock(MediaKey::new(0xE9), Direction::Both).unwrap();
+    dev.lock(MediaKey::new(0xB5), Direction::Both).unwrap();
+    assert_eq!(
+        media_ids(&dev.query_locks().unwrap()),
+        vec![0xEA, 0xB5, 0x30]
+    );
+}
+
+#[cfg(feature = "mock")]
+#[test]
+fn a_locks_reply_past_the_entry_cap_still_answers() {
+    // Locks::from_entries and MockBox::set_locks are both public and unbounded, but the box appends
+    // at most CTRL_RESP_LOCKS_MAXN entries and always replies (ctrl_locks_append). 256 entries would
+    // encode a count byte of 0 over a payload no frame can carry, and 103 a payload one byte too
+    // long: either way the caller waits out the query timeout instead of reading a short answer.
+    use crate::types::{LockEntry, MediaKey};
+    let mock = crate::MockBox::new();
+    let entries: Vec<LockEntry> = (0..256u16)
+        .map(|i| LockEntry {
+            scope: LockScope::Target(MediaKey::new(0x100 + i).into()),
+            direction: Direction::Both,
+            scale: LOCK_SCALE_BLOCK,
+        })
+        .collect();
+    mock.set_locks(Locks::from_entries(entries));
+    let dev = crate::Device::with_mock(mock);
+    let l = dev.query_locks().unwrap();
+    // 96 entries is ids 0x100..=0x15F; everything from 0x160 up fell off the reply.
+    assert_eq!(l.entries().len(), 96);
+    assert!(l.is_locked(MediaKey::new(0x100), Direction::Both));
+    assert!(l.is_locked(MediaKey::new(0x15F), Direction::Both));
+    assert!(!l.is_locked(MediaKey::new(0x160), Direction::Both));
+}
+
+#[cfg(feature = "mock")]
+#[test]
+fn a_reapply_rebuilds_the_media_slots_in_the_order_the_box_had_them() {
+    // The reply enumerates media in slot order, so a replay that refills the slots in a different
+    // order reports the same locks as a different `Locks`. A host comparing snapshots either side of
+    // a reconnect would read that as the box having changed something.
+    use crate::protocol::FrameType;
+    use crate::types::MediaKey;
+    let dev = crate::Device::with_mock(crate::MockBox::new());
+    for id in [0xEAu16, 0xE9, 0x30, 0xB5] {
+        dev.lock(MediaKey::new(id), Direction::Both).unwrap();
+    }
+    let before = dev.query_locks().unwrap();
+    assert_eq!(media_ids(&before), vec![0xEA, 0xE9, 0x30, 0xB5]);
+
+    // RESET clears the box's table the way the firmware's silence window does, without touching what
+    // the host holds; `reapply` is then what a reconnect runs.
+    dev.link.send(FrameType::Reset, &[]).unwrap();
+    assert!(dev.query_locks().unwrap().entries().is_empty());
+    dev.reapply().unwrap();
+    assert_eq!(dev.query_locks().unwrap(), before);
+}

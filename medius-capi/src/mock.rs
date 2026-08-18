@@ -6,7 +6,10 @@ use std::time::Duration;
 
 use medius::{Device, MockBox};
 
-use crate::convert::{clock_domain_to_native, emit_pace_to_medius, frame_type_to_native};
+use crate::convert::{
+    clip_status_from_c, clock_domain_from_c, device_info_from_c, emit_pace_from_c,
+    frame_type_from_c,
+};
 use crate::ctypes::*;
 use crate::device::MediusDevice;
 use crate::error::{MediusStatus, clear_error, fail, guard, guard_status, record};
@@ -74,14 +77,17 @@ pub unsafe extern "C" fn medius_mock_set_health(mock: *mut MediusMockBox, value:
     });
 }
 
-/// Set the device identity the mock answers to a DEVICE_INFO query.
+/// Set the device identity the mock answers to a DEVICE_INFO query. `value.kind` takes a
+/// `MEDIUS_DEVICE_KIND_*` constant; any other value is ignored, as these setters have no status.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_mock_set_device_info(
     mock: *mut MediusMockBox,
     value: MediusDeviceInfo,
 ) {
     with_mock(mock, |m| {
-        let _ = m.clone().with_device_info(value.into());
+        if let Some(info) = device_info_from_c(value) {
+            let _ = m.clone().with_device_info(info);
+        }
     });
 }
 
@@ -190,25 +196,29 @@ pub unsafe extern "C" fn medius_mock_set_bearing(
     });
 }
 
-/// Set the emit-rate pacing mode the mock answers to an OPTION(EMIT) query; `hz` matters only for `Fixed`.
+/// Set the emit-rate pacing mode the mock answers to an OPTION(EMIT) query; `hz` matters only for
+/// `Fixed`. `mode` takes a `MEDIUS_EMIT_MODE_*` constant; any other value is ignored.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn medius_mock_set_emit_pace(
-    mock: *mut MediusMockBox,
-    mode: MediusEmitMode,
-    hz: u16,
-) {
+pub unsafe extern "C" fn medius_mock_set_emit_pace(mock: *mut MediusMockBox, mode: u8, hz: u16) {
     with_mock(mock, |m| {
-        let _ = m.clone().with_emit_pace(emit_pace_to_medius(mode, hz));
+        if let Some(pace) = emit_pace_from_c(mode, hz) {
+            let _ = m.clone().with_emit_pace(pace);
+        }
     });
 }
 
 /// Set the [`ClipStatus`](medius::ClipStatus) the mock answers to `medius_clip_query_status`.
+/// `value.state` takes a `MEDIUS_CLIP_STATE_*` constant; any other value is ignored.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_mock_set_clip_status(
     mock: *mut MediusMockBox,
     value: MediusClipStatus,
 ) {
-    with_mock(mock, |m| m.set_clip_status(value.into()));
+    with_mock(mock, |m| {
+        if let Some(status) = clip_status_from_c(value) {
+            m.set_clip_status(status);
+        }
+    });
 }
 
 /// Set the [`ClipSettings`](medius::ClipSettings) the mock answers to `medius_clip_query_config`.
@@ -246,11 +256,13 @@ pub unsafe extern "C" fn medius_mock_push_raw(
     });
 }
 
-/// Push a LOG line as if the box emitted it (surfaces on the device's log stream).
+/// Push a LOG line as if the box emitted it (surfaces on the device's log stream). `level` takes a
+/// `MEDIUS_LOG_LEVEL_*` constant; any other value reads as `INFO`, which is what the wire decoder
+/// does with a level byte it does not know.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_mock_push_log(
     mock: *mut MediusMockBox,
-    level: MediusLogLevel,
+    level: u8,
     text: *const c_char,
 ) {
     with_mock(mock, |m| {
@@ -258,7 +270,7 @@ pub unsafe extern "C" fn medius_mock_push_log(
             return;
         }
         let text = unsafe { CStr::from_ptr(text) }.to_string_lossy();
-        m.push_log(level.into(), &text);
+        m.push_log(medius::LogLevel::from_u8(level), &text);
     });
 }
 
@@ -288,17 +300,14 @@ pub unsafe extern "C" fn medius_mock_push_usages(
             return;
         }
         let e = unsafe { &*event };
-        let Some(direction) = medius::Direction::from_u8(e.direction) else {
+        let (Some(class), Some(direction)) = (
+            medius::Class::from_u8(e.class),
+            medius::Direction::from_u8(e.direction),
+        ) else {
             return;
         };
         let usages = crate::convert::usage_event_to_medius(e);
-        m.push_usages(
-            seq,
-            ts_us,
-            crate::convert::class_from_c(e.class),
-            direction,
-            &usages,
-        );
+        m.push_usages(seq, ts_us, class, direction, &usages);
     });
 }
 
@@ -309,7 +318,7 @@ pub unsafe extern "C" fn medius_mock_push_traffic(
     mock: *mut MediusMockBox,
     seq: u8,
     ts_us: u32,
-    clock: MediusClockDomain,
+    clock: u8,
     event: *const MediusTrafficEvent,
 ) {
     with_mock(mock, |m| {
@@ -317,6 +326,9 @@ pub unsafe extern "C" fn medius_mock_push_traffic(
             return;
         }
         let e = unsafe { &*event };
+        let Some(clock) = clock_domain_from_c(clock) else {
+            return;
+        };
         let Some(class) = medius::CatchClass::from_u8(e.class) else {
             return;
         };
@@ -327,7 +339,7 @@ pub unsafe extern "C" fn medius_mock_push_traffic(
         m.push_traffic(
             seq,
             ts_us,
-            clock_domain_to_native(clock),
+            clock,
             class,
             e.id,
             direction,
@@ -349,14 +361,15 @@ pub unsafe extern "C" fn medius_mock_recorded(mock: *mut MediusMockBox) -> usize
     })
 }
 
-/// Whether the host has sent at least one frame of the given type.
+/// Whether the host has sent at least one frame of the given type. `ty` takes a
+/// `MEDIUS_FRAME_TYPE_*` constant; any other value reads as false.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn medius_mock_saw(mock: *mut MediusMockBox, ty: MediusFrameType) -> bool {
+pub unsafe extern "C" fn medius_mock_saw(mock: *mut MediusMockBox, ty: u8) -> bool {
     guard(false, || {
         if mock.is_null() {
             return false;
         }
-        match frame_type_to_native(ty) {
+        match frame_type_from_c(ty) {
             Some(ft) => unsafe { (*mock).inner.saw(ft) },
             None => false,
         }

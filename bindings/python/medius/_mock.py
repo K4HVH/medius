@@ -7,11 +7,12 @@ from typing import Optional
 
 from . import _native
 from ._device import Device
-from ._enums import BearingMode, ClockDomain, FrameType, LogLevel
+from ._enums import BearingMode, ClipState, ClockDomain, DeviceKind, EmitMode, FrameType, LogLevel
 from ._types import (
     Bearing,
     Caps,
     _enum,
+    _u16,
     _window_ms,
     CatchState,
     ClipSettings,
@@ -127,7 +128,8 @@ class MockBox:
         )
 
     def set_emit_pace(self, pace: EmitPace):
-        _native.lib.medius_mock_set_emit_pace(self._handle, int(pace.mode), int(pace.hz))
+        mode = _enum(pace.mode, EmitMode, "mode")
+        _native.lib.medius_mock_set_emit_pace(self._handle, int(mode), _u16(pace.hz, "hz"))
 
     def set_clip_status(self, status: ClipStatus):
         """Set the `ClipStatus` the mock answers to `ClipHandle.query_status`."""
@@ -148,6 +150,7 @@ class MockBox:
         _native.lib.medius_mock_push_raw(self._handle, buf, len(data))
 
     def push_log(self, level: LogLevel, text: str):
+        level = _enum(level, LogLevel, "level")
         _native.lib.medius_mock_push_log(self._handle, int(level), text.encode("utf-8"))
 
     def push_motion(self, seq: int, ts_us: int, event: MotionEvent):
@@ -159,6 +162,7 @@ class MockBox:
 
     def push_traffic(self, seq: int, ts_us: int, clock: ClockDomain, event: TrafficEvent):
         """Push a TRAFFIC_EVENT; a `true_len` above the byte count is how a cut capture looks."""
+        clock = _enum(clock, ClockDomain, "clock")
         c = traffic_event_to_c(event)
         _native.lib.medius_mock_push_traffic(self._handle, seq, ts_us, int(clock), ctypes.byref(c))
 
@@ -166,6 +170,7 @@ class MockBox:
         return int(_native.lib.medius_mock_recorded(self._handle))
 
     def saw(self, frame_type: FrameType) -> bool:
+        frame_type = _enum(frame_type, FrameType, "frame_type")
         return bool(_native.lib.medius_mock_saw(self._handle, int(frame_type)))
 
     def clear_recorded(self):

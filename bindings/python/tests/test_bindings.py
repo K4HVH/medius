@@ -37,9 +37,13 @@ from medius import (
     ClockEstimate,
     ControlStatus,
     Edge,
+    LedMode,
+    LedTarget,
     LOCK_SCALE_BLOCK,
     LOCK_SCALE_MAX,
     LOCK_SCALE_PASS,
+    RebootTarget,
+    Timeline,
     TrafficClass,
     Usage,
     Device,
@@ -1149,3 +1153,93 @@ def test_timeline_unwraps_the_rollover_and_maps_onto_the_callers_clock():
             assert t.samples(ClockDomain.HOST_CHIP) == 2
             t.reset(ClockDomain.HOST_CHIP)
             assert t.samples(ClockDomain.HOST_CHIP) == 0
+
+
+def test_every_enum_parameter_is_checked_before_it_reaches_the_boundary():
+    # Each of these used to hand the C ABI a byte it materialized as a `#[repr(u8)]` enum before any
+    # check could run: SIGSEGV where the value fell outside the jump table, and the wrong command on
+    # the wire where it did not. There is no status to read back from a crashed interpreter.
+    with MockBox() as mock, Device.with_mock(mock) as d:
+        with pytest.raises(ValueError):
+            d.led(LedTarget.DEVICE, 77, 5)
+        with pytest.raises(ValueError):
+            d.led(200, LedMode.SOLID, 55)
+        with pytest.raises(ValueError):
+            d.led(LedTarget.DEVICE, LedMode.SOLID, 300)
+        with pytest.raises(ValueError):
+            d.reboot(200)
+        with pytest.raises(ValueError):
+            d.inject(Usage.button(Button.LEFT), 200)
+        with pytest.raises(ValueError):
+            d.set_emit_pace(EmitPace(9, 1000))
+        with pytest.raises(ValueError):
+            d.move_axis(Motion.cursor(1, 2), 9, PendingMotion.KEEP)
+        with pytest.raises(ValueError):
+            d.move_axis(Motion.cursor(1, 2), MoveTiming.RIDE, 9)
+        with pytest.raises(ValueError):
+            d.move_rel(70_000, 0)
+        with pytest.raises(ValueError):
+            Usage.button(200)
+        with pytest.raises(ValueError):
+            Usage.key(300)
+        with pytest.raises(ValueError):
+            Motion.cursor(70_000, 0)
+        # Nothing that raised reached the wire.
+        assert mock.recorded() == 0
+        # and the named values still send what they always did
+        d.led(LedTarget.BOTH, LedMode.BLINK, 128)
+        assert _clip_frames(d, mock, FrameType.LED) == [bytes([2, 3, 128])]
+
+
+def test_clip_enum_parameters_are_checked():
+    with MockBox() as mock, Device.with_mock(mock) as d:
+        clip = d.clip()
+        with pytest.raises(ValueError):
+            clip.unbind(Usage.button(Button.LEFT), 200)
+        with pytest.raises(ValueError):
+            clip.bind(ClipTrigger(Usage.button(Button.LEFT), 200, ClipAction.START))
+        with pytest.raises(ValueError):
+            clip.bind(ClipTrigger(Usage.button(Button.LEFT), Edge.PRESS, 200))
+        with pytest.raises(ValueError):
+            clip.set_autolock([Blanket.AIM, 99])
+        b = ClipBuilder()
+        with pytest.raises(ValueError):
+            b.edge(Usage.button(Button.LEFT), 200)
+        with pytest.raises(ValueError):
+            b.frame(edges=[(Usage.button(Button.LEFT), 200)])
+        with pytest.raises(ValueError):
+            b.move(70_000, 0)
+        b.close()
+        assert _clip_frames(d, mock, FrameType.CLIP_TRIGGER) == []
+        assert _clip_frames(d, mock, FrameType.CLIP_SET) == []
+
+
+def test_mock_and_stream_enum_parameters_are_checked():
+    with MockBox() as mock, Device.with_mock(mock) as d:
+        with pytest.raises(ValueError):
+            mock.push_log(200, "hi")
+        with pytest.raises(ValueError):
+            mock.saw(200)
+        with pytest.raises(ValueError):
+            mock.set_emit_pace(EmitPace(9, 0))
+        with pytest.raises(ValueError):
+            mock.push_traffic(0, 0, 200, TrafficEvent(TrafficClass.HID_IN, 1, Direction.IN, 0, 0, b""))
+        with pytest.raises(ValueError):
+            mock.set_device_info(DeviceInfo(1, 2, 3, 4, False, False, 200, ""))
+        with pytest.raises(ValueError):
+            mock.set_clip_status(
+                ClipStatus(200, free=0, total=0, played=0, ticks=0, underruns=0, overruns=0,
+                           seq_gaps=0, held=[])
+            )
+        with pytest.raises(ValueError):
+            mock.push_usages(0, 0, UsageSnapshot([], 200, Direction.POSITIVE))
+        t = Timeline()
+        with pytest.raises(ValueError):
+            t.reset(200)
+        with pytest.raises(ValueError):
+            t.samples(200)
+        t.close()
+        stream = d.input_events(CatchFilter.all_input())
+        with pytest.raises(ValueError):
+            stream.held(200)
+        stream.close()

@@ -2,7 +2,9 @@
 
 use medius::{ClipBuilder, ClipHandle};
 
-use crate::convert::{clip_settings_to_c, input_to_medius};
+use crate::convert::{
+    action_from_c, clip_action_from_c, clip_settings_to_c, edge_from_c, input_to_medius,
+};
 use crate::ctypes::*;
 use crate::device::MediusDevice;
 use crate::error::{MediusStatus, clear_error, fail, guard, guard_status, record, status_of};
@@ -144,17 +146,23 @@ pub unsafe extern "C" fn medius_clip_builder_force_release(
     builder_edge(b, usage, medius::Action::ForceRelease)
 }
 
-/// A one-edge frame for any usage with an explicit `action`.
+/// A one-edge frame for any usage with an explicit `action`. `action` takes a `MEDIUS_ACTION_*`
+/// constant; any other value is `MEDIUS_STATUS_ERR_INVALID_ARG`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_clip_builder_edge(
     b: *mut MediusClipBuilder,
     usage: MediusUsage,
-    action: MediusAction,
+    action: u8,
 ) -> MediusStatus {
-    builder_edge(b, usage, action.into())
+    let Some(action) = action_from_c(action) else {
+        return fail(MediusStatus::ErrInvalidArg, "invalid clip edge action");
+    };
+    builder_edge(b, usage, action)
 }
 
-/// A general content frame: a motion delta (`dx`/`dy`, `wheel`) plus `n` edges from parallel `inputs`/`actions` arrays.
+/// A general content frame: a motion delta (`dx`/`dy`, `wheel`) plus `n` edges from parallel
+/// `inputs`/`actions` arrays. Each `actions` entry takes a `MEDIUS_ACTION_*` constant; any other
+/// value is `MEDIUS_STATUS_ERR_INVALID_ARG`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_clip_builder_frame(
     b: *mut MediusClipBuilder,
@@ -162,7 +170,7 @@ pub unsafe extern "C" fn medius_clip_builder_frame(
     dy: i16,
     wheel: i16,
     inputs: *const MediusUsage,
-    actions: *const MediusAction,
+    actions: *const u8,
     n: usize,
 ) -> MediusStatus {
     guard_status(|| {
@@ -186,11 +194,8 @@ pub unsafe extern "C" fn medius_clip_builder_frame(
             let Some(input) = input_to_medius(unsafe { *inputs.add(i) }) else {
                 return fail(MediusStatus::ErrInvalidArg, "invalid clip edge input");
             };
-            let action = match unsafe { *(actions.add(i) as *const u8) } {
-                0 => medius::Action::SoftRelease,
-                1 => medius::Action::Press,
-                2 => medius::Action::ForceRelease,
-                _ => return fail(MediusStatus::ErrInvalidArg, "invalid clip edge action"),
+            let Some(action) = action_from_c(unsafe { *actions.add(i) }) else {
+                return fail(MediusStatus::ErrInvalidArg, "invalid clip edge action");
             };
             es.push((input, action));
         }
@@ -242,29 +247,13 @@ pub unsafe extern "C" fn medius_clip_append(
     })
 }
 
-fn edge_to_medius(e: MediusEdge) -> medius::Edge {
-    match e {
-        MediusEdge::Both => medius::Edge::Both,
-        MediusEdge::Press => medius::Edge::Press,
-        MediusEdge::Release => medius::Edge::Release,
-    }
-}
-fn action_to_medius(a: MediusClipAction) -> medius::ClipAction {
-    match a {
-        MediusClipAction::Start => medius::ClipAction::Start,
-        MediusClipAction::Stop => medius::ClipAction::Stop,
-        MediusClipAction::Pause => medius::ClipAction::Pause,
-        MediusClipAction::Resume => medius::ClipAction::Resume,
-        MediusClipAction::Restart => medius::ClipAction::Restart,
-        MediusClipAction::Toggle => medius::ClipAction::Toggle,
-    }
-}
-
-/// Set the autolock scope: the input groups `scope` points at (NULL / 0 = none). Set before the first append.
+/// Set the autolock scope: the input groups `scope` points at (NULL / 0 = none). Set before the first
+/// append. Each entry takes a `MEDIUS_BLANKET_*` constant; any other value is
+/// `MEDIUS_STATUS_ERR_INVALID_ARG`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_clip_set_autolock(
     clip: *mut MediusClip,
-    scope: *const MediusBlanket,
+    scope: *const u8,
     scope_len: usize,
 ) -> MediusStatus {
     guard_status(|| {
@@ -273,11 +262,8 @@ pub unsafe extern "C" fn medius_clip_set_autolock(
         }
         let mut groups: Vec<medius::Blanket> = Vec::new();
         if !scope.is_null() {
-            // Read the array as bytes. The header types it as MediusBlanket, so loading an element
-            // as one would materialize whatever the caller wrote as an enum value.
-            let bytes = scope as *const u8;
             for i in 0..scope_len {
-                let Some(b) = crate::convert::blanket_from_c(unsafe { *bytes.add(i) }) else {
+                let Some(b) = crate::convert::blanket_from_c(unsafe { *scope.add(i) }) else {
                     return fail(MediusStatus::ErrInvalidArg, "invalid blanket group");
                 };
                 groups.push(b);
@@ -305,35 +291,45 @@ pub unsafe extern "C" fn medius_clip_set_ride(clip: *mut MediusClip, on: u8) -> 
     with_clip(clip, |c| c.set_ride(on != 0))
 }
 
-/// Add or overwrite a trigger binding.
+/// Add or overwrite a trigger binding. `trigger.edge` takes a `MEDIUS_EDGE_*` constant and
+/// `trigger.action` a `MEDIUS_CLIP_ACTION_*` one; any other value is
+/// `MEDIUS_STATUS_ERR_INVALID_ARG`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_clip_bind(
     clip: *mut MediusClip,
     trigger: MediusClipTrigger,
 ) -> MediusStatus {
-    let Some(on) = input_to_medius(trigger.on) else {
-        return fail(MediusStatus::ErrInvalidArg, "invalid clip trigger usage");
+    let (Some(on), Some(edge), Some(action)) = (
+        input_to_medius(trigger.on),
+        edge_from_c(trigger.edge),
+        clip_action_from_c(trigger.action),
+    ) else {
+        return fail(MediusStatus::ErrInvalidArg, "invalid clip trigger");
     };
     let t = medius::ClipTrigger {
         on,
-        edge: edge_to_medius(trigger.edge),
-        action: action_to_medius(trigger.action),
+        edge,
+        action,
         consume: trigger.consume != 0,
     };
     with_clip(clip, |c| c.bind(t))
 }
 
-/// Remove the trigger binding on `usage`'s `edge`.
+/// Remove the trigger binding on `usage`'s `edge`. `edge` takes a `MEDIUS_EDGE_*` constant; any other
+/// value is `MEDIUS_STATUS_ERR_INVALID_ARG`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_clip_unbind(
     clip: *mut MediusClip,
     usage: MediusUsage,
-    edge: MediusEdge,
+    edge: u8,
 ) -> MediusStatus {
-    let Some(u) = input_to_medius(usage) else {
-        return fail(MediusStatus::ErrInvalidArg, "invalid clip trigger usage");
+    let (Some(u), Some(edge)) = (input_to_medius(usage), edge_from_c(edge)) else {
+        return fail(
+            MediusStatus::ErrInvalidArg,
+            "invalid clip trigger usage or edge",
+        );
     };
-    with_clip(clip, |c| c.unbind(u, edge_to_medius(edge)))
+    with_clip(clip, |c| c.unbind(u, edge))
 }
 
 /// Remove every trigger binding.

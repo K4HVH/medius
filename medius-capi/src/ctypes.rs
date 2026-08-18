@@ -298,7 +298,8 @@ pub enum MediusLockTargetKind {
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MediusUsage {
-    pub kind: MediusClass,
+    /// A `MEDIUS_CLASS_*` value.
+    pub kind: u8,
     pub id: u16,
 }
 
@@ -328,8 +329,10 @@ pub enum MediusClipAction {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MediusClipTrigger {
     pub on: MediusUsage,
-    pub edge: MediusEdge,
-    pub action: MediusClipAction,
+    /// A `MEDIUS_EDGE_*` value.
+    pub edge: u8,
+    /// A `MEDIUS_CLIP_ACTION_*` value.
+    pub action: u8,
     pub consume: u8,
 }
 
@@ -337,7 +340,8 @@ pub struct MediusClipTrigger {
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MediusMotion {
-    pub kind: MediusMotionKind,
+    /// A `MEDIUS_MOTION_KIND_*` value.
+    pub kind: u8,
     pub dx: i16,
     pub dy: i16,
     pub wheel: i16,
@@ -347,7 +351,8 @@ pub struct MediusMotion {
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MediusLockTarget {
-    pub kind: MediusLockTargetKind,
+    /// A `MEDIUS_LOCK_TARGET_KIND_*` value.
+    pub kind: u8,
     pub usage: MediusUsage,
 }
 
@@ -429,7 +434,8 @@ pub struct MediusDeviceInfo {
     pub bcd_usb: u16,
     pub has_serial: u8,
     pub has_bos: u8,
-    pub kind: MediusDeviceKind,
+    /// A `MEDIUS_DEVICE_KIND_*` value.
+    pub kind: u8,
     pub product: [c_char; MEDIUS_MAX_PRODUCT],
 }
 
@@ -464,6 +470,9 @@ pub struct MediusLockEntry {
     pub target: MediusLockTarget,
     pub is_blanket: bool,
     /// A `MEDIUS_DIRECTION_*` value: which direction of the target this entry weighs.
+    /// A byte rather than `MediusDirection`, so the boundary can validate it before anything reads it
+    /// as one; C++ renders the enum as `enum : uint8_t`, so assigning this to a `MediusDirection`
+    /// there needs a cast.
     pub direction: u8,
     /// Percent of the physical value kept: 0 blocks, 100 passes, above 100 amplifies. A momentary
     /// usage carries one bit, so the box stores the block or pass it renders and one never reports a
@@ -501,6 +510,9 @@ pub struct MediusCatchFilter {
     /// A `MEDIUS_DIRECTION_*` value: the press/release edge on the momentary classes, the sign of
     /// the delta on axes, and IN (`Positive`) / OUT (`Negative`) on the traffic classes. A byte no
     /// constant names is refused at subscribe time.
+    /// A byte rather than `MediusDirection`, so the boundary can validate it before anything reads it
+    /// as one; C++ renders the enum as `enum : uint8_t`, so assigning this to a `MediusDirection`
+    /// there needs a cast.
     pub direction: u8,
     /// Bytes kept per event; 0 keeps the whole packet. Traffic classes only -- an input class carries
     /// no packet, and naming one with a non-zero capture is refused at subscribe time.
@@ -587,7 +599,8 @@ pub enum MediusClipState {
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MediusClipStatus {
-    pub state: MediusClipState,
+    /// A `MEDIUS_CLIP_STATE_*` value.
+    pub state: u8,
     pub free: u32,
     /// The retained clip size in bytes (streaming: buffered-but-undrained bytes).
     pub total: u32,
@@ -670,10 +683,13 @@ pub struct MediusUsageEvent {
     /// Which class this snapshot is of, one of `MEDIUS_CLASS_*`. Carried here rather than read off
     /// the first entry, because the snapshot that most needs it is the one with `n == 0`: releasing
     /// the last held usage is the edge a caller waits for, and it lists nothing to read a class from.
-    pub class: MediusClass,
+    pub class: u8,
     /// A `MEDIUS_DIRECTION_*` value: the edge that produced this snapshot, the subscribed set having
     /// grown (`Positive`) or shrunk (`Negative`). Without it a direction on an input filter cannot be
     /// honoured at all.
+    /// A byte rather than `MediusDirection`, so the boundary can validate it before anything reads it
+    /// as one; C++ renders the enum as `enum : uint8_t`, so assigning this to a `MediusDirection`
+    /// there needs a cast.
     pub direction: u8,
     pub n: u16,
     pub usages: [MediusUsage; MEDIUS_MAX_USAGES],
@@ -689,6 +705,9 @@ pub struct MediusTrafficEvent {
     /// Endpoint address, interface number, or endpoint number, per the class.
     pub id: u16,
     /// A `MEDIUS_DIRECTION_*` value: `Positive` is IN (device to PC), `Negative` is OUT.
+    /// A byte rather than `MediusDirection`, so the boundary can validate it before anything reads it
+    /// as one; C++ renders the enum as `enum : uint8_t`, so assigning this to a `MediusDirection`
+    /// there needs a cast.
     pub direction: u8,
     /// Class-specific; read it with `medius_traffic_event_control_status` or `..._bus_event`.
     pub flags: u8,

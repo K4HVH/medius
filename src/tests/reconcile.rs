@@ -229,3 +229,109 @@ fn a_key_blanket_is_its_own_row() {
         vec![((LOCK_CLS_KEY, LOCK_ID_ALL, LOCK_DIR_POS), LOCK_SCALE_BLOCK)]
     );
 }
+
+// The box keeps granular media locks in a fixed 8-slot array filled first-free-slot-first
+// (input_core.c media_set, INPUT_MEDIA_MAX = 8), so what a replay has to reproduce is the order they
+// were taken in, not their ids.
+use crate::protocol::opcode::LOCK_CLS_MEDIA;
+
+fn media_ids(d: &DesiredState) -> Vec<u16> {
+    d.held_locks()
+        .iter()
+        .filter(|&&((class, _, _), _)| class == LOCK_CLS_MEDIA)
+        .map(|&((_, id, _), _)| id)
+        .collect()
+}
+
+#[test]
+fn media_locks_replay_in_the_order_they_were_taken() {
+    let mut d = DesiredState::default();
+    // Nine usages in an order id-sorting would not produce: MUTE, VOL_UP, VOL_DOWN come back in that
+    // order only if the take order is what is remembered.
+    let taken = [0x223u16, 0x30, 0xB5, 0xE9, 0xB6, 0xCD, 0xE2, 0xB7, 0xEA];
+    for id in taken {
+        d.apply_lock((LOCK_CLS_MEDIA, id, LOCK_DIR_BOTH), LOCK_SCALE_BLOCK);
+    }
+    // Past the box's eight slots the ninth taken is what falls off, here and on the box alike; by id
+    // the ninth would be 0x223 and the box would still be dropping 0xEA.
+    assert_eq!(media_ids(&d), taken);
+}
+
+#[test]
+fn a_released_media_lock_leaves_the_order_of_the_rest() {
+    let mut d = DesiredState::default();
+    for id in [0xEAu16, 0xE9, 0x30] {
+        d.apply_lock((LOCK_CLS_MEDIA, id, LOCK_DIR_BOTH), LOCK_SCALE_BLOCK);
+    }
+    d.apply_lock((LOCK_CLS_MEDIA, 0xE9, LOCK_DIR_BOTH), LOCK_SCALE_PASS);
+    d.apply_lock((LOCK_CLS_MEDIA, 0xB5, LOCK_DIR_BOTH), LOCK_SCALE_BLOCK);
+    assert_eq!(media_ids(&d), vec![0xEA, 0x30, 0xB5]);
+    // Re-taking one already held keeps its place rather than moving it to the end.
+    d.apply_lock((LOCK_CLS_MEDIA, 0xEA, LOCK_DIR_BOTH), LOCK_SCALE_BLOCK);
+    assert_eq!(media_ids(&d), vec![0xEA, 0x30, 0xB5]);
+}
+
+#[test]
+fn a_media_blanket_does_not_take_a_slot() {
+    // The blanket is its own flag on the box (lock_all_media), not an entry in the slot array.
+    let mut d = DesiredState::default();
+    d.apply_lock((LOCK_CLS_MEDIA, 0xEA, LOCK_DIR_BOTH), LOCK_SCALE_BLOCK);
+    d.apply_lock(
+        (LOCK_CLS_MEDIA, LOCK_ID_ALL, LOCK_DIR_BOTH),
+        LOCK_SCALE_BLOCK,
+    );
+    d.apply_lock((LOCK_CLS_MEDIA, 0x30, LOCK_DIR_BOTH), LOCK_SCALE_BLOCK);
+    assert_eq!(media_ids(&d), vec![0xEA, 0x30, LOCK_ID_ALL]);
+}
+
+#[test]
+fn every_other_class_still_replays_in_id_order() {
+    let mut d = DesiredState::default();
+    for id in [3u16, 0, 1] {
+        d.apply_lock((LOCK_CLS_BTN, id, LOCK_DIR_POS), LOCK_SCALE_BLOCK);
+    }
+    assert_eq!(
+        d.held_locks()
+            .iter()
+            .map(|&((_, id, _), _)| id)
+            .collect::<Vec<_>>(),
+        vec![0, 1, 3]
+    );
+}
+
+#[test]
+fn an_undone_apply_leaves_the_state_exactly_as_it_was() {
+    let mut d = DesiredState::default();
+    d.apply_lock((X.0, X.1, LOCK_DIR_BOTH), 40);
+    d.apply_lock((LOCK_CLS_MEDIA, 0xEA, LOCK_DIR_BOTH), LOCK_SCALE_BLOCK);
+    let before = (d.held_locks(), d.is_idle());
+
+    let undo = d.apply_lock((X.0, X.1, LOCK_DIR_AGAINST), LOCK_SCALE_BLOCK);
+    d.restore_lock(undo);
+    assert_eq!((d.held_locks(), d.is_idle()), before);
+
+    // Including the case that took a fresh row: undoing it must leave nothing behind, blanket
+    // expansion and media order alike.
+    let undo = d.apply_lock((LOCK_CLS_BTN, LOCK_ID_ALL, LOCK_DIR_BOTH), LOCK_SCALE_BLOCK);
+    d.restore_lock(undo);
+    let undo = d.apply_lock((LOCK_CLS_MEDIA, 0x30, LOCK_DIR_BOTH), LOCK_SCALE_BLOCK);
+    d.restore_lock(undo);
+    assert_eq!((d.held_locks(), d.is_idle()), before);
+
+    // And the case that cleared a row: undoing an unlock puts the lock back.
+    let undo = d.apply_lock((X.0, X.1, LOCK_DIR_BOTH), LOCK_SCALE_PASS);
+    d.restore_lock(undo);
+    assert_eq!((d.held_locks(), d.is_idle()), before);
+}
+
+#[test]
+fn a_row_of_another_class_never_disturbs_the_media_order() {
+    // The classes share an id space: media usage 3 and button 3 are different rows, and releasing
+    // one must not move the other in the replay.
+    let mut d = DesiredState::default();
+    d.apply_lock((LOCK_CLS_MEDIA, 3, LOCK_DIR_BOTH), LOCK_SCALE_BLOCK);
+    d.apply_lock((LOCK_CLS_MEDIA, 0xEA, LOCK_DIR_BOTH), LOCK_SCALE_BLOCK);
+    d.apply_lock((LOCK_CLS_BTN, 3, LOCK_DIR_POS), LOCK_SCALE_BLOCK);
+    d.apply_lock((LOCK_CLS_BTN, 3, LOCK_DIR_POS), LOCK_SCALE_PASS);
+    assert_eq!(media_ids(&d), vec![3, 0xEA]);
+}
