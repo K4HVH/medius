@@ -60,7 +60,7 @@ impl Device {
     /// # use medius::{Axis, Device, Direction, Result};
     /// # fn main() -> Result<()> {
     /// let device = Device::find()?;
-    /// device.scale(Axis::X, Direction::Against, 40)?;   // 40% of physical opposing the aim
+    /// device.scale(Axis::X, Direction::Against, 40)?;   // 40% of physical motion opposing the injection
     /// device.scale(Axis::X, Direction::With, 130)?;     // 130% of physical helping it
     /// # Ok(()) }
     /// ```
@@ -105,7 +105,7 @@ impl Device {
         self.scale(axis, direction, scale)
     }
 
-    /// `LOCK` a whole [`Blanket`] group (the aim, the wheel, or every button / key / media usage).
+    /// `LOCK` a whole [`Blanket`] group (X and Y, the wheel, or every button / key / media usage).
     ///
     /// [`Blanket::Keys`] honours the direction: `Positive` blocks press edges only, `Negative`
     /// release edges only.
