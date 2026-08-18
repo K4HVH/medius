@@ -25,6 +25,7 @@ class Status(IntEnum):
     ERR_WILDCARD_NOT_INPUT = 16
     ERR_HALF_EDGE_INPUT_FILTER = 17
     ERR_RESERVED_ID = 18
+    ERR_RELATIVE_DIRECTION = 19
 
 
 class DeviceKind(IntEnum):
@@ -156,7 +157,10 @@ class BearingMode(IntEnum):
 
     #: Each axis compares its own sign against its own bearing, independently.
     PER_AXIS = 0
-    #: The aim is projected onto the injected XY vector; motion across it passes untouched.
+    #: The aim is projected onto the injected XY vector; motion across it passes untouched. One
+    #: relative scale governs the whole aim, the lower of X's and Y's, and that is what reads back.
+    #: Each axis's absolute scale then applies to what the projection left, not to the sign the hand
+    #: moved: it is a statement about what reaches the PC.
     VECTOR = 1
 
 

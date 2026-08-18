@@ -34,6 +34,42 @@ from ._enums import (
 )
 
 
+# Scalar checks for the parameters that reach ctypes. ctypes truncates silently, so an unchecked
+# 300 becomes 44 and an unchecked -1 becomes 255. The lock, bearing and catch-filter surfaces use
+# these; `led`, `move_rel`, `inject` and the clip verbs still pass theirs straight through.
+def _enum(value, kind, what):
+    """`value` as `kind`, or ValueError: the library would read a stray byte as whichever member its
+    low bits happen to name."""
+    try:
+        return kind(value)
+    except ValueError:
+        raise ValueError(f"{what} must be a {kind.__name__}, got {value!r}") from None
+
+
+def _u8(value, what):
+    v = int(value)
+    if not 0 <= v <= 0xFF:
+        raise ValueError(f"{what} must be 0..255, got {value!r}")
+    return v
+
+
+def _u16(value, what):
+    v = int(value)
+    if not 0 <= v <= 0xFFFF:
+        raise ValueError(f"{what} must be 0..65535, got {value!r}")
+    return v
+
+
+def _window_ms(window_ms):
+    """A window in whole ms for the wire `u16`: `None` = 0 (off), saturating like the Rust API."""
+    if window_ms is None:
+        return 0
+    v = int(window_ms)
+    if v < 0:
+        raise ValueError(f"window_ms must not be negative, got {window_ms!r}")
+    return min(v, 0xFFFF)
+
+
 def _as_usage(usage) -> "Usage":
     """A `Usage`, a `Button` / `Key` / `MediaKey`, or a raw ctypes usage, as a `Usage`.
 
@@ -169,6 +205,9 @@ class LockEntry:
     `scale` is a percent of the physical value: 0 blocks, 100 passes untouched, above 100 amplifies.
     A momentary usage carries one bit, so the box stores the block or pass it renders and one never
     reports a value in between.
+
+    It is the figure the box applies, not the byte it was sent: in `BearingMode.VECTOR` one relative
+    scale governs the whole aim, the lower of X's and Y's, and both relative entries carry it.
     """
 
     target: "LockTarget"
@@ -192,7 +231,9 @@ class Locks:
         """
         c = locks_to_c(self)
         return bool(
-            _native.lib.medius_locks_is_locked(ctypes.byref(c), target._c, int(direction))
+            _native.lib.medius_locks_is_locked(
+                ctypes.byref(c), target._c, int(_enum(direction, Direction, "direction"))
+            )
         )
 
     def scale_of(self, target: "LockTarget", direction) -> int:
@@ -201,7 +242,9 @@ class Locks:
         """
         c = locks_to_c(self)
         return int(
-            _native.lib.medius_locks_scale_of(ctypes.byref(c), target._c, int(direction))
+            _native.lib.medius_locks_scale_of(
+                ctypes.byref(c), target._c, int(_enum(direction, Direction, "direction"))
+            )
         )
 
 
@@ -632,12 +675,16 @@ class CatchFilter:
     @classmethod
     def watch_axis(cls, axis: Axis) -> "CatchFilter":
         """One relative axis."""
-        return cls(_native.lib.medius_catch_filter_watch_axis(int(axis)))
+        return cls(_native.lib.medius_catch_filter_watch_axis(int(_enum(axis, Axis, "axis"))))
 
     @classmethod
     def watch_class(cls, input_class: Class) -> "CatchFilter":
         """Every usage in one momentary class."""
-        return cls(_native.lib.medius_catch_filter_watch_class(int(input_class)))
+        return cls(
+            _native.lib.medius_catch_filter_watch_class(
+                int(_enum(input_class, Class, "input_class"))
+            )
+        )
 
     @classmethod
     def watch_axes(cls) -> "CatchFilter":
@@ -654,12 +701,20 @@ class CatchFilter:
     @classmethod
     def traffic(cls, traffic_class: TrafficClass, id: int) -> "CatchFilter":
         """One traffic address: an endpoint, an interface, or a control endpoint number."""
-        return cls(_native.lib.medius_catch_filter_traffic(int(traffic_class), int(id)))
+        return cls(
+            _native.lib.medius_catch_filter_traffic(
+                int(_enum(traffic_class, TrafficClass, "traffic_class")), _u16(id, "id")
+            )
+        )
 
     @classmethod
     def traffic_class(cls, traffic_class: TrafficClass) -> "CatchFilter":
         """Every id within one traffic class."""
-        return cls(_native.lib.medius_catch_filter_traffic_class(int(traffic_class)))
+        return cls(
+            _native.lib.medius_catch_filter_traffic_class(
+                int(_enum(traffic_class, TrafficClass, "traffic_class"))
+            )
+        )
 
     @classmethod
     def everything(cls) -> "CatchFilter":
@@ -673,12 +728,16 @@ class CatchFilter:
     def with_direction(self, direction: Direction) -> "CatchFilter":
         """A copy restricted to one direction, sign or edge."""
         return CatchFilter(
-            _native.lib.medius_catch_filter_with_direction(self._c, int(direction))
+            _native.lib.medius_catch_filter_with_direction(
+                self._c, int(_enum(direction, Direction, "direction"))
+            )
         )
 
     def with_capture(self, n: int) -> "CatchFilter":
         """A copy keeping only the first `n` bytes of each packet; 0 keeps the whole packet."""
-        return CatchFilter(_native.lib.medius_catch_filter_with_capture(self._c, int(n)))
+        return CatchFilter(
+            _native.lib.medius_catch_filter_with_capture(self._c, _u8(n, "capture"))
+        )
 
     def on_press(self) -> "CatchFilter":
         """A copy restricted to the press edge."""
@@ -1167,8 +1226,8 @@ def locks_to_c(locks) -> "_native.MediusLocks":
         c.entries[i] = _native.MediusLockEntry(
             target=e.target._c,
             is_blanket=bool(e.is_blanket),
-            direction=int(e.direction),
-            scale=int(e.scale),
+            direction=int(_enum(e.direction, Direction, f"entries[{i}].direction")),
+            scale=_u8(e.scale, f"entries[{i}].scale"),
         )
     return c
 
