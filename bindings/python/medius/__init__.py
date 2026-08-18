@@ -8,7 +8,12 @@ from . import _native
 from ._enums import (
     Axis,
     Action,
+    BEARING_WINDOW_DEFAULT_MS,
+    BearingMode,
     Blanket,
+    LOCK_SCALE_BLOCK,
+    LOCK_SCALE_MAX,
+    LOCK_SCALE_PASS,
     BusEventKind,
     Button,
     CatchClass,
@@ -62,6 +67,7 @@ from ._clip import ClipBuilder, ClipHandle
 from ._streams import EventStream, InputStream, LogStream, Timeline
 from ._mock import MockBox
 from ._types import (
+    Bearing,
     BoxInfo,
     BusEvent,
     Caps,
@@ -157,7 +163,12 @@ def flash(port: str, bin_path: str, host: bool = False) -> None:
 
 __all__ = [
     "Action",
+    "BEARING_WINDOW_DEFAULT_MS",
+    "BearingMode",
     "Blanket",
+    "LOCK_SCALE_BLOCK",
+    "LOCK_SCALE_MAX",
+    "LOCK_SCALE_PASS",
     "BusEventKind",
     "Button",
     "CatchClass",
@@ -220,6 +231,7 @@ __all__ = [
     "ReservedIdError",
     "CatchFilter",
     "CatchState",
+    "Bearing",
     "ClipSettings",
     "ClipStatus",
     "ClipTrigger",

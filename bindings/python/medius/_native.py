@@ -178,8 +178,8 @@ class MediusLockEntry(ctypes.Structure):
     _fields_ = [
         ("target", MediusLockTarget),
         ("is_blanket", c_bool),
-        ("positive", c_bool),
-        ("negative", c_bool),
+        ("direction", u8),
+        ("scale", u8),
     ]
 
 
@@ -211,6 +211,10 @@ class MediusCatchState(ctypes.Structure):
 
 class MediusImperfectStatus(ctypes.Structure):
     _fields_ = [("allowed", u8), ("over_capacity", u8), ("clone_imperfect", u8)]
+
+
+class MediusBearing(ctypes.Structure):
+    _fields_ = [("window_ms", u16), ("mode", u8)]
 
 
 class MediusEmitPaceStatus(ctypes.Structure):
@@ -377,6 +381,8 @@ _decl("medius_device_lock", i32, [HANDLE, MediusLockTarget, u8])
 _decl("medius_device_unlock", i32, [HANDLE, MediusLockTarget, u8])
 _decl("medius_device_lock_all", i32, [HANDLE, u8, u8])
 _decl("medius_device_unlock_all", i32, [HANDLE, u8, u8])
+_decl("medius_device_scale", i32, [HANDLE, MediusLockTarget, u8, u8])
+_decl("medius_device_scale_all", i32, [HANDLE, u8, u8, u8])
 _decl("medius_device_led", i32, [HANDLE, u8, u8, u8])
 _decl("medius_device_reset", i32, [HANDLE])
 _decl("medius_device_reapply", i32, [HANDLE])
@@ -384,6 +390,7 @@ _decl("medius_device_reconnect", i32, [HANDLE])
 _decl("medius_device_reboot", i32, [HANDLE, u8])
 _decl("medius_device_allow_imperfect_clones", i32, [HANDLE, c_bool])
 _decl("medius_device_set_movement_riding", i32, [HANDLE, c_bool, u32])
+_decl("medius_device_set_bearing", i32, [HANDLE, u16, u8])
 _decl("medius_device_set_emit_pace", i32, [HANDLE, u8, u16])
 _decl("medius_device_set_name", i32, [HANDLE, ctypes.c_char_p])
 _decl("medius_device_clear_name", i32, [HANDLE])
@@ -395,6 +402,7 @@ _decl("medius_device_caps", i32, [HANDLE, ctypes.POINTER(MediusCaps)])
 _decl("medius_device_query_rate", i32, [HANDLE, ctypes.POINTER(MediusRate)])
 _decl("medius_device_query_stats", i32, [HANDLE, ctypes.POINTER(MediusStats)])
 _decl("medius_device_query_locks", i32, [HANDLE, ctypes.POINTER(MediusLocks)])
+_decl("medius_device_query_bearing", i32, [HANDLE, ctypes.POINTER(MediusBearing)])
 _decl("medius_device_query_catch", i32, [HANDLE, ctypes.POINTER(MediusCatchState)])
 _decl("medius_device_query_imperfect", i32, [HANDLE, ctypes.POINTER(MediusImperfectStatus)])
 _decl(
@@ -420,6 +428,7 @@ _decl("medius_motion_wheel", MediusMotion, [i16])
 _decl("medius_lock_target_axis", MediusLockTarget, [u8])
 _decl("medius_lock_target_usage", MediusLockTarget, [MediusUsage])
 _decl("medius_locks_is_locked", c_bool, [ctypes.POINTER(MediusLocks), MediusLockTarget, u8])
+_decl("medius_locks_scale_of", u8, [ctypes.POINTER(MediusLocks), MediusLockTarget, u8])
 _decl("medius_rate_native_hz", c_bool, [MediusRate, ctypes.POINTER(ctypes.c_float)])
 _decl("medius_usage_event_is_held", c_bool, [ctypes.POINTER(MediusUsageEvent), MediusUsage])
 _decl("medius_catch_filter_watch", MediusCatchFilter, [MediusUsage])

@@ -12,6 +12,7 @@ import medius
 from medius import (
     Axis,
     BadProtoVerError,
+    BearingMode,
     BusEventKind,
     Button,
     Caps,
@@ -34,6 +35,9 @@ from medius import (
     ClockEstimate,
     ControlStatus,
     Edge,
+    LOCK_SCALE_BLOCK,
+    LOCK_SCALE_MAX,
+    LOCK_SCALE_PASS,
     TrafficClass,
     Usage,
     Device,
@@ -193,12 +197,62 @@ def test_rate_roundtrip_and_native_hz():
 def test_locks_roundtrip_and_is_locked():
     x = LockTarget.x()
     with MockBox() as mock:
-        mock.set_locks(Locks([LockEntry(x, is_blanket=False, positive=True, negative=True)]))
+        mock.set_locks(
+            Locks(
+                [
+                    LockEntry(x, is_blanket=False, direction=Direction.POSITIVE, scale=0),
+                    LockEntry(x, is_blanket=False, direction=Direction.NEGATIVE, scale=0),
+                ]
+            )
+        )
         with Device.with_mock(mock) as d:
             locks = d.query_locks()
-    assert len(locks.entries) == 1
+    assert len(locks.entries) == 2
     assert locks.is_locked(x, Direction.BOTH)
     assert not locks.is_locked(LockTarget.y(), Direction.BOTH)
+
+
+def test_locks_carry_a_scale_not_just_a_lock():
+    x = LockTarget.x()
+    with MockBox() as mock:
+        mock.set_locks(
+            Locks(
+                [
+                    LockEntry(x, is_blanket=False, direction=Direction.AGAINST, scale=40),
+                    LockEntry(x, is_blanket=False, direction=Direction.WITH, scale=130),
+                ]
+            )
+        )
+        with Device.with_mock(mock) as d:
+            locks = d.query_locks()
+    assert locks.scale_of(x, Direction.AGAINST) == 40
+    assert locks.scale_of(x, Direction.WITH) == 130
+    # A direction nothing covers passes untouched, and a weighed one is not a locked one.
+    assert locks.scale_of(x, Direction.POSITIVE) == LOCK_SCALE_PASS
+    assert not locks.is_locked(x, Direction.AGAINST)
+    assert not locks.entries[0].is_block
+
+
+def test_scale_and_bearing_reach_the_device():
+    x = LockTarget.x()
+    with MockBox() as mock, Device.with_mock(mock) as d:
+        d.scale(x, Direction.AGAINST, 40)
+        d.scale_all(Blanket.AIM, Direction.WITH, 130)
+        d.lock(x, Direction.POSITIVE)
+        d.unlock(x, Direction.POSITIVE)
+        d.set_bearing(20, BearingMode.VECTOR)
+        d.set_bearing(None)
+        bearing = d.query_bearing()
+    # The mock answers the default, which is what the box boots holding.
+    assert bearing.mode == BearingMode.PER_AXIS
+
+
+def test_relative_directions_report_themselves():
+    assert Direction.WITH.is_relative and Direction.AGAINST.is_relative
+    assert not Direction.BOTH.is_relative
+    assert not Direction.POSITIVE.is_relative and not Direction.NEGATIVE.is_relative
+    assert (int(Direction.WITH), int(Direction.AGAINST)) == (3, 4)
+    assert (LOCK_SCALE_BLOCK, LOCK_SCALE_PASS, LOCK_SCALE_MAX) == (0, 100, 255)
 
 
 def test_health_roundtrip():
