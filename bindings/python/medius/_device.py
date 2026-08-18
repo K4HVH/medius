@@ -6,12 +6,13 @@ import ctypes
 from typing import Optional, Sequence, Union
 
 from . import _native
-from ._enums import (Action, Blanket, LedMode, LedTarget, Direction, MoveTiming, PendingMotion,
-                     RebootTarget, Status)
+from ._enums import (Action, BearingMode, Blanket, LedMode, LedTarget, Direction, MoveTiming,
+                     PendingMotion, RebootTarget, Status)
 from ._errors import InvalidArgError, MediusError, check
 from ._clip import ClipHandle
 from ._streams import EventStream, InputStream, LogStream
 from ._types import (
+    Bearing,
     Caps,
     CatchFilter,
     CatchState,
@@ -28,6 +29,7 @@ from ._types import (
     Rate,
     Stats,
     Version,
+    bearing_from_c,
     caps_from_c,
     catch_state_from_c,
     counters_from_c,
@@ -156,6 +158,31 @@ class Device:
     def unlock(self, target: LockTarget, direction: Direction):
         check(_native.lib.medius_device_unlock(self._handle, target._c, int(direction)))
 
+    def scale(self, target: LockTarget, direction: Direction, scale: int):
+        """Weigh physical input on a target and direction.
+
+        `scale` is the percent of the physical value the box keeps: 0 blocks, 100 passes it
+        untouched, above that amplifies to 255 (2.55x). `lock` and `unlock` are its two ends.
+
+        A delta picks up at most two scales, its absolute direction's and its relative direction's,
+        and they multiply, so a block anywhere wins. `Direction.WITH` and `Direction.AGAINST` need a
+        live bearing (see `set_bearing`). A momentary usage carries one bit, so any scale below a
+        full pass locks it and there is nothing in between.
+        """
+        check(
+            _native.lib.medius_device_scale(
+                self._handle, target._c, int(direction), int(scale)
+            )
+        )
+
+    def scale_all(self, what: Blanket, direction: Direction, scale: int):
+        """Weigh a whole class blanket; see `scale` for what the number means."""
+        check(
+            _native.lib.medius_device_scale_all(
+                self._handle, int(what), int(direction), int(scale)
+            )
+        )
+
     def lock_all(self, what: Blanket, direction: Direction):
         check(_native.lib.medius_device_lock_all(self._handle, int(what), int(direction)))
 
@@ -186,6 +213,18 @@ class Device:
         check(
             _native.lib.medius_device_set_movement_riding(
                 self._handle, enabled, int(window_ms) if enabled else 0
+            )
+        )
+
+    def set_bearing(self, window_ms: Optional[int], mode: BearingMode = BearingMode.PER_AXIS):
+        """Set what `Direction.WITH` and `Direction.AGAINST` are measured against.
+
+        `window_ms` is how long the last injected delta's direction stays the bearing; `None` turns
+        it off, leaving the relative directions inert whatever their scale.
+        """
+        check(
+            _native.lib.medius_device_set_bearing(
+                self._handle, int(window_ms) if window_ms else 0, int(mode)
             )
         )
 
@@ -235,6 +274,12 @@ class Device:
         out = _native.MediusLocks()
         check(_native.lib.medius_device_query_locks(self._handle, ctypes.byref(out)))
         return locks_from_c(out)
+
+    def query_bearing(self) -> Bearing:
+        """The configured bearing: its window and how it is read."""
+        out = _native.MediusBearing()
+        check(_native.lib.medius_device_query_bearing(self._handle, ctypes.byref(out)))
+        return bearing_from_c(out)
 
     def query_catch(self) -> CatchState:
         out = _native.MediusCatchState()

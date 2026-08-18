@@ -9,6 +9,7 @@ from typing import List, Optional, Union
 from . import _native
 from ._enums import (
     Axis,
+    BearingMode,
     Blanket,
     BusEventKind,
     CatchClass,
@@ -162,12 +163,21 @@ class Stats:
 
 @dataclass
 class LockEntry:
-    """One active lock: what is locked and which edges."""
+    """One weighed direction: what it addresses, which way, and how much of it survives.
+
+    `scale` is a percent of the physical value: 0 blocks, 100 passes untouched, above 100 amplifies.
+    A momentary usage carries one bit and so only ever reports 0.
+    """
 
     target: "LockTarget"
     is_blanket: bool
-    positive: bool
-    negative: bool
+    direction: int
+    scale: int
+
+    @property
+    def is_block(self) -> bool:
+        """Whether this entry blocks its direction outright, rather than merely weighing it."""
+        return self.scale == 0
 
 
 @dataclass
@@ -175,9 +185,21 @@ class Locks:
     entries: List[LockEntry] = field(default_factory=list)
 
     def is_locked(self, target: "LockTarget", direction) -> bool:
+        """Whether the target is blocked outright on that direction. A direction merely weighed is
+        not locked. `Direction.BOTH` asks about the two fixed signs; ask for a relative one by name.
+        """
         c = locks_to_c(self)
         return bool(
             _native.lib.medius_locks_is_locked(ctypes.byref(c), target._c, int(direction))
+        )
+
+    def scale_of(self, target: "LockTarget", direction) -> int:
+        """The percent of the physical value kept on that target and direction; 100 when nothing
+        weighs it. `Direction.BOTH` reports the lowest across every direction.
+        """
+        c = locks_to_c(self)
+        return int(
+            _native.lib.medius_locks_scale_of(ctypes.byref(c), target._c, int(direction))
         )
 
 
@@ -229,6 +251,23 @@ class ImperfectStatus:
     allowed: bool
     over_capacity: bool
     clone_imperfect: bool
+
+
+@dataclass(frozen=True)
+class Bearing:
+    """The configured bearing: what `Direction.WITH` and `Direction.AGAINST` are measured against.
+
+    `window_ms` is how long the last injected delta's direction stays the bearing. `None` is off,
+    which leaves the relative directions inert whatever their scale.
+    """
+
+    window_ms: Optional[int] = None
+    mode: BearingMode = BearingMode.PER_AXIS
+
+    @property
+    def is_live(self) -> bool:
+        """Whether a bearing is held at all; the relative directions do nothing when it is not."""
+        return self.window_ms is not None
 
 
 @dataclass(frozen=True)
@@ -1101,9 +1140,14 @@ def lock_target_from_c(c) -> LockTarget:
     )
 
 
+def bearing_from_c(c) -> Bearing:
+    ms = int(c.window_ms)
+    return Bearing(ms if ms else None, BearingMode(c.mode))
+
+
 def lock_entry_from_c(c) -> LockEntry:
     return LockEntry(
-        lock_target_from_c(c.target), bool(c.is_blanket), bool(c.positive), bool(c.negative)
+        lock_target_from_c(c.target), bool(c.is_blanket), Direction(c.direction), int(c.scale)
     )
 
 
@@ -1121,8 +1165,8 @@ def locks_to_c(locks) -> "_native.MediusLocks":
         c.entries[i] = _native.MediusLockEntry(
             target=e.target._c,
             is_blanket=bool(e.is_blanket),
-            positive=bool(e.positive),
-            negative=bool(e.negative),
+            direction=int(e.direction),
+            scale=int(e.scale),
         )
     return c
 
