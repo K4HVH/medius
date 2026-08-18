@@ -14,3 +14,6 @@ bindings/python/wheelhouse/
 bindings/python/medius/**/*.so
 bindings/python/medius/**/*.dylib
 bindings/python/medius/**/*.dll
+
+# scratch: pasted conversation logs
+chat*.txt
