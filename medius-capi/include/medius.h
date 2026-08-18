@@ -127,6 +127,8 @@ enum MediusStatus
     MEDIUS_STATUS_ERR_HALF_EDGE_INPUT_FILTER = 17,
     // An exact id equal to the blanket sentinel, which would address the whole class.
     MEDIUS_STATUS_ERR_RESERVED_ID = 18,
+    // `MEDIUS_DIRECTION_WITH` / `_AGAINST` on something with no bearing to measure them against.
+    MEDIUS_STATUS_ERR_RELATIVE_DIRECTION = 19,
 };
 #ifndef __cplusplus
 #if __STDC_VERSION__ >= 202311L
@@ -347,30 +349,6 @@ typedef uint8_t MediusLockTargetKind;
 #endif // __STDC_VERSION__ >= 202311L
 #endif // __cplusplus
 
-// Which edge of an axis/button a lock applies to.
-enum MediusDirection
-#if defined(__cplusplus) || __STDC_VERSION__ >= 202311L
-  : uint8_t
-#endif // defined(__cplusplus) || __STDC_VERSION__ >= 202311L
- {
-    // Every direction of the target: both edges, both signs, and both relative senses.
-    MEDIUS_DIRECTION_BOTH = 0,
-    MEDIUS_DIRECTION_POSITIVE = 1,
-    MEDIUS_DIRECTION_NEGATIVE = 2,
-    // The axis sign the box is currently injecting. Measured against the bearing, so it follows the
-    // aim rather than the axis; inert while no bearing is live. Axes only.
-    MEDIUS_DIRECTION_WITH = 3,
-    // The axis sign opposing the box's injection. Measured against the bearing; axes only.
-    MEDIUS_DIRECTION_AGAINST = 4,
-};
-#ifndef __cplusplus
-#if __STDC_VERSION__ >= 202311L
-typedef enum MediusDirection MediusDirection;
-#else
-typedef uint8_t MediusDirection;
-#endif // __STDC_VERSION__ >= 202311L
-#endif // __cplusplus
-
 // Which status LED a command addresses.
 enum MediusLedTarget
 #if defined(__cplusplus) || __STDC_VERSION__ >= 202311L
@@ -427,25 +405,6 @@ typedef uint8_t MediusRebootTarget;
 #endif // __STDC_VERSION__ >= 202311L
 #endif // __cplusplus
 
-// How the box decides whether physical motion runs with or against its own injection.
-enum MediusBearingMode
-#if defined(__cplusplus) || __STDC_VERSION__ >= 202311L
-  : uint8_t
-#endif // defined(__cplusplus) || __STDC_VERSION__ >= 202311L
- {
-    // Each axis compares its own sign against its own bearing, independently.
-    MEDIUS_BEARING_MODE_PER_AXIS = 0,
-    // The aim is projected onto the injected XY vector; motion across it passes untouched.
-    MEDIUS_BEARING_MODE_VECTOR = 1,
-};
-#ifndef __cplusplus
-#if __STDC_VERSION__ >= 202311L
-typedef enum MediusBearingMode MediusBearingMode;
-#else
-typedef uint8_t MediusBearingMode;
-#endif // __STDC_VERSION__ >= 202311L
-#endif // __cplusplus
-
 // What paces injected motion.
 enum MediusEmitMode
 #if defined(__cplusplus) || __STDC_VERSION__ >= 202311L
@@ -461,6 +420,28 @@ enum MediusEmitMode
 typedef enum MediusEmitMode MediusEmitMode;
 #else
 typedef uint8_t MediusEmitMode;
+#endif // __STDC_VERSION__ >= 202311L
+#endif // __cplusplus
+
+// How the box decides whether physical motion runs with or against its own injection.
+enum MediusBearingMode
+#if defined(__cplusplus) || __STDC_VERSION__ >= 202311L
+  : uint8_t
+#endif // defined(__cplusplus) || __STDC_VERSION__ >= 202311L
+ {
+    // Each axis compares its own sign against its own bearing, independently.
+    MEDIUS_BEARING_MODE_PER_AXIS = 0,
+    // The aim is projected onto the injected XY vector; motion across it passes untouched. One
+    // relative scale governs the whole aim, the lower of X's and Y's, and that is what reads back.
+    // Each axis's absolute scale then applies to what the projection left, not to the sign the hand
+    // moved: it is a statement about what reaches the PC.
+    MEDIUS_BEARING_MODE_VECTOR = 1,
+};
+#ifndef __cplusplus
+#if __STDC_VERSION__ >= 202311L
+typedef enum MediusBearingMode MediusBearingMode;
+#else
+typedef uint8_t MediusBearingMode;
 #endif // __STDC_VERSION__ >= 202311L
 #endif // __cplusplus
 
@@ -669,6 +650,31 @@ typedef uint8_t MediusFrameType;
 #endif // __STDC_VERSION__ >= 202311L
 #endif // __cplusplus
 
+// Which edge of an axis/button a lock applies to.
+enum MediusDirection
+#if defined(__cplusplus) || __STDC_VERSION__ >= 202311L
+  : uint8_t
+#endif // defined(__cplusplus) || __STDC_VERSION__ >= 202311L
+ {
+    // Both edges, both signs, or both flows; on a `LOCK` scale the two fixed signs, with the
+    // relative pair passing.
+    MEDIUS_DIRECTION_BOTH = 0,
+    MEDIUS_DIRECTION_POSITIVE = 1,
+    MEDIUS_DIRECTION_NEGATIVE = 2,
+    // The axis sign the box is currently injecting. Measured against the bearing, so it follows the
+    // aim rather than the axis; inert while no bearing is live. Axes only.
+    MEDIUS_DIRECTION_WITH = 3,
+    // The axis sign opposing the box's injection. Measured against the bearing; axes only.
+    MEDIUS_DIRECTION_AGAINST = 4,
+};
+#ifndef __cplusplus
+#if __STDC_VERSION__ >= 202311L
+typedef enum MediusDirection MediusDirection;
+#else
+typedef uint8_t MediusDirection;
+#endif // __STDC_VERSION__ >= 202311L
+#endif // __cplusplus
+
 // A handle to one box's buffered-clip playback (owns the append-sequence counter, one per session).
 typedef struct MediusClip MediusClip;
 
@@ -860,11 +866,15 @@ typedef struct MediusStats {
 typedef struct MediusLockEntry {
     struct MediusLockTarget target;
     bool is_blanket;
-    // Which direction of the target this entry weighs.
-    MediusDirection direction;
+    // A `MEDIUS_DIRECTION_*` value: which direction of the target this entry weighs.
+    uint8_t direction;
     // Percent of the physical value kept: 0 blocks, 100 passes, above 100 amplifies. A momentary
     // usage carries one bit, so the box stores the block or pass it renders and one never reports a
     // value in between.
+    //
+    // This is the figure the box applies, not the byte it was sent: in `MEDIUS_BEARING_MODE_VECTOR`
+    // one relative scale governs the whole aim, the lower of X's and Y's, and both relative entries
+    // carry that number.
     uint8_t scale;
 } MediusLockEntry;
 
@@ -907,9 +917,10 @@ typedef struct MediusCatchFilter {
     MediusCatchClass class_;
     // The class-specific id, or `MEDIUS_CATCH_ID_ANY`.
     uint16_t id;
-    // The press/release edge on the momentary classes, the sign of the delta on axes, and IN
-    // (`Positive`) / OUT (`Negative`) on the traffic classes.
-    MediusDirection direction;
+    // A `MEDIUS_DIRECTION_*` value: the press/release edge on the momentary classes, the sign of
+    // the delta on axes, and IN (`Positive`) / OUT (`Negative`) on the traffic classes. A byte no
+    // constant names is refused at subscribe time.
+    uint8_t direction;
     // Bytes kept per event; 0 keeps the whole packet. Traffic classes only -- an input class carries
     // no packet, and naming one with a non-zero capture is refused at subscribe time.
     uint8_t capture;
@@ -978,9 +989,10 @@ typedef struct MediusUsageEvent {
     // the first entry, because the snapshot that most needs it is the one with `n == 0`: releasing
     // the last held usage is the edge a caller waits for, and it lists nothing to read a class from.
     MediusClass class_;
-    // The edge that produced this snapshot: the subscribed set grew (`Positive`) or shrank
-    // (`Negative`). Without it a direction on an input filter cannot be honoured at all.
-    MediusDirection direction;
+    // A `MEDIUS_DIRECTION_*` value: the edge that produced this snapshot, the subscribed set having
+    // grown (`Positive`) or shrunk (`Negative`). Without it a direction on an input filter cannot be
+    // honoured at all.
+    uint8_t direction;
     uint16_t n;
     struct MediusUsage usages[MEDIUS_MAX_USAGES];
 } MediusUsageEvent;
@@ -992,8 +1004,8 @@ typedef struct MediusTrafficEvent {
     MediusCatchClass class_;
     // Endpoint address, interface number, or endpoint number, per the class.
     uint16_t id;
-    // `Positive` is IN (device to PC), `Negative` is OUT.
-    MediusDirection direction;
+    // A `MEDIUS_DIRECTION_*` value: `Positive` is IN (device to PC), `Negative` is OUT.
+    uint8_t direction;
     // Class-specific; read it with `medius_traffic_event_control_status` or `..._bus_event`.
     uint8_t flags;
     // The packet's length before `capture` truncated it.
@@ -1421,39 +1433,55 @@ MediusStatus medius_device_force_release(struct MediusDevice *dev, struct Medius
 // above that amplifies to `MEDIUS_LOCK_SCALE_MAX` (2.55x). Lock and unlock are its two ends.
 //
 // A delta picks up at most two scales, its absolute direction's and its relative direction's, and
-// they multiply. `MEDIUS_DIRECTION_WITH` / `_AGAINST` need a live bearing; see
-// `medius_device_set_bearing`. A momentary usage carries one bit, so any scale below a full pass
-// locks it and there is nothing in between.
+// they multiply. `MEDIUS_DIRECTION_BOTH` is the exception: it writes the scale to the two fixed
+// signs and a full pass to the relative pair, so a `Both` of 50 is 50% with or without a bearing
+// rather than 25% with one. Name a relative direction to weigh it.
+//
+// `MEDIUS_DIRECTION_WITH` / `_AGAINST` need a live bearing (see `medius_device_set_bearing`) and
+// only an axis has one, so either on a button, key or media usage is
+// `MEDIUS_STATUS_ERR_RELATIVE_DIRECTION`. A momentary usage carries one bit, so any scale below a full
+// pass locks it and any scale at or above one unlocks it. A media usage has no edges and is sent as
+// `MEDIUS_DIRECTION_BOTH` whatever edge is named, which is what `RESP(LOCKS)` reports it as.
+//
+// `dir` takes a `MEDIUS_DIRECTION_*` constant; any other value is
+// `MEDIUS_STATUS_ERR_INVALID_ARG`.
 MediusStatus medius_device_scale(struct MediusDevice *dev,
                                  struct MediusLockTarget target,
-                                 MediusDirection dir,
+                                 uint8_t dir,
                                  uint8_t scale);
 
-// Weigh a whole class blanket (cursor aim, wheel, all buttons, all keys, or all media).
+// Weigh a whole class blanket (cursor aim, wheel, all buttons, all keys, or all media). `what` takes
+// a `MEDIUS_BLANKET_*` constant and `dir` a `MEDIUS_DIRECTION_*` one; any other value is
+// `MEDIUS_STATUS_ERR_INVALID_ARG`.
 MediusStatus medius_device_scale_all(struct MediusDevice *dev,
-                                     MediusBlanket what,
-                                     MediusDirection dir,
+                                     uint8_t what,
+                                     uint8_t dir,
                                      uint8_t scale);
 
 // Lock a target (axis or usage) on an edge. A button, key, and media usage all lock the same way.
+// `dir` takes a `MEDIUS_DIRECTION_*` constant; any other value is `MEDIUS_STATUS_ERR_INVALID_ARG`.
 MediusStatus medius_device_lock(struct MediusDevice *dev,
                                 struct MediusLockTarget target,
-                                MediusDirection dir);
+                                uint8_t dir);
 
-// Release a lock set by `medius_device_lock`.
+// Release a lock set by `medius_device_lock`. `dir` takes a `MEDIUS_DIRECTION_*` constant; any other
+// value is `MEDIUS_STATUS_ERR_INVALID_ARG`.
 MediusStatus medius_device_unlock(struct MediusDevice *dev,
                                   struct MediusLockTarget target,
-                                  MediusDirection dir);
+                                  uint8_t dir);
 
 // Lock a whole class blanket (cursor aim, wheel, all buttons, all keys, or all media).
-MediusStatus medius_device_lock_all(struct MediusDevice *dev,
-                                    MediusBlanket what,
-                                    MediusDirection dir);
+//
+// `MEDIUS_BLANKET_KEYS` honours the direction: `Positive` blocks press edges only, `Negative`
+// release edges only. `what` takes a `MEDIUS_BLANKET_*` constant and `dir` a `MEDIUS_DIRECTION_*`
+// one; any other value is `MEDIUS_STATUS_ERR_INVALID_ARG`.
+MediusStatus medius_device_lock_all(struct MediusDevice *dev, uint8_t what, uint8_t dir);
 
-// Release a blanket lock set by `medius_device_lock_all`.
+// Release a blanket lock set by `medius_device_lock_all`. `what` takes a `MEDIUS_BLANKET_*` constant
+// and `dir` a `MEDIUS_DIRECTION_*` one; any other value is `MEDIUS_STATUS_ERR_INVALID_ARG`.
 MediusStatus medius_device_unlock_all(struct MediusDevice *dev,
-                                      MediusBlanket what,
-                                      MediusDirection dir);
+                                      uint8_t what,
+                                      uint8_t dir);
 
 MediusStatus medius_device_led(struct MediusDevice *dev,
                                MediusLedTarget target,
@@ -1478,9 +1506,13 @@ MediusStatus medius_device_set_movement_riding(struct MediusDevice *dev,
 // Set the bearing: what `MEDIUS_DIRECTION_WITH` / `_AGAINST` are measured against. `window_ms` is how
 // long the last injected delta's direction stays the bearing; 0 turns it off, leaving the relative
 // directions inert whatever their scale. The box boots at `MEDIUS_BEARING_WINDOW_DEFAULT_MS`.
+//
+// `mode` takes a `MEDIUS_BEARING_MODE_*` constant; any other value is
+// `MEDIUS_STATUS_ERR_INVALID_ARG`. Both fields ride one frame and the box persists them together,
+// so a window change carries the mode with it.
 MediusStatus medius_device_set_bearing(struct MediusDevice *dev,
                                        uint16_t window_ms,
-                                       MediusBearingMode mode);
+                                       uint8_t mode);
 
 // Set what paces injected motion; `hz` is the target rate for `Fixed` and ignored otherwise.
 MediusStatus medius_device_set_emit_pace(struct MediusDevice *dev,
@@ -1532,11 +1564,6 @@ uint32_t medius_default_query_timeout_ms(void);
 uint32_t medius_default_keepalive_cadence_ms(void);
 
 // The C ABI version, bumped on any breaking change to this header.
-//
-// Held at 4 through the 3.2.0 scale change on purpose, alongside the protocol version it tracks.
-// `MediusLockEntry` kept its size but not its meaning: the two edge booleans became a direction and a
-// scale, so a binary built against the 3.1.x header reads `direction` where it expects `positive` and
-// gets no version to check. Rebuild against this header; the version will not tell you to.
 uint32_t medius_abi_version(void);
 
 // The medius-capi crate version as a static NUL-terminated string.
@@ -1572,17 +1599,19 @@ struct MediusLockTarget medius_lock_target_usage(struct MediusUsage usage);
 
 // The scale in effect on `target`/`dir`: percent of the physical value kept, so
 // `MEDIUS_LOCK_SCALE_PASS` when nothing weighs it. `Both` reports the lowest across every direction.
-// Mirrors `medius::Locks::scale_of`.
+// Mirrors `medius::Locks::scale_of`. `dir` takes a `MEDIUS_DIRECTION_*` constant; any other value
+// names no entry and reads as `MEDIUS_LOCK_SCALE_PASS`.
 uint8_t medius_locks_scale_of(const struct MediusLocks *locks,
                               struct MediusLockTarget target,
-                              MediusDirection dir);
+                              uint8_t dir);
 
 // Whether `target`/`dir` is blocked outright in `locks`. A direction merely weighed is not locked.
 // `Both` asks about the two fixed signs, the pair it has always named; ask for a relative direction
-// by name. Mirrors `medius::Locks::is_locked`.
+// by name. Mirrors `medius::Locks::is_locked`. `dir` takes a `MEDIUS_DIRECTION_*` constant; any
+// other value names no entry and reads as unlocked.
 bool medius_locks_is_locked(const struct MediusLocks *locks,
                             struct MediusLockTarget target,
-                            MediusDirection dir);
+                            uint8_t dir);
 
 // The native report rate in Hz written to `out_hz`, false when there is no continuous cadence. Delegates to `medius::Rate::native_hz`.
 bool medius_rate_native_hz(struct MediusRate rate,
@@ -1623,9 +1652,11 @@ struct MediusCatchFilter medius_catch_filter_traffic_class(MediusCatchClass clas
 // Pair it with `medius_catch_filter_with_capture` unless you mean to trace bulk in full.
 struct MediusCatchFilter medius_catch_filter_everything(void);
 
-// `f` restricted to one direction, sign or edge.
+// `f` restricted to one direction, sign or edge. `direction` takes a `MEDIUS_DIRECTION_*` constant;
+// a byte no constant names is carried through and refused at subscribe time with
+// `MEDIUS_STATUS_ERR_INVALID_ARG`, since a filter has no status to return here.
 struct MediusCatchFilter medius_catch_filter_with_direction(struct MediusCatchFilter f,
-                                                            MediusDirection direction);
+                                                            uint8_t direction);
 
 // `f` keeping only the first `bytes` of each packet; 0 keeps the whole packet. Traffic classes only.
 struct MediusCatchFilter medius_catch_filter_with_capture(struct MediusCatchFilter f,
@@ -1938,6 +1969,12 @@ void medius_mock_set_imperfect_status(struct MediusMockBox *mock,
 #if defined(MEDIUS_FEATURE_MOCK)
 // Set the movement-riding window the mock answers to a query; `enabled == false` means off.
 void medius_mock_set_movement_riding(struct MediusMockBox *mock, bool enabled, uint32_t window_ms);
+#endif
+
+#if defined(MEDIUS_FEATURE_MOCK)
+// Set the bearing the mock answers to an OPTION(BEARING) query; `window_ms` 0 = off. `mode` takes a
+// `MEDIUS_BEARING_MODE_*` constant; any other value is ignored, as the box ignores it.
+void medius_mock_set_bearing(struct MediusMockBox *mock, uint16_t window_ms, uint8_t mode);
 #endif
 
 #if defined(MEDIUS_FEATURE_MOCK)

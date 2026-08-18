@@ -122,7 +122,8 @@ pub enum MediusLedMode {
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MediusDirection {
-    /// Every direction of the target: both edges, both signs, and both relative senses.
+    /// Both edges, both signs, or both flows; on a `LOCK` scale the two fixed signs, with the
+    /// relative pair passing.
     Both = 0,
     Positive = 1,
     Negative = 2,
@@ -139,7 +140,10 @@ pub enum MediusDirection {
 pub enum MediusBearingMode {
     /// Each axis compares its own sign against its own bearing, independently.
     PerAxis = 0,
-    /// The aim is projected onto the injected XY vector; motion across it passes untouched.
+    /// The aim is projected onto the injected XY vector; motion across it passes untouched. One
+    /// relative scale governs the whole aim, the lower of X's and Y's, and that is what reads back.
+    /// Each axis's absolute scale then applies to what the projection left, not to the sign the hand
+    /// moved: it is a statement about what reaches the PC.
     Vector = 1,
 }
 
@@ -459,11 +463,15 @@ pub struct MediusStats {
 pub struct MediusLockEntry {
     pub target: MediusLockTarget,
     pub is_blanket: bool,
-    /// Which direction of the target this entry weighs.
-    pub direction: MediusDirection,
+    /// A `MEDIUS_DIRECTION_*` value: which direction of the target this entry weighs.
+    pub direction: u8,
     /// Percent of the physical value kept: 0 blocks, 100 passes, above 100 amplifies. A momentary
     /// usage carries one bit, so the box stores the block or pass it renders and one never reports a
     /// value in between.
+    ///
+    /// This is the figure the box applies, not the byte it was sent: in `MEDIUS_BEARING_MODE_VECTOR`
+    /// one relative scale governs the whole aim, the lower of X's and Y's, and both relative entries
+    /// carry that number.
     pub scale: u8,
 }
 
@@ -490,9 +498,10 @@ pub struct MediusCatchFilter {
     pub class: MediusCatchClass,
     /// The class-specific id, or `MEDIUS_CATCH_ID_ANY`.
     pub id: u16,
-    /// The press/release edge on the momentary classes, the sign of the delta on axes, and IN
-    /// (`Positive`) / OUT (`Negative`) on the traffic classes.
-    pub direction: MediusDirection,
+    /// A `MEDIUS_DIRECTION_*` value: the press/release edge on the momentary classes, the sign of
+    /// the delta on axes, and IN (`Positive`) / OUT (`Negative`) on the traffic classes. A byte no
+    /// constant names is refused at subscribe time.
+    pub direction: u8,
     /// Bytes kept per event; 0 keeps the whole packet. Traffic classes only -- an input class carries
     /// no packet, and naming one with a non-zero capture is refused at subscribe time.
     pub capture: u8,
@@ -662,9 +671,10 @@ pub struct MediusUsageEvent {
     /// the first entry, because the snapshot that most needs it is the one with `n == 0`: releasing
     /// the last held usage is the edge a caller waits for, and it lists nothing to read a class from.
     pub class: MediusClass,
-    /// The edge that produced this snapshot: the subscribed set grew (`Positive`) or shrank
-    /// (`Negative`). Without it a direction on an input filter cannot be honoured at all.
-    pub direction: MediusDirection,
+    /// A `MEDIUS_DIRECTION_*` value: the edge that produced this snapshot, the subscribed set having
+    /// grown (`Positive`) or shrunk (`Negative`). Without it a direction on an input filter cannot be
+    /// honoured at all.
+    pub direction: u8,
     pub n: u16,
     pub usages: [MediusUsage; MEDIUS_MAX_USAGES],
 }
@@ -678,8 +688,8 @@ pub struct MediusTrafficEvent {
     pub class: MediusCatchClass,
     /// Endpoint address, interface number, or endpoint number, per the class.
     pub id: u16,
-    /// `Positive` is IN (device to PC), `Negative` is OUT.
-    pub direction: MediusDirection,
+    /// A `MEDIUS_DIRECTION_*` value: `Positive` is IN (device to PC), `Negative` is OUT.
+    pub direction: u8,
     /// Class-specific; read it with `medius_traffic_event_control_status` or `..._bus_event`.
     pub flags: u8,
     /// The packet's length before `capture` truncated it.

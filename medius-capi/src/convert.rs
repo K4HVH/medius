@@ -107,37 +107,6 @@ impl From<MediusLedMode> for LedMode {
     }
 }
 
-impl From<MediusDirection> for Direction {
-    fn from(v: MediusDirection) -> Self {
-        match v {
-            MediusDirection::Both => Direction::Both,
-            MediusDirection::Positive => Direction::Positive,
-            MediusDirection::Negative => Direction::Negative,
-            MediusDirection::With => Direction::With,
-            MediusDirection::Against => Direction::Against,
-        }
-    }
-}
-
-fn lock_direction_to_c(d: Direction) -> MediusDirection {
-    match d {
-        Direction::Both => MediusDirection::Both,
-        Direction::Positive => MediusDirection::Positive,
-        Direction::Negative => MediusDirection::Negative,
-        Direction::With => MediusDirection::With,
-        Direction::Against => MediusDirection::Against,
-    }
-}
-
-impl From<MediusBearingMode> for BearingMode {
-    fn from(v: MediusBearingMode) -> Self {
-        match v {
-            MediusBearingMode::PerAxis => BearingMode::PerAxis,
-            MediusBearingMode::Vector => BearingMode::Vector,
-        }
-    }
-}
-
 impl From<Bearing> for MediusBearing {
     fn from(b: Bearing) -> Self {
         MediusBearing {
@@ -152,16 +121,16 @@ impl From<Bearing> for MediusBearing {
     }
 }
 
-impl From<MediusBlanket> for Blanket {
-    fn from(v: MediusBlanket) -> Self {
-        match v {
-            MediusBlanket::Keys => Blanket::Keys,
-            MediusBlanket::Media => Blanket::Media,
-            MediusBlanket::Buttons => Blanket::Buttons,
-            MediusBlanket::Aim => Blanket::Aim,
-            MediusBlanket::Wheel => Blanket::Wheel,
-        }
-    }
+/// A `MEDIUS_BLANKET_*` byte to a [`Blanket`], or `None` for a value the enum does not name.
+pub(crate) fn blanket_from_c(v: u8) -> Option<Blanket> {
+    Some(match v {
+        0 => Blanket::Aim,
+        1 => Blanket::Wheel,
+        2 => Blanket::Buttons,
+        3 => Blanket::Keys,
+        4 => Blanket::Media,
+        _ => return None,
+    })
 }
 
 impl From<MediusLogLevel> for LogLevel {
@@ -399,7 +368,7 @@ impl From<Locks> for MediusLocks {
         let blank = MediusLockEntry {
             target: axis_target(MediusLockTargetKind::X),
             is_blanket: false,
-            direction: MediusDirection::Both,
+            direction: MediusDirection::Both as u8,
             scale: MEDIUS_LOCK_SCALE_PASS,
         };
         let mut out = MediusLocks {
@@ -426,7 +395,7 @@ impl From<Locks> for MediusLocks {
             out.entries[out.n as usize] = MediusLockEntry {
                 target,
                 is_blanket,
-                direction: lock_direction_to_c(e.direction),
+                direction: e.direction.as_u8(),
                 scale: e.scale,
             };
             out.n += 1;
@@ -455,7 +424,7 @@ pub(crate) fn catch_filter_to_c(f: CatchFilter) -> MediusCatchFilter {
     MediusCatchFilter {
         class,
         id,
-        direction: lock_direction_to_c(f.direction()),
+        direction: f.direction().as_u8(),
         capture: f.capture().as_u8(),
     }
 }
@@ -463,7 +432,7 @@ pub(crate) fn catch_filter_to_c(f: CatchFilter) -> MediusCatchFilter {
 /// The C struct back to a [`CatchFilter`]; `None` when the four values address nothing the box would
 /// accept -- an unknown class, an unknown direction, or the wildcard class carrying a real id.
 pub(crate) fn catch_filter_from_c(f: MediusCatchFilter) -> Option<CatchFilter> {
-    CatchFilter::from_wire(f.class, f.id, f.direction as u8, f.capture)
+    CatchFilter::from_wire(f.class, f.id, f.direction, f.capture)
 }
 
 /// A decoded [`InputEvent`] to the C struct. The unused arms are zeroed rather than left undefined:
@@ -780,7 +749,7 @@ impl From<CatchEvent> for MediusCatchEvent {
                     data: MediusCatchEventData {
                         usages: MediusUsageEvent {
                             class: class_kind(s.class),
-                            direction: lock_direction_to_c(s.direction),
+                            direction: s.direction.as_u8(),
                             n: n as u16,
                             usages,
                         },
@@ -799,7 +768,7 @@ impl From<CatchEvent> for MediusCatchEvent {
                         traffic: MediusTrafficEvent {
                             class: t.class.as_u8(),
                             id: t.id,
-                            direction: lock_direction_to_c(t.direction),
+                            direction: t.direction.as_u8(),
                             flags: t.flags,
                             true_len: t.true_len,
                             len: n as u16,
@@ -946,7 +915,7 @@ impl From<MediusLocks> for Locks {
                 };
                 Some(LockEntry {
                     scope,
-                    direction: e.direction.into(),
+                    direction: Direction::from_u8(e.direction)?,
                     scale: e.scale,
                 })
             })

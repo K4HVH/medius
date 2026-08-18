@@ -171,6 +171,25 @@ pub unsafe extern "C" fn medius_mock_set_movement_riding(
     });
 }
 
+/// Set the bearing the mock answers to an OPTION(BEARING) query; `window_ms` 0 = off. `mode` takes a
+/// `MEDIUS_BEARING_MODE_*` constant; any other value is ignored, as the box ignores it.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn medius_mock_set_bearing(
+    mock: *mut MediusMockBox,
+    window_ms: u16,
+    mode: u8,
+) {
+    with_mock(mock, |m| {
+        let Some(mode) = medius::BearingMode::from_u8(mode) else {
+            return;
+        };
+        m.set_bearing(medius::Bearing {
+            window: (window_ms != 0).then(|| Duration::from_millis(window_ms as u64)),
+            mode,
+        });
+    });
+}
+
 /// Set the emit-rate pacing mode the mock answers to an OPTION(EMIT) query; `hz` matters only for `Fixed`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_mock_set_emit_pace(
@@ -269,12 +288,15 @@ pub unsafe extern "C" fn medius_mock_push_usages(
             return;
         }
         let e = unsafe { &*event };
+        let Some(direction) = medius::Direction::from_u8(e.direction) else {
+            return;
+        };
         let usages = crate::convert::usage_event_to_medius(e);
         m.push_usages(
             seq,
             ts_us,
             crate::convert::class_from_c(e.class),
-            e.direction.into(),
+            direction,
             &usages,
         );
     });
@@ -298,6 +320,9 @@ pub unsafe extern "C" fn medius_mock_push_traffic(
         let Some(class) = medius::CatchClass::from_u8(e.class) else {
             return;
         };
+        let Some(direction) = medius::Direction::from_u8(e.direction) else {
+            return;
+        };
         let n = (e.len as usize).min(MEDIUS_MAX_TRAFFIC_BYTES);
         m.push_traffic(
             seq,
@@ -305,7 +330,7 @@ pub unsafe extern "C" fn medius_mock_push_traffic(
             clock_domain_to_native(clock),
             class,
             e.id,
-            e.direction.into(),
+            direction,
             e.flags,
             e.true_len,
             &e.bytes[..n],

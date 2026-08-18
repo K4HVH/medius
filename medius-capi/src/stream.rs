@@ -41,7 +41,12 @@ pub unsafe extern "C" fn medius_device_catch_events(
         for f in slice {
             match catch_filter_from_c(*f) {
                 Some(f) => parsed.push(f),
-                None => return fail(MediusStatus::ErrInvalidArg, "unknown catch class"),
+                None => {
+                    return fail(
+                        MediusStatus::ErrInvalidArg,
+                        "catch filter names no known class or direction",
+                    );
+                }
             }
         }
         let d = unsafe { &(*dev).inner };
@@ -233,7 +238,12 @@ pub unsafe extern "C" fn medius_device_input_events(
         for f in slice {
             match catch_filter_from_c(*f) {
                 Some(f) => parsed.push(f),
-                None => return fail(MediusStatus::ErrInvalidArg, "unknown catch class"),
+                None => {
+                    return fail(
+                        MediusStatus::ErrInvalidArg,
+                        "catch filter names no known class or direction",
+                    );
+                }
             }
         }
         let d = unsafe { &(*dev).inner };
