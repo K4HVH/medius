@@ -214,6 +214,66 @@ fn unlocking_both_forgets_the_relative_scales_too() {
 }
 
 #[test]
+fn releasing_one_sign_of_a_both_lock_is_not_undone_by_a_reapply() {
+    use crate::{Axis, Direction};
+    let mock = MockBox::new();
+    let device = Device::with_mock(mock.clone());
+    device.lock(Axis::X, Direction::Both).unwrap();
+    device.unlock(Axis::X, Direction::Negative).unwrap();
+    mock.clear_recorded();
+
+    device.reapply().unwrap();
+    let locks: Vec<Vec<u8>> = mock
+        .recorded_frames()
+        .iter()
+        .filter(|f| f.ty == FrameType::Lock)
+        .map(|f| f.payload.clone())
+        .collect();
+    // Both wrote two slots and the unlock cleared one of them, so only the positive sign is still
+    // held. Re-sending the Both would re-block a direction the caller released.
+    assert_eq!(locks, vec![vec![3, 0, 0, 1, 0]]);
+    drop(device);
+}
+
+#[test]
+fn releasing_one_button_of_a_blanket_is_not_undone_by_a_reapply() {
+    use crate::{Blanket, Button, Direction};
+    let mock = MockBox::new();
+    let device = Device::with_mock(mock.clone());
+    device.lock_all(Blanket::Buttons, Direction::Both).unwrap();
+    device.unlock(Button::Left, Direction::Both).unwrap();
+    mock.clear_recorded();
+
+    device.reapply().unwrap();
+    let ids: Vec<u16> = mock
+        .recorded_frames()
+        .iter()
+        .filter(|f| f.ty == FrameType::Lock)
+        .map(|f| u16::from_le_bytes([f.payload[1], f.payload[2]]))
+        .collect();
+    // The box has no button-blanket state: it wrote the five rows, so a release of one leaves four.
+    assert_eq!(ids, vec![1, 2, 3, 4]);
+    drop(device);
+}
+
+#[test]
+fn a_scale_a_one_bit_class_cannot_hold_is_not_held_here_either() {
+    use crate::{Button, Direction};
+    let mock = MockBox::new();
+    let device = Device::with_mock(mock.clone());
+    device
+        .scale(Button::Left, Direction::Positive, 150)
+        .unwrap();
+    mock.clear_recorded();
+
+    device.reapply().unwrap();
+    // 150% truncates to a pass on the box, which is an unlock, so there is nothing to hold open the
+    // keepalive and nothing to re-assert.
+    assert!(!mock.saw(FrameType::Lock));
+    drop(device);
+}
+
+#[test]
 fn reboot_emits_the_target_byte() {
     let mock = MockBox::new();
     let device = Device::with_mock(mock.clone());

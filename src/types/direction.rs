@@ -23,7 +23,8 @@ use crate::protocol::opcode::{
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Default)]
 pub enum Direction {
-    /// Every direction of the target: both edges, both signs, both flows, and both relative senses.
+    /// Both edges, both signs, or both flows; on a `LOCK` scale the two fixed signs, with the
+    /// relative pair passing.
     ///
     /// On a `LOCK` scale it writes the scale to the two fixed signs and a full pass to the relative
     /// pair, since the two multiply and writing both would square the number; only an unlock, a full
@@ -72,9 +73,9 @@ impl Direction {
     /// Whether this direction is measured against the bearing rather than a fixed sign.
     ///
     /// Only the relative-axis class reads one. A catch subscription is addressed before there is any
-    /// injection to be with or against, so it refuses one with
-    /// [`Error::RelativeDirection`](crate::Error::RelativeDirection). A clip trigger cannot express one
-    /// at all: its edge is the separate three-variant [`Edge`](crate::Edge).
+    /// injection to be with or against, and a button, key or media lock has no bearing at all, so both
+    /// refuse one with [`Error::RelativeDirection`](crate::Error::RelativeDirection). A clip trigger
+    /// cannot express one at all: its edge is the separate three-variant [`Edge`](crate::Edge).
     pub fn is_relative(self) -> bool {
         matches!(self, Direction::With | Direction::Against)
     }

@@ -159,9 +159,20 @@ device.scale(Axis::X, Direction::With, 130)?;    // and helping motion given a p
 ```
 
 A delta picks up at most two scales, its fixed direction's and its relative direction's, and they
-multiply, so a block in either wins. `BearingMode::Vector` projects onto the injected vector instead,
-leaving motion across it untouched. A button, key, or media usage carries one bit, so any scale under
-100 simply locks it.
+multiply, so a block in either wins. `Direction::Both` is the exception: it writes the scale to the two
+fixed signs and a full pass to the relative pair, so a `Both` of 50 is 50% with a bearing live and 50%
+without, not 25%. `BearingMode::Vector` projects onto the injected vector instead, leaving motion
+across it untouched; one relative scale then governs the whole aim, the lower of X's and Y's, and
+`query_locks` reports that effective number on both axes. Each axis's absolute scale applies to what
+the projection left rather than to the sign the hand moved, so a block still covers motion the
+projection put on that axis.
+
+Only an axis has a bearing, so `With`/`Against` on a button, key or media usage is
+`Error::RelativeDirection` rather than a frame the box would drop. A button, key, or media usage
+carries one bit: any scale under 100 locks it, any scale at or above 100 unlocks it. A media usage has
+no edges at all -- it is suppressed whole -- so an edge on one is sent as `Both`, which is what
+`query_locks` reports. `lock_all(Blanket::Keys, ...)` does honour the edge: `Positive` blocks presses
+only, `Negative` releases only.
 
 ### Buffered clip playback
 

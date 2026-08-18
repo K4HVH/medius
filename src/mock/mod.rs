@@ -5,9 +5,11 @@ use std::sync::Arc;
 use parking_lot::Mutex;
 
 use crate::protocol::opcode::{
-    CAP_REPORT_ID, CAP_WHEEL, CAP_X, CAP_Y, CAPS_CD_KBD, CAPS_CD_MOUSE, DI_HAS_BOS, DI_HAS_SERIAL,
-    KBC_CONSUMER, KBC_NKRO, KBC_REPORT_ID, KBC_SYSTEM, OPT_BEARING, OPT_EMIT, OPT_IMPERFECT,
-    OPT_MOVE_RIDE, RATE_CONFIDENT,
+    BTN_COUNT, CAP_REPORT_ID, CAP_WHEEL, CAP_X, CAP_Y, CAPS_CD_KBD, CAPS_CD_MOUSE, DI_HAS_BOS,
+    DI_HAS_SERIAL, KBC_CONSUMER, KBC_NKRO, KBC_REPORT_ID, KBC_SYSTEM, LOCK_AXIS_WHEEL,
+    LOCK_CLS_AXIS, LOCK_CLS_BTN, LOCK_CLS_KEY, LOCK_CLS_MEDIA, LOCK_DIR_AGAINST, LOCK_DIR_BOTH,
+    LOCK_DIR_NEG, LOCK_DIR_POS, LOCK_DIR_WITH, LOCK_ID_ALL, LOCK_SCALE_BLOCK, LOCK_SCALE_PASS,
+    OPT_BEARING, OPT_EMIT, OPT_IMPERFECT, OPT_MOVE_RIDE, OPT_NAME, RATE_CONFIDENT,
 };
 use crate::protocol::opcode::{
     CLIP_CFG_F_FINALIZED, CLIP_CFG_F_LOOP, CLIP_CFG_F_RETAIN, CLIP_CFG_F_RIDE, CLK_RATE_NONE,
@@ -16,9 +18,10 @@ use crate::protocol::{DecodedFrame, FrameType, encode};
 use crate::transport::mock::MockTransport;
 use crate::types::lock::blanket_scope;
 use crate::types::{
-    Bearing, Caps, CatchClass, CatchState, Class, ClipSettings, ClipState, ClipStatus, ClockDomain,
-    DeviceInfo, DeviceKind, Direction, EmitPace, Health, ImperfectStatus, KbdCaps, Locks, LogLevel,
-    MouseCaps, Rate, Stats, Usage, Version,
+    Axis, Bearing, BearingMode, Caps, CatchClass, CatchState, Class, ClipSettings, ClipState,
+    ClipStatus, ClockDomain, DeviceInfo, DeviceKind, Direction, EmitPace, Health, ImperfectStatus,
+    KbdCaps, LockEntry, LockScope, LockTarget, Locks, LogLevel, MouseCaps, Rate, Stats, Usage,
+    Version,
 };
 
 #[derive(Debug)]
@@ -29,7 +32,9 @@ struct State {
     caps: Caps,
     rate: Rate,
     stats: Stats,
-    locks: Locks,
+    // The table the LOCK frames build, and a pinned reply that wins over it when a test scripts one.
+    table: LockTable,
+    locks: Option<Locks>,
     catch: CatchState,
     imperfect: ImperfectStatus,
     move_ride_ms: u16,
@@ -58,7 +63,8 @@ impl Default for State {
             rate: Rate::from_payload(&[4, 0, 0, 0, 0, 0]).unwrap(),
             stats: Stats::from_payload(&[5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
                 .unwrap(),
-            locks: Locks::from_payload(&[6, 0, 0]).unwrap(),
+            table: LockTable::default(),
+            locks: None,
             catch: CatchState::from_payload(&[
                 7, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xFF, 0xFF, 0,
             ])
@@ -71,6 +77,268 @@ impl Default for State {
             clip_settings: ClipSettings::default(),
             recorded: Vec::new(),
             respond: true,
+        }
+    }
+}
+
+// The box's lock table, modelled the way the firmware holds it so the mock answers `RESP(LOCKS)` the
+// way a box would rather than echoing what the host sent. Mouse rows are X, Y, wheel then the five
+// buttons; slots are POS, NEG, WITH, AGAINST.
+const LOCK_TGT_BTN_BASE: usize = 3;
+const LOCK_TGT_COUNT: usize = 8;
+const LOCK_SLOT_WITH: usize = 2;
+const SLOT_DIRS: [u8; 4] = [LOCK_DIR_POS, LOCK_DIR_NEG, LOCK_DIR_WITH, LOCK_DIR_AGAINST];
+// CTRL_RESP_LOCKS_MAXN and INPUT_MEDIA_MAX: past either the box drops silently.
+const RESP_LOCKS_MAXN: usize = 96;
+const MEDIA_LOCK_MAX: usize = 8;
+
+#[derive(Debug, Clone)]
+pub(crate) struct LockTable {
+    mouse: [[u8; 4]; LOCK_TGT_COUNT],
+    key_blanket: u8,
+    key_press: [bool; 256],
+    key_release: [bool; 256],
+    media: [u16; MEDIA_LOCK_MAX], // 0 = free slot, as the firmware's list holds it
+    media_blanket: bool,
+}
+
+impl Default for LockTable {
+    fn default() -> LockTable {
+        LockTable {
+            mouse: [[LOCK_SCALE_PASS; 4]; LOCK_TGT_COUNT],
+            key_blanket: 0,
+            key_press: [false; 256],
+            key_release: [false; 256],
+            media: [0; MEDIA_LOCK_MAX],
+            media_blanket: false,
+        }
+    }
+}
+
+fn slot_mask(dir: u8) -> u8 {
+    match dir {
+        LOCK_DIR_BOTH => 0x0F,
+        LOCK_DIR_POS => 0x01,
+        LOCK_DIR_NEG => 0x02,
+        LOCK_DIR_WITH => 0x04,
+        LOCK_DIR_AGAINST => 0x08,
+        _ => 0,
+    }
+}
+
+impl LockTable {
+    fn set_mouse(&mut self, target: usize, dir: u8, scale: u8) {
+        let slots = slot_mask(dir);
+        for i in 0..4 {
+            if slots & (1 << i) == 0 {
+                continue;
+            }
+            // One bit is all a button carries, so the box stores the block or pass it will render.
+            let mut v = scale;
+            if target >= LOCK_TGT_BTN_BASE {
+                v = if v < LOCK_SCALE_PASS {
+                    LOCK_SCALE_BLOCK
+                } else {
+                    LOCK_SCALE_PASS
+                };
+            }
+            if i >= LOCK_SLOT_WITH {
+                // A button has no bearing, so a named relative direction on one is refused outright;
+                // Both reaches the relative pair with a pass, never with the scale, since the two
+                // multiply.
+                if target >= LOCK_TGT_BTN_BASE && dir != LOCK_DIR_BOTH {
+                    continue;
+                }
+                if dir == LOCK_DIR_BOTH {
+                    v = LOCK_SCALE_PASS;
+                }
+            }
+            self.mouse[target][i] = v;
+        }
+    }
+
+    pub(crate) fn apply(&mut self, class: u8, id: u16, dir: u8, scale: u8) {
+        let on = scale < LOCK_SCALE_PASS;
+        match class {
+            LOCK_CLS_AXIS => {
+                if id == LOCK_ID_ALL {
+                    for t in 0..=LOCK_AXIS_WHEEL as usize {
+                        self.set_mouse(t, dir, scale);
+                    }
+                } else if id <= LOCK_AXIS_WHEEL {
+                    self.set_mouse(id as usize, dir, scale);
+                }
+            }
+            LOCK_CLS_BTN => {
+                if id == LOCK_ID_ALL {
+                    for b in 0..BTN_COUNT as usize {
+                        self.set_mouse(LOCK_TGT_BTN_BASE + b, dir, scale);
+                    }
+                } else if id < BTN_COUNT as u16 {
+                    self.set_mouse(LOCK_TGT_BTN_BASE + id as usize, dir, scale);
+                }
+            }
+            LOCK_CLS_KEY => {
+                if id == LOCK_ID_ALL {
+                    // The blanket carries the two edge slots only, and honours the direction: a
+                    // relative one names neither and is dropped.
+                    let m = slot_mask(dir) & 0x03;
+                    if m == 0 {
+                        return;
+                    }
+                    if on {
+                        self.key_blanket |= m;
+                    } else {
+                        self.key_blanket &= !m;
+                    }
+                } else {
+                    let u = (id & 0xFF) as usize;
+                    if u < 0x04 {
+                        return;
+                    }
+                    if dir == LOCK_DIR_BOTH || dir == LOCK_DIR_POS {
+                        self.key_press[u] = on;
+                    }
+                    if dir == LOCK_DIR_BOTH || dir == LOCK_DIR_NEG {
+                        self.key_release[u] = on;
+                    }
+                }
+            }
+            LOCK_CLS_MEDIA => {
+                // A media usage is suppressed whole, so the direction byte is not read at all.
+                if id == LOCK_ID_ALL {
+                    self.media_blanket = on;
+                } else if id != 0 {
+                    if !on {
+                        for slot in self.media.iter_mut().filter(|s| **s == id) {
+                            *slot = 0;
+                        }
+                    } else if !self.media.contains(&id)
+                        && let Some(slot) = self.media.iter_mut().find(|s| **s == 0)
+                    {
+                        *slot = id;
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    // In vector mode one relative scale governs the whole aim, the lower of X's and Y's, so the
+    // readback names that number on both axes instead of each axis's stored byte.
+    fn reported(&self, t: usize, slot: usize, vector: bool) -> u8 {
+        let sc = self.mouse[t][slot];
+        if !vector || slot < LOCK_SLOT_WITH || t > Axis::Y.as_u16() as usize {
+            return sc;
+        }
+        sc.min(self.mouse[1 - t][slot])
+    }
+
+    pub(crate) fn pack(&self, mode: BearingMode) -> Locks {
+        let vector = mode == BearingMode::Vector;
+        let mut out: Vec<LockEntry> = Vec::new();
+        let mut push = |scope: LockScope, direction: u8, scale: u8| {
+            if out.len() < RESP_LOCKS_MAXN {
+                out.push(LockEntry {
+                    scope,
+                    direction: Direction::from_u8(direction).expect("slot direction"),
+                    scale,
+                });
+            }
+        };
+        for t in 0..LOCK_TGT_COUNT {
+            for (slot, &dir) in SLOT_DIRS.iter().enumerate() {
+                let scale = self.reported(t, slot, vector);
+                if scale == LOCK_SCALE_PASS {
+                    continue;
+                }
+                let target = if t < LOCK_TGT_BTN_BASE {
+                    LockTarget::Axis(match t {
+                        0 => Axis::X,
+                        1 => Axis::Y,
+                        _ => Axis::Wheel,
+                    })
+                } else {
+                    LockTarget::Usage(Usage::new(Class::Button, (t - LOCK_TGT_BTN_BASE) as u16))
+                };
+                push(LockScope::Target(target), dir, scale);
+            }
+        }
+        for (bit, dir) in [(0x01, LOCK_DIR_POS), (0x02, LOCK_DIR_NEG)] {
+            if self.key_blanket & bit != 0 {
+                push(LockScope::Blanket(Class::Key), dir, LOCK_SCALE_BLOCK);
+            }
+        }
+        // Media before granular keys: media is bounded at MEDIA_LOCK_MAX and granular keys are not,
+        // so enumerating keys last is what keeps the unbounded class from starving the bounded one at
+        // the entry cap. A media usage is suppressed whole, so the direction it reports is Both.
+        if self.media_blanket {
+            push(
+                LockScope::Blanket(Class::Media),
+                LOCK_DIR_BOTH,
+                LOCK_SCALE_BLOCK,
+            );
+        }
+        for &id in self.media.iter().filter(|&&id| id != 0) {
+            push(
+                LockScope::Target(LockTarget::Usage(Usage::new(Class::Media, id))),
+                LOCK_DIR_BOTH,
+                LOCK_SCALE_BLOCK,
+            );
+        }
+        // Granular keys last, on whatever is left of the cap. Past it they truncate silently -- the
+        // reply has nowhere to say so -- which is why nothing bounded is enumerated after them.
+        for u in 0..256u16 {
+            let usage = LockScope::Target(LockTarget::Usage(Usage::new(Class::Key, u)));
+            if self.key_press[u as usize] {
+                push(usage, LOCK_DIR_POS, LOCK_SCALE_BLOCK);
+            }
+            if self.key_release[u as usize] {
+                push(usage, LOCK_DIR_NEG, LOCK_SCALE_BLOCK);
+            }
+        }
+        Locks::from_entries(out)
+    }
+}
+
+impl State {
+    fn apply_lock_frame(&mut self, p: &[u8]) {
+        if p.len() < 5 {
+            return;
+        }
+        self.table
+            .apply(p[0], u16::from_le_bytes([p[1], p[2]]), p[3], p[4]);
+    }
+
+    fn apply_option_frame(&mut self, p: &[u8]) {
+        match (p.first().copied(), &p[1..]) {
+            (Some(OPT_IMPERFECT), [allow, ..]) => self.imperfect.allowed = *allow != 0,
+            (Some(OPT_MOVE_RIDE), [lo, hi, ..]) => {
+                self.move_ride_ms = u16::from_le_bytes([*lo, *hi])
+            }
+            (Some(OPT_EMIT), [mode, lo, hi, ..]) => {
+                let hz = u16::from_le_bytes([*lo, *hi]);
+                self.emit_pace = match mode {
+                    1 => EmitPace::Interval,
+                    2 => EmitPace::Fixed(hz),
+                    _ => EmitPace::Learned,
+                };
+            }
+            (Some(OPT_NAME), name) => {
+                self.version.name = String::from_utf8_lossy(name).into_owned()
+            }
+            (Some(OPT_BEARING), [lo, hi, mode, ..]) => {
+                // An unknown mode is ignored whole, as the firmware ignores it, window and all.
+                let Some(mode) = BearingMode::from_u8(*mode) else {
+                    return;
+                };
+                let ms = u16::from_le_bytes([*lo, *hi]);
+                self.bearing = Bearing {
+                    window: (ms != 0).then(|| std::time::Duration::from_millis(ms as u64)),
+                    mode,
+                };
+            }
+            _ => {}
         }
     }
 }
@@ -346,6 +614,14 @@ impl MockBox {
                 seq,
                 payload: payload.to_vec(),
             });
+            match ty {
+                FrameType::Lock => st.apply_lock_frame(payload),
+                FrameType::Option => st.apply_option_frame(payload),
+                // RESET clears every lock along with the injection, as input_reset does. The bearing
+                // option is NVS-backed and survives it.
+                FrameType::Reset => st.table = LockTable::default(),
+                _ => {}
+            }
             if ty == FrameType::Query && st.respond {
                 match payload.first().copied() {
                     Some(0) => {
@@ -370,7 +646,11 @@ impl MockBox {
                         encode(FrameType::Resp, seq, &stats_payload(st.stats)).expect("resp fits")
                     }
                     Some(6) => {
-                        encode(FrameType::Resp, seq, &locks_payload(&st.locks)).expect("resp fits")
+                        let locks = st
+                            .locks
+                            .clone()
+                            .unwrap_or_else(|| st.table.pack(st.bearing.mode));
+                        encode(FrameType::Resp, seq, &locks_payload(&locks)).expect("resp fits")
                     }
                     Some(7) => encode(FrameType::Resp, seq, &catch_resp_payload(&st.catch))
                         .expect("resp fits"),
@@ -472,11 +752,18 @@ impl MockBox {
         self
     }
 
-    /// Set the [`Locks`] answered to `QUERY(LOCKS)` (builder style).
+    /// Pin the [`Locks`] answered to `QUERY(LOCKS)` (builder style), for a reply the mock's own lock
+    /// table would never build. Without one it answers from that table, which the `LOCK` frames it
+    /// receives maintain the way the box maintains its own.
     #[must_use]
     pub fn with_locks(self, locks: Locks) -> Self {
-        self.state.lock().locks = locks;
+        self.state.lock().locks = Some(locks);
         self
+    }
+
+    /// Pin the [`Locks`] answered to `QUERY(LOCKS)` in place; see [`with_locks`](Self::with_locks).
+    pub fn set_locks(&self, locks: Locks) {
+        self.state.lock().locks = Some(locks);
     }
 
     /// Set the [`CatchState`] answered to `QUERY(CATCH)` (builder style).

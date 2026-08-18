@@ -134,11 +134,7 @@ fn reapply_held(ctx: &ReconnectCtx) -> Result<()> {
     let _serial = ctx.catch_lock.lock();
     let (held, held_locks, catch) = {
         let d = ctx.desired.lock();
-        (
-            d.held().collect::<Vec<_>>(),
-            d.held_locks().collect::<Vec<_>>(),
-            d.catch(),
-        )
+        (d.held().collect::<Vec<_>>(), d.held_locks(), d.catch())
     };
     for (usage, action) in held {
         let (class, id) = usage.class_id();

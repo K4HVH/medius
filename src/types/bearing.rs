@@ -13,6 +13,13 @@ pub enum BearingMode {
     /// The aim is projected onto the injected XY vector: only the part of the physical delta lying
     /// along the injection is weighed, and the part across it passes untouched. Smoother on
     /// diagonals; X and Y stop being independent.
+    ///
+    /// One relative scale governs the whole aim, the lower of X's and Y's, so setting only X's
+    /// weighs Y's motion too. `RESP(LOCKS)` reports that effective number on both relative entries.
+    ///
+    /// The projection moves motion between the axes, and each axis's absolute scale then applies to
+    /// what the projection left rather than to the sign the hand moved: an absolute scale is a
+    /// statement about what reaches the PC, so a block covers motion the projection put there.
     Vector,
 }
 
