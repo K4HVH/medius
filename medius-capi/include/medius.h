@@ -146,10 +146,10 @@ enum MediusBearingMode
  {
     // Each axis compares its own sign against its own bearing, independently.
     MEDIUS_BEARING_MODE_PER_AXIS = 0,
-    // The aim is projected onto the injected XY vector; motion across it passes untouched. One
-    // relative scale governs the whole aim, the lower of X's and Y's, and that is what reads back.
-    // Each axis's absolute scale then applies to what the projection left, not to the sign the hand
-    // moved: it is a statement about what reaches the PC.
+    // The physical delta is projected onto the injected XY vector. One
+    // relative scale governs both axes, the lower of X's and Y's, and that is what reads back.
+    // Each axis's absolute scale then applies to what the projection left, not to the sign the report
+    // carried: it governs what reaches the PC.
     MEDIUS_BEARING_MODE_VECTOR = 1,
 };
 #ifndef __cplusplus
@@ -512,8 +512,8 @@ enum MediusDirection
     MEDIUS_DIRECTION_BOTH = 0,
     MEDIUS_DIRECTION_POSITIVE = 1,
     MEDIUS_DIRECTION_NEGATIVE = 2,
-    // The axis sign the box is currently injecting. Measured against the bearing, so it follows the
-    // aim rather than the axis; inert while no bearing is live. Axes only.
+    // The axis sign the box is currently injecting. Measured against the bearing, so the sign it covers follows the
+    // injection rather than the axis; inert while no bearing is live. Axes only.
     MEDIUS_DIRECTION_WITH = 3,
     // The axis sign opposing the box's injection. Measured against the bearing; axes only.
     MEDIUS_DIRECTION_AGAINST = 4,

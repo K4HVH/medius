@@ -126,7 +126,7 @@ class Direction(IntEnum):
     values under names that read at the call site. Which applies is decided by the class.
 
     `WITH` and `AGAINST` name a sign relative to the bearing, the direction the box is currently
-    injecting, so they follow the aim instead of the axis. Axes only, and inert until a bearing is
+    injecting, so the sign they cover follows the injection instead of the axis. Axes only, and inert until a bearing is
     live (see `Device.set_bearing`).
     """
 
@@ -157,10 +157,10 @@ class BearingMode(IntEnum):
 
     #: Each axis compares its own sign against its own bearing, independently.
     PER_AXIS = 0
-    #: The aim is projected onto the injected XY vector; motion across it passes untouched. One
-    #: relative scale governs the whole aim, the lower of X's and Y's, and that is what reads back.
-    #: Each axis's absolute scale then applies to what the projection left, not to the sign the hand
-    #: moved: it is a statement about what reaches the PC.
+    #: The physical delta is projected onto the injected XY vector. One
+    #: relative scale governs both axes, the lower of X's and Y's, and that is what reads back.
+    #: Each axis's absolute scale then applies to what the projection left, not to the sign the report
+    #: carried: it governs what reaches the PC.
     VECTOR = 1
 
 

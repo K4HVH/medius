@@ -18,7 +18,7 @@ pub enum BearingMode {
     /// weighs Y's motion too. `RESP(LOCKS)` reports that effective number on both relative entries.
     ///
     /// The projection moves motion between the axes, and each axis's absolute scale then applies to
-    /// what the projection left rather than to the sign the hand moved: an absolute scale is a
+    /// what the projection left rather than to the sign the report carried: an absolute scale is a
     /// statement about what reaches the PC, so a block covers motion the projection put there.
     Vector,
 }
