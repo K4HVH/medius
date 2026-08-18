@@ -2,9 +2,7 @@
 
 use std::time::Duration;
 
-use crate::convert::{
-    catch_filter_from_c, class_from_c, clock_domain_to_native, input_event_to_c, usage_to_c,
-};
+use crate::convert::{catch_filter_from_c, clock_domain_from_c, input_event_to_c, usage_to_c};
 use crate::ctypes::*;
 use crate::device::MediusDevice;
 use crate::error::{MediusStatus, clear_error, fail, guard, guard_status, record};
@@ -178,18 +176,19 @@ fn fail_bool(message: &str) -> bool {
 unsafe fn timeline_observe(
     t: *mut MediusTimeline,
     ts_us: u32,
-    clock: MediusClockDomain,
+    clock: u8,
     now_ns: u64,
     out: *mut MediusStamped,
 ) -> bool {
+    let Some(clock) = clock_domain_from_c(clock) else {
+        return fail_bool("event names no known clock domain");
+    };
     let tl = unsafe { &mut *t };
     let base = tl.origin;
     let Some(arrival) = base.checked_add(Duration::from_nanos(now_ns)) else {
         return fail_bool("now_ns is too large to be a monotonic reading");
     };
-    let st = tl
-        .inner
-        .observe_stamp(ts_us, clock_domain_to_native(clock), arrival);
+    let st = tl.inner.observe_stamp(ts_us, clock, arrival);
     let host_ns = st
         .host
         .saturating_duration_since(base)
@@ -360,22 +359,26 @@ pub unsafe extern "C" fn medius_input_stream_dropped(stream: *mut MediusInputStr
 }
 
 /// Write the usages of `class` this stream currently holds to `out[0..cap]` and return how many there
-/// are. A return above `cap` means the buffer was too small and only `cap` were written.
+/// are. A return above `cap` means the buffer was too small and only `cap` were written. `class`
+/// takes a `MEDIUS_CLASS_*` constant; any other value holds nothing and reads as 0.
 ///
 /// # Safety
 /// `out` must point to space for `cap` `MediusUsage`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_input_stream_held(
     stream: *mut MediusInputStream,
-    class: MediusClass,
+    class: u8,
     out: *mut MediusUsage,
     cap: usize,
 ) -> usize {
     guard(0, || {
+        let Some(class) = medius::Class::from_u8(class) else {
+            return 0;
+        };
         if stream.is_null() {
             return 0;
         }
-        let held = unsafe { (*stream).inner.held(class_from_c(class)) };
+        let held = unsafe { (*stream).inner.held(class) };
         if !out.is_null() {
             for (i, u) in held.iter().take(cap).enumerate() {
                 unsafe { *out.add(i) = usage_to_c(*u) };
@@ -437,7 +440,11 @@ pub unsafe extern "C" fn medius_timeline_observe(
         if t.is_null() || ev.is_null() || out.is_null() {
             return false;
         }
-        let (ts_us, clock) = unsafe { ((*ev).ts_us, (*ev).clock) };
+        // `clock` is read as the byte it is: the field is typed `MediusClockDomain` for a caller
+        // reading it, and materializing one out of memory a caller filled would be undefined before
+        // the check below could run.
+        let ts_us = unsafe { (*ev).ts_us };
+        let clock = unsafe { *(&raw const (*ev).clock).cast::<u8>() };
         unsafe { timeline_observe(t, ts_us, clock, now_ns, out) }
     })
 }
@@ -459,38 +466,41 @@ pub unsafe extern "C" fn medius_timeline_observe_input(
         if t.is_null() || ev.is_null() || out.is_null() {
             return false;
         }
-        let (ts_us, clock) = unsafe { ((*ev).ts_us, (*ev).clock) };
+        let ts_us = unsafe { (*ev).ts_us };
+        let clock = unsafe { *(&raw const (*ev).clock).cast::<u8>() };
         unsafe { timeline_observe(t, ts_us, clock, now_ns, out) }
     })
 }
 
-/// Forget one domain's rollover count and measured floor, for a chip that rebooted.
+/// Forget one domain's rollover count and measured floor, for a chip that rebooted. `domain` takes a
+/// `MEDIUS_CLOCK_DOMAIN_*` constant; any other value is a no-op.
 ///
 /// # Safety
 /// `t` must be non-null and valid, or null.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn medius_timeline_reset(t: *mut MediusTimeline, domain: MediusClockDomain) {
+pub unsafe extern "C" fn medius_timeline_reset(t: *mut MediusTimeline, domain: u8) {
     guard((), || {
-        if !t.is_null() {
-            unsafe { (*t).inner.reset(clock_domain_to_native(domain)) };
+        if let (false, Some(domain)) = (t.is_null(), clock_domain_from_c(domain)) {
+            unsafe { (*t).inner.reset(domain) };
         }
     });
 }
 
 /// Events observed for a domain. The floor is a minimum over these: a handful is a loose estimate.
+/// `domain` takes a `MEDIUS_CLOCK_DOMAIN_*` constant; any other value reads as 0.
 ///
 /// # Safety
 /// `t` must be non-null and valid, or null.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn medius_timeline_samples(
-    t: *mut MediusTimeline,
-    domain: MediusClockDomain,
-) -> u64 {
+pub unsafe extern "C" fn medius_timeline_samples(t: *mut MediusTimeline, domain: u8) -> u64 {
     guard(0, || {
+        let Some(domain) = clock_domain_from_c(domain) else {
+            return 0;
+        };
         if t.is_null() {
             return 0;
         }
-        unsafe { (*t).inner.samples(clock_domain_to_native(domain)) }
+        unsafe { (*t).inner.samples(domain) }
     })
 }
 

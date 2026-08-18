@@ -37,74 +37,149 @@ fn read_cstr(src: &[c_char]) -> String {
     String::from_utf8_lossy(&bytes).into_owned()
 }
 
-fn kind_to_medius(k: DeviceKind) -> MediusDeviceKind {
-    match k {
+// Every enum crosses this boundary as a byte, because materializing a `#[repr(u8)]` enum from one a
+// caller chose is undefined behaviour before any check can run. These are the total maps back, keyed
+// on the C ABI's own discriminants; each answers `None` for a byte no constant names.
+
+fn kind_to_c(k: DeviceKind) -> u8 {
+    let k = match k {
         DeviceKind::Unknown => MediusDeviceKind::Unknown,
         DeviceKind::Keyboard => MediusDeviceKind::Keyboard,
         DeviceKind::Mouse => MediusDeviceKind::Mouse,
-    }
+    };
+    k as u8
 }
 
-fn kind_from_medius(k: MediusDeviceKind) -> DeviceKind {
-    match k {
-        MediusDeviceKind::Unknown => DeviceKind::Unknown,
-        MediusDeviceKind::Keyboard => DeviceKind::Keyboard,
-        MediusDeviceKind::Mouse => DeviceKind::Mouse,
-    }
+#[cfg(feature = "mock")]
+pub(crate) fn device_kind_from_c(v: u8) -> Option<DeviceKind> {
+    Some(match v {
+        0 => DeviceKind::Unknown,
+        1 => DeviceKind::Keyboard,
+        2 => DeviceKind::Mouse,
+        _ => return None,
+    })
 }
 
-impl From<MediusButton> for Button {
-    fn from(v: MediusButton) -> Self {
-        match v {
-            MediusButton::Left => Button::Left,
-            MediusButton::Right => Button::Right,
-            MediusButton::Middle => Button::Middle,
-            MediusButton::Side1 => Button::Side1,
-            MediusButton::Side2 => Button::Side2,
-        }
-    }
+pub(crate) fn action_from_c(v: u8) -> Option<Action> {
+    Some(match v {
+        0 => Action::SoftRelease,
+        1 => Action::Press,
+        2 => Action::ForceRelease,
+        _ => return None,
+    })
 }
 
-impl From<MediusAction> for Action {
-    fn from(v: MediusAction) -> Self {
-        match v {
-            MediusAction::SoftRelease => Action::SoftRelease,
-            MediusAction::Press => Action::Press,
-            MediusAction::ForceRelease => Action::ForceRelease,
-        }
-    }
+pub(crate) fn reboot_target_from_c(v: u8) -> Option<RebootTarget> {
+    Some(match v {
+        0 => RebootTarget::DeviceDownload,
+        1 => RebootTarget::HostDownload,
+        2 => RebootTarget::DeviceRun,
+        3 => RebootTarget::HostRun,
+        _ => return None,
+    })
 }
 
-impl From<MediusRebootTarget> for RebootTarget {
-    fn from(v: MediusRebootTarget) -> Self {
-        match v {
-            MediusRebootTarget::DeviceDownload => RebootTarget::DeviceDownload,
-            MediusRebootTarget::HostDownload => RebootTarget::HostDownload,
-            MediusRebootTarget::DeviceRun => RebootTarget::DeviceRun,
-            MediusRebootTarget::HostRun => RebootTarget::HostRun,
-        }
-    }
+pub(crate) fn led_target_from_c(v: u8) -> Option<LedTarget> {
+    Some(match v {
+        0 => LedTarget::Device,
+        1 => LedTarget::Host,
+        2 => LedTarget::Both,
+        _ => return None,
+    })
 }
 
-impl From<MediusLedTarget> for LedTarget {
-    fn from(v: MediusLedTarget) -> Self {
-        match v {
-            MediusLedTarget::Device => LedTarget::Device,
-            MediusLedTarget::Host => LedTarget::Host,
-            MediusLedTarget::Both => LedTarget::Both,
-        }
-    }
+pub(crate) fn led_mode_from_c(v: u8) -> Option<LedMode> {
+    Some(match v {
+        0 => LedMode::Auto,
+        1 => LedMode::Off,
+        2 => LedMode::Solid,
+        3 => LedMode::Blink,
+        _ => return None,
+    })
 }
 
-impl From<MediusLedMode> for LedMode {
-    fn from(v: MediusLedMode) -> Self {
-        match v {
-            MediusLedMode::Auto => LedMode::Auto,
-            MediusLedMode::Off => LedMode::Off,
-            MediusLedMode::Solid => LedMode::Solid,
-            MediusLedMode::Blink => LedMode::Blink,
-        }
-    }
+pub(crate) fn move_timing_from_c(v: u8) -> Option<MoveTiming> {
+    Some(match v {
+        0 => MoveTiming::Ride,
+        1 => MoveTiming::Now,
+        _ => return None,
+    })
+}
+
+pub(crate) fn pending_motion_from_c(v: u8) -> Option<PendingMotion> {
+    Some(match v {
+        0 => PendingMotion::Keep,
+        1 => PendingMotion::Flush,
+        2 => PendingMotion::Discard,
+        _ => return None,
+    })
+}
+
+pub(crate) fn axis_from_c(v: u8) -> Option<Axis> {
+    Some(match v {
+        0 => Axis::X,
+        1 => Axis::Y,
+        2 => Axis::Wheel,
+        _ => return None,
+    })
+}
+
+pub(crate) fn edge_from_c(v: u8) -> Option<medius::Edge> {
+    Some(match v {
+        0 => medius::Edge::Both,
+        1 => medius::Edge::Press,
+        2 => medius::Edge::Release,
+        _ => return None,
+    })
+}
+
+pub(crate) fn clip_action_from_c(v: u8) -> Option<medius::ClipAction> {
+    Some(match v {
+        0 => medius::ClipAction::Start,
+        1 => medius::ClipAction::Stop,
+        2 => medius::ClipAction::Pause,
+        3 => medius::ClipAction::Resume,
+        4 => medius::ClipAction::Restart,
+        5 => medius::ClipAction::Toggle,
+        _ => return None,
+    })
+}
+
+#[cfg(feature = "mock")]
+pub(crate) fn clip_state_from_c(v: u8) -> Option<ClipState> {
+    Some(match v {
+        0 => ClipState::Idle,
+        1 => ClipState::Playing,
+        2 => ClipState::Paused,
+        3 => ClipState::Faulted,
+        _ => return None,
+    })
+}
+
+pub(crate) fn clock_domain_from_c(v: u8) -> Option<ClockDomain> {
+    Some(match v {
+        0 => ClockDomain::HostChip,
+        1 => ClockDomain::DeviceChip,
+        _ => return None,
+    })
+}
+
+/// `(mode, hz)` to an [`EmitPace`]; `hz` matters only for `Fixed`.
+pub(crate) fn emit_pace_from_c(mode: u8, hz: u16) -> Option<EmitPace> {
+    Some(match mode {
+        0 => EmitPace::Learned,
+        1 => EmitPace::Interval,
+        2 => EmitPace::Fixed(hz),
+        _ => return None,
+    })
+}
+
+pub(crate) fn motion_from_c(v: MediusMotion) -> Option<Motion> {
+    Some(match v.kind {
+        0 => Motion::Cursor { dx: v.dx, dy: v.dy },
+        1 => Motion::Wheel(v.wheel),
+        _ => return None,
+    })
 }
 
 impl From<Bearing> for MediusBearing {
@@ -145,80 +220,31 @@ impl From<MediusLogLevel> for LogLevel {
     }
 }
 
-/// `MediusLockTarget` to [`LockTarget`]; `None` when a `Usage` target has an out-of-range button id.
+/// `MediusLockTarget` to [`LockTarget`]; `None` for a `kind` no constant names or a `Usage` target
+/// with an out-of-range button id.
 pub(crate) fn lock_target_to_medius(v: MediusLockTarget) -> Option<LockTarget> {
     Some(match v.kind {
-        MediusLockTargetKind::X => LockTarget::Axis(Axis::X),
-        MediusLockTargetKind::Y => LockTarget::Axis(Axis::Y),
-        MediusLockTargetKind::Wheel => LockTarget::Axis(Axis::Wheel),
-        MediusLockTargetKind::Usage => LockTarget::Usage(input_to_medius(v.usage)?),
+        0 => LockTarget::Axis(Axis::X),
+        1 => LockTarget::Axis(Axis::Y),
+        2 => LockTarget::Axis(Axis::Wheel),
+        3 => LockTarget::Usage(input_to_medius(v.usage)?),
+        _ => return None,
     })
 }
 
-impl From<MediusMotion> for Motion {
-    fn from(v: MediusMotion) -> Self {
-        match v.kind {
-            MediusMotionKind::Cursor => Motion::Cursor { dx: v.dx, dy: v.dy },
-            MediusMotionKind::Wheel => Motion::Wheel(v.wheel),
-        }
-    }
-}
-
-impl From<MediusMoveTiming> for MoveTiming {
-    fn from(v: MediusMoveTiming) -> Self {
-        match v {
-            MediusMoveTiming::Ride => MoveTiming::Ride,
-            MediusMoveTiming::Now => MoveTiming::Now,
-        }
-    }
-}
-
-impl From<MediusPendingMotion> for PendingMotion {
-    fn from(v: MediusPendingMotion) -> Self {
-        match v {
-            MediusPendingMotion::Keep => PendingMotion::Keep,
-            MediusPendingMotion::Flush => PendingMotion::Flush,
-            MediusPendingMotion::Discard => PendingMotion::Discard,
-        }
-    }
-}
-
-/// `MediusUsage` to a [`Usage`]; `None` when a button/key id is out of range for its class.
+/// `MediusUsage` to a [`Usage`]; `None` for a `kind` no constant names, or a button/key id out of
+/// range for its class.
 pub(crate) fn input_to_medius(v: MediusUsage) -> Option<Usage> {
-    Some(match v.kind {
-        MediusClass::Button => Usage::from(Button::from_id(u8::try_from(v.id).ok()?)?),
-        MediusClass::Key => Usage::from(Key::new(u8::try_from(v.id).ok()?)),
-        MediusClass::Media => Usage::from(MediaKey::new(v.id)),
+    Some(match Class::from_u8(v.kind)? {
+        Class::Button => Usage::from(Button::from_id(u8::try_from(v.id).ok()?)?),
+        Class::Key => Usage::from(Key::new(u8::try_from(v.id).ok()?)),
+        Class::Media => Usage::from(MediaKey::new(v.id)),
     })
-}
-
-pub(crate) fn class_from_c(c: MediusClass) -> Class {
-    match c {
-        MediusClass::Button => Class::Button,
-        MediusClass::Key => Class::Key,
-        MediusClass::Media => Class::Media,
-    }
-}
-
-fn class_kind(class: Class) -> MediusClass {
-    match class {
-        Class::Button => MediusClass::Button,
-        Class::Key => MediusClass::Key,
-        Class::Media => MediusClass::Media,
-    }
-}
-
-fn kind_class(kind: MediusClass) -> Class {
-    match kind {
-        MediusClass::Button => Class::Button,
-        MediusClass::Key => Class::Key,
-        MediusClass::Media => Class::Media,
-    }
 }
 
 pub(crate) fn usage_to_c(u: Usage) -> MediusUsage {
     MediusUsage {
-        kind: class_kind(u.class),
+        kind: u.class.as_u8(),
         id: u.id,
     }
 }
@@ -229,28 +255,23 @@ fn lock_target_to_c(t: LockTarget) -> MediusLockTarget {
         LockTarget::Axis(Axis::Y) => axis_target(MediusLockTargetKind::Y),
         LockTarget::Axis(Axis::Wheel) => axis_target(MediusLockTargetKind::Wheel),
         LockTarget::Usage(u) => MediusLockTarget {
-            kind: MediusLockTargetKind::Usage,
+            kind: MediusLockTargetKind::Usage as u8,
             usage: usage_to_c(u),
         },
     }
 }
 
-fn axis_target(kind: MediusLockTargetKind) -> MediusLockTarget {
-    MediusLockTarget {
-        kind,
-        usage: MediusUsage {
-            kind: MediusClass::Button,
-            id: 0,
-        },
+pub(crate) fn blank_usage() -> MediusUsage {
+    MediusUsage {
+        kind: MediusClass::Button as u8,
+        id: 0,
     }
 }
 
-/// `(MediusEmitMode, hz)` to `EmitPace`; `hz` matters only for `Fixed`.
-pub(crate) fn emit_pace_to_medius(mode: MediusEmitMode, hz: u16) -> EmitPace {
-    match mode {
-        MediusEmitMode::Learned => EmitPace::Learned,
-        MediusEmitMode::Interval => EmitPace::Interval,
-        MediusEmitMode::Fixed => EmitPace::Fixed(hz),
+fn axis_target(kind: MediusLockTargetKind) -> MediusLockTarget {
+    MediusLockTarget {
+        kind: kind as u8,
+        usage: blank_usage(),
     }
 }
 
@@ -331,7 +352,7 @@ impl From<DeviceInfo> for MediusDeviceInfo {
             bcd_usb: m.bcd_usb,
             has_serial: b(m.has_serial),
             has_bos: b(m.has_bos),
-            kind: kind_to_medius(m.kind),
+            kind: kind_to_c(m.kind),
             product,
         }
     }
@@ -382,9 +403,9 @@ impl From<Locks> for MediusLocks {
             let (target, is_blanket) = match e.scope {
                 LockScope::Blanket(class) => {
                     let target = MediusLockTarget {
-                        kind: MediusLockTargetKind::Usage,
+                        kind: MediusLockTargetKind::Usage as u8,
                         usage: MediusUsage {
-                            kind: class_kind(class),
+                            kind: class.as_u8(),
                             id: 0,
                         },
                     };
@@ -411,13 +432,6 @@ fn clock_domain_to_c(d: ClockDomain) -> MediusClockDomain {
     }
 }
 
-pub(crate) fn clock_domain_to_native(d: MediusClockDomain) -> ClockDomain {
-    match d {
-        MediusClockDomain::HostChip => ClockDomain::HostChip,
-        MediusClockDomain::DeviceChip => ClockDomain::DeviceChip,
-    }
-}
-
 /// A [`CatchFilter`] to the C struct, wildcards resolved to their sentinels.
 pub(crate) fn catch_filter_to_c(f: CatchFilter) -> MediusCatchFilter {
     let (class, id) = f.wire();
@@ -438,10 +452,7 @@ pub(crate) fn catch_filter_from_c(f: MediusCatchFilter) -> Option<CatchFilter> {
 /// A decoded [`InputEvent`] to the C struct. The unused arms are zeroed rather than left undefined:
 /// a C caller reading `dx` on a press must see 0, not whatever was on the stack.
 pub(crate) fn input_event_to_c(e: InputEvent) -> MediusInputEvent {
-    let blank = MediusUsage {
-        kind: MediusClass::Button,
-        id: 0,
-    };
+    let blank = blank_usage();
     let (kind, usage, dx, dy, dz) = match e.input {
         Input::Press(u) => (MediusInputKind::Press, usage_to_c(u), 0, 0, 0),
         Input::Release(u) => (MediusInputKind::Release, usage_to_c(u), 0, 0, 0),
@@ -513,29 +524,25 @@ impl From<ImperfectStatus> for MediusImperfectStatus {
     }
 }
 
-impl From<ClipState> for MediusClipState {
-    fn from(s: ClipState) -> Self {
-        match s {
-            ClipState::Idle => MediusClipState::Idle,
-            ClipState::Playing => MediusClipState::Playing,
-            ClipState::Paused => MediusClipState::Paused,
-            ClipState::Faulted => MediusClipState::Faulted,
-        }
-    }
+fn clip_state_to_c(s: ClipState) -> u8 {
+    let s = match s {
+        ClipState::Idle => MediusClipState::Idle,
+        ClipState::Playing => MediusClipState::Playing,
+        ClipState::Paused => MediusClipState::Paused,
+        ClipState::Faulted => MediusClipState::Faulted,
+    };
+    s as u8
 }
 
 impl From<ClipStatus> for MediusClipStatus {
     fn from(s: ClipStatus) -> Self {
-        let mut held = [MediusUsage {
-            kind: MediusClass::Button,
-            id: 0,
-        }; MEDIUS_MAX_USAGES];
+        let mut held = [blank_usage(); MEDIUS_MAX_USAGES];
         let n = s.held.len().min(MEDIUS_MAX_USAGES);
         for (slot, u) in held.iter_mut().zip(s.held.iter()).take(n) {
             *slot = usage_to_c(*u);
         }
         MediusClipStatus {
-            state: s.state.into(),
+            state: clip_state_to_c(s.state),
             free: s.free,
             total: s.total,
             played: s.played,
@@ -549,45 +556,20 @@ impl From<ClipStatus> for MediusClipStatus {
     }
 }
 
-impl From<MediusClipState> for ClipState {
-    fn from(s: MediusClipState) -> Self {
-        match s {
-            MediusClipState::Idle => ClipState::Idle,
-            MediusClipState::Playing => ClipState::Playing,
-            MediusClipState::Paused => ClipState::Paused,
-            MediusClipState::Faulted => ClipState::Faulted,
-        }
-    }
-}
-
 /// Serialize clip settings to the C struct (autolock as a `CLIP_LOCK_*` bitmask, triggers into the fixed array).
 pub(crate) fn clip_settings_to_c(s: &medius::ClipSettings) -> MediusClipSettings {
     let mut triggers = [MediusClipTrigger {
-        on: MediusUsage {
-            kind: MediusClass::Button,
-            id: 0,
-        },
-        edge: MediusEdge::Both,
-        action: MediusClipAction::Start,
+        on: blank_usage(),
+        edge: MediusEdge::Both as u8,
+        action: MediusClipAction::Start as u8,
         consume: 0,
     }; MEDIUS_CLIP_TRIG_MAX];
     let n = s.triggers.len().min(MEDIUS_CLIP_TRIG_MAX);
     for (slot, t) in triggers.iter_mut().zip(s.triggers.iter()).take(n) {
         *slot = MediusClipTrigger {
             on: usage_to_c(t.on),
-            edge: match t.edge {
-                medius::Edge::Both => MediusEdge::Both,
-                medius::Edge::Press => MediusEdge::Press,
-                medius::Edge::Release => MediusEdge::Release,
-            },
-            action: match t.action {
-                medius::ClipAction::Start => MediusClipAction::Start,
-                medius::ClipAction::Stop => MediusClipAction::Stop,
-                medius::ClipAction::Pause => MediusClipAction::Pause,
-                medius::ClipAction::Resume => MediusClipAction::Resume,
-                medius::ClipAction::Restart => MediusClipAction::Restart,
-                medius::ClipAction::Toggle => MediusClipAction::Toggle,
-            },
+            edge: edge_to_c(t.edge),
+            action: clip_action_to_c(t.action),
             consume: t.consume as u8,
         };
     }
@@ -600,6 +582,27 @@ pub(crate) fn clip_settings_to_c(s: &medius::ClipSettings) -> MediusClipSettings
         triggers,
         n: n as u8,
     }
+}
+
+fn edge_to_c(e: medius::Edge) -> u8 {
+    let e = match e {
+        medius::Edge::Both => MediusEdge::Both,
+        medius::Edge::Press => MediusEdge::Press,
+        medius::Edge::Release => MediusEdge::Release,
+    };
+    e as u8
+}
+
+fn clip_action_to_c(a: medius::ClipAction) -> u8 {
+    let a = match a {
+        medius::ClipAction::Start => MediusClipAction::Start,
+        medius::ClipAction::Stop => MediusClipAction::Stop,
+        medius::ClipAction::Pause => MediusClipAction::Pause,
+        medius::ClipAction::Resume => MediusClipAction::Resume,
+        medius::ClipAction::Restart => MediusClipAction::Restart,
+        medius::ClipAction::Toggle => MediusClipAction::Toggle,
+    };
+    a as u8
 }
 
 /// A blanket group's `CLIP_LOCK_*` scope bit.
@@ -620,21 +623,10 @@ pub(crate) fn clip_settings_from_c(c: &MediusClipSettings) -> medius::ClipSettin
     let triggers = c.triggers[..n]
         .iter()
         .filter_map(|t| {
-            input_to_medius(t.on).map(|on| medius::ClipTrigger {
-                on,
-                edge: match t.edge {
-                    MediusEdge::Both => medius::Edge::Both,
-                    MediusEdge::Press => medius::Edge::Press,
-                    MediusEdge::Release => medius::Edge::Release,
-                },
-                action: match t.action {
-                    MediusClipAction::Start => medius::ClipAction::Start,
-                    MediusClipAction::Stop => medius::ClipAction::Stop,
-                    MediusClipAction::Pause => medius::ClipAction::Pause,
-                    MediusClipAction::Resume => medius::ClipAction::Resume,
-                    MediusClipAction::Restart => medius::ClipAction::Restart,
-                    MediusClipAction::Toggle => medius::ClipAction::Toggle,
-                },
+            Some(medius::ClipTrigger {
+                on: input_to_medius(t.on)?,
+                edge: edge_from_c(t.edge)?,
+                action: clip_action_from_c(t.action)?,
                 consume: t.consume != 0,
             })
         })
@@ -659,25 +651,25 @@ pub(crate) fn clip_settings_from_c(c: &MediusClipSettings) -> medius::ClipSettin
     }
 }
 
-impl From<MediusClipStatus> for ClipStatus {
-    fn from(s: MediusClipStatus) -> Self {
-        let n = (s.held_n as usize).min(MEDIUS_MAX_USAGES);
-        let held = s.held[..n]
-            .iter()
-            .filter_map(|&u| input_to_medius(u))
-            .collect();
-        ClipStatus {
-            state: s.state.into(),
-            free: s.free,
-            total: s.total,
-            played: s.played,
-            ticks: s.ticks,
-            underruns: s.underruns,
-            overruns: s.overruns,
-            seq_gaps: s.seq_gaps,
-            held,
-        }
-    }
+/// The C struct back to a [`ClipStatus`]; `None` for a `state` no constant names.
+#[cfg(feature = "mock")]
+pub(crate) fn clip_status_from_c(s: MediusClipStatus) -> Option<ClipStatus> {
+    let n = (s.held_n as usize).min(MEDIUS_MAX_USAGES);
+    let held = s.held[..n]
+        .iter()
+        .filter_map(|&u| input_to_medius(u))
+        .collect();
+    Some(ClipStatus {
+        state: clip_state_from_c(s.state)?,
+        free: s.free,
+        total: s.total,
+        played: s.played,
+        ticks: s.ticks,
+        underruns: s.underruns,
+        overruns: s.overruns,
+        seq_gaps: s.seq_gaps,
+        held,
+    })
 }
 
 impl From<EmitPaceStatus> for MediusEmitPaceStatus {
@@ -734,10 +726,7 @@ impl From<CatchEvent> for MediusCatchEvent {
                 },
             },
             CatchEvent::Usages(s) => {
-                let mut usages = [MediusUsage {
-                    kind: MediusClass::Button,
-                    id: 0,
-                }; MEDIUS_MAX_USAGES];
+                let mut usages = [blank_usage(); MEDIUS_MAX_USAGES];
                 let n = s.usages.len().min(MEDIUS_MAX_USAGES);
                 for (slot, u) in usages.iter_mut().zip(s.usages.iter()).take(n) {
                     *slot = usage_to_c(*u);
@@ -748,7 +737,7 @@ impl From<CatchEvent> for MediusCatchEvent {
                     clock: clock_domain_to_c(s.clock),
                     data: MediusCatchEventData {
                         usages: MediusUsageEvent {
-                            class: class_kind(s.class),
+                            class: s.class.as_u8(),
                             direction: s.direction.as_u8(),
                             n: n as u16,
                             usages,
@@ -861,19 +850,19 @@ impl From<MediusCaps> for Caps {
     }
 }
 
-impl From<MediusDeviceInfo> for DeviceInfo {
-    fn from(m: MediusDeviceInfo) -> Self {
-        DeviceInfo {
-            vid: m.vid,
-            pid: m.pid,
-            bcd_device: m.bcd_device,
-            bcd_usb: m.bcd_usb,
-            has_serial: nz(m.has_serial),
-            has_bos: nz(m.has_bos),
-            kind: kind_from_medius(m.kind),
-            product: read_cstr(&m.product),
-        }
-    }
+/// The C struct back to a [`DeviceInfo`]; `None` for a `kind` no constant names.
+#[cfg(feature = "mock")]
+pub(crate) fn device_info_from_c(m: MediusDeviceInfo) -> Option<DeviceInfo> {
+    Some(DeviceInfo {
+        vid: m.vid,
+        pid: m.pid,
+        bcd_device: m.bcd_device,
+        bcd_usb: m.bcd_usb,
+        has_serial: nz(m.has_serial),
+        has_bos: nz(m.has_bos),
+        kind: device_kind_from_c(m.kind)?,
+        product: read_cstr(&m.product),
+    })
 }
 
 impl From<MediusRate> for Rate {
@@ -909,7 +898,7 @@ impl From<MediusLocks> for Locks {
             .iter()
             .filter_map(|e| {
                 let scope = if e.is_blanket {
-                    LockScope::Blanket(kind_class(e.target.usage.kind))
+                    LockScope::Blanket(Class::from_u8(e.target.usage.kind)?)
                 } else {
                     LockScope::Target(lock_target_to_medius(e.target)?)
                 };
@@ -992,10 +981,10 @@ impl From<medius::FrameType> for MediusFrameType {
     }
 }
 
-/// `MediusFrameType` to `medius::FrameType`; `None` if the value is out of range.
+/// A `MEDIUS_FRAME_TYPE_*` byte to a `medius::FrameType`; `None` if no constant names it.
 #[cfg(feature = "mock")]
-pub(crate) fn frame_type_to_native(t: MediusFrameType) -> Option<medius::FrameType> {
-    medius::FrameType::try_from(t as u8).ok()
+pub(crate) fn frame_type_from_c(t: u8) -> Option<medius::FrameType> {
+    medius::FrameType::try_from(t).ok()
 }
 
 /// `PortInfo` to `MediusPortInfo`; `None` if the path would not fit (never a half-written string).

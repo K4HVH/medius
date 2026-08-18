@@ -2,8 +2,8 @@ use std::collections::BTreeMap;
 
 use crate::link::catch::FilterSet;
 use crate::protocol::opcode::{
-    LOCK_CLS_AXIS, LOCK_CLS_BTN, LOCK_DIR_AGAINST, LOCK_DIR_BOTH, LOCK_DIR_NEG, LOCK_DIR_POS,
-    LOCK_DIR_WITH, LOCK_ID_ALL, LOCK_SCALE_BLOCK, LOCK_SCALE_PASS,
+    LOCK_CLS_AXIS, LOCK_CLS_BTN, LOCK_CLS_MEDIA, LOCK_DIR_AGAINST, LOCK_DIR_BOTH, LOCK_DIR_NEG,
+    LOCK_DIR_POS, LOCK_DIR_WITH, LOCK_ID_ALL, LOCK_SCALE_BLOCK, LOCK_SCALE_PASS,
 };
 use crate::types::{Action, Class, Usage};
 
@@ -81,6 +81,13 @@ impl Slots {
     }
 }
 
+/// What [`DesiredState::apply_lock`] overwrote, enough to put it back when the frame never went out.
+#[derive(Debug)]
+pub(crate) struct LockUndo {
+    rows: Vec<((u8, u16), Option<Slots>)>,
+    media_order: Vec<u16>,
+}
+
 /// PC-owned injection + subscription state, re-asserted after a reconnect so held usages and open catches survive a control-link blip.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub(crate) struct DesiredState {
@@ -88,6 +95,11 @@ pub(crate) struct DesiredState {
     // One entry per box lock-table row. A row every slot passes is not held at all and is dropped, so
     // `locks` stays exactly the set a reconnect has to re-send.
     locks: BTreeMap<(u8, u16), Slots>,
+    // Granular media rows in the order they were taken. The box keeps its media locks in a fixed
+    // 8-slot array filled first-free-slot-first, so a replay in id order refills those slots in a
+    // different order and, past the eight it holds, drops a different usage than the box was
+    // dropping. The blanket is its own flag on the box, not a slot, so it stays out.
+    media_order: Vec<u16>,
     catch: FilterSet,
 }
 
@@ -111,7 +123,7 @@ impl DesiredState {
     /// number sent is truncated to that; recording the raw byte would leave a scale above a full pass
     /// held here as a lock the box released. A button blanket expands the way the box expands it,
     /// onto the five button rows, so releasing one button afterwards is not undone by the replay.
-    pub(crate) fn apply_lock(&mut self, key: LockKey, scale: u8) {
+    pub(crate) fn apply_lock(&mut self, key: LockKey, scale: u8) -> LockUndo {
         let (class, id, dir) = key;
         let scale = if class == LOCK_CLS_AXIS {
             scale
@@ -120,13 +132,36 @@ impl DesiredState {
         } else {
             LOCK_SCALE_PASS
         };
+        let mut undo = LockUndo {
+            rows: Vec::new(),
+            media_order: self.media_order.clone(),
+        };
         for id in expand_blanket(class, id) {
-            let row = self.locks.entry((class, id)).or_default();
+            let key = (class, id);
+            undo.rows.push((key, self.locks.get(&key).copied()));
+            let row = self.locks.entry(key).or_default();
             row.write(dir, scale);
             if row.is_clear() {
-                self.locks.remove(&(class, id));
+                self.locks.remove(&key);
+                if is_media_slot(class, id) {
+                    self.media_order.retain(|&m| m != id);
+                }
+            } else if is_media_slot(class, id) && !self.media_order.contains(&id) {
+                self.media_order.push(id);
             }
         }
+        undo
+    }
+
+    /// Put back what an `apply_lock` wrote, for a frame that never reached the transport.
+    pub(crate) fn restore_lock(&mut self, undo: LockUndo) {
+        for (key, row) in undo.rows {
+            match row {
+                Some(row) => self.locks.insert(key, row),
+                None => self.locks.remove(&key),
+            };
+        }
+        self.media_order = undo.media_order;
     }
 
     pub(crate) fn clear(&mut self) {
@@ -134,6 +169,7 @@ impl DesiredState {
         // otherwise clears firmware-side on the same lifecycle as injection.
         self.overrides.clear();
         self.locks.clear();
+        self.media_order.clear();
     }
 
     /// The catch subscription table the box should be holding (re-asserted on reconnect).
@@ -159,10 +195,13 @@ impl DesiredState {
         })
     }
 
-    /// The `(key, scale)` commands that rebuild every held row, for the reconnect reapply.
+    /// The `(key, scale)` commands that rebuild every held row, for the reconnect reapply. Media rows
+    /// come out in the order they were taken, so the replay fills the box's slot array the way the
+    /// live box filled it.
     pub(crate) fn held_locks(&self) -> Vec<(LockKey, u8)> {
-        self.locks
-            .iter()
+        let mut rows: Vec<(&(u8, u16), &Slots)> = self.locks.iter().collect();
+        rows.sort_by_key(|((class, id), _)| (*class, self.media_rank(*class, *id), *id));
+        rows.into_iter()
             .flat_map(|(&(class, id), row)| {
                 row.commands()
                     .into_iter()
@@ -170,6 +209,23 @@ impl DesiredState {
             })
             .collect()
     }
+
+    // Which slot a media row took; the media blanket holds none and goes last, and every other class
+    // ranks alike and stays ordered by id.
+    fn media_rank(&self, class: u8, id: u16) -> usize {
+        if class != LOCK_CLS_MEDIA {
+            return 0;
+        }
+        self.media_order
+            .iter()
+            .position(|&m| m == id)
+            .unwrap_or(usize::MAX)
+    }
+}
+
+// A granular media lock, the only class the box holds in a slot array. Its blanket is a separate flag.
+fn is_media_slot(class: u8, id: u16) -> bool {
+    class == LOCK_CLS_MEDIA && id != LOCK_ID_ALL
 }
 
 // The box has no button-blanket state: it writes the five button rows and forgets it was ever one

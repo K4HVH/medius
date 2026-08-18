@@ -12,12 +12,21 @@ use super::Device;
 impl Device {
     fn send_lock(&self, class: u8, id: u16, direction: Direction, scale: u8) -> Result<()> {
         let dir = lock_direction(class, direction)?.as_u8();
-        self.link
+        // Recorded before the write so a reconnect racing it still replays the lock, and rolled back
+        // when the frame never went out: a desired state the box was never told about holds the
+        // keepalive open for a lock nothing is applying.
+        let undo = self
+            .link
             .desired()
             .lock()
             .apply_lock((class, id, dir), scale);
-        self.link
-            .send(FrameType::Lock, &lock_payload(class, id, dir, scale))
+        let sent = self
+            .link
+            .send(FrameType::Lock, &lock_payload(class, id, dir, scale));
+        if sent.is_err() {
+            self.link.desired().lock().restore_lock(undo);
+        }
+        sent
     }
 
     /// `LOCK` weighs physical input on a target while host injection still drives it; reverts on

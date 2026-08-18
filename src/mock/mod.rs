@@ -12,7 +12,8 @@ use crate::protocol::opcode::{
     OPT_BEARING, OPT_EMIT, OPT_IMPERFECT, OPT_MOVE_RIDE, OPT_NAME, RATE_CONFIDENT,
 };
 use crate::protocol::opcode::{
-    CLIP_CFG_F_FINALIZED, CLIP_CFG_F_LOOP, CLIP_CFG_F_RETAIN, CLIP_CFG_F_RIDE, CLK_RATE_NONE,
+    CLIP_CFG_F_FINALIZED, CLIP_CFG_F_LOOP, CLIP_CFG_F_RETAIN, CLIP_CFG_F_RIDE, CLIP_TRIG_MAX,
+    CLK_RATE_NONE,
 };
 use crate::protocol::{DecodedFrame, FrameType, encode};
 use crate::transport::mock::MockTransport;
@@ -91,6 +92,17 @@ const SLOT_DIRS: [u8; 4] = [LOCK_DIR_POS, LOCK_DIR_NEG, LOCK_DIR_WITH, LOCK_DIR_
 // CTRL_RESP_LOCKS_MAXN and INPUT_MEDIA_MAX: past either the box drops silently.
 const RESP_LOCKS_MAXN: usize = 96;
 const MEDIA_LOCK_MAX: usize = 8;
+// The rest of ctrl_proto.h's reply bounds. Every one of these sits behind a public builder that
+// takes a caller-supplied length, and the box truncates at each rather than refusing: it appends
+// what fits and answers. Encoding past them writes a count byte that wrapped past 255, or a payload
+// longer than a frame carries -- and since the responder runs inside `write_all`, that `encode`
+// failure unwinds back out of the caller's own query rather than answering it.
+const NAME_MAX: usize = 32; // CTRL_NAME_MAX
+const DEVICE_INFO_PRODUCT_MAX: usize = 127; // CTRL_DEVICE_INFO_PRODUCT_MAX
+const CATCH_MAXN: usize = 32; // CTRL_CATCH_MAXN
+const USAGE_EVENT_MAX: usize = 40; // CTRL_USAGE_EVENT_MAX
+const CLIP_HELD_MAX: usize = USAGE_EVENT_MAX; // CTRL_CLIP_HELD_MAX, defined as CTRL_USAGE_EVENT_MAX
+const TRAFFIC_DATA_MAX: usize = 180; // CTRL_TRAFFIC_DATA_MAX
 
 #[derive(Debug, Clone)]
 pub(crate) struct LockTable {
@@ -343,6 +355,16 @@ impl State {
     }
 }
 
+fn version_payload(v: &Version) -> Vec<u8> {
+    let mut p = vec![0u8, v.proto_ver, v.fw_major, v.fw_minor, v.fw_patch];
+    p.extend_from_slice(&v.mac);
+    // usbdev_box_name_copy stops at CTRL_NAME_MAX, so a longer name reads back cut. Bytes, not
+    // chars, as the box copies them: a split multi-byte char decodes lossily, which is what the box
+    // would put on the wire too.
+    p.extend_from_slice(&v.name.as_bytes()[..v.name.len().min(NAME_MAX)]);
+    p
+}
+
 fn device_info_payload(m: &DeviceInfo) -> Vec<u8> {
     let mut flags = 0u8;
     if m.has_serial {
@@ -363,7 +385,8 @@ fn device_info_payload(m: &DeviceInfo) -> Vec<u8> {
     p.extend_from_slice(&m.bcd_usb.to_le_bytes());
     p.push(flags);
     p.push(kind);
-    p.extend_from_slice(m.product.as_bytes());
+    // The reply copies at most CTRL_DEVICE_INFO_PRODUCT_MAX bytes of the product tail.
+    p.extend_from_slice(&m.product.as_bytes()[..m.product.len().min(DEVICE_INFO_PRODUCT_MAX)]);
     p
 }
 
@@ -437,7 +460,10 @@ fn stats_payload(s: Stats) -> Vec<u8> {
 fn locks_payload(l: &Locks) -> Vec<u8> {
     use crate::protocol::opcode::{LOCK_CLS_AXIS, LOCK_ID_ALL};
     use crate::types::{LockScope, LockTarget};
-    let entries = l.entries();
+    // The box stops appending at RESP_LOCKS_MAXN and answers with what fit (ctrl_locks_append), so a
+    // longer `Locks` truncates here. Encoding all of them would write a count byte that wrapped past
+    // 255 and a payload no frame can carry, which fails the caller's query instead of answering it.
+    let entries = &l.entries()[..l.entries().len().min(RESP_LOCKS_MAXN)];
     let mut p = vec![6u8, entries.len() as u8];
     for e in entries {
         let (class, id) = match e.scope {
@@ -465,8 +491,10 @@ fn catch_resp_payload(c: &CatchState) -> Vec<u8> {
         .age
         .map_or(u16::MAX, |d| d.as_millis().min(u16::MAX as u128 - 1) as u16);
     p.extend_from_slice(&age.to_le_bytes());
-    p.push(c.entries.len() as u8);
-    for e in &c.entries {
+    // ctrl_catch_append stops at CTRL_CATCH_MAXN, which is the table's own size.
+    let entries = &c.entries[..c.entries.len().min(CATCH_MAXN)];
+    p.push(entries.len() as u8);
+    for e in entries {
         let (class, id) = e.filter.wire();
         p.push(class);
         p.extend_from_slice(&id.to_le_bytes());
@@ -533,8 +561,10 @@ fn clip_status_payload(c: &ClipStatus, cfg: &ClipSettings) -> Vec<u8> {
     p.extend_from_slice(&c.underruns.to_le_bytes());
     p.extend_from_slice(&c.overruns.to_le_bytes());
     p.extend_from_slice(&c.seq_gaps.to_le_bytes());
-    p.push(c.held.len() as u8);
-    for u in &c.held {
+    // ctrl_clip_held_append stops at CTRL_CLIP_HELD_MAX, ctrl_clip_trig_append at CLIP_TRIG_MAX.
+    let held = &c.held[..c.held.len().min(CLIP_HELD_MAX)];
+    p.push(held.len() as u8);
+    for u in held {
         u.push_le(&mut p);
     }
     p.push(blanket_scope(&cfg.autolock));
@@ -547,8 +577,9 @@ fn clip_status_payload(c: &ClipStatus, cfg: &ClipSettings) -> Vec<u8> {
         })
         | (if cfg.ride { CLIP_CFG_F_RIDE } else { 0 });
     p.push(flags);
-    p.push(cfg.triggers.len() as u8);
-    for t in &cfg.triggers {
+    let triggers = &cfg.triggers[..cfg.triggers.len().min(CLIP_TRIG_MAX)];
+    p.push(triggers.len() as u8);
+    for t in triggers {
         let (class, id) = t.on.class_id();
         p.push(class);
         p.extend_from_slice(&id.to_le_bytes());
@@ -576,6 +607,8 @@ fn usage_event_payload(
     direction: Direction,
     usages: &[Usage],
 ) -> Vec<u8> {
+    // ctrl_usage_append stops at CTRL_USAGE_EVENT_MAX.
+    let usages = &usages[..usages.len().min(USAGE_EVENT_MAX)];
     let mut p = Vec::with_capacity(8 + 3 * usages.len());
     p.extend_from_slice(&ts_us.to_le_bytes());
     p.push(0); // clk: host chip, as for motion
@@ -624,13 +657,8 @@ impl MockBox {
             }
             if ty == FrameType::Query && st.respond {
                 match payload.first().copied() {
-                    Some(0) => {
-                        let v = &st.version;
-                        let mut p = vec![0, v.proto_ver, v.fw_major, v.fw_minor, v.fw_patch];
-                        p.extend_from_slice(&v.mac);
-                        p.extend_from_slice(v.name.as_bytes());
-                        encode(FrameType::Resp, seq, &p).expect("resp fits")
-                    }
+                    Some(0) => encode(FrameType::Resp, seq, &version_payload(&st.version))
+                        .expect("resp fits"),
                     Some(1) => {
                         encode(FrameType::Resp, seq, &[1, st.health.to_flags()]).expect("resp fits")
                     }
@@ -869,9 +897,13 @@ impl MockBox {
 
     /// Push a `LOG` line as if the box emitted it; it surfaces on the device's `logs()` channel.
     pub fn push_log(&self, level: LogLevel, text: &str) {
-        let mut payload = Vec::with_capacity(1 + text.len());
+        // The protocol names no bound on LOG text -- emit_log_frame's 160-byte line buffer is one
+        // emitter's, not the wire's -- so the only bound to hold is the frame's own, less the level
+        // byte. Bytes, as the box copies them; a split char decodes lossily.
+        let n = text.len().min(crate::protocol::opcode::MAX_PAYLOAD - 1);
+        let mut payload = Vec::with_capacity(1 + n);
         payload.push(level.as_u8());
-        payload.extend_from_slice(text.as_bytes());
+        payload.extend_from_slice(&text.as_bytes()[..n]);
         self.transport.push_frame(FrameType::Log, 0, &payload);
     }
 
@@ -912,7 +944,9 @@ impl MockBox {
         p.push(direction.as_u8());
         p.push(flags);
         p.extend_from_slice(&true_len.to_le_bytes());
-        p.extend_from_slice(bytes);
+        // ctrl_pack_traffic_event cuts the copy at CTRL_TRAFFIC_DATA_MAX; `true_len` still names the
+        // packet's length before the cut, which is what makes a truncated capture self-describing.
+        p.extend_from_slice(&bytes[..bytes.len().min(TRAFFIC_DATA_MAX)]);
         self.transport.push_frame(FrameType::TrafficEvent, seq, &p);
     }
 

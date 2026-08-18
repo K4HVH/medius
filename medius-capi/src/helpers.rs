@@ -5,11 +5,13 @@ use crate::error::guard;
 
 const SETUP_LEN: u16 = 8;
 
-/// Build an [`MediusUsage`] addressing a mouse button.
+/// Build an [`MediusUsage`] addressing a mouse button. `button` takes a `MEDIUS_BUTTON_*` constant;
+/// a byte no constant names is carried through and refused by the call that takes the usage, since a
+/// constructor has no status to return.
 #[unsafe(no_mangle)]
-pub extern "C" fn medius_usage_button(button: MediusButton) -> MediusUsage {
+pub extern "C" fn medius_usage_button(button: u8) -> MediusUsage {
     MediusUsage {
-        kind: MediusClass::Button,
+        kind: MediusClass::Button as u8,
         id: button as u16,
     }
 }
@@ -18,7 +20,7 @@ pub extern "C" fn medius_usage_button(button: MediusButton) -> MediusUsage {
 #[unsafe(no_mangle)]
 pub extern "C" fn medius_usage_key(key: MediusKey) -> MediusUsage {
     MediusUsage {
-        kind: MediusClass::Key,
+        kind: MediusClass::Key as u8,
         id: key as u16,
     }
 }
@@ -27,7 +29,7 @@ pub extern "C" fn medius_usage_key(key: MediusKey) -> MediusUsage {
 #[unsafe(no_mangle)]
 pub extern "C" fn medius_usage_media(media: MediusMediaKey) -> MediusUsage {
     MediusUsage {
-        kind: MediusClass::Media,
+        kind: MediusClass::Media as u8,
         id: media,
     }
 }
@@ -36,7 +38,7 @@ pub extern "C" fn medius_usage_media(media: MediusMediaKey) -> MediusUsage {
 #[unsafe(no_mangle)]
 pub extern "C" fn medius_motion_cursor(dx: i16, dy: i16) -> MediusMotion {
     MediusMotion {
-        kind: MediusMotionKind::Cursor,
+        kind: MediusMotionKind::Cursor as u8,
         dx,
         dy,
         wheel: 0,
@@ -47,22 +49,21 @@ pub extern "C" fn medius_motion_cursor(dx: i16, dy: i16) -> MediusMotion {
 #[unsafe(no_mangle)]
 pub extern "C" fn medius_motion_wheel(delta: i16) -> MediusMotion {
     MediusMotion {
-        kind: MediusMotionKind::Wheel,
+        kind: MediusMotionKind::Wheel as u8,
         dx: 0,
         dy: 0,
         wheel: delta,
     }
 }
 
-/// Build a [`MediusLockTarget`] addressing an axis (`kind` must be `X`, `Y`, or `Wheel`).
+/// Build a [`MediusLockTarget`] addressing an axis: `kind` takes `MEDIUS_LOCK_TARGET_KIND_X`, `_Y` or
+/// `_WHEEL`. Any other byte is carried through and refused by the call that takes the target, since a
+/// constructor has no status to return.
 #[unsafe(no_mangle)]
-pub extern "C" fn medius_lock_target_axis(kind: MediusLockTargetKind) -> MediusLockTarget {
+pub extern "C" fn medius_lock_target_axis(kind: u8) -> MediusLockTarget {
     MediusLockTarget {
         kind,
-        usage: MediusUsage {
-            kind: MediusClass::Button,
-            id: 0,
-        },
+        usage: crate::convert::blank_usage(),
     }
 }
 
@@ -70,7 +71,7 @@ pub extern "C" fn medius_lock_target_axis(kind: MediusLockTargetKind) -> MediusL
 #[unsafe(no_mangle)]
 pub extern "C" fn medius_lock_target_usage(usage: MediusUsage) -> MediusLockTarget {
     MediusLockTarget {
-        kind: MediusLockTargetKind::Usage,
+        kind: MediusLockTargetKind::Usage as u8,
         usage,
     }
 }
@@ -78,11 +79,10 @@ pub extern "C" fn medius_lock_target_usage(usage: MediusUsage) -> MediusLockTarg
 // A blanket covers any usage of its class; a specific entry matches its exact target. For an axis
 // target only the kind is significant (the usage field is an unused sentinel).
 fn lock_entry_covers(e: &MediusLockEntry, target: MediusLockTarget) -> bool {
-    let is_usage = target.kind == MediusLockTargetKind::Usage;
+    let usage_kind = MediusLockTargetKind::Usage as u8;
+    let is_usage = target.kind == usage_kind;
     if e.is_blanket {
-        is_usage
-            && e.target.kind == MediusLockTargetKind::Usage
-            && e.target.usage.kind == target.usage.kind
+        is_usage && e.target.kind == usage_kind && e.target.usage.kind == target.usage.kind
     } else {
         e.target.kind == target.kind && (!is_usage || e.target.usage == target.usage)
     }
@@ -173,33 +173,55 @@ pub unsafe extern "C" fn medius_usage_event_is_held(
     })
 }
 
+// The momentary classes carry the same numbering as their catch classes; `None` for a byte no
+// `MEDIUS_CLASS_*` constant names.
+fn input_catch_class(class: u8) -> Option<MediusCatchClass> {
+    match class {
+        MEDIUS_CATCH_CLASS_BTN | MEDIUS_CATCH_CLASS_KEY | MEDIUS_CATCH_CLASS_MEDIA => Some(class),
+        _ => None,
+    }
+}
+
+// A filter addressing nothing: the wildcard class carrying a real id, which subscribing refuses with
+// MEDIUS_STATUS_ERR_INVALID_ARG. A constructor has no status of its own, and a byte no constant names
+// must not become a narrower subscription that looks like the box producing no events.
+fn unaddressable() -> MediusCatchFilter {
+    MediusCatchFilter {
+        class: MEDIUS_CATCH_CLASS_ANY,
+        id: 0,
+        direction: MediusDirection::Both as u8,
+        capture: 0,
+    }
+}
+
 /// One momentary usage: a button, a key, or a media usage. The same thing `medius_device_lock` takes.
+/// A `usage.kind` no `MEDIUS_CLASS_*` constant names yields a filter subscribing refuses.
 #[unsafe(no_mangle)]
 pub extern "C" fn medius_catch_filter_watch(usage: MediusUsage) -> MediusCatchFilter {
-    exact(
-        match usage.kind {
-            MediusClass::Button => MEDIUS_CATCH_CLASS_BTN,
-            MediusClass::Key => MEDIUS_CATCH_CLASS_KEY,
-            MediusClass::Media => MEDIUS_CATCH_CLASS_MEDIA,
-        },
-        usage.id,
-    )
+    match input_catch_class(usage.kind) {
+        Some(class) => exact(class, usage.id),
+        None => unaddressable(),
+    }
 }
 
-/// One relative axis.
+/// One relative axis. `axis` takes a `MEDIUS_AXIS_*` constant; any other byte yields a filter
+/// subscribing refuses.
 #[unsafe(no_mangle)]
-pub extern "C" fn medius_catch_filter_watch_axis(axis: MediusAxis) -> MediusCatchFilter {
-    exact(MEDIUS_CATCH_CLASS_AXIS, axis as u16)
+pub extern "C" fn medius_catch_filter_watch_axis(axis: u8) -> MediusCatchFilter {
+    match crate::convert::axis_from_c(axis) {
+        Some(axis) => exact(MEDIUS_CATCH_CLASS_AXIS, axis.as_u16()),
+        None => unaddressable(),
+    }
 }
 
-/// Every usage in one momentary class.
+/// Every usage in one momentary class. `class` takes a `MEDIUS_CLASS_*` constant; any other byte
+/// yields a filter subscribing refuses.
 #[unsafe(no_mangle)]
-pub extern "C" fn medius_catch_filter_watch_class(class: MediusClass) -> MediusCatchFilter {
-    blanket(match class {
-        MediusClass::Button => MEDIUS_CATCH_CLASS_BTN,
-        MediusClass::Key => MEDIUS_CATCH_CLASS_KEY,
-        MediusClass::Media => MEDIUS_CATCH_CLASS_MEDIA,
-    })
+pub extern "C" fn medius_catch_filter_watch_class(class: u8) -> MediusCatchFilter {
+    match input_catch_class(class) {
+        Some(class) => blanket(class),
+        None => unaddressable(),
+    }
 }
 
 /// Every relative axis: X, Y and the wheel.

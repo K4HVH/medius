@@ -6,7 +6,11 @@ use std::time::Duration;
 
 use medius::Device;
 
-use crate::convert::{blanket_from_c, emit_pace_to_medius, input_to_medius, lock_target_to_medius};
+use crate::convert::{
+    action_from_c, blanket_from_c, emit_pace_from_c, input_to_medius, led_mode_from_c,
+    led_target_from_c, lock_target_to_medius, motion_from_c, move_timing_from_c,
+    pending_motion_from_c, reboot_target_from_c,
+};
 use crate::ctypes::*;
 use crate::error::{MediusStatus, clear_error, fail, guard, guard_status, record, status_of};
 
@@ -279,15 +283,31 @@ pub unsafe extern "C" fn medius_device_discard_motion(dev: *mut MediusDevice) ->
     with_device(dev, |d| d.discard_motion())
 }
 
+/// Drive one relative axis. `motion.kind` takes a `MEDIUS_MOTION_KIND_*` constant, `timing` a
+/// `MEDIUS_MOVE_TIMING_*` one and `pending` a `MEDIUS_PENDING_MOTION_*` one; any other value is
+/// `MEDIUS_STATUS_ERR_INVALID_ARG`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_device_move_axis(
     dev: *mut MediusDevice,
     motion: MediusMotion,
-    timing: MediusMoveTiming,
-    pending: MediusPendingMotion,
+    timing: u8,
+    pending: u8,
 ) -> MediusStatus {
-    with_device(dev, |d| {
-        d.move_axis(motion.into(), timing.into(), pending.into())
+    guard_status(|| {
+        if dev.is_null() {
+            return fail(MediusStatus::ErrInvalidArg, "null device handle");
+        }
+        let (Some(motion), Some(timing), Some(pending)) = (
+            motion_from_c(motion),
+            move_timing_from_c(timing),
+            pending_motion_from_c(pending),
+        ) else {
+            return fail(
+                MediusStatus::ErrInvalidArg,
+                "invalid motion, timing or pending",
+            );
+        };
+        status_of(unsafe { &(*dev).inner }.move_axis(motion, timing, pending))
     })
 }
 
@@ -309,13 +329,17 @@ fn with_input(
 }
 
 /// Drive one momentary usage (button, key, or media) with an explicit action. The one injection verb.
+/// `action` takes a `MEDIUS_ACTION_*` constant; any other value is `MEDIUS_STATUS_ERR_INVALID_ARG`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_device_inject(
     dev: *mut MediusDevice,
     input: MediusUsage,
-    action: MediusAction,
+    action: u8,
 ) -> MediusStatus {
-    with_input(dev, input, |d, u| d.inject(u, action.into()))
+    let Some(action) = action_from_c(action) else {
+        return fail(MediusStatus::ErrInvalidArg, "invalid injection action");
+    };
+    with_input(dev, input, |d, u| d.inject(u, action))
 }
 
 /// Press a usage (`Action::Press`).
@@ -474,14 +498,19 @@ pub unsafe extern "C" fn medius_device_unlock_all(
     with_blanket(dev, what, dir, |d, what, dir| d.unlock_all(what, dir))
 }
 
+/// Drive a status LED. `target` takes a `MEDIUS_LED_TARGET_*` constant and `mode` a
+/// `MEDIUS_LED_MODE_*` one; any other value is `MEDIUS_STATUS_ERR_INVALID_ARG`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_device_led(
     dev: *mut MediusDevice,
-    target: MediusLedTarget,
-    mode: MediusLedMode,
+    target: u8,
+    mode: u8,
     level: u8,
 ) -> MediusStatus {
-    with_device(dev, |d| d.led(target.into(), mode.into(), level))
+    let (Some(target), Some(mode)) = (led_target_from_c(target), led_mode_from_c(mode)) else {
+        return fail(MediusStatus::ErrInvalidArg, "invalid LED target or mode");
+    };
+    with_device(dev, |d| d.led(target, mode, level))
 }
 
 #[unsafe(no_mangle)]
@@ -499,12 +528,14 @@ pub unsafe extern "C" fn medius_device_reconnect(dev: *mut MediusDevice) -> Medi
     with_device(dev, |d| d.reconnect())
 }
 
+/// Reboot a chip. `target` takes a `MEDIUS_REBOOT_TARGET_*` constant; any other value is
+/// `MEDIUS_STATUS_ERR_INVALID_ARG`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn medius_device_reboot(
-    dev: *mut MediusDevice,
-    target: MediusRebootTarget,
-) -> MediusStatus {
-    with_device(dev, |d| d.reboot(target.into()))
+pub unsafe extern "C" fn medius_device_reboot(dev: *mut MediusDevice, target: u8) -> MediusStatus {
+    let Some(target) = reboot_target_from_c(target) else {
+        return fail(MediusStatus::ErrInvalidArg, "invalid reboot target");
+    };
+    with_device(dev, |d| d.reboot(target))
 }
 
 #[unsafe(no_mangle)]
@@ -551,14 +582,18 @@ pub unsafe extern "C" fn medius_device_set_bearing(
     })
 }
 
-/// Set what paces injected motion; `hz` is the target rate for `Fixed` and ignored otherwise.
+/// Set what paces injected motion; `hz` is the target rate for `Fixed` and ignored otherwise. `mode`
+/// takes a `MEDIUS_EMIT_MODE_*` constant; any other value is `MEDIUS_STATUS_ERR_INVALID_ARG`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_device_set_emit_pace(
     dev: *mut MediusDevice,
-    mode: MediusEmitMode,
+    mode: u8,
     hz: u16,
 ) -> MediusStatus {
-    with_device(dev, |d| d.set_emit_pace(emit_pace_to_medius(mode, hz)))
+    let Some(pace) = emit_pace_from_c(mode, hz) else {
+        return fail(MediusStatus::ErrInvalidArg, "invalid emit pacing mode");
+    };
+    with_device(dev, |d| d.set_emit_pace(pace))
 }
 
 /// Set the box's persistent name (`name`, NUL-terminated UTF-8); an empty string clears it.

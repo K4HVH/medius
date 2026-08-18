@@ -35,8 +35,9 @@ from ._enums import (
 
 
 # Scalar checks for the parameters that reach ctypes. ctypes truncates silently, so an unchecked
-# 300 becomes 44 and an unchecked -1 becomes 255. The lock, bearing and catch-filter surfaces use
-# these; `led`, `move_rel`, `inject` and the clip verbs still pass theirs straight through.
+# 300 becomes 44 and an unchecked -1 becomes 255, and every enum crosses the C ABI as a plain byte
+# the library refuses rather than trusts. Everything that reaches a ctypes argument goes through one
+# of these.
 def _enum(value, kind, what):
     """`value` as `kind`, or ValueError: the library would read a stray byte as whichever member its
     low bits happen to name."""
@@ -57,6 +58,13 @@ def _u16(value, what):
     v = int(value)
     if not 0 <= v <= 0xFFFF:
         raise ValueError(f"{what} must be 0..65535, got {value!r}")
+    return v
+
+
+def _i16(value, what):
+    v = int(value)
+    if not -0x8000 <= v <= 0x7FFF:
+        raise ValueError(f"{what} must be -32768..32767, got {value!r}")
     return v
 
 
@@ -532,15 +540,15 @@ class Usage:
 
     @classmethod
     def button(cls, button) -> "Usage":
-        return cls(_native.lib.medius_usage_button(int(button)))
+        return cls(_native.lib.medius_usage_button(int(_enum(button, Button, "button"))))
 
     @classmethod
     def key(cls, key) -> "Usage":
-        return cls(_native.lib.medius_usage_key(int(key)))
+        return cls(_native.lib.medius_usage_key(_u8(key, "key")))
 
     @classmethod
     def media(cls, media) -> "Usage":
-        return cls(_native.lib.medius_usage_media(int(media)))
+        return cls(_native.lib.medius_usage_media(_u16(media, "media")))
 
     @property
     def kind(self) -> Class:
@@ -573,11 +581,11 @@ class Motion:
 
     @classmethod
     def cursor(cls, dx, dy) -> "Motion":
-        return cls(_native.lib.medius_motion_cursor(int(dx), int(dy)))
+        return cls(_native.lib.medius_motion_cursor(_i16(dx, "dx"), _i16(dy, "dy")))
 
     @classmethod
     def wheel(cls, delta) -> "Motion":
-        return cls(_native.lib.medius_motion_wheel(int(delta)))
+        return cls(_native.lib.medius_motion_wheel(_i16(delta, "delta")))
 
 
 class LockTarget:
@@ -918,7 +926,7 @@ def device_info_to_c(m) -> "_native.MediusDeviceInfo":
         m.bcd_usb,
         int(m.has_serial),
         int(m.has_bos),
-        int(m.kind),
+        int(_enum(m.kind, DeviceKind, "kind")),
         m.product.encode("utf-8")[: _native.MEDIUS_MAX_PRODUCT - 1],
     )
 
@@ -1099,7 +1107,7 @@ def clip_status_from_c(c) -> ClipStatus:
 
 def clip_status_to_c(s) -> "_native.MediusClipStatus":
     c = _native.MediusClipStatus()
-    c.state = int(s.state)
+    c.state = int(_enum(s.state, ClipState, "state"))
     c.free = s.free
     c.total = s.total
     c.played = s.played
@@ -1170,7 +1178,7 @@ def clip_settings_from_c(c) -> ClipSettings:
 def clip_settings_to_c(s) -> "_native.MediusClipSettings":
     c = _native.MediusClipSettings()
     bit = {b: m for (m, b) in _BLANKET_BITS}
-    c.autolock_bits = sum(bit[b] for b in s.autolock)
+    c.autolock_bits = sum(bit[_enum(b, Blanket, "autolock")] for b in s.autolock)
     c.loop_ = 1 if s.loop else 0
     c.retain = 1 if s.retain else 0
     c.finalized = 1 if s.finalized else 0
@@ -1180,7 +1188,10 @@ def clip_settings_to_c(s) -> "_native.MediusClipSettings":
     for i in range(n):
         t = s.triggers[i]
         c.triggers[i] = _native.MediusClipTrigger(
-            t.on._c, int(t.edge), int(t.action), 1 if t.consume else 0
+            t.on._c,
+            int(_enum(t.edge, Edge, f"triggers[{i}].edge")),
+            int(_enum(t.action, ClipAction, f"triggers[{i}].action")),
+            1 if t.consume else 0,
         )
     return c
 
@@ -1238,8 +1249,8 @@ def motion_event_to_c(e) -> "_native.MediusMotionEvent":
 
 def usage_snapshot_to_c(s) -> "_native.MediusUsageEvent":
     c = _native.MediusUsageEvent()
-    c.class_ = int(s.cls)
-    c.direction = int(s.direction)
+    c.class_ = int(_enum(s.cls, Class, "cls"))
+    c.direction = int(_enum(s.direction, Direction, "direction"))
     n = min(len(s.usages), _native.MEDIUS_MAX_USAGES)
     c.n = n
     for idx in range(n):
@@ -1249,11 +1260,11 @@ def usage_snapshot_to_c(s) -> "_native.MediusUsageEvent":
 
 def traffic_event_to_c(t) -> "_native.MediusTrafficEvent":
     c = _native.MediusTrafficEvent()
-    c.class_ = int(t.catch_class)
-    c.id = int(t.id)
-    c.direction = int(t.direction)
-    c.flags = int(t.flags)
-    c.true_len = int(t.true_len)
+    c.class_ = int(_enum(t.catch_class, CatchClass, "catch_class"))
+    c.id = _u16(t.id, "id")
+    c.direction = int(_enum(t.direction, Direction, "direction"))
+    c.flags = _u8(t.flags, "flags")
+    c.true_len = _u16(t.true_len, "true_len")
     raw = bytes(t.bytes)[: _native.MEDIUS_MAX_TRAFFIC_BYTES]
     c.len = len(raw)
     for i, b in enumerate(raw):

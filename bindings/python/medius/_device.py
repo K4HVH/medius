@@ -6,15 +6,17 @@ import ctypes
 from typing import Optional, Sequence, Union
 
 from . import _native
-from ._enums import (Action, BearingMode, Blanket, LedMode, LedTarget, Direction, MoveTiming,
-                     PendingMotion, RebootTarget, Status)
+from ._enums import (Action, BearingMode, Blanket, EmitMode, LedMode, LedTarget, Direction,
+                     MoveTiming, PendingMotion, RebootTarget, Status)
 from ._errors import InvalidArgError, MediusError, check
 from ._clip import ClipHandle
 from ._streams import EventStream, InputStream, LogStream
 from ._types import (
     Bearing,
     _enum,
+    _i16,
     _u8,
+    _u16,
     _window_ms,
     Caps,
     CatchFilter,
@@ -118,18 +120,18 @@ class Device:
         return Device(handle)
 
     def move_rel(self, dx, dy):
-        check(_native.lib.medius_device_move_rel(self._handle, dx, dy))
+        check(_native.lib.medius_device_move_rel(self._handle, _i16(dx, "dx"), _i16(dy, "dy")))
 
     def wheel(self, delta):
-        check(_native.lib.medius_device_wheel(self._handle, delta))
+        check(_native.lib.medius_device_wheel(self._handle, _i16(delta, "delta")))
 
     def move_rel_now(self, dx, dy):
         """A cursor move that bypasses movement riding: it emits on the box's own clock."""
-        check(_native.lib.medius_device_move_rel_now(self._handle, dx, dy))
+        check(_native.lib.medius_device_move_rel_now(self._handle, _i16(dx, "dx"), _i16(dy, "dy")))
 
     def wheel_now(self, delta):
         """A wheel move that bypasses movement riding."""
-        check(_native.lib.medius_device_wheel_now(self._handle, delta))
+        check(_native.lib.medius_device_wheel_now(self._handle, _i16(delta, "delta")))
 
     def flush_motion(self):
         """Emit the motion held for a ride now, ignoring the ride window."""
@@ -141,9 +143,12 @@ class Device:
 
     def move_axis(self, motion: Motion, timing: MoveTiming = MoveTiming.RIDE,
                   pending: PendingMotion = PendingMotion.KEEP):
+        timing = _enum(timing, MoveTiming, "timing")
+        pending = _enum(pending, PendingMotion, "pending")
         check(_native.lib.medius_device_move_axis(self._handle, motion._c, int(timing), int(pending)))
 
     def inject(self, input: Usage, action: Action):
+        action = _enum(action, Action, "action")
         check(_native.lib.medius_device_inject(self._handle, input._c, int(action)))
 
     def press(self, input: Usage):
@@ -213,7 +218,13 @@ class Device:
         check(_native.lib.medius_device_unlock_all(self._handle, int(what), int(direction)))
 
     def led(self, target: LedTarget, mode: LedMode, level):
-        check(_native.lib.medius_device_led(self._handle, int(target), int(mode), int(level)))
+        target = _enum(target, LedTarget, "target")
+        mode = _enum(mode, LedMode, "mode")
+        check(
+            _native.lib.medius_device_led(
+                self._handle, int(target), int(mode), _u8(level, "level")
+            )
+        )
 
     def reset(self):
         check(_native.lib.medius_device_reset(self._handle))
@@ -225,6 +236,7 @@ class Device:
         check(_native.lib.medius_device_reconnect(self._handle))
 
     def reboot(self, target: RebootTarget):
+        target = _enum(target, RebootTarget, "target")
         check(_native.lib.medius_device_reboot(self._handle, int(target)))
 
     def allow_imperfect_clones(self, allow: bool):
@@ -258,7 +270,12 @@ class Device:
 
     def set_emit_pace(self, pace: EmitPace):
         """Set what paces injected motion (`hz` matters only for `EmitPace.fixed`)."""
-        check(_native.lib.medius_device_set_emit_pace(self._handle, int(pace.mode), int(pace.hz)))
+        mode = _enum(pace.mode, EmitMode, "mode")
+        check(
+            _native.lib.medius_device_set_emit_pace(
+                self._handle, int(mode), _u16(pace.hz, "hz")
+            )
+        )
 
     def set_name(self, name: str):
         """Set the box's persistent human-readable name; an empty string clears it."""
