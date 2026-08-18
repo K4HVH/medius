@@ -233,15 +233,15 @@ fn lock_parity() {
             let x = medius_lock_target_axis(MediusLockTargetKind::X);
             let side1 = medius_lock_target_usage(medius_usage_button(MediusButton::Side1));
             assert_eq!(
-                medius_device_lock(dev, x, MediusDirection::Both),
+                medius_device_lock(dev, x, MediusDirection::Both as u8),
                 MediusStatus::Ok
             );
             assert_eq!(
-                medius_device_lock(dev, side1, MediusDirection::Positive),
+                medius_device_lock(dev, side1, MediusDirection::Positive as u8),
                 MediusStatus::Ok
             );
             assert_eq!(
-                medius_device_unlock(dev, x, MediusDirection::Both),
+                medius_device_unlock(dev, x, MediusDirection::Both as u8),
                 MediusStatus::Ok
             );
         },
@@ -259,7 +259,11 @@ fn lock_all_and_led_parity() {
         },
         |dev| unsafe {
             assert_eq!(
-                medius_device_lock_all(dev, MediusBlanket::Buttons, MediusDirection::Both),
+                medius_device_lock_all(
+                    dev,
+                    MediusBlanket::Buttons as u8,
+                    MediusDirection::Both as u8
+                ),
                 MediusStatus::Ok
             );
             assert_eq!(
@@ -421,13 +425,13 @@ fn query_locks_roundtrips_through_is_locked() {
     set.entries[0] = MediusLockEntry {
         target: x,
         is_blanket: false,
-        direction: MediusDirection::Positive,
+        direction: MediusDirection::Positive as u8,
         scale: MEDIUS_LOCK_SCALE_BLOCK,
     };
     set.entries[1] = MediusLockEntry {
         target: x,
         is_blanket: false,
-        direction: MediusDirection::Negative,
+        direction: MediusDirection::Negative as u8,
         scale: MEDIUS_LOCK_SCALE_BLOCK,
     };
     unsafe { medius_mock_set_locks(mock, set) };
@@ -441,7 +445,7 @@ fn query_locks_roundtrips_through_is_locked() {
         unsafe { medius_device_query_locks(dev, &mut locks) },
         MediusStatus::Ok
     );
-    assert!(unsafe { medius_locks_is_locked(&locks, x, MediusDirection::Both) });
+    assert!(unsafe { medius_locks_is_locked(&locks, x, MediusDirection::Both as u8) });
     unsafe {
         medius_device_free(dev);
         medius_mock_free(mock);
@@ -450,6 +454,130 @@ fn query_locks_roundtrips_through_is_locked() {
 
 #[test]
 fn scale_and_bearing_cross_the_boundary() {
+    // Byte-for-byte against the native crate: a status of Ok proves only that the call returned.
+    assert_parity(
+        |d| {
+            d.scale(medius::Axis::X, medius::Direction::Against, 40)
+                .unwrap();
+            d.scale_all(medius::Blanket::Aim, medius::Direction::With, 130)
+                .unwrap();
+            d.scale_axis(medius::Axis::Wheel, medius::Direction::Both, 50)
+                .unwrap();
+            d.set_bearing(Some(Duration::from_millis(35)), medius::BearingMode::Vector)
+                .unwrap();
+            d.set_bearing(None, medius::BearingMode::PerAxis).unwrap();
+        },
+        |dev| unsafe {
+            let x = medius_lock_target_axis(MediusLockTargetKind::X);
+            let wheel = medius_lock_target_axis(MediusLockTargetKind::Wheel);
+            assert_eq!(
+                medius_device_scale(dev, x, MediusDirection::Against as u8, 40),
+                MediusStatus::Ok
+            );
+            assert_eq!(
+                medius_device_scale_all(
+                    dev,
+                    MediusBlanket::Aim as u8,
+                    MediusDirection::With as u8,
+                    130
+                ),
+                MediusStatus::Ok
+            );
+            assert_eq!(
+                medius_device_scale(dev, wheel, MediusDirection::Both as u8, 50),
+                MediusStatus::Ok
+            );
+            assert_eq!(
+                medius_device_set_bearing(dev, 35, MediusBearingMode::Vector as u8),
+                MediusStatus::Ok
+            );
+            assert_eq!(
+                medius_device_set_bearing(dev, 0, MediusBearingMode::PerAxis as u8),
+                MediusStatus::Ok
+            );
+        },
+    );
+}
+
+#[test]
+fn scale_frames_carry_the_direction_and_the_number() {
+    // The payload bytes, derived from ctrl_proto.h: [class][id u16 LE][direction][scale].
+    let frames = native_frames(|d| {
+        d.scale(medius::Axis::X, medius::Direction::Against, 40)
+            .unwrap();
+        d.scale_all(medius::Blanket::Aim, medius::Direction::With, 130)
+            .unwrap();
+        d.set_bearing(Some(Duration::from_millis(35)), medius::BearingMode::Vector)
+            .unwrap();
+    });
+    let payloads: Vec<Vec<u8>> = frames.into_iter().map(|f| f.payload).collect();
+    assert_eq!(
+        payloads,
+        vec![
+            vec![3, 0, 0, 4, 40],  // AXIS X, AGAINST, 40%
+            vec![3, 0, 0, 3, 130], // AXIS X, WITH, 130%
+            vec![3, 1, 0, 3, 130], // AXIS Y, WITH, 130%
+            vec![4, 35, 0, 1],     // OPTION(BEARING), 35 ms, VECTOR
+        ]
+    );
+}
+
+#[test]
+fn the_bearing_reads_back_what_was_set_through_the_boundary() {
+    let mock = medius_mock_new();
+    let mut dev: *mut MediusDevice = ptr::null_mut();
+    assert_eq!(
+        unsafe { medius_device_with_mock(mock, &mut dev) },
+        MediusStatus::Ok
+    );
+    let mut bearing: MediusBearing = unsafe { std::mem::zeroed() };
+    // The mock boots holding what a real box boots holding.
+    assert_eq!(
+        unsafe { medius_device_query_bearing(dev, &mut bearing) },
+        MediusStatus::Ok
+    );
+    assert_eq!(bearing.mode, MediusBearingMode::PerAxis);
+    assert_eq!(bearing.window_ms, MEDIUS_BEARING_WINDOW_DEFAULT_MS);
+    // Both fields have to survive the trip, and Vector has to decode as Vector.
+    assert_eq!(
+        unsafe { medius_device_set_bearing(dev, 35, MediusBearingMode::Vector as u8) },
+        MediusStatus::Ok
+    );
+    assert_eq!(
+        unsafe { medius_device_query_bearing(dev, &mut bearing) },
+        MediusStatus::Ok
+    );
+    assert_eq!(bearing.mode, MediusBearingMode::Vector);
+    assert_eq!(bearing.window_ms, 35);
+    // A window of 0 is the bearing off, with the mode still carried.
+    assert_eq!(
+        unsafe { medius_device_set_bearing(dev, 0, MediusBearingMode::PerAxis as u8) },
+        MediusStatus::Ok
+    );
+    assert_eq!(
+        unsafe { medius_device_query_bearing(dev, &mut bearing) },
+        MediusStatus::Ok
+    );
+    assert_eq!(bearing.window_ms, 0);
+    assert_eq!(bearing.mode, MediusBearingMode::PerAxis);
+    // And the mock's own setter puts one there without a frame, for a decode test that never writes.
+    unsafe { medius_mock_set_bearing(mock, 250, MediusBearingMode::Vector as u8) };
+    assert_eq!(
+        unsafe { medius_device_query_bearing(dev, &mut bearing) },
+        MediusStatus::Ok
+    );
+    assert_eq!(
+        (bearing.window_ms, bearing.mode),
+        (250, MediusBearingMode::Vector)
+    );
+    unsafe {
+        medius_device_free(dev);
+        medius_mock_free(mock);
+    }
+}
+
+#[test]
+fn a_scale_reaches_the_box_lock_table_through_the_boundary() {
     let mock = medius_mock_new();
     let mut dev: *mut MediusDevice = ptr::null_mut();
     assert_eq!(
@@ -457,27 +585,243 @@ fn scale_and_bearing_cross_the_boundary() {
         MediusStatus::Ok
     );
     let x = medius_lock_target_axis(MediusLockTargetKind::X);
+    let y = medius_lock_target_axis(MediusLockTargetKind::Y);
     assert_eq!(
-        unsafe { medius_device_scale(dev, x, MediusDirection::Against, 40) },
+        unsafe { medius_device_scale(dev, x, MediusDirection::With as u8, 130) },
         MediusStatus::Ok
     );
     assert_eq!(
-        unsafe { medius_device_scale_all(dev, MediusBlanket::Aim, MediusDirection::With, 130) },
+        unsafe { medius_device_scale(dev, y, MediusDirection::With as u8, 60) },
+        MediusStatus::Ok
+    );
+    let mut locks: MediusLocks = unsafe { std::mem::zeroed() };
+    assert_eq!(
+        unsafe { medius_device_query_locks(dev, &mut locks) },
         MediusStatus::Ok
     );
     assert_eq!(
-        unsafe { medius_device_set_bearing(dev, 20, MediusBearingMode::Vector) },
+        unsafe { medius_locks_scale_of(&locks, x, MediusDirection::With as u8) },
+        130
+    );
+    // In vector mode one relative scale governs the aim, the lower of the two, and the box reports
+    // that number on both axes rather than each axis's stored byte.
+    assert_eq!(
+        unsafe { medius_device_set_bearing(dev, 20, MediusBearingMode::Vector as u8) },
         MediusStatus::Ok
     );
-    // The mock answers the default bearing, which is what a real box boots holding: the 20 ms window
-    // in per-axis mode, not the zero a bare struct would leave.
+    assert_eq!(
+        unsafe { medius_device_query_locks(dev, &mut locks) },
+        MediusStatus::Ok
+    );
+    assert_eq!(
+        unsafe { medius_locks_scale_of(&locks, x, MediusDirection::With as u8) },
+        60
+    );
+    assert_eq!(
+        unsafe { medius_locks_scale_of(&locks, y, MediusDirection::With as u8) },
+        60
+    );
+    unsafe {
+        medius_device_free(dev);
+        medius_mock_free(mock);
+    }
+}
+
+#[test]
+fn a_relative_direction_with_no_bearing_to_read_has_its_own_status() {
+    let mock = medius_mock_new();
+    let mut dev: *mut MediusDevice = ptr::null_mut();
+    assert_eq!(
+        unsafe { medius_device_with_mock(mock, &mut dev) },
+        MediusStatus::Ok
+    );
+    let left = medius_lock_target_usage(medius_usage_button(MediusButton::Left));
+    assert_eq!(
+        unsafe { medius_device_scale(dev, left, MediusDirection::Against as u8, 40) },
+        MediusStatus::ErrRelativeDirection
+    );
+    assert_eq!(
+        unsafe {
+            medius_device_lock_all(dev, MediusBlanket::Keys as u8, MediusDirection::With as u8)
+        },
+        MediusStatus::ErrRelativeDirection
+    );
+    unsafe {
+        medius_device_free(dev);
+        medius_mock_free(mock);
+    }
+}
+
+#[test]
+fn an_unnamed_direction_byte_in_a_caller_built_lock_entry_is_dropped() {
+    // `MediusLockEntry.direction` is a `uint8_t` the caller fills in through `medius_mock_set_locks`,
+    // and Python has always handed it a raw byte. The setter has no status to return, so the entry is
+    // dropped rather than read as whichever direction the byte resembles -- a lock the host believes
+    // in and the box never took is the failure this prevents.
+    const BAD: u8 = 40;
+    let mock = medius_mock_new();
+    let x = medius_lock_target_axis(MediusLockTargetKind::X);
+    let mut set: MediusLocks = unsafe { std::mem::zeroed() };
+    set.n = 2;
+    set.entries[0] = MediusLockEntry {
+        target: x,
+        is_blanket: false,
+        direction: BAD,
+        scale: MEDIUS_LOCK_SCALE_BLOCK,
+    };
+    set.entries[1] = MediusLockEntry {
+        target: x,
+        is_blanket: false,
+        direction: MediusDirection::Positive as u8,
+        scale: MEDIUS_LOCK_SCALE_BLOCK,
+    };
+    unsafe { medius_mock_set_locks(mock, set) };
+    let mut dev: *mut MediusDevice = ptr::null_mut();
+    assert_eq!(
+        unsafe { medius_device_with_mock(mock, &mut dev) },
+        MediusStatus::Ok
+    );
+    let mut locks: MediusLocks = unsafe { std::mem::zeroed() };
+    assert_eq!(
+        unsafe { medius_device_query_locks(dev, &mut locks) },
+        MediusStatus::Ok
+    );
+    // The named entry survives and the unnamed one is gone, count included -- a caller reading `n`
+    // must not walk an entry that was never decoded.
+    assert_eq!(locks.n, 1);
+    assert_eq!(locks.entries[0].direction, MediusDirection::Positive as u8);
+    assert_eq!(locks.entries[0].scale, MEDIUS_LOCK_SCALE_BLOCK);
+    assert!(unsafe { medius_locks_is_locked(&locks, x, MediusDirection::Positive as u8) });
+    unsafe {
+        medius_device_free(dev);
+        medius_mock_free(mock);
+    }
+}
+
+#[test]
+fn an_unnamed_direction_byte_in_a_catch_filter_is_refused() {
+    // `MediusCatchFilter.direction` is a `uint8_t` the caller fills in, and Python has always handed
+    // it a raw byte. A filter helper has no status to return, so the byte rides the struct and the
+    // subscription refuses it -- rather than the box being handed whichever direction its low bits
+    // resemble, or a stream that silently never yields.
+    const BAD: u8 = 40;
+    let mock = medius_mock_new();
+    let mut dev: *mut MediusDevice = ptr::null_mut();
+    assert_eq!(
+        unsafe { medius_device_with_mock(mock, &mut dev) },
+        MediusStatus::Ok
+    );
+    let base = medius_catch_filter_watch(medius_usage_button(MediusButton::Left));
+    let bad = medius_catch_filter_with_direction(base, BAD);
+    assert_eq!(bad.direction, BAD, "the byte rides the filter unchanged");
+    let mut stream: *mut MediusEventStream = ptr::null_mut();
+    assert_eq!(
+        unsafe { medius_device_catch_events(dev, &bad, 1, &mut stream) },
+        MediusStatus::ErrInvalidArg
+    );
+    assert!(stream.is_null());
+    let mut input: *mut MediusInputStream = ptr::null_mut();
+    assert_eq!(
+        unsafe { medius_device_input_events(dev, &bad, 1, &mut input) },
+        MediusStatus::ErrInvalidArg
+    );
+    assert!(input.is_null());
+    // A named one still subscribes, so the refusal is about the byte and not about the call.
+    let good = medius_catch_filter_with_direction(base, MediusDirection::Positive as u8);
+    assert_eq!(
+        unsafe { medius_device_catch_events(dev, &good, 1, &mut stream) },
+        MediusStatus::Ok
+    );
+    assert!(!stream.is_null());
+    unsafe {
+        medius_event_stream_free(stream);
+        medius_device_free(dev);
+        medius_mock_free(mock);
+    }
+}
+
+#[test]
+fn a_byte_no_constant_names_is_refused_at_every_entry_point() {
+    // These parameters are `uint8_t` in the header, so any byte is a legal call. Each entry point has
+    // to name it an argument error rather than act on whichever constant its low bits resemble.
+    const BAD: u8 = 40;
+    let mock = medius_mock_new();
+    let mut dev: *mut MediusDevice = ptr::null_mut();
+    assert_eq!(
+        unsafe { medius_device_with_mock(mock, &mut dev) },
+        MediusStatus::Ok
+    );
+    let x = medius_lock_target_axis(MediusLockTargetKind::X);
+    let both = MediusDirection::Both as u8;
+    let aim = MediusBlanket::Aim as u8;
+    for (what, status) in [
+        ("scale dir", unsafe { medius_device_scale(dev, x, BAD, 50) }),
+        ("scale_all dir", unsafe {
+            medius_device_scale_all(dev, aim, BAD, 50)
+        }),
+        ("scale_all what", unsafe {
+            medius_device_scale_all(dev, BAD, both, 50)
+        }),
+        ("lock dir", unsafe { medius_device_lock(dev, x, BAD) }),
+        ("unlock dir", unsafe { medius_device_unlock(dev, x, BAD) }),
+        ("lock_all dir", unsafe {
+            medius_device_lock_all(dev, aim, BAD)
+        }),
+        ("lock_all what", unsafe {
+            medius_device_lock_all(dev, BAD, both)
+        }),
+        ("unlock_all dir", unsafe {
+            medius_device_unlock_all(dev, aim, BAD)
+        }),
+        ("unlock_all what", unsafe {
+            medius_device_unlock_all(dev, BAD, both)
+        }),
+        // Two named values is one ABI bit while the parameter is an enum, which folded every stray
+        // byte onto Vector. As a byte it is refused like any other.
+        ("set_bearing mode", unsafe {
+            medius_device_set_bearing(dev, 20, BAD)
+        }),
+    ] {
+        assert_eq!(status, MediusStatus::ErrInvalidArg, "{what}");
+    }
+    // Nothing refused reached the box.
+    let mut locks: MediusLocks = unsafe { std::mem::zeroed() };
+    assert_eq!(
+        unsafe { medius_device_query_locks(dev, &mut locks) },
+        MediusStatus::Ok
+    );
+    assert_eq!(locks.n, 0);
     let mut bearing: MediusBearing = unsafe { std::mem::zeroed() };
     assert_eq!(
         unsafe { medius_device_query_bearing(dev, &mut bearing) },
         MediusStatus::Ok
     );
-    assert_eq!(bearing.mode, MediusBearingMode::PerAxis);
-    assert_eq!(bearing.window_ms, MEDIUS_BEARING_WINDOW_DEFAULT_MS);
+    assert_eq!(
+        (bearing.window_ms, bearing.mode),
+        (MEDIUS_BEARING_WINDOW_DEFAULT_MS, MediusBearingMode::PerAxis)
+    );
+    // The mock setter has no status to return, so it leaves the bearing alone.
+    unsafe { medius_mock_set_bearing(mock, 250, BAD) };
+    assert_eq!(
+        unsafe { medius_device_query_bearing(dev, &mut bearing) },
+        MediusStatus::Ok
+    );
+    assert_eq!(
+        (bearing.window_ms, bearing.mode),
+        (MEDIUS_BEARING_WINDOW_DEFAULT_MS, MediusBearingMode::PerAxis)
+    );
+    // The two readers answer with a status of their own: an unnamed direction names no entry, so
+    // nothing weighs the target and nothing is locked.
+    unsafe {
+        assert_eq!(medius_device_lock(dev, x, both), MediusStatus::Ok);
+        assert_eq!(medius_device_query_locks(dev, &mut locks), MediusStatus::Ok);
+        assert!(medius_locks_is_locked(&locks, x, both));
+        assert_eq!(
+            medius_locks_scale_of(&locks, x, BAD),
+            MEDIUS_LOCK_SCALE_PASS
+        );
+        assert!(!medius_locks_is_locked(&locks, x, BAD));
+    }
     unsafe {
         medius_device_free(dev);
         medius_mock_free(mock);
@@ -623,7 +967,7 @@ fn catch_delivers_a_traffic_event() {
     let t = unsafe { event.data.traffic };
     assert_eq!(t.class, MEDIUS_CATCH_CLASS_VENDOR_BULK);
     assert_eq!(t.id, 0x83);
-    assert_eq!(t.direction, MediusDirection::Positive);
+    assert_eq!(t.direction, MediusDirection::Positive as u8);
     assert_eq!(t.flags, 0x01);
     assert_eq!(t.true_len, 64);
     assert_eq!(t.len, 4);
@@ -650,7 +994,7 @@ fn traffic_event_survives_the_mock_push_round_trip() {
     let mut pushed: MediusTrafficEvent = unsafe { std::mem::zeroed() };
     pushed.class = MEDIUS_CATCH_CLASS_CONTROL;
     pushed.id = 0;
-    pushed.direction = MediusDirection::Positive;
+    pushed.direction = MediusDirection::Positive as u8;
     pushed.flags = 0xFD;
     pushed.true_len = 10;
     pushed.len = 10;

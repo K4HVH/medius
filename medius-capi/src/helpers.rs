@@ -90,12 +90,13 @@ fn lock_entry_covers(e: &MediusLockEntry, target: MediusLockTarget) -> bool {
 
 /// The scale in effect on `target`/`dir`: percent of the physical value kept, so
 /// `MEDIUS_LOCK_SCALE_PASS` when nothing weighs it. `Both` reports the lowest across every direction.
-/// Mirrors `medius::Locks::scale_of`.
+/// Mirrors `medius::Locks::scale_of`. `dir` takes a `MEDIUS_DIRECTION_*` constant; any other value
+/// names no entry and reads as `MEDIUS_LOCK_SCALE_PASS`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_locks_scale_of(
     locks: *const MediusLocks,
     target: MediusLockTarget,
-    dir: MediusDirection,
+    dir: u8,
 ) -> u8 {
     guard(MEDIUS_LOCK_SCALE_PASS, || {
         if locks.is_null() {
@@ -106,10 +107,9 @@ pub unsafe extern "C" fn medius_locks_scale_of(
         locks.entries[..n]
             .iter()
             .filter(|e| {
+                let both = MediusDirection::Both as u8;
                 lock_entry_covers(e, target)
-                    && (dir == MediusDirection::Both
-                        || e.direction == MediusDirection::Both
-                        || e.direction == dir)
+                    && (dir == both || e.direction == both || e.direction == dir)
             })
             .map(|e| e.scale)
             .min()
@@ -119,19 +119,20 @@ pub unsafe extern "C" fn medius_locks_scale_of(
 
 /// Whether `target`/`dir` is blocked outright in `locks`. A direction merely weighed is not locked.
 /// `Both` asks about the two fixed signs, the pair it has always named; ask for a relative direction
-/// by name. Mirrors `medius::Locks::is_locked`.
+/// by name. Mirrors `medius::Locks::is_locked`. `dir` takes a `MEDIUS_DIRECTION_*` constant; any
+/// other value names no entry and reads as unlocked.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_locks_is_locked(
     locks: *const MediusLocks,
     target: MediusLockTarget,
-    dir: MediusDirection,
+    dir: u8,
 ) -> bool {
     guard(false, || {
-        if dir == MediusDirection::Both {
+        if dir == MediusDirection::Both as u8 {
             return unsafe {
-                medius_locks_scale_of(locks, target, MediusDirection::Positive)
+                medius_locks_scale_of(locks, target, MediusDirection::Positive as u8)
                     == MEDIUS_LOCK_SCALE_BLOCK
-                    && medius_locks_scale_of(locks, target, MediusDirection::Negative)
+                    && medius_locks_scale_of(locks, target, MediusDirection::Negative as u8)
                         == MEDIUS_LOCK_SCALE_BLOCK
             };
         }
@@ -253,7 +254,7 @@ pub extern "C" fn medius_catch_filter_everything() -> MediusCatchFilter {
     MediusCatchFilter {
         class: MEDIUS_CATCH_CLASS_ANY,
         id: MEDIUS_CATCH_ID_ANY,
-        direction: MediusDirection::Both,
+        direction: MediusDirection::Both as u8,
         capture: 0,
     }
 }
@@ -262,7 +263,7 @@ fn exact(class: MediusCatchClass, id: u16) -> MediusCatchFilter {
     MediusCatchFilter {
         class,
         id,
-        direction: MediusDirection::Both,
+        direction: MediusDirection::Both as u8,
         capture: 0,
     }
 }
@@ -271,16 +272,18 @@ fn blanket(class: MediusCatchClass) -> MediusCatchFilter {
     MediusCatchFilter {
         class,
         id: MEDIUS_CATCH_ID_ANY,
-        direction: MediusDirection::Both,
+        direction: MediusDirection::Both as u8,
         capture: 0,
     }
 }
 
-/// `f` restricted to one direction, sign or edge.
+/// `f` restricted to one direction, sign or edge. `direction` takes a `MEDIUS_DIRECTION_*` constant;
+/// a byte no constant names is carried through and refused at subscribe time with
+/// `MEDIUS_STATUS_ERR_INVALID_ARG`, since a filter has no status to return here.
 #[unsafe(no_mangle)]
 pub extern "C" fn medius_catch_filter_with_direction(
     f: MediusCatchFilter,
-    direction: MediusDirection,
+    direction: u8,
 ) -> MediusCatchFilter {
     MediusCatchFilter { direction, ..f }
 }
@@ -300,25 +303,25 @@ pub extern "C" fn medius_catch_filter_with_capture(
 /// `f` restricted to the press edge.
 #[unsafe(no_mangle)]
 pub extern "C" fn medius_catch_filter_on_press(f: MediusCatchFilter) -> MediusCatchFilter {
-    medius_catch_filter_with_direction(f, MediusDirection::Positive)
+    medius_catch_filter_with_direction(f, MediusDirection::Positive as u8)
 }
 
 /// `f` restricted to the release edge.
 #[unsafe(no_mangle)]
 pub extern "C" fn medius_catch_filter_on_release(f: MediusCatchFilter) -> MediusCatchFilter {
-    medius_catch_filter_with_direction(f, MediusDirection::Negative)
+    medius_catch_filter_with_direction(f, MediusDirection::Negative as u8)
 }
 
 /// `f` restricted to traffic from the device to the PC.
 #[unsafe(no_mangle)]
 pub extern "C" fn medius_catch_filter_inbound(f: MediusCatchFilter) -> MediusCatchFilter {
-    medius_catch_filter_with_direction(f, MediusDirection::Positive)
+    medius_catch_filter_with_direction(f, MediusDirection::Positive as u8)
 }
 
 /// `f` restricted to traffic from the PC to the device.
 #[unsafe(no_mangle)]
 pub extern "C" fn medius_catch_filter_outbound(f: MediusCatchFilter) -> MediusCatchFilter {
-    medius_catch_filter_with_direction(f, MediusDirection::Negative)
+    medius_catch_filter_with_direction(f, MediusDirection::Negative as u8)
 }
 
 /// Whether two filters name the same box table entry, whatever their captures.

@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use medius::Device;
 
-use crate::convert::{emit_pace_to_medius, input_to_medius, lock_target_to_medius};
+use crate::convert::{blanket_from_c, emit_pace_to_medius, input_to_medius, lock_target_to_medius};
 use crate::ctypes::*;
 use crate::error::{MediusStatus, clear_error, fail, guard, guard_status, record, status_of};
 
@@ -348,7 +348,8 @@ pub unsafe extern "C" fn medius_device_force_release(
 fn with_lock_target(
     dev: *mut MediusDevice,
     target: MediusLockTarget,
-    f: impl FnOnce(&Device, medius::LockTarget) -> Result<(), medius::Error>,
+    dir: u8,
+    f: impl FnOnce(&Device, medius::LockTarget, medius::Direction) -> Result<(), medius::Error>,
 ) -> MediusStatus {
     guard_status(|| {
         if dev.is_null() {
@@ -357,8 +358,32 @@ fn with_lock_target(
         let Some(t) = lock_target_to_medius(target) else {
             return fail(MediusStatus::ErrInvalidArg, "invalid lock target");
         };
+        let Some(dir) = medius::Direction::from_u8(dir) else {
+            return fail(MediusStatus::ErrInvalidArg, "invalid direction");
+        };
         let d = unsafe { &(*dev).inner };
-        status_of(f(d, t))
+        status_of(f(d, t, dir))
+    })
+}
+
+fn with_blanket(
+    dev: *mut MediusDevice,
+    what: u8,
+    dir: u8,
+    f: impl FnOnce(&Device, medius::Blanket, medius::Direction) -> Result<(), medius::Error>,
+) -> MediusStatus {
+    guard_status(|| {
+        if dev.is_null() {
+            return fail(MediusStatus::ErrInvalidArg, "null device handle");
+        }
+        let Some(what) = blanket_from_c(what) else {
+            return fail(MediusStatus::ErrInvalidArg, "invalid blanket group");
+        };
+        let Some(dir) = medius::Direction::from_u8(dir) else {
+            return fail(MediusStatus::ErrInvalidArg, "invalid direction");
+        };
+        let d = unsafe { &(*dev).inner };
+        status_of(f(d, what, dir))
     })
 }
 
@@ -367,68 +392,86 @@ fn with_lock_target(
 /// above that amplifies to `MEDIUS_LOCK_SCALE_MAX` (2.55x). Lock and unlock are its two ends.
 ///
 /// A delta picks up at most two scales, its absolute direction's and its relative direction's, and
-/// they multiply. `MEDIUS_DIRECTION_WITH` / `_AGAINST` need a live bearing; see
-/// `medius_device_set_bearing`. A momentary usage carries one bit, so any scale below a full pass
-/// locks it and there is nothing in between.
+/// they multiply. `MEDIUS_DIRECTION_BOTH` is the exception: it writes the scale to the two fixed
+/// signs and a full pass to the relative pair, so a `Both` of 50 is 50% with or without a bearing
+/// rather than 25% with one. Name a relative direction to weigh it.
+///
+/// `MEDIUS_DIRECTION_WITH` / `_AGAINST` need a live bearing (see `medius_device_set_bearing`) and
+/// only an axis has one, so either on a button, key or media usage is
+/// `MEDIUS_STATUS_ERR_RELATIVE_DIRECTION`. A momentary usage carries one bit, so any scale below a full
+/// pass locks it and any scale at or above one unlocks it. A media usage has no edges and is sent as
+/// `MEDIUS_DIRECTION_BOTH` whatever edge is named, which is what `RESP(LOCKS)` reports it as.
+///
+/// `dir` takes a `MEDIUS_DIRECTION_*` constant; any other value is
+/// `MEDIUS_STATUS_ERR_INVALID_ARG`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_device_scale(
     dev: *mut MediusDevice,
     target: MediusLockTarget,
-    dir: MediusDirection,
+    dir: u8,
     scale: u8,
 ) -> MediusStatus {
-    with_lock_target(dev, target, |d, t| d.scale(t, dir.into(), scale))
+    with_lock_target(dev, target, dir, |d, t, dir| d.scale(t, dir, scale))
 }
 
-/// Weigh a whole class blanket (cursor aim, wheel, all buttons, all keys, or all media).
+/// Weigh a whole class blanket (cursor aim, wheel, all buttons, all keys, or all media). `what` takes
+/// a `MEDIUS_BLANKET_*` constant and `dir` a `MEDIUS_DIRECTION_*` one; any other value is
+/// `MEDIUS_STATUS_ERR_INVALID_ARG`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_device_scale_all(
     dev: *mut MediusDevice,
-    what: MediusBlanket,
-    dir: MediusDirection,
+    what: u8,
+    dir: u8,
     scale: u8,
 ) -> MediusStatus {
-    with_device(dev, |d| d.scale_all(what.into(), dir.into(), scale))
+    with_blanket(dev, what, dir, |d, what, dir| d.scale_all(what, dir, scale))
 }
 
 /// Lock a target (axis or usage) on an edge. A button, key, and media usage all lock the same way.
+/// `dir` takes a `MEDIUS_DIRECTION_*` constant; any other value is `MEDIUS_STATUS_ERR_INVALID_ARG`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_device_lock(
     dev: *mut MediusDevice,
     target: MediusLockTarget,
-    dir: MediusDirection,
+    dir: u8,
 ) -> MediusStatus {
-    with_lock_target(dev, target, |d, t| d.lock(t, dir.into()))
+    with_lock_target(dev, target, dir, |d, t, dir| d.lock(t, dir))
 }
 
-/// Release a lock set by `medius_device_lock`.
+/// Release a lock set by `medius_device_lock`. `dir` takes a `MEDIUS_DIRECTION_*` constant; any other
+/// value is `MEDIUS_STATUS_ERR_INVALID_ARG`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_device_unlock(
     dev: *mut MediusDevice,
     target: MediusLockTarget,
-    dir: MediusDirection,
+    dir: u8,
 ) -> MediusStatus {
-    with_lock_target(dev, target, |d, t| d.unlock(t, dir.into()))
+    with_lock_target(dev, target, dir, |d, t, dir| d.unlock(t, dir))
 }
 
 /// Lock a whole class blanket (cursor aim, wheel, all buttons, all keys, or all media).
+///
+/// `MEDIUS_BLANKET_KEYS` honours the direction: `Positive` blocks press edges only, `Negative`
+/// release edges only. `what` takes a `MEDIUS_BLANKET_*` constant and `dir` a `MEDIUS_DIRECTION_*`
+/// one; any other value is `MEDIUS_STATUS_ERR_INVALID_ARG`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_device_lock_all(
     dev: *mut MediusDevice,
-    what: MediusBlanket,
-    dir: MediusDirection,
+    what: u8,
+    dir: u8,
 ) -> MediusStatus {
-    with_device(dev, |d| d.lock_all(what.into(), dir.into()))
+    with_blanket(dev, what, dir, |d, what, dir| d.lock_all(what, dir))
 }
 
-/// Release a blanket lock set by `medius_device_lock_all`.
+/// Release a blanket lock set by `medius_device_lock_all`. `what` takes a `MEDIUS_BLANKET_*` constant
+/// and `dir` a `MEDIUS_DIRECTION_*` one; any other value is `MEDIUS_STATUS_ERR_INVALID_ARG`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_device_unlock_all(
     dev: *mut MediusDevice,
-    what: MediusBlanket,
-    dir: MediusDirection,
+    what: u8,
+    dir: u8,
 ) -> MediusStatus {
-    with_device(dev, |d| d.unlock_all(what.into(), dir.into()))
+    with_blanket(dev, what, dir, |d, what, dir| d.unlock_all(what, dir))
 }
 
 #[unsafe(no_mangle)]
@@ -486,14 +529,26 @@ pub unsafe extern "C" fn medius_device_set_movement_riding(
 /// Set the bearing: what `MEDIUS_DIRECTION_WITH` / `_AGAINST` are measured against. `window_ms` is how
 /// long the last injected delta's direction stays the bearing; 0 turns it off, leaving the relative
 /// directions inert whatever their scale. The box boots at `MEDIUS_BEARING_WINDOW_DEFAULT_MS`.
+///
+/// `mode` takes a `MEDIUS_BEARING_MODE_*` constant; any other value is
+/// `MEDIUS_STATUS_ERR_INVALID_ARG`. Both fields ride one frame and the box persists them together,
+/// so a window change carries the mode with it.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_device_set_bearing(
     dev: *mut MediusDevice,
     window_ms: u16,
-    mode: MediusBearingMode,
+    mode: u8,
 ) -> MediusStatus {
-    let window = (window_ms != 0).then(|| Duration::from_millis(window_ms as u64));
-    with_device(dev, |d| d.set_bearing(window, mode.into()))
+    guard_status(|| {
+        if dev.is_null() {
+            return fail(MediusStatus::ErrInvalidArg, "null device handle");
+        }
+        let Some(mode) = medius::BearingMode::from_u8(mode) else {
+            return fail(MediusStatus::ErrInvalidArg, "invalid bearing mode");
+        };
+        let window = (window_ms != 0).then(|| Duration::from_millis(window_ms as u64));
+        status_of(unsafe { &(*dev).inner }.set_bearing(window, mode))
+    })
 }
 
 /// Set what paces injected motion; `hz` is the target rate for `Fixed` and ignored otherwise.
@@ -682,14 +737,9 @@ pub extern "C" fn medius_default_keepalive_cadence_ms() -> u32 {
 }
 
 /// The C ABI version, bumped on any breaking change to this header.
-///
-/// Held at 4 through the 3.2.0 scale change on purpose, alongside the protocol version it tracks.
-/// `MediusLockEntry` kept its size but not its meaning: the two edge booleans became a direction and a
-/// scale, so a binary built against the 3.1.x header reads `direction` where it expects `positive` and
-/// gets no version to check. Rebuild against this header; the version will not tell you to.
 #[unsafe(no_mangle)]
 pub extern "C" fn medius_abi_version() -> u32 {
-    4
+    5
 }
 
 /// The medius-capi crate version as a static NUL-terminated string.

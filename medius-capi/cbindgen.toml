@@ -19,6 +19,10 @@ parse_deps = false
 
 [export]
 prefix = ""
+# No field or parameter is typed MediusDirection any more -- every direction on the boundary is a
+# uint8_t the crate validates -- but the enum and its MEDIUS_DIRECTION_* constants are still what
+# callers pass, and cbindgen prunes a type nothing references.
+include = ["MediusDirection"]
 
 [enum]
 rename_variants = "QualifiedScreamingSnakeCase"

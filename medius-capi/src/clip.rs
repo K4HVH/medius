@@ -271,13 +271,18 @@ pub unsafe extern "C" fn medius_clip_set_autolock(
         if clip.is_null() {
             return fail(MediusStatus::ErrInvalidArg, "null clip handle");
         }
-        let groups: Vec<medius::Blanket> = if scope.is_null() || scope_len == 0 {
-            Vec::new()
-        } else {
-            (0..scope_len)
-                .map(|i| medius::Blanket::from(unsafe { *scope.add(i) }))
-                .collect()
-        };
+        let mut groups: Vec<medius::Blanket> = Vec::new();
+        if !scope.is_null() {
+            // Read the array as bytes. The header types it as MediusBlanket, so loading an element
+            // as one would materialize whatever the caller wrote as an enum value.
+            let bytes = scope as *const u8;
+            for i in 0..scope_len {
+                let Some(b) = crate::convert::blanket_from_c(unsafe { *bytes.add(i) }) else {
+                    return fail(MediusStatus::ErrInvalidArg, "invalid blanket group");
+                };
+                groups.push(b);
+            }
+        }
         status_of(unsafe { &(*clip).inner }.set_autolock(&groups))
     })
 }
