@@ -81,6 +81,17 @@
 // `MediusClockEstimate::rate_ppb` when the box has fitted no drift rate.
 #define MEDIUS_CLOCK_RATE_NONE INT32_MIN
 
+// `LOCK` scale: percent of the physical value kept. 0 blocks, 100 passes it untouched, above 100
+// amplifies, to 255 (2.55x).
+#define MEDIUS_LOCK_SCALE_BLOCK 0
+
+#define MEDIUS_LOCK_SCALE_PASS 100
+
+#define MEDIUS_LOCK_SCALE_MAX 255
+
+// The bearing window the box holds before any host sets one, in ms.
+#define MEDIUS_BEARING_WINDOW_DEFAULT_MS 20
+
 // The max clip trigger bindings in a `MediusClipSettings` (matches the firmware `CLIP_TRIG_MAX`).
 #define MEDIUS_CLIP_TRIG_MAX 8
 
@@ -342,9 +353,15 @@ enum MediusDirection
   : uint8_t
 #endif // defined(__cplusplus) || __STDC_VERSION__ >= 202311L
  {
+    // Every direction of the target: both edges, both signs, and both relative senses.
     MEDIUS_DIRECTION_BOTH = 0,
     MEDIUS_DIRECTION_POSITIVE = 1,
     MEDIUS_DIRECTION_NEGATIVE = 2,
+    // The axis sign the box is currently injecting. Measured against the bearing, so it follows the
+    // aim rather than the axis; inert while no bearing is live. Axes only.
+    MEDIUS_DIRECTION_WITH = 3,
+    // The axis sign opposing the box's injection. Measured against the bearing; axes only.
+    MEDIUS_DIRECTION_AGAINST = 4,
 };
 #ifndef __cplusplus
 #if __STDC_VERSION__ >= 202311L
@@ -407,6 +424,25 @@ enum MediusRebootTarget
 typedef enum MediusRebootTarget MediusRebootTarget;
 #else
 typedef uint8_t MediusRebootTarget;
+#endif // __STDC_VERSION__ >= 202311L
+#endif // __cplusplus
+
+// How the box decides whether physical motion runs with or against its own injection.
+enum MediusBearingMode
+#if defined(__cplusplus) || __STDC_VERSION__ >= 202311L
+  : uint8_t
+#endif // defined(__cplusplus) || __STDC_VERSION__ >= 202311L
+ {
+    // Each axis compares its own sign against its own bearing, independently.
+    MEDIUS_BEARING_MODE_PER_AXIS = 0,
+    // The aim is projected onto the injected XY vector; motion across it passes untouched.
+    MEDIUS_BEARING_MODE_VECTOR = 1,
+};
+#ifndef __cplusplus
+#if __STDC_VERSION__ >= 202311L
+typedef enum MediusBearingMode MediusBearingMode;
+#else
+typedef uint8_t MediusBearingMode;
 #endif // __STDC_VERSION__ >= 202311L
 #endif // __cplusplus
 
@@ -824,8 +860,11 @@ typedef struct MediusStats {
 typedef struct MediusLockEntry {
     struct MediusLockTarget target;
     bool is_blanket;
-    bool positive;
-    bool negative;
+    // Which direction of the target this entry weighs.
+    MediusDirection direction;
+    // Percent of the physical value kept: 0 blocks, 100 passes, above 100 amplifies. A momentary
+    // usage carries one bit and so only ever reports 0.
+    uint8_t scale;
 } MediusLockEntry;
 
 // The active locks: `entries[0..n]`. Use `medius_locks_is_locked` to test a target/direction.
@@ -902,6 +941,14 @@ typedef struct MediusImperfectStatus {
     uint8_t over_capacity;
     uint8_t clone_imperfect;
 } MediusImperfectStatus;
+
+// The configured bearing: what `MEDIUS_DIRECTION_WITH` / `_AGAINST` are measured against.
+typedef struct MediusBearing {
+    // How long the last injected delta's direction stays the bearing, in ms. 0 = never, which
+    // leaves the relative directions inert whatever their scale.
+    uint16_t window_ms;
+    MediusBearingMode mode;
+} MediusBearing;
 
 // Emit-rate pacing mode plus the rate in effect.
 typedef struct MediusEmitPaceStatus {
@@ -1368,6 +1415,25 @@ MediusStatus medius_device_soft_release(struct MediusDevice *dev, struct MediusU
 // Force-release a usage: mask a physical hold too.
 MediusStatus medius_device_force_release(struct MediusDevice *dev, struct MediusUsage input);
 
+// Weigh physical input on a target and direction. `scale` is the percent of the physical value the
+// box keeps: `MEDIUS_LOCK_SCALE_BLOCK` blocks it, `MEDIUS_LOCK_SCALE_PASS` passes it untouched, and
+// above that amplifies to `MEDIUS_LOCK_SCALE_MAX` (2.55x). Lock and unlock are its two ends.
+//
+// A delta picks up at most two scales, its absolute direction's and its relative direction's, and
+// they multiply. `MEDIUS_DIRECTION_WITH` / `_AGAINST` need a live bearing; see
+// `medius_device_set_bearing`. A momentary usage carries one bit, so any scale below a full pass
+// locks it and there is nothing in between.
+MediusStatus medius_device_scale(struct MediusDevice *dev,
+                                 struct MediusLockTarget target,
+                                 MediusDirection dir,
+                                 uint8_t scale);
+
+// Weigh a whole class blanket (cursor aim, wheel, all buttons, all keys, or all media).
+MediusStatus medius_device_scale_all(struct MediusDevice *dev,
+                                     MediusBlanket what,
+                                     MediusDirection dir,
+                                     uint8_t scale);
+
 // Lock a target (axis or usage) on an edge. A button, key, and media usage all lock the same way.
 MediusStatus medius_device_lock(struct MediusDevice *dev,
                                 struct MediusLockTarget target,
@@ -1408,6 +1474,13 @@ MediusStatus medius_device_set_movement_riding(struct MediusDevice *dev,
                                                bool enabled,
                                                uint32_t window_ms);
 
+// Set the bearing: what `MEDIUS_DIRECTION_WITH` / `_AGAINST` are measured against. `window_ms` is how
+// long the last injected delta's direction stays the bearing; 0 turns it off, leaving the relative
+// directions inert whatever their scale. The box boots at `MEDIUS_BEARING_WINDOW_DEFAULT_MS`.
+MediusStatus medius_device_set_bearing(struct MediusDevice *dev,
+                                       uint16_t window_ms,
+                                       MediusBearingMode mode);
+
 // Set what paces injected motion; `hz` is the target rate for `Fixed` and ignored otherwise.
 MediusStatus medius_device_set_emit_pace(struct MediusDevice *dev,
                                          MediusEmitMode mode,
@@ -1437,6 +1510,9 @@ MediusStatus medius_device_query_catch(struct MediusDevice *dev, struct MediusCa
 
 MediusStatus medius_device_query_imperfect(struct MediusDevice *dev,
                                            struct MediusImperfectStatus *out);
+
+// Query the bearing into `*out`.
+MediusStatus medius_device_query_bearing(struct MediusDevice *dev, struct MediusBearing *out);
 
 // Query the movement-riding window into `*out_enabled` and `*out_window_ms` (0 when off).
 MediusStatus medius_device_query_movement_riding(struct MediusDevice *dev,
@@ -1488,7 +1564,16 @@ struct MediusLockTarget medius_lock_target_axis(MediusLockTargetKind kind);
 // Build a [`MediusLockTarget`] addressing a momentary usage (button, key, or media).
 struct MediusLockTarget medius_lock_target_usage(struct MediusUsage usage);
 
-// Whether `target`/`dir` is locked in `locks` (`Both` requires both edges). Mirrors `medius::Locks::is_locked`.
+// The scale in effect on `target`/`dir`: percent of the physical value kept, so
+// `MEDIUS_LOCK_SCALE_PASS` when nothing weighs it. `Both` reports the lowest across every direction.
+// Mirrors `medius::Locks::scale_of`.
+uint8_t medius_locks_scale_of(const struct MediusLocks *locks,
+                              struct MediusLockTarget target,
+                              MediusDirection dir);
+
+// Whether `target`/`dir` is blocked outright in `locks`. A direction merely weighed is not locked.
+// `Both` asks about the two fixed signs, the pair it has always named; ask for a relative direction
+// by name. Mirrors `medius::Locks::is_locked`.
 bool medius_locks_is_locked(const struct MediusLocks *locks,
                             struct MediusLockTarget target,
                             MediusDirection dir);

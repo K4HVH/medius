@@ -122,10 +122,44 @@ pub enum MediusLedMode {
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MediusDirection {
+    /// Every direction of the target: both edges, both signs, and both relative senses.
     Both = 0,
     Positive = 1,
     Negative = 2,
+    /// The axis sign the box is currently injecting. Measured against the bearing, so it follows the
+    /// aim rather than the axis; inert while no bearing is live. Axes only.
+    With = 3,
+    /// The axis sign opposing the box's injection. Measured against the bearing; axes only.
+    Against = 4,
 }
+
+/// How the box decides whether physical motion runs with or against its own injection.
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MediusBearingMode {
+    /// Each axis compares its own sign against its own bearing, independently.
+    PerAxis = 0,
+    /// The aim is projected onto the injected XY vector; motion across it passes untouched.
+    Vector = 1,
+}
+
+/// The configured bearing: what `MEDIUS_DIRECTION_WITH` / `_AGAINST` are measured against.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MediusBearing {
+    /// How long the last injected delta's direction stays the bearing, in ms. 0 = never, which
+    /// leaves the relative directions inert whatever their scale.
+    pub window_ms: u16,
+    pub mode: MediusBearingMode,
+}
+
+/// `LOCK` scale: percent of the physical value kept. 0 blocks, 100 passes it untouched, above 100
+/// amplifies, to 255 (2.55x).
+pub const MEDIUS_LOCK_SCALE_BLOCK: u8 = 0;
+pub const MEDIUS_LOCK_SCALE_PASS: u8 = 100;
+pub const MEDIUS_LOCK_SCALE_MAX: u8 = 255;
+/// The bearing window the box holds before any host sets one, in ms.
+pub const MEDIUS_BEARING_WINDOW_DEFAULT_MS: u16 = 20;
 
 /// A whole input group for a blanket lock or a clip auto-lock scope.
 #[repr(u8)]
@@ -425,8 +459,11 @@ pub struct MediusStats {
 pub struct MediusLockEntry {
     pub target: MediusLockTarget,
     pub is_blanket: bool,
-    pub positive: bool,
-    pub negative: bool,
+    /// Which direction of the target this entry weighs.
+    pub direction: MediusDirection,
+    /// Percent of the physical value kept: 0 blocks, 100 passes, above 100 amplifies. A momentary
+    /// usage carries one bit and so only ever reports 0.
+    pub scale: u8,
 }
 
 /// The active locks: `entries[0..n]`. Use `medius_locks_is_locked` to test a target/direction.
