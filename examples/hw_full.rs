@@ -18,11 +18,11 @@ mod linux {
     use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
     use std::time::{Duration, Instant};
 
-    use medius::PROTO_VER;
+    use medius::{BEARING_WINDOW_DEFAULT, PROTO_VER};
     use medius::{
-        Action, Axis, Blanket, Button, CatchClass, CatchFilter, Class, ClipAction, ClipBuilder,
-        ClipState, ClipTrigger, Device, Direction, Edge, EmitPace, Input, Key, LedMode, LedTarget,
-        MediaKey, RebootTarget, Timeline, TrafficClass,
+        Action, Axis, BearingMode, Blanket, Button, CatchClass, CatchFilter, Class, ClipAction,
+        ClipBuilder, ClipState, ClipTrigger, Device, Direction, Edge, EmitPace, Input, Key, LedMode,
+        LedTarget, MediaKey, RebootTarget, Timeline, TrafficClass,
     };
 
     const EVIOCGRAB: libc::c_ulong = 0x4004_4590;
@@ -491,8 +491,8 @@ mod linux {
         }
 
         {
-            // LOCK: the LOCKS query reflects the set, is_locked() reads individual edges, and the
-            // mask matches the wire layout (X+ = bit0, Left press = bit6 => 0x0041). LOCK_ON is set.
+            // LOCK: the LOCKS query reflects the set, is_locked() reads individual directions, and the
+            // reply carries one entry per weighed direction. LOCK_ON is set.
             let dev = device.as_ref().unwrap();
             let _ = dev.reset();
             let _ = dev.lock(Axis::X, Direction::Positive);
@@ -518,6 +518,79 @@ mod linux {
         }
 
         {
+            // SCALE: a partial scale reads back as itself, not as a lock. The physical weighing needs a
+            // hand on the mouse (tools/validate_lock.py drives that); what the box can prove alone is
+            // that the value survives the round trip and that a weighed direction is not a locked one.
+            let dev = device.as_ref().unwrap();
+            let _ = dev.reset();
+            let _ = dev.scale(Axis::X, Direction::Negative, 40);
+            let _ = dev.scale(Axis::Y, Direction::With, 130);
+            let locks = dev.query_locks();
+            let s_ok = locks
+                .as_ref()
+                .map(|l| {
+                    l.scale_of(Axis::X, Direction::Negative) == 40
+                        && l.scale_of(Axis::Y, Direction::With) == 130
+                        && l.scale_of(Axis::X, Direction::Positive) == medius::LOCK_SCALE_PASS
+                        && !l.is_locked(Axis::X, Direction::Negative)
+                })
+                .unwrap_or(false);
+            let on = dev.query_health().map(|h| h.lock_on).unwrap_or(false);
+            check(
+                "scale: round trip + weighed is not locked",
+                s_ok && on,
+                format!("40%/130% read back ok={s_ok} lock_on={on}"),
+            );
+            let _ = dev.reset();
+        }
+
+        {
+            // SCALE: a Both-direction scale must mean the same number whether or not a bearing is live,
+            // so the box stores it on the fixed pair only and leaves the relative pair passing.
+            let dev = device.as_ref().unwrap();
+            let _ = dev.reset();
+            let _ = dev.scale(Axis::X, Direction::Both, 50);
+            let both = dev.query_locks();
+            let b_ok = both
+                .as_ref()
+                .map(|l| {
+                    l.scale_of(Axis::X, Direction::Positive) == 50
+                        && l.scale_of(Axis::X, Direction::Negative) == 50
+                        && l.scale_of(Axis::X, Direction::With) == medius::LOCK_SCALE_PASS
+                        && l.scale_of(Axis::X, Direction::Against) == medius::LOCK_SCALE_PASS
+                })
+                .unwrap_or(false);
+            // and an unlock is total: it reaches the relative pair too
+            let _ = dev.scale(Axis::X, Direction::Against, medius::LOCK_SCALE_BLOCK);
+            let _ = dev.unlock(Axis::X, Direction::Both);
+            let cleared = dev.query_locks().map(|l| l.entries().len()).unwrap_or(99);
+            check(
+                "scale: Both weighs the fixed pair, unlock clears all four",
+                b_ok && cleared == 0,
+                format!("both_ok={b_ok} entries after unlock={cleared}"),
+            );
+            let _ = dev.reset();
+        }
+
+        {
+            // BEARING: the option round-trips and persists in NVS like the other OPTION ids.
+            let dev = device.as_ref().unwrap();
+            let _ = dev.set_bearing(Some(Duration::from_millis(35)), BearingMode::Vector);
+            let a = dev.query_bearing();
+            let _ = dev.set_bearing(None, BearingMode::PerAxis);
+            let b = dev.query_bearing();
+            let _ = dev.set_bearing(Some(BEARING_WINDOW_DEFAULT), BearingMode::PerAxis);
+            let ok = matches!(&a, Ok(x) if x.window == Some(Duration::from_millis(35))
+                && x.mode == BearingMode::Vector && x.is_live())
+                && matches!(&b, Ok(x) if x.window.is_none() && !x.is_live());
+            check(
+                "bearing: option round trip",
+                ok,
+                format!("set 35ms/vector -> {a:?}; off -> {b:?}"),
+            );
+        }
+
+        {
             // LOCK: injection overrides a hand-locked button (block-press, but a forced press wins).
             let dev = device.as_ref().unwrap();
             let _ = dev.reset();
@@ -537,6 +610,8 @@ mod linux {
         {
             // LOCK safety: RESET clears every lock; the keepalive holds a lock alive while the client
             // runs, and the firmware self-clears only on true control-PC silence (a crash stops it).
+            // A Both-direction lock is two entries now, one per fixed sign; the relative pair stays at a
+            // full pass and so is not reported at all.
             let dev = device.as_ref().unwrap();
             let _ = dev.lock(Axis::Y, Direction::Both);
             let _ = dev.reset();
@@ -549,7 +624,7 @@ mod linux {
             let _ = dev.reset();
             check(
                 "lock: reset + keepalive holds",
-                after_reset == 0 && before == 1 && after_hold == 1,
+                after_reset == 0 && before == 2 && after_hold == 2,
                 format!(
                     "reset->{after_reset} locks; y-lock {before}, held across 1.4s {after_hold}"
                 ),
