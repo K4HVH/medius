@@ -20,7 +20,6 @@ pub(crate) const ACTIVATE_TIMEOUT: Duration = Duration::from_secs(60);
 /// A chip confirms the image it booted after about ten seconds of running.
 pub(crate) const CONFIRM_TIMEOUT: Duration = Duration::from_secs(45);
 
-
 /// The chunking and credit accounting for one staged image, with no transport in it. The sync and
 /// async transfers both drive this, so the wire logic exists once and cannot drift between them.
 pub(crate) struct ChunkPlan<'a> {
@@ -37,7 +36,11 @@ impl<'a> ChunkPlan<'a> {
         ChunkPlan {
             image,
             target,
-            credit: if credit == 0 { OTA_CREDIT } else { credit as usize },
+            credit: if credit == 0 {
+                OTA_CREDIT
+            } else {
+                credit as usize
+            },
             seq: 0,
             sent: 0,
             unacked: 0,
@@ -199,7 +202,8 @@ impl Device {
     /// Commit every staged image and reboot into it. The host chip goes first and has to be back on
     /// the inter-chip link before the device chip follows, so this can take tens of seconds.
     pub fn activate_firmware(&self) -> Result<()> {
-        let (status, arg) = self.update_op(OTA_OP_ACTIVATE, UpdateTarget::Device, &[], ACTIVATE_TIMEOUT)?;
+        let (status, arg) =
+            self.update_op(OTA_OP_ACTIVATE, UpdateTarget::Device, &[], ACTIVATE_TIMEOUT)?;
         if status != UpdateStatus::OK {
             return Err(Error::Update {
                 op: OTA_OP_ACTIVATE,

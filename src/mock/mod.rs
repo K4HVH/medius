@@ -632,7 +632,6 @@ pub struct MockBox {
     transport: Arc<MockTransport>,
 }
 
-
 /// The box's side of an update session, so a transfer against the mock exercises the same sequencing
 /// the firmware does. A handler that just answered OK would let every deliberate break pass.
 #[derive(Debug, Clone, Default)]
@@ -763,7 +762,11 @@ impl MockBox {
                 let Some(&op) = payload.first() else {
                     return Vec::new();
                 };
-                let body = if payload.len() > 2 { &payload[2..] } else { &[][..] };
+                let body = if payload.len() > 2 {
+                    &payload[2..]
+                } else {
+                    &[][..]
+                };
                 let answer = match op {
                     0 => Some(st.update.begin(body)),
                     1 => st.update.data(body),

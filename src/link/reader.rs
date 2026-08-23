@@ -80,7 +80,9 @@ fn reader_loop(
             }
             Ok(n) => {
                 decoder.feed(&buf[..n], |frame| {
-                    route_frame(frame, pending, logs_tx, logs_rx, updates_tx, events, counters);
+                    route_frame(
+                        frame, pending, logs_tx, logs_rx, updates_tx, events, counters,
+                    );
                 });
                 counters.set_crc_drops(decoder.crc_error_count());
             }

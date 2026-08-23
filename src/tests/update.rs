@@ -10,13 +10,21 @@ use crate::types::{FirmwareInfo, ImageState, UpdateStatus, UpdateTarget};
 fn payload(host_present: u8, staged: u8) -> [u8; 17] {
     [
         Q_FIRMWARE, // what
-        3, 2, 0, // device version
-        0,    // device slot ota_0
-        2,    // device state valid
-        host_present, 3, 2, 0,    // host version
-        1,    // host slot ota_1
-        1,    // host state pending-verify
-        0x00, 0x00, 0x0F, 0x00, // slot size 0x000F0000 little-endian
+        3,
+        2,
+        0, // device version
+        0, // device slot ota_0
+        2, // device state valid
+        host_present,
+        3,
+        2,
+        0, // host version
+        1, // host slot ota_1
+        1, // host state pending-verify
+        0x00,
+        0x00,
+        0x0F,
+        0x00, // slot size 0x000F0000 little-endian
         staged,
     ]
 }
@@ -171,7 +179,10 @@ fn a_short_final_chunk_is_sent_whole() {
     assert_eq!(first.len(), 4 + OTA_CHUNK);
     assert_eq!(second.len(), 4 + 9);
     assert!(plan.next_frame().is_none());
-    assert!(plan.awaiting_ack(), "the last chunk always asks for an answer");
+    assert!(
+        plan.awaiting_ack(),
+        "the last chunk always asks for an answer"
+    );
 }
 
 #[test]
