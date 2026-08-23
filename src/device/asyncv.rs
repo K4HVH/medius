@@ -1,5 +1,6 @@
 use std::time::Duration;
 
+use super::update::{ACTIVATE_TIMEOUT, CONFIRM_TIMEOUT, ChunkPlan, OP_TIMEOUT, begin_body};
 use crate::error::{Error, Result};
 use crate::link::Link;
 use crate::protocol::opcode::{
@@ -10,7 +11,6 @@ use crate::protocol::opcode::{
     OTA_OP_ABORT, OTA_OP_ACTIVATE, OTA_OP_BEGIN, OTA_OP_DATA, OTA_OP_END, UPD_RESP_LEN,
 };
 use crate::protocol::{FrameType, Resp, parse_resp};
-use super::update::{ACTIVATE_TIMEOUT, CONFIRM_TIMEOUT, ChunkPlan, OP_TIMEOUT, begin_body};
 use crate::types::{
     Action, Axis, Bearing, BearingMode, Blanket, Caps, CatchFilter, CatchState, ClipBuilder,
     ClipSettings, ClipStatus, ClipTrigger, CountersSnapshot, DeviceInfo, Direction, Edge, EmitPace,
@@ -312,9 +312,7 @@ impl AsyncDevice {
             }
         }
 
-        let (status, arg) = self
-            .update_op(OTA_OP_END, target, &[], OP_TIMEOUT)
-            .await?;
+        let (status, arg) = self.update_op(OTA_OP_END, target, &[], OP_TIMEOUT).await?;
         if status != UpdateStatus::STAGED {
             return Err(Error::Update {
                 op: OTA_OP_END,
@@ -383,7 +381,10 @@ impl AsyncDevice {
             }
             // No runtime to sleep on in a runtime-agnostic crate; flume's timeout is the one wait
             // primitive already in the dependency set.
-            let _ = self.link.updates_rx().recv_timeout(Duration::from_millis(500));
+            let _ = self
+                .link
+                .updates_rx()
+                .recv_timeout(Duration::from_millis(500));
         }
     }
 

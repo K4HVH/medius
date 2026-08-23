@@ -5,11 +5,11 @@ use std::time::Duration;
 
 use medius::{
     Action, Axis, Bearing, BearingMode, Blanket, BoxInfo, Button, Caps, CatchEntry, CatchEvent,
-    CatchFilter, CatchState, Class, ClipState, ClipStatus, ClockDomain, ClockEstimate,
-    ChipFirmware, CountersSnapshot, DeviceInfo, DeviceKind, Direction, EmitPace, EmitPaceStatus,
-    FirmwareInfo, Health, ImageState, ImperfectStatus, Input, InputEvent, KbdCaps, Key, LedMode, LedTarget, LockEntry, LockScope,
-    LockTarget, Locks, LogLevel, LogLine, MediaKey, Motion, MouseCaps, MoveTiming, PendingMotion,
-    PortInfo, Rate, RebootTarget, Stats, Usage, Version,
+    CatchFilter, CatchState, ChipFirmware, Class, ClipState, ClipStatus, ClockDomain,
+    ClockEstimate, CountersSnapshot, DeviceInfo, DeviceKind, Direction, EmitPace, EmitPaceStatus,
+    FirmwareInfo, Health, ImageState, ImperfectStatus, Input, InputEvent, KbdCaps, Key, LedMode,
+    LedTarget, LockEntry, LockScope, LockTarget, Locks, LogLevel, LogLine, MediaKey, Motion,
+    MouseCaps, MoveTiming, PendingMotion, PortInfo, Rate, RebootTarget, Stats, Usage, Version,
 };
 
 use crate::ctypes::*;
@@ -299,13 +299,16 @@ impl From<FirmwareInfo> for MediusFirmwareInfo {
         MediusFirmwareInfo {
             device: f.device.into(),
             host_present: u8::from(f.host.is_some()),
-            host: f.host.unwrap_or(ChipFirmware {
-                major: 0,
-                minor: 0,
-                patch: 0,
-                slot: 0xFF,
-                state: ImageState::Unknown(0xFF),
-            }).into(),
+            host: f
+                .host
+                .unwrap_or(ChipFirmware {
+                    major: 0,
+                    minor: 0,
+                    patch: 0,
+                    slot: 0xFF,
+                    state: ImageState::Unknown(0xFF),
+                })
+                .into(),
             slot_size: f.slot_size,
             device_staged: u8::from(f.device_staged),
             host_staged: u8::from(f.host_staged),

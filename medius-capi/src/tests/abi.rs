@@ -1980,7 +1980,10 @@ fn firmware_update_frames_match_the_native_crate() {
             );
         })
     };
-    assert_eq!(native, capi, "the two paths must put identical bytes on the wire");
+    assert_eq!(
+        native, capi,
+        "the two paths must put identical bytes on the wire"
+    );
     assert!(
         native.iter().any(|f| f.ty == medius::FrameType::Update),
         "the transfer must actually have sent UPDATE frames"
