@@ -1156,9 +1156,8 @@ impl MockBox {
         );
     }
 
-    /// A snapshot copy of every command the host has sent so far, decoded, in order.
-    /// Every frame the mock has answered with, decoded. The recorded-command log says nothing about
-    /// replies, and the reply `SEQ` is exactly what a client must not correlate on.
+    /// Every frame the mock has answered with, decoded, in order. The recorded-command log says
+    /// nothing about replies, and the reply `SEQ` is exactly what a client must not correlate on.
     pub fn replied_frames(&self) -> Vec<DecodedFrame> {
         let mut out = Vec::new();
         let mut dec = crate::protocol::FrameDecoder::new();
@@ -1168,6 +1167,7 @@ impl MockBox {
         out
     }
 
+    /// A snapshot copy of every command the host has sent so far, decoded, in order.
     pub fn recorded_frames(&self) -> Vec<DecodedFrame> {
         self.state.lock().recorded.clone()
     }
