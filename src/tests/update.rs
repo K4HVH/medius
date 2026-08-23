@@ -349,11 +349,11 @@ mod correlation {
     use super::*;
     use crate::protocol::FrameType;
 
-    /// A DATA acknowledgement answers a whole window, so the box gives it a rolling SEQ of its own.
-    /// A client that correlated on SEQ would work against a mock that echoed the command's SEQ and
-    /// fail on hardware, which is the false green this asserts against.
+    /// A DATA acknowledgement answers a whole window, so the box gives it a rolling SEQ of its own
+    /// rather than echoing the command's. This reads the REPLY seqs: an earlier version of this test
+    /// only looked at the frames the client sent, so it passed whatever the mock answered.
     #[test]
-    fn data_acks_do_not_echo_the_command_seq() {
+    fn data_acks_carry_a_rolling_seq_not_the_command_seq() {
         let mock = crate::MockBox::new();
         let dev = crate::Device::with_mock(mock.clone());
         let img: Vec<u8> = (0..(OTA_CHUNK * 40)).map(|i| i as u8).collect();
@@ -366,32 +366,54 @@ mod correlation {
             .filter(|f| f.ty == FrameType::Update && f.payload.first() == Some(&OTA_OP_DATA))
             .map(|f| f.seq)
             .collect();
+        let acks: Vec<u8> = mock
+            .replied_frames()
+            .iter()
+            .filter(|f| f.ty == FrameType::UpdateResp && f.payload.first() == Some(&OTA_OP_DATA))
+            .map(|f| f.seq)
+            .collect();
+
         assert!(
-            sent.len() > 16,
-            "need more than one window, got {}",
-            sent.len()
+            acks.len() >= 3,
+            "need several windows, got {} acks",
+            acks.len()
         );
-        // Every window's last command SEQ is what a SEQ-correlating client would key on. The mock
-        // must not be answering with those, or it cannot discriminate.
-        let acked_on_command_seq = sent
-            .chunks(16)
-            .filter_map(|w| w.last().copied())
-            .collect::<Vec<_>>();
-        assert!(
-            !acked_on_command_seq.is_empty(),
-            "windows should have closed"
+        // Rolling: starts at 0 and steps by one per acknowledgement, which is nothing like the
+        // command SEQs (one per chunk, sixteen per window).
+        let expected: Vec<u8> = (0..acks.len() as u8).collect();
+        assert_eq!(acks, expected, "acks should roll 0,1,2..., got {acks:?}");
+        assert_ne!(
+            acks[1], sent[31],
+            "the second ack must not echo the SEQ of the chunk that closed its window"
         );
     }
 
-    /// An oversized chunk is a malformed frame, not an image that does not fit. The firmware
-    /// separates them and so must the mock, or a client cannot tell "retry smaller" from "wrong box".
+    /// An oversized chunk is a malformed frame, not an image that does not fit. No client sends one,
+    /// so the box's answer is asserted against the mock's state machine directly.
     #[test]
     fn an_oversized_chunk_is_bad_state_not_too_big() {
-        let mock = crate::MockBox::new();
-        let dev = crate::Device::with_mock(mock.clone());
-        // Reach past the public API: no client sends an over-long chunk, which is why it needs a test.
-        let img = vec![0u8; OTA_CHUNK * 2];
-        dev.stage_firmware(UpdateTarget::Device, &img, &mut |_| {})
-            .expect("a well-formed transfer still works");
+        let mut u = crate::mock::MockUpdate::default();
+        let mut begin = Vec::new();
+        begin.extend_from_slice(&((OTA_CHUNK * 4) as u32).to_le_bytes());
+        begin.extend_from_slice(&[0u8; 32]);
+        assert_eq!(u.begin_for_test(&begin), (0x01, 16));
+
+        let mut over = vec![0u8, 0]; // seq 0
+        over.extend_from_slice(&vec![0u8; OTA_CHUNK + 1]); // one byte too many
+        assert_eq!(
+            u.data_for_test(&over),
+            Some((0x1A, OTA_CHUNK as u32)),
+            "an over-long chunk is malformed, and the answer names the chunk size"
+        );
+
+        // An image overrun is the other answer, and must stay distinct from it.
+        let mut u2 = crate::mock::MockUpdate::default();
+        let mut small = Vec::new();
+        small.extend_from_slice(&10u32.to_le_bytes());
+        small.extend_from_slice(&[0u8; 32]);
+        u2.begin_for_test(&small);
+        let mut long = vec![0u8, 0];
+        long.extend_from_slice(&[0u8; 20]);
+        assert_eq!(u2.data_for_test(&long), Some((0x12, 10)));
     }
 }

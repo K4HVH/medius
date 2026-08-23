@@ -42,6 +42,7 @@ pub(crate) struct LinkInner {
     pending: Arc<Mutex<HashMap<u8, PendingEntry>>>,
     logs_rx: flume::Receiver<LogLine>,
     updates_rx: flume::Receiver<Vec<u8>>,
+    updates_tx: flume::Sender<Vec<u8>>,
     desired: Arc<Mutex<DesiredState>>,
     events: Arc<Mutex<CatchReg>>,
     catch_gen: Arc<AtomicU64>,
@@ -121,7 +122,7 @@ impl Link {
             Arc::clone(&pending),
             logs_tx.clone(),
             logs_rx.clone(),
-            updates_tx,
+            updates_tx.clone(),
             Arc::clone(&events),
             Arc::clone(&counters),
             Arc::clone(&stop),
@@ -157,6 +158,7 @@ impl Link {
                 pending,
                 logs_rx,
                 updates_rx,
+                updates_tx,
                 desired,
                 events,
                 catch_gen,
@@ -206,6 +208,11 @@ impl Link {
 
     pub(crate) fn updates_rx(&self) -> &flume::Receiver<Vec<u8>> {
         &self.inner.updates_rx
+    }
+
+    /// For putting back a reply that belongs to another caller; see `Device::recv_update`.
+    pub(crate) fn updates_tx(&self) -> &flume::Sender<Vec<u8>> {
+        &self.inner.updates_tx
     }
 
     pub(crate) fn logs_rx(&self) -> flume::Receiver<LogLine> {
