@@ -17,6 +17,9 @@ use super::Device;
 pub(crate) const OP_TIMEOUT: Duration = Duration::from_secs(20);
 /// `ACTIVATE` reboots the host chip and waits for it back on the link before the device chip follows.
 pub(crate) const ACTIVATE_TIMEOUT: Duration = Duration::from_secs(60);
+/// How often a blocked receive wakes to check what another caller may have parked for it.
+const HELD_POLL: Duration = Duration::from_millis(50);
+
 /// A chip confirms the image it booted after about ten seconds of running.
 pub(crate) const CONFIRM_TIMEOUT: Duration = Duration::from_secs(45);
 
@@ -261,29 +264,34 @@ impl Device {
     /// another caller's answer and leave it timing out against a box that replied correctly.
     pub(crate) fn recv_update(&self, op: u8, timeout: Duration) -> Result<(UpdateStatus, u32)> {
         let deadline = Instant::now() + timeout;
-        // Anything already parked for this op by another caller.
-        if let Some(p) = self.take_held(op) {
-            return Ok((
-                UpdateStatus(p[2]),
-                u32::from_le_bytes([p[3], p[4], p[5], p[6]]),
-            ));
-        }
         loop {
+            // Checked on EVERY wake, not just before the first wait: another caller can park this
+            // op's reply at any point, and only looking once would leave it sitting there until the
+            // next call while this one timed out.
+            if let Some(p) = self.take_held(op) {
+                return Ok((
+                    UpdateStatus(p[2]),
+                    u32::from_le_bytes([p[3], p[4], p[5], p[6]]),
+                ));
+            }
             let left = deadline.saturating_duration_since(Instant::now());
             if left.is_zero() {
                 return Err(Error::QueryTimeout);
             }
-            match self.link.updates_rx().recv_timeout(left) {
+            // Bounded, so a reply parked while this thread is blocked is noticed promptly rather
+            // than only when the channel happens to deliver something.
+            match self.link.updates_rx().recv_timeout(left.min(HELD_POLL)) {
                 Ok(p) if p.len() >= UPD_RESP_LEN && p[0] == op => {
                     return Ok((
                         UpdateStatus(p[2]),
                         u32::from_le_bytes([p[3], p[4], p[5], p[6]]),
                     ));
                 }
-                // Park it where its own caller looks on every wake. Re-sending it into the channel
-                // after this call finished would arrive long after that caller had given up.
+                // Park it where its own caller looks. Re-sending it into the channel after this call
+                // finished would arrive long after that caller had given up.
                 Ok(p) => self.link.hold_update(p),
-                Err(_) => return Err(Error::QueryTimeout),
+                Err(flume::RecvTimeoutError::Timeout) => continue,
+                Err(_) => return Err(Error::Disconnected),
             }
         }
     }
