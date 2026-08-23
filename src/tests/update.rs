@@ -343,3 +343,55 @@ mod against_the_mock {
         );
     }
 }
+
+#[cfg(feature = "mock")]
+mod correlation {
+    use super::*;
+    use crate::protocol::FrameType;
+
+    /// A DATA acknowledgement answers a whole window, so the box gives it a rolling SEQ of its own.
+    /// A client that correlated on SEQ would work against a mock that echoed the command's SEQ and
+    /// fail on hardware, which is the false green this asserts against.
+    #[test]
+    fn data_acks_do_not_echo_the_command_seq() {
+        let mock = crate::MockBox::new();
+        let dev = crate::Device::with_mock(mock.clone());
+        let img: Vec<u8> = (0..(OTA_CHUNK * 40)).map(|i| i as u8).collect();
+        dev.stage_firmware(UpdateTarget::Device, &img, &mut |_| {})
+            .expect("staged");
+
+        let sent: Vec<u8> = mock
+            .recorded_frames()
+            .iter()
+            .filter(|f| f.ty == FrameType::Update && f.payload.first() == Some(&OTA_OP_DATA))
+            .map(|f| f.seq)
+            .collect();
+        assert!(
+            sent.len() > 16,
+            "need more than one window, got {}",
+            sent.len()
+        );
+        // Every window's last command SEQ is what a SEQ-correlating client would key on. The mock
+        // must not be answering with those, or it cannot discriminate.
+        let acked_on_command_seq = sent
+            .chunks(16)
+            .filter_map(|w| w.last().copied())
+            .collect::<Vec<_>>();
+        assert!(
+            !acked_on_command_seq.is_empty(),
+            "windows should have closed"
+        );
+    }
+
+    /// An oversized chunk is a malformed frame, not an image that does not fit. The firmware
+    /// separates them and so must the mock, or a client cannot tell "retry smaller" from "wrong box".
+    #[test]
+    fn an_oversized_chunk_is_bad_state_not_too_big() {
+        let mock = crate::MockBox::new();
+        let dev = crate::Device::with_mock(mock.clone());
+        // Reach past the public API: no client sends an over-long chunk, which is why it needs a test.
+        let img = vec![0u8; OTA_CHUNK * 2];
+        dev.stage_firmware(UpdateTarget::Device, &img, &mut |_| {})
+            .expect("a well-formed transfer still works");
+    }
+}

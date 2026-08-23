@@ -232,13 +232,11 @@ impl Device {
         body: &[u8],
         timeout: Duration,
     ) -> Result<(UpdateStatus, u32)> {
-        // Drain anything already queued for this op: it answers an earlier command, and taking it as
-        // this one's reply would report a stale outcome.
-        while let Ok(p) = self.link.updates_rx().try_recv() {
-            if p.first() != Some(&op) {
-                continue;
-            }
-        }
+        // Everything already queued answers an earlier command, and taking one as this op's reply
+        // would report a stale outcome. try_recv consumes whatever it returns, so this empties the
+        // channel rather than filtering it; a session is single-threaded, so there is nothing else
+        // to lose.
+        while self.link.updates_rx().try_recv().is_ok() {}
         let mut frame = Vec::with_capacity(2 + body.len());
         frame.push(op);
         frame.push(target.as_u8());
