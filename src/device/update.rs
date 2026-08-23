@@ -125,7 +125,19 @@ impl Device {
     pub fn wait_firmware_confirmed(&self) -> Result<FirmwareInfo> {
         let deadline = Instant::now() + CONFIRM_TIMEOUT;
         loop {
-            let info = self.firmware_info()?;
+            // This is the call you make right after an activate, when the box is rebooting into the
+            // image it is about to confirm. A query that goes unanswered there is the expected state,
+            // so keep asking until the deadline rather than reporting the reboot as a failure.
+            let info = match self.firmware_info() {
+                Ok(i) => i,
+                Err(e) => {
+                    if Instant::now() >= deadline {
+                        return Err(e);
+                    }
+                    std::thread::sleep(Duration::from_millis(500));
+                    continue;
+                }
+            };
             if !info.any_pending() {
                 return Ok(info);
             }
@@ -157,10 +169,6 @@ impl Device {
             });
         }
         self.wait_firmware_confirmed()?;
-        // A DATA acknowledgement left over from an abandoned attempt on this connection has arg ==
-        // credit, which is exactly what the first window expects, so it passes the offset check and
-        // runs the loop a window ahead of the box for the rest of the transfer.
-        self.drop_held(OTA_OP_DATA);
 
         let (status, arg) = self.update_op(OTA_OP_BEGIN, target, &begin_body(image), OP_TIMEOUT)?;
         if status != UpdateStatus::READY {
@@ -170,6 +178,13 @@ impl Device {
                 arg,
             });
         }
+        // AFTER the BEGIN reply, not before it. A DATA acknowledgement left over from an abandoned
+        // attempt has arg == credit, which is exactly what the first window expects, so it passes the
+        // offset check and runs the loop a window ahead of the box for the rest of the transfer. But
+        // before the BEGIN it is still sitting in the channel, where dropping held replies cannot
+        // reach it -- and awaiting the BEGIN is itself what moves it across. The box answers in
+        // order, so everything from the old attempt is behind that reply on the wire.
+        self.drop_held(OTA_OP_DATA);
 
         let mut plan = ChunkPlan::new(image, target, arg);
         while !plan.done() {
