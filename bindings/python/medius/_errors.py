@@ -47,7 +47,7 @@ class FrameTooLongError(MediusError):
     pass
 
 
-class FlashToolError(MediusError):
+class UpdateError(MediusError):
     pass
 
 
@@ -99,7 +99,7 @@ _STATUS_EXC = {
     Status.ERR_QUERY_TIMEOUT: QueryTimeoutError,
     Status.ERR_DISCONNECTED: DisconnectedError,
     Status.ERR_FRAME_TOO_LONG: FrameTooLongError,
-    Status.ERR_FLASH_TOOL: FlashToolError,
+    Status.ERR_UPDATE: UpdateError,
     Status.ERR_INVALID_ARG: InvalidArgError,
     Status.ERR_PANIC: PanicError,
     Status.ERR_CATCH_TABLE_FULL: CatchTableFullError,

@@ -18,7 +18,7 @@ pub enum MediusStatus {
     ErrQueryTimeout = 5,
     ErrDisconnected = 6,
     ErrFrameTooLong = 7,
-    ErrFlashTool = 8,
+    ErrUpdate = 8,
     ErrInvalidArg = 9,
     ErrPanic = 10,
     ErrUnknown = 11,
@@ -83,8 +83,7 @@ fn status_for(err: &Error) -> MediusStatus {
         Error::HalfEdgeInputFilter => MediusStatus::ErrHalfEdgeInputFilter,
         Error::ReservedId { .. } => MediusStatus::ErrReservedId,
         Error::RelativeDirection { .. } => MediusStatus::ErrRelativeDirection,
-        #[cfg(feature = "flash")]
-        Error::FlashTool(_) => MediusStatus::ErrFlashTool,
+        Error::Update { .. } => MediusStatus::ErrUpdate,
         _ => MediusStatus::ErrUnknown,
     }
 }

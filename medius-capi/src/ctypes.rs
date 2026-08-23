@@ -209,6 +209,8 @@ pub enum MediusFrameType {
     ClipCtrl = 0x13,
     ClipSet = 0x14,
     ClipTrigger = 0x15,
+    Update = 0x17,
+    UpdateResp = 0x18,
 }
 
 /// Which arm of a [`MediusCatchEvent`] is populated.
@@ -375,6 +377,33 @@ pub struct MediusVersion {
     pub fw_patch: u8,
     pub mac: [u8; 6],
     pub name: [c_char; MEDIUS_MAX_NAME],
+}
+
+/// One chip's firmware version and which of its two app slots it booted.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MediusChipFirmware {
+    pub major: u8,
+    pub minor: u8,
+    pub patch: u8,
+    /// 0 = ota_0, 1 = ota_1.
+    pub slot: u8,
+    /// 0 new, 1 pending-verify, 2 valid, 3 invalid, 4 aborted, 0xFF unknown.
+    pub state: u8,
+}
+
+/// Both chips' firmware state (`RESP(FIRMWARE)`).
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MediusFirmwareInfo {
+    pub device: MediusChipFirmware,
+    /// 0 when the host chip has not answered over the inter-chip link; `host` is then meaningless.
+    pub host_present: u8,
+    pub host: MediusChipFirmware,
+    /// Usable bytes in a spare slot; the same on both chips.
+    pub slot_size: u32,
+    pub device_staged: u8,
+    pub host_staged: u8,
 }
 
 /// Box health flags (each field is 0 or 1).

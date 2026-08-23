@@ -41,6 +41,7 @@ pub(crate) struct LinkInner {
     query_gen: Arc<AtomicU64>,
     pending: Arc<Mutex<HashMap<u8, PendingEntry>>>,
     logs_rx: flume::Receiver<LogLine>,
+    updates_rx: flume::Receiver<Vec<u8>>,
     desired: Arc<Mutex<DesiredState>>,
     events: Arc<Mutex<CatchReg>>,
     catch_gen: Arc<AtomicU64>,
@@ -99,6 +100,9 @@ impl Link {
         let query_timeout = DEFAULT_QUERY_TIMEOUT;
         let pending: Arc<Mutex<HashMap<u8, PendingEntry>>> = Arc::new(Mutex::new(HashMap::new()));
         let (logs_tx, logs_rx) = flume::bounded(logs::LOGS_CAPACITY);
+        // Unbounded: a stalled reader must never drop an acknowledgement, since the sender is blocked
+        // waiting for exactly that frame before it may send the next window.
+        let (updates_tx, updates_rx) = flume::unbounded();
         let counters = Arc::new(Counters::default());
         let stop = Arc::new(AtomicBool::new(false));
         let desired = Arc::new(Mutex::new(DesiredState::default()));
@@ -117,6 +121,7 @@ impl Link {
             Arc::clone(&pending),
             logs_tx.clone(),
             logs_rx.clone(),
+            updates_tx,
             Arc::clone(&events),
             Arc::clone(&counters),
             Arc::clone(&stop),
@@ -151,6 +156,7 @@ impl Link {
                 query_gen,
                 pending,
                 logs_rx,
+                updates_rx,
                 desired,
                 events,
                 catch_gen,
@@ -196,6 +202,10 @@ impl Link {
 
     pub(crate) fn desired(&self) -> &Mutex<DesiredState> {
         &self.inner.desired
+    }
+
+    pub(crate) fn updates_rx(&self) -> &flume::Receiver<Vec<u8>> {
+        &self.inner.updates_rx
     }
 
     pub(crate) fn logs_rx(&self) -> flume::Receiver<LogLine> {

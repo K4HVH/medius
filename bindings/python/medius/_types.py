@@ -9,6 +9,8 @@ from typing import List, Optional, Union
 from . import _native
 from ._enums import (
     Axis,
+    ImageState,
+    UpdateTarget,
     BEARING_WINDOW_DEFAULT_MS,
     BearingMode,
     Blanket,
@@ -103,6 +105,32 @@ def _as_usage(usage) -> "Usage":
 def _cstr(buf) -> str:
     raw = bytes(buf)
     return raw.split(b"\x00", 1)[0].decode("utf-8", "replace")
+
+
+@dataclass
+class ChipFirmware:
+    major: int
+    minor: int
+    patch: int
+    slot: int
+    state: ImageState
+
+    def __str__(self) -> str:
+        return f"{self.major}.{self.minor}.{self.patch} on ota_{self.slot} ({self.state.name.lower()})"
+
+
+@dataclass
+class FirmwareInfo:
+    device: ChipFirmware
+    host: "ChipFirmware | None"
+    slot_size: int
+    device_staged: bool
+    host_staged: bool
+
+    def any_pending(self) -> bool:
+        """True while either chip has not confirmed the image it booted, which is when an update is refused."""
+        pend = ImageState.PENDING_VERIFY
+        return self.device.state == pend or (self.host is not None and self.host.state == pend)
 
 
 @dataclass
@@ -852,6 +880,24 @@ def input_event_from_c(c) -> InputEvent:
     if kind != InputKind.MOTION:
         usage = Usage(_native.MediusUsage(kind=c.usage.kind, id=c.usage.id))
     return InputEvent(kind, int(c.ts_us), ClockDomain(c.clock), usage, int(c.dx), int(c.dy), int(c.dz))
+
+
+def _chip_firmware_from_c(c) -> ChipFirmware:
+    try:
+        state = ImageState(c.state)
+    except ValueError:
+        state = ImageState.UNKNOWN
+    return ChipFirmware(int(c.major), int(c.minor), int(c.patch), int(c.slot), state)
+
+
+def firmware_info_from_c(c) -> FirmwareInfo:
+    return FirmwareInfo(
+        _chip_firmware_from_c(c.device),
+        _chip_firmware_from_c(c.host) if c.host_present else None,
+        int(c.slot_size),
+        bool(c.device_staged),
+        bool(c.host_staged),
+    )
 
 
 def version_from_c(c) -> Version:

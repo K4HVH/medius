@@ -312,6 +312,40 @@ mod linux {
         }
 
         {
+            // FIRMWARE: read only. Staging an image from here would reboot the box mid-suite, so this
+            // asserts what a reader can: both chips answer, they agree on a version, and the layout is
+            // the two-slot one an update needs. A box still on a single-app image reports no slot size.
+            let dev = device.as_ref().unwrap();
+            let fw = dev.firmware_info();
+            let both = fw.as_ref().map(|f| f.host.is_some()).unwrap_or(false);
+            let slot_ok = fw
+                .as_ref()
+                .map(|f| f.slot_size == 0x000F_0000)
+                .unwrap_or(false);
+            let matched = fw
+                .as_ref()
+                .map(|f| {
+                    f.host.is_none_or(|h| {
+                        (h.major, h.minor, h.patch)
+                            == (f.device.major, f.device.minor, f.device.patch)
+                    })
+                })
+                .unwrap_or(false);
+            let detail = fw
+                .as_ref()
+                .map(|f| match f.host {
+                    Some(h) => format!("device {} | host {} | slot {}B", f.device, h, f.slot_size),
+                    None => format!("device {} | host absent", f.device),
+                })
+                .unwrap_or_else(|e| format!("{e}"));
+            check(
+                "firmware slots",
+                fw.is_ok() && both && slot_ok && matched,
+                detail,
+            );
+        }
+
+        {
             // IMPERFECT: a normal mouse fits the box's endpoints, so it's never over-capacity and the
             // live clone is faithful. The opt-in toggle is informational here (just printed).
             let dev = device.as_ref().unwrap();

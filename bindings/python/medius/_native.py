@@ -88,6 +88,27 @@ class MediusVersion(ctypes.Structure):
     ]
 
 
+class MediusChipFirmware(ctypes.Structure):
+    _fields_ = [
+        ("major", u8),
+        ("minor", u8),
+        ("patch", u8),
+        ("slot", u8),
+        ("state", u8),
+    ]
+
+
+class MediusFirmwareInfo(ctypes.Structure):
+    _fields_ = [
+        ("device", MediusChipFirmware),
+        ("host_present", u8),
+        ("host", MediusChipFirmware),
+        ("slot_size", u32),
+        ("device_staged", u8),
+        ("host_staged", u8),
+    ]
+
+
 class MediusHealth(ctypes.Structure):
     _fields_ = [
         ("link_up", u8),
@@ -553,7 +574,15 @@ _decl("medius_clip_finalize", i32, [HANDLE])
 _decl("medius_clip_query_status", i32, [HANDLE, ctypes.POINTER(MediusClipStatus)])
 _decl("medius_clip_query_config", i32, [HANDLE, ctypes.POINTER(MediusClipSettings)])
 
-HAS_FLASH = _decl("medius_flash", i32, [ctypes.c_char_p, ctypes.c_char_p, c_bool], optional=True) is not None
+UPDATE_PROGRESS_CB = ctypes.CFUNCTYPE(None, ctypes.c_void_p, ctypes.c_size_t, ctypes.c_size_t)
+_decl("medius_device_firmware_info", i32, [HANDLE, ctypes.POINTER(MediusFirmwareInfo)])
+_decl(
+    "medius_device_stage_firmware",
+    i32,
+    [HANDLE, u8, ctypes.POINTER(u8), ctypes.c_size_t, UPDATE_PROGRESS_CB, ctypes.c_void_p],
+)
+_decl("medius_device_abort_update", i32, [HANDLE, u8])
+_decl("medius_device_activate_firmware", i32, [HANDLE])
 
 HAS_MOCK = _decl("medius_mock_new", HANDLE, [], optional=True) is not None
 if HAS_MOCK:

@@ -13,8 +13,6 @@ pub(crate) mod protocol;
 mod transport;
 pub mod types;
 
-#[cfg(feature = "flash")]
-pub mod flash;
 #[cfg(feature = "mock")]
 mod mock;
 
@@ -38,13 +36,16 @@ pub use protocol::{DecodedFrame, FrameType};
 pub use transport::scan::find_medius;
 pub use types::{
     Action, Axis, Bearing, BearingMode, Blanket, BusEvent, Button, CLIP_EDGES_MAX, Caps, Capture,
-    CatchClass, CatchEntry, CatchEvent, CatchFilter, CatchState, Class, ClipAction, ClipBuilder,
+    CatchClass, CatchEntry, CatchEvent, CatchFilter, CatchState, ChipFirmware, Class, ClipAction,
+    ClipBuilder,
     ClipSettings, ClipState, ClipStatus, ClipTrigger, ClockDomain, ClockEstimate, ControlStatus,
     CountersSnapshot, DeviceInfo, DeviceKind, Direction, DirectionMeaning, Edge, EmitPace,
-    EmitPaceStatus, Health, ImperfectStatus, Input, InputEvent, KbdCaps, Key, LedMode, LedTarget,
+    EmitPaceStatus, FirmwareInfo, Health, ImageState, ImperfectStatus, Input, InputEvent, KbdCaps,
+    Key, LedMode, LedTarget,
     LockEntry, LockScope, LockTarget, Locks, LogLevel, LogLine, MediaKey, Motion, MotionEvent,
     MouseCaps, MoveTiming, PendingMotion, PortInfo, Rate, RebootTarget, Stamped, Stats, Timeline,
-    Timestamped, TrafficClass, TrafficEvent, Usage, UsageSnapshot, Version,
+    Timestamped, TrafficClass, TrafficEvent, UpdateProgress, UpdateStatus, UpdateTarget, Usage,
+    UsageSnapshot, Version,
 };
 
 #[cfg(feature = "async")]

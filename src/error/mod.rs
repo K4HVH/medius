@@ -67,9 +67,14 @@ pub enum Error {
     )]
     HalfEdgeInputFilter,
 
-    #[cfg(feature = "flash")]
-    #[error("flash tool failed: {0}")]
-    FlashTool(String),
+    /// The box refused a firmware update op (§4.16). `arg` is that status's argument: the slot size
+    /// for `TOO_BIG`, the chunk it expected for `SEQ_GAP`, an `esp_err_t` for a write or image failure.
+    #[error("update {op} refused: {status} (arg {arg})")]
+    Update {
+        op: u8,
+        status: crate::types::UpdateStatus,
+        arg: u32,
+    },
 }
 
 /// The crate-wide [`Result`](core::result::Result) alias.

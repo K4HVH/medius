@@ -3,16 +3,19 @@
 from __future__ import annotations
 
 import ctypes
+import time
 from typing import Optional, Sequence, Union
 
 from . import _native
 from ._enums import (Action, BearingMode, Blanket, EmitMode, LedMode, LedTarget, Direction,
-                     MoveTiming, PendingMotion, RebootTarget, Status)
+                     MoveTiming, PendingMotion, RebootTarget, Status, UpdateTarget)
 from ._errors import InvalidArgError, MediusError, check
 from ._clip import ClipHandle
 from ._streams import EventStream, InputStream, LogStream
 from ._types import (
     Bearing,
+    FirmwareInfo,
+    firmware_info_from_c,
     _enum,
     _i16,
     _u8,
@@ -289,6 +292,53 @@ class Device:
         out = _native.MediusVersion()
         check(_native.lib.medius_device_query_version(self._handle, ctypes.byref(out)))
         return version_from_c(out)
+
+    def firmware_info(self) -> FirmwareInfo:
+        """Both chips' firmware versions and which app slot each booted."""
+        out = _native.MediusFirmwareInfo()
+        check(_native.lib.medius_device_firmware_info(self._handle, ctypes.byref(out)))
+        return firmware_info_from_c(out)
+
+    def wait_firmware_confirmed(self, timeout: float = 45.0) -> FirmwareInfo:
+        """Block until neither chip is still on probation; a chip on probation refuses an update."""
+        deadline = time.monotonic() + timeout
+        while True:
+            info = self.firmware_info()
+            if not info.any_pending():
+                return info
+            if time.monotonic() >= deadline:
+                raise RuntimeError(f"still on probation after {timeout}s")
+            time.sleep(0.5)
+
+    def stage_firmware(self, target: UpdateTarget, image: bytes, progress=None) -> None:
+        """Write one image into that chip's spare slot; it stays inert until activate_firmware()."""
+        if not image:
+            raise ValueError("image is empty")
+        buf = (ctypes.c_uint8 * len(image)).from_buffer_copy(image)
+
+        def _cb(_user, sent, total):
+            if progress is not None:
+                progress(int(sent), int(total))
+
+        cb = _native.UPDATE_PROGRESS_CB(_cb)
+        check(
+            _native.lib.medius_device_stage_firmware(
+                self._handle, int(target), buf, len(image), cb, None
+            )
+        )
+
+    def abort_update(self, target: UpdateTarget) -> None:
+        """Drop whatever is staged or in flight for one target."""
+        check(_native.lib.medius_device_abort_update(self._handle, int(target)))
+
+    def activate_firmware(self) -> None:
+        """Commit every staged image and reboot into it; the host chip goes first."""
+        check(_native.lib.medius_device_activate_firmware(self._handle))
+
+    def update_firmware(self, target: UpdateTarget, image: bytes, progress=None) -> None:
+        """Stage one image and activate it."""
+        self.stage_firmware(target, image, progress)
+        self.activate_firmware()
 
     def query_health(self) -> Health:
         out = _native.MediusHealth()
