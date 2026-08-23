@@ -232,11 +232,18 @@ impl Device {
         body: &[u8],
         timeout: Duration,
     ) -> Result<(UpdateStatus, u32)> {
-        // Everything already queued answers an earlier command, and taking one as this op's reply
-        // would report a stale outcome. try_recv consumes whatever it returns, so this empties the
-        // channel rather than filtering it; a session is single-threaded, so there is nothing else
-        // to lose.
-        while self.link.updates_rx().try_recv().is_ok() {}
+        // Anything already queued for THIS op answers an earlier command, and taking it as this
+        // one's reply would report a stale outcome. Everything else belongs to somebody and goes
+        // back: try_recv consumes whatever it returns, so filtering means re-sending.
+        let mut keep: Vec<Vec<u8>> = Vec::new();
+        while let Ok(p) = self.link.updates_rx().try_recv() {
+            if p.first() != Some(&op) {
+                keep.push(p);
+            }
+        }
+        for p in keep {
+            let _ = self.link.updates_tx().send(p);
+        }
         let mut frame = Vec::with_capacity(2 + body.len());
         frame.push(op);
         frame.push(target.as_u8());
@@ -247,23 +254,32 @@ impl Device {
 
     /// The next `UPDATE_RESP` for `op`. Matched on the op byte, not `SEQ`: one acknowledgement answers
     /// a whole window of `DATA` frames, so it carries a rolling `SEQ` of its own.
+    ///
+    /// A reply for another op is put BACK, not dropped. The channel is one shared MPMC receiver and
+    /// `AsyncDevice::offload` runs transfers on threads of their own, so discarding here would eat
+    /// another caller's answer and leave it timing out against a box that replied correctly.
     pub(crate) fn recv_update(&self, op: u8, timeout: Duration) -> Result<(UpdateStatus, u32)> {
         let deadline = Instant::now() + timeout;
-        loop {
+        let mut others: Vec<Vec<u8>> = Vec::new();
+        let out = loop {
             let left = deadline.saturating_duration_since(Instant::now());
             if left.is_zero() {
-                return Err(Error::QueryTimeout);
+                break Err(Error::QueryTimeout);
             }
             match self.link.updates_rx().recv_timeout(left) {
                 Ok(p) if p.len() >= UPD_RESP_LEN && p[0] == op => {
-                    return Ok((
+                    break Ok((
                         UpdateStatus(p[2]),
                         u32::from_le_bytes([p[3], p[4], p[5], p[6]]),
                     ));
                 }
-                Ok(_) => continue,
-                Err(_) => return Err(Error::QueryTimeout),
+                Ok(p) => others.push(p),
+                Err(_) => break Err(Error::QueryTimeout),
             }
+        };
+        for p in others {
+            let _ = self.link.updates_tx().send(p);
         }
+        out
     }
 }

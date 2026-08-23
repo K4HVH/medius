@@ -30,6 +30,7 @@ use crate::types::{
 #[derive(Debug)]
 struct State {
     update: MockUpdate,
+    replied: Vec<Vec<u8>>,
     version: Version,
     health: Health,
     device_info: DeviceInfo,
@@ -54,6 +55,7 @@ impl Default for State {
     fn default() -> Self {
         State {
             update: MockUpdate::default(),
+            replied: Vec::new(),
             version: Version {
                 proto_ver: crate::protocol::PROTO_VER,
                 fw_major: 0,
@@ -648,6 +650,16 @@ pub(crate) struct MockUpdate {
 }
 
 impl MockUpdate {
+    #[cfg(test)]
+    pub(crate) fn begin_for_test(&mut self, body: &[u8]) -> (u8, u32) {
+        self.begin(body)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn data_for_test(&mut self, body: &[u8]) -> Option<(u8, u32)> {
+        self.data(body)
+    }
+
     fn begin(&mut self, body: &[u8]) -> (u8, u32) {
         if body.len() < 36 {
             return (0x1A, 0);
@@ -766,123 +778,130 @@ impl MockBox {
                 FrameType::Reset => st.table = LockTable::default(),
                 _ => {}
             }
-            if ty == FrameType::Update && st.respond {
-                let Some(&op) = payload.first() else {
-                    return Vec::new();
-                };
-                let body = if payload.len() > 2 {
-                    &payload[2..]
-                } else {
-                    &[][..]
-                };
-                let answer = match op {
-                    0 => Some(st.update.begin(body)),
-                    1 => st.update.data(body),
-                    2 => Some(st.update.end()),
-                    3 => {
-                        let seq = st.update.data_seq;
-                        st.update = MockUpdate::default();
-                        st.update.data_seq = seq;
-                        Some((0x00, 0))
-                    }
-                    4 => {
-                        if st.update.staged {
+            let out: Vec<u8> = 'reply: {
+                if ty == FrameType::Update && st.respond {
+                    let Some(&op) = payload.first() else {
+                        return Vec::new();
+                    };
+                    let body = if payload.len() > 2 {
+                        &payload[2..]
+                    } else {
+                        &[][..]
+                    };
+                    let answer = match op {
+                        0 => Some(st.update.begin(body)),
+                        1 => st.update.data(body),
+                        2 => Some(st.update.end()),
+                        3 => {
                             let seq = st.update.data_seq;
                             st.update = MockUpdate::default();
                             st.update.data_seq = seq;
                             Some((0x00, 0))
-                        } else {
-                            Some((0x19, 0))
                         }
-                    }
-                    _ => None,
-                };
-                return match answer {
-                    Some((status, arg)) => {
-                        let mut p = vec![op, payload.get(1).copied().unwrap_or(0), status];
-                        p.extend_from_slice(&arg.to_le_bytes());
-                        // A DATA acknowledgement answers a whole window, so the firmware gives it a
-                        // rolling SEQ of its own rather than echoing the command's. Echoing it here
-                        // would let a client that correlated on SEQ pass the mock and fail on the box.
-                        let rseq = if op == 1 {
-                            let v = st.update.data_seq;
-                            st.update.data_seq = st.update.data_seq.wrapping_add(1);
-                            v
-                        } else {
-                            seq
-                        };
-                        encode(FrameType::UpdateResp, rseq, &p).expect("resp fits")
-                    }
-                    None => Vec::new(),
-                };
-            }
-            if ty == FrameType::Query && st.respond {
-                match payload.first().copied() {
-                    Some(0) => encode(FrameType::Resp, seq, &version_payload(&st.version))
-                        .expect("resp fits"),
-                    Some(1) => {
-                        encode(FrameType::Resp, seq, &[1, st.health.to_flags()]).expect("resp fits")
-                    }
-                    Some(2) => encode(FrameType::Resp, seq, &device_info_payload(&st.device_info))
-                        .expect("resp fits"),
-                    Some(3) => {
-                        encode(FrameType::Resp, seq, &caps_payload(st.caps)).expect("resp fits")
-                    }
-                    Some(4) => {
-                        encode(FrameType::Resp, seq, &rate_payload(st.rate)).expect("resp fits")
-                    }
-                    Some(5) => {
-                        encode(FrameType::Resp, seq, &stats_payload(st.stats)).expect("resp fits")
-                    }
-                    Some(6) => {
-                        let locks = st
-                            .locks
-                            .clone()
-                            .unwrap_or_else(|| st.table.pack(st.bearing.mode));
-                        encode(FrameType::Resp, seq, &locks_payload(&locks)).expect("resp fits")
-                    }
-                    Some(7) => encode(FrameType::Resp, seq, &catch_resp_payload(&st.catch))
-                        .expect("resp fits"),
-                    Some(9) => match payload.get(1).copied() {
-                        Some(OPT_IMPERFECT) => encode(
-                            FrameType::Resp,
-                            seq,
-                            &options_imperfect_payload(st.imperfect),
-                        )
-                        .expect("resp fits"),
-                        Some(OPT_MOVE_RIDE) => encode(
-                            FrameType::Resp,
-                            seq,
-                            &options_move_ride_payload(st.move_ride_ms),
-                        )
-                        .expect("resp fits"),
-                        Some(OPT_BEARING) => {
-                            encode(FrameType::Resp, seq, &options_bearing_payload(st.bearing))
-                                .expect("resp fits")
+                        4 => {
+                            if st.update.staged {
+                                let seq = st.update.data_seq;
+                                st.update = MockUpdate::default();
+                                st.update.data_seq = seq;
+                                Some((0x00, 0))
+                            } else {
+                                Some((0x19, 0))
+                            }
                         }
-                        Some(OPT_EMIT) => {
-                            encode(FrameType::Resp, seq, &options_emit_payload(st.emit_pace))
-                                .expect("resp fits")
+                        _ => None,
+                    };
+                    break 'reply match answer {
+                        Some((status, arg)) => {
+                            let mut p = vec![op, payload.get(1).copied().unwrap_or(0), status];
+                            p.extend_from_slice(&arg.to_le_bytes());
+                            // A DATA acknowledgement answers a whole window, so the firmware gives it a
+                            // rolling SEQ of its own rather than echoing the command's. Echoing it here
+                            // would let a client that correlated on SEQ pass the mock and fail on the box.
+                            let rseq = if op == 1 {
+                                let v = st.update.data_seq;
+                                st.update.data_seq = st.update.data_seq.wrapping_add(1);
+                                v
+                            } else {
+                                seq
+                            };
+                            encode(FrameType::UpdateResp, rseq, &p).expect("resp fits")
                         }
-                        _ => Vec::new(),
-                    },
-                    Some(11) => encode(
-                        FrameType::Resp,
-                        seq,
-                        &firmware_payload(&st.version, st.update.staged),
-                    )
-                    .expect("resp fits"),
-                    Some(10) => encode(
-                        FrameType::Resp,
-                        seq,
-                        &clip_status_payload(&st.clip, &st.clip_settings),
-                    )
-                    .expect("resp fits"),
-                    _ => Vec::new(),
+                        None => Vec::new(),
+                    };
                 }
-            } else {
-                Vec::new()
+                if ty == FrameType::Query && st.respond {
+                    match payload.first().copied() {
+                        Some(0) => encode(FrameType::Resp, seq, &version_payload(&st.version))
+                            .expect("resp fits"),
+                        Some(1) => encode(FrameType::Resp, seq, &[1, st.health.to_flags()])
+                            .expect("resp fits"),
+                        Some(2) => {
+                            encode(FrameType::Resp, seq, &device_info_payload(&st.device_info))
+                                .expect("resp fits")
+                        }
+                        Some(3) => {
+                            encode(FrameType::Resp, seq, &caps_payload(st.caps)).expect("resp fits")
+                        }
+                        Some(4) => {
+                            encode(FrameType::Resp, seq, &rate_payload(st.rate)).expect("resp fits")
+                        }
+                        Some(5) => encode(FrameType::Resp, seq, &stats_payload(st.stats))
+                            .expect("resp fits"),
+                        Some(6) => {
+                            let locks = st
+                                .locks
+                                .clone()
+                                .unwrap_or_else(|| st.table.pack(st.bearing.mode));
+                            encode(FrameType::Resp, seq, &locks_payload(&locks)).expect("resp fits")
+                        }
+                        Some(7) => encode(FrameType::Resp, seq, &catch_resp_payload(&st.catch))
+                            .expect("resp fits"),
+                        Some(9) => match payload.get(1).copied() {
+                            Some(OPT_IMPERFECT) => encode(
+                                FrameType::Resp,
+                                seq,
+                                &options_imperfect_payload(st.imperfect),
+                            )
+                            .expect("resp fits"),
+                            Some(OPT_MOVE_RIDE) => encode(
+                                FrameType::Resp,
+                                seq,
+                                &options_move_ride_payload(st.move_ride_ms),
+                            )
+                            .expect("resp fits"),
+                            Some(OPT_BEARING) => {
+                                encode(FrameType::Resp, seq, &options_bearing_payload(st.bearing))
+                                    .expect("resp fits")
+                            }
+                            Some(OPT_EMIT) => {
+                                encode(FrameType::Resp, seq, &options_emit_payload(st.emit_pace))
+                                    .expect("resp fits")
+                            }
+                            _ => Vec::new(),
+                        },
+                        Some(11) => encode(
+                            FrameType::Resp,
+                            seq,
+                            &firmware_payload(&st.version, st.update.staged),
+                        )
+                        .expect("resp fits"),
+                        Some(10) => encode(
+                            FrameType::Resp,
+                            seq,
+                            &clip_status_payload(&st.clip, &st.clip_settings),
+                        )
+                        .expect("resp fits"),
+                        _ => Vec::new(),
+                    }
+                } else {
+                    Vec::new()
+                }
+            };
+            // Kept so a test can assert what the box ANSWERED, not just what the host asked.
+            if !out.is_empty() {
+                st.replied.push(out.clone());
             }
+            out
         }));
 
         MockBox { state, transport }
@@ -1138,6 +1157,17 @@ impl MockBox {
     }
 
     /// A snapshot copy of every command the host has sent so far, decoded, in order.
+    /// Every frame the mock has answered with, decoded. The recorded-command log says nothing about
+    /// replies, and the reply `SEQ` is exactly what a client must not correlate on.
+    pub fn replied_frames(&self) -> Vec<DecodedFrame> {
+        let mut out = Vec::new();
+        let mut dec = crate::protocol::FrameDecoder::new();
+        for bytes in self.state.lock().replied.iter() {
+            dec.feed(bytes, |f| out.push(f));
+        }
+        out
+    }
+
     pub fn recorded_frames(&self) -> Vec<DecodedFrame> {
         self.state.lock().recorded.clone()
     }

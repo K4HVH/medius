@@ -290,7 +290,7 @@ impl AsyncDevice {
         self.offload(|d| d.activate_firmware()).await
     }
 
-    /// Stage one image and activate it.
+    /// Stage one image and activate it. Not cancellable; see [`offload`](Self::offload).
     pub async fn update_firmware(
         &self,
         target: UpdateTarget,
@@ -310,6 +310,10 @@ impl AsyncDevice {
     }
 
     /// Run one blocking update call on a thread of its own and await the result.
+    ///
+    /// NOT cancellable. Dropping the returned future stops the waiting, not the transfer: the thread
+    /// runs to completion and `update_firmware` will still reboot the box. Wrap it in a timeout only
+    /// if that is acceptable.
     ///
     /// The transfer is a credit-windowed conversation with its own timeouts, and this crate carries
     /// no runtime and no timer, so an `async` reimplementation would have nothing to bound its waits
