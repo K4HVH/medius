@@ -198,27 +198,21 @@ fn a_zero_credit_falls_back_to_the_default() {
 
 #[test]
 fn update_status_names_every_value_the_box_can_answer() {
-    for s in [
-        UpdateStatus::OK,
-        UpdateStatus::READY,
-        UpdateStatus::ACK,
-        UpdateStatus::STAGED,
-        UpdateStatus::BUSY,
-        UpdateStatus::NO_SLOT,
-        UpdateStatus::TOO_BIG,
-        UpdateStatus::SEQ_GAP,
-        UpdateStatus::WRITE_FAILED,
-        UpdateStatus::BAD_SHA,
-        UpdateStatus::BAD_IMAGE,
-        UpdateStatus::LINK_DOWN,
-        UpdateStatus::TIMEOUT,
-        UpdateStatus::NOTHING_STAGED,
-        UpdateStatus::BAD_STATE,
-        UpdateStatus::ON_PROBATION,
-    ] {
-        assert_ne!(s.name(), "unknown", "{s} has no name");
-    }
-    assert_eq!(UpdateStatus(0x7F).name(), "unknown");
+    // Derived from name() rather than hand-listed. The hand-written version was bypassed by the very
+    // status it existed to guard, because adding one meant remembering a test in another file. This
+    // fails the moment an arm is added or removed, which is the prompt to update the wire docs, the
+    // reference client and the dashboard table too.
+    let named: Vec<u8> = (0u8..=0xFF)
+        .filter(|&v| UpdateStatus(v).name() != "unknown")
+        .collect();
+    assert_eq!(
+        named,
+        vec![
+            0x00, 0x01, 0x02, 0x03, 0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17, 0x18, 0x19,
+            0x1A, 0x1B, 0x1C,
+        ],
+        "a status gained or lost a name"
+    );
 }
 
 #[test]
