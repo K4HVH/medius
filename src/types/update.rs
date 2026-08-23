@@ -173,6 +173,9 @@ impl UpdateStatus {
     pub const NOTHING_STAGED: UpdateStatus = UpdateStatus(0x19);
     pub const BAD_STATE: UpdateStatus = UpdateStatus(0x1A);
     pub const ON_PROBATION: UpdateStatus = UpdateStatus(0x1B);
+    /// Refused before the slot was touched. Unlike [`UpdateStatus::WRITE_FAILED`], which comes after
+    /// the erase, whatever was already staged survives this and is still bootable.
+    pub const UNTOUCHED: UpdateStatus = UpdateStatus(0x1C);
 
     pub fn name(self) -> &'static str {
         match self {
@@ -192,6 +195,7 @@ impl UpdateStatus {
             UpdateStatus::NOTHING_STAGED => "nothing-staged",
             UpdateStatus::BAD_STATE => "bad-state",
             UpdateStatus::ON_PROBATION => "on-probation",
+            UpdateStatus::UNTOUCHED => "untouched",
             _ => "unknown",
         }
     }

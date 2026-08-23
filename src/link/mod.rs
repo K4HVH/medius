@@ -43,7 +43,7 @@ pub(crate) struct LinkInner {
     seq: Arc<AtomicU8>,
     query_gen: Arc<AtomicU64>,
     pending: Arc<Mutex<HashMap<u8, PendingEntry>>>,
-    #[cfg(test)]
+    #[cfg(all(test, feature = "mock"))]
     updates_tx: flume::Sender<Vec<u8>>,
     logs_rx: flume::Receiver<LogLine>,
     updates_rx: flume::Receiver<Vec<u8>>,
@@ -165,7 +165,7 @@ impl Link {
                 query_gen,
                 pending,
                 logs_rx,
-                #[cfg(test)]
+                #[cfg(all(test, feature = "mock"))]
                 updates_tx,
                 updates_rx,
                 held_updates: Arc::clone(&held_updates),
@@ -227,7 +227,7 @@ impl Link {
 
     /// Puts a reply on the channel as if the box had sent it, for tests about what happens to a
     /// reply that outlived the caller who asked for it.
-    #[cfg(test)]
+    #[cfg(all(test, feature = "mock"))]
     pub(crate) fn inject_update(&self, payload: Vec<u8>) {
         let _ = self.inner.updates_tx.send(payload);
     }
