@@ -31,6 +31,9 @@ use slot::TransportSlot;
 /// Default `RESP` wait before [`Error::QueryTimeout`](crate::Error::QueryTimeout).
 pub const DEFAULT_QUERY_TIMEOUT: Duration = Duration::from_secs(1);
 
+/// Replies parked for another caller. A window is 16 frames; this is slack on top.
+const HELD_UPDATES_MAX: usize = 64;
+
 /// Default keepalive cadence for refreshing a held override.
 pub const DEFAULT_KEEPALIVE_CADENCE: Duration = Duration::from_millis(500);
 
@@ -42,7 +45,7 @@ pub(crate) struct LinkInner {
     pending: Arc<Mutex<HashMap<u8, PendingEntry>>>,
     logs_rx: flume::Receiver<LogLine>,
     updates_rx: flume::Receiver<Vec<u8>>,
-    updates_tx: flume::Sender<Vec<u8>>,
+    held_updates: Mutex<Vec<Vec<u8>>>,
     desired: Arc<Mutex<DesiredState>>,
     events: Arc<Mutex<CatchReg>>,
     catch_gen: Arc<AtomicU64>,
@@ -122,7 +125,7 @@ impl Link {
             Arc::clone(&pending),
             logs_tx.clone(),
             logs_rx.clone(),
-            updates_tx.clone(),
+            updates_tx,
             Arc::clone(&events),
             Arc::clone(&counters),
             Arc::clone(&stop),
@@ -158,7 +161,7 @@ impl Link {
                 pending,
                 logs_rx,
                 updates_rx,
-                updates_tx,
+                held_updates: Mutex::new(Vec::new()),
                 desired,
                 events,
                 catch_gen,
@@ -210,9 +213,17 @@ impl Link {
         &self.inner.updates_rx
     }
 
-    /// For putting back a reply that belongs to another caller; see `Device::recv_update`.
-    pub(crate) fn updates_tx(&self) -> &flume::Sender<Vec<u8>> {
-        &self.inner.updates_tx
+    /// Replies taken off the channel that answer somebody else's op; see `Device::recv_update`.
+    pub(crate) fn held_updates(&self) -> &Mutex<Vec<Vec<u8>>> {
+        &self.inner.held_updates
+    }
+
+    pub(crate) fn hold_update(&self, payload: Vec<u8>) {
+        let mut held = self.inner.held_updates.lock();
+        if held.len() >= HELD_UPDATES_MAX {
+            held.remove(0);
+        }
+        held.push(payload);
     }
 
     pub(crate) fn logs_rx(&self) -> flume::Receiver<LogLine> {

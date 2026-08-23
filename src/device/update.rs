@@ -154,6 +154,10 @@ impl Device {
             });
         }
         self.wait_firmware_confirmed()?;
+        // A DATA acknowledgement left over from an abandoned attempt on this connection has arg ==
+        // credit, which is exactly what the first window expects, so it passes the offset check and
+        // runs the loop a window ahead of the box for the rest of the transfer.
+        self.drop_held(OTA_OP_DATA);
 
         let (status, arg) = self.update_op(OTA_OP_BEGIN, target, &begin_body(image), OP_TIMEOUT)?;
         if status != UpdateStatus::READY {
@@ -233,17 +237,14 @@ impl Device {
         timeout: Duration,
     ) -> Result<(UpdateStatus, u32)> {
         // Anything already queued for THIS op answers an earlier command, and taking it as this
-        // one's reply would report a stale outcome. Everything else belongs to somebody and goes
-        // back: try_recv consumes whatever it returns, so filtering means re-sending.
-        let mut keep: Vec<Vec<u8>> = Vec::new();
+        // one's reply would report a stale outcome. Everything else belongs to somebody and is
+        // parked rather than dropped.
         while let Ok(p) = self.link.updates_rx().try_recv() {
             if p.first() != Some(&op) {
-                keep.push(p);
+                self.link.hold_update(p);
             }
         }
-        for p in keep {
-            let _ = self.link.updates_tx().send(p);
-        }
+        self.drop_held(op);
         let mut frame = Vec::with_capacity(2 + body.len());
         frame.push(op);
         frame.push(target.as_u8());
@@ -260,26 +261,45 @@ impl Device {
     /// another caller's answer and leave it timing out against a box that replied correctly.
     pub(crate) fn recv_update(&self, op: u8, timeout: Duration) -> Result<(UpdateStatus, u32)> {
         let deadline = Instant::now() + timeout;
-        let mut others: Vec<Vec<u8>> = Vec::new();
-        let out = loop {
+        // Anything already parked for this op by another caller.
+        if let Some(p) = self.take_held(op) {
+            return Ok((
+                UpdateStatus(p[2]),
+                u32::from_le_bytes([p[3], p[4], p[5], p[6]]),
+            ));
+        }
+        loop {
             let left = deadline.saturating_duration_since(Instant::now());
             if left.is_zero() {
-                break Err(Error::QueryTimeout);
+                return Err(Error::QueryTimeout);
             }
             match self.link.updates_rx().recv_timeout(left) {
                 Ok(p) if p.len() >= UPD_RESP_LEN && p[0] == op => {
-                    break Ok((
+                    return Ok((
                         UpdateStatus(p[2]),
                         u32::from_le_bytes([p[3], p[4], p[5], p[6]]),
                     ));
                 }
-                Ok(p) => others.push(p),
-                Err(_) => break Err(Error::QueryTimeout),
+                // Park it where its own caller looks on every wake. Re-sending it into the channel
+                // after this call finished would arrive long after that caller had given up.
+                Ok(p) => self.link.hold_update(p),
+                Err(_) => return Err(Error::QueryTimeout),
             }
-        };
-        for p in others {
-            let _ = self.link.updates_tx().send(p);
         }
-        out
+    }
+
+    fn take_held(&self, op: u8) -> Option<Vec<u8>> {
+        let mut held = self.link.held_updates().lock();
+        let i = held
+            .iter()
+            .position(|p: &Vec<u8>| p.len() >= UPD_RESP_LEN && p[0] == op)?;
+        Some(held.remove(i))
+    }
+
+    fn drop_held(&self, op: u8) {
+        self.link
+            .held_updates()
+            .lock()
+            .retain(|p| p.first() != Some(&op));
     }
 }
