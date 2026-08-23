@@ -130,13 +130,15 @@ impl Device {
             // so keep asking until the deadline rather than reporting the reboot as a failure.
             let info = match self.firmware_info() {
                 Ok(i) => i,
-                Err(e) => {
-                    if Instant::now() >= deadline {
-                        return Err(e);
-                    }
+                // Only a timeout. The CH343 stays enumerated while the chip behind it reboots, so a
+                // reboot reads as an unanswered query. Anything else is a real fault, and this is
+                // also called at the top of staging, where waiting 45 s on a box that is not there
+                // would hide it.
+                Err(Error::QueryTimeout) if Instant::now() < deadline => {
                     std::thread::sleep(Duration::from_millis(500));
                     continue;
                 }
+                Err(e) => return Err(e),
             };
             if !info.any_pending() {
                 return Ok(info);
@@ -244,7 +246,14 @@ impl Device {
         progress: &mut dyn FnMut(UpdateProgress),
     ) -> Result<()> {
         self.stage_firmware(target, image, progress)?;
-        self.activate_firmware()
+        // A refused activate leaves the image staged and armed, so a later unrelated activate would
+        // commit it on its own. Disarm it. Best effort, because the usual reason for being here is
+        // that the box is no longer answering, and the activate's error is the one worth reporting.
+        if let Err(e) = self.activate_firmware() {
+            let _ = self.abort_update(target);
+            return Err(e);
+        }
+        Ok(())
     }
 
     pub(crate) fn update_op(
