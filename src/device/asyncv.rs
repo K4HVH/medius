@@ -1,22 +1,18 @@
 use std::time::Duration;
 
-use super::update::{ACTIVATE_TIMEOUT, CONFIRM_TIMEOUT, ChunkPlan, OP_TIMEOUT, begin_body};
 use crate::error::{Error, Result};
 use crate::link::Link;
 use crate::protocol::opcode::{
     OPT_BEARING, OPT_EMIT, OPT_IMPERFECT, OPT_MOVE_RIDE, Q_CAPS, Q_CATCH, Q_CLIP, Q_DEVICE_INFO,
     Q_FIRMWARE, Q_HEALTH, Q_LOCKS, Q_RATE, Q_STATS, Q_VERSION,
 };
-use crate::protocol::opcode::{
-    OTA_OP_ABORT, OTA_OP_ACTIVATE, OTA_OP_BEGIN, OTA_OP_DATA, OTA_OP_END, UPD_RESP_LEN,
-};
-use crate::protocol::{FrameType, Resp, parse_resp};
+use crate::protocol::{Resp, parse_resp};
 use crate::types::{
     Action, Axis, Bearing, BearingMode, Blanket, Caps, CatchFilter, CatchState, ClipBuilder,
     ClipSettings, ClipStatus, ClipTrigger, CountersSnapshot, DeviceInfo, Direction, Edge, EmitPace,
     EmitPaceStatus, FirmwareInfo, Health, ImperfectStatus, LedMode, LedTarget, LockTarget, Locks,
-    Motion, MoveTiming, PendingMotion, Rate, RebootTarget, Stats, UpdateProgress, UpdateStatus,
-    UpdateTarget, Usage, Version,
+    Motion, MoveTiming, PendingMotion, Rate, RebootTarget, Stats, UpdateProgress, UpdateTarget,
+    Usage, Version,
 };
 
 use super::Device;
@@ -273,158 +269,68 @@ impl AsyncDevice {
     }
 
     /// Write one image into the target chip's spare slot; it stays inert until
-    /// [`activate_firmware`](Self::activate_firmware). Drives the same `ChunkPlan` as the sync path,
-    /// so the two cannot disagree about the wire.
+    /// [`activate_firmware`](Self::activate_firmware).
     pub async fn stage_firmware(
         &self,
         target: UpdateTarget,
-        image: &[u8],
-        progress: &mut dyn FnMut(UpdateProgress),
+        image: Vec<u8>,
+        mut progress: impl FnMut(UpdateProgress) + Send + 'static,
     ) -> Result<u32> {
-        if image.is_empty() {
-            return Err(Error::Update {
-                op: OTA_OP_BEGIN,
-                status: UpdateStatus::TOO_BIG,
-                arg: 0,
-            });
-        }
-        self.wait_firmware_confirmed().await?;
-
-        let (status, arg) = self
-            .update_op(OTA_OP_BEGIN, target, &begin_body(image), OP_TIMEOUT)
-            .await?;
-        if status != UpdateStatus::READY {
-            return Err(Error::Update {
-                op: OTA_OP_BEGIN,
-                status,
-                arg,
-            });
-        }
-
-        let mut plan = ChunkPlan::new(image, target, arg);
-        while !plan.done() {
-            while let Some(frame) = plan.next_frame() {
-                self.link.send(FrameType::Update, &frame)?;
-            }
-            if plan.awaiting_ack() {
-                let (status, arg) = self.recv_update(OTA_OP_DATA, OP_TIMEOUT).await?;
-                progress(plan.on_ack(status, arg)?);
-            }
-        }
-
-        let (status, arg) = self.update_op(OTA_OP_END, target, &[], OP_TIMEOUT).await?;
-        if status != UpdateStatus::STAGED {
-            return Err(Error::Update {
-                op: OTA_OP_END,
-                status,
-                arg,
-            });
-        }
-        Ok(arg)
+        self.offload(move |d| d.stage_firmware(target, &image, &mut progress))
+            .await
     }
 
     /// Drop whatever is staged or in flight for one target.
     pub async fn abort_update(&self, target: UpdateTarget) -> Result<()> {
-        let (status, arg) = self
-            .update_op(OTA_OP_ABORT, target, &[], OP_TIMEOUT)
-            .await?;
-        if status != UpdateStatus::OK {
-            return Err(Error::Update {
-                op: OTA_OP_ABORT,
-                status,
-                arg,
-            });
-        }
-        Ok(())
+        self.offload(move |d| d.abort_update(target)).await
     }
 
     /// Commit every staged image and reboot into it.
     pub async fn activate_firmware(&self) -> Result<()> {
-        let (status, arg) = self
-            .update_op(OTA_OP_ACTIVATE, UpdateTarget::Device, &[], ACTIVATE_TIMEOUT)
-            .await?;
-        if status != UpdateStatus::OK {
-            return Err(Error::Update {
-                op: OTA_OP_ACTIVATE,
-                status,
-                arg,
-            });
-        }
-        Ok(())
+        self.offload(|d| d.activate_firmware()).await
     }
 
     /// Stage one image and activate it.
     pub async fn update_firmware(
         &self,
         target: UpdateTarget,
-        image: &[u8],
-        progress: &mut dyn FnMut(UpdateProgress),
+        image: Vec<u8>,
+        mut progress: impl FnMut(UpdateProgress) + Send + 'static,
     ) -> Result<()> {
-        self.stage_firmware(target, image, progress).await?;
-        self.activate_firmware().await
+        self.offload(move |d| {
+            d.stage_firmware(target, &image, &mut progress)?;
+            d.activate_firmware()
+        })
+        .await
     }
 
     /// Block until neither chip is still on probation.
     pub async fn wait_firmware_confirmed(&self) -> Result<FirmwareInfo> {
-        let deadline = std::time::Instant::now() + CONFIRM_TIMEOUT;
-        loop {
-            let info = self.firmware_info().await?;
-            if !info.any_pending() {
-                return Ok(info);
-            }
-            if std::time::Instant::now() >= deadline {
-                return Err(Error::Update {
-                    op: OTA_OP_BEGIN,
-                    status: UpdateStatus::ON_PROBATION,
-                    arg: 0,
-                });
-            }
-            // No runtime to sleep on in a runtime-agnostic crate; flume's timeout is the one wait
-            // primitive already in the dependency set.
-            let _ = self
-                .link
-                .updates_rx()
-                .recv_timeout(Duration::from_millis(500));
-        }
+        self.offload(|d| d.wait_firmware_confirmed()).await
     }
 
-    async fn update_op(
-        &self,
-        op: u8,
-        target: UpdateTarget,
-        body: &[u8],
-        timeout: Duration,
-    ) -> Result<(UpdateStatus, u32)> {
-        while let Ok(p) = self.link.updates_rx().try_recv() {
-            if p.first() != Some(&op) {
-                continue;
-            }
-        }
-        let mut frame = Vec::with_capacity(2 + body.len());
-        frame.push(op);
-        frame.push(target.as_u8());
-        frame.extend_from_slice(body);
-        self.link.send(FrameType::Update, &frame)?;
-        self.recv_update(op, timeout).await
-    }
-
-    async fn recv_update(&self, op: u8, timeout: Duration) -> Result<(UpdateStatus, u32)> {
-        let deadline = std::time::Instant::now() + timeout;
-        loop {
-            if std::time::Instant::now() >= deadline {
-                return Err(Error::QueryTimeout);
-            }
-            match self.link.updates_rx().recv_async().await {
-                Ok(p) if p.len() >= UPD_RESP_LEN && p[0] == op => {
-                    return Ok((
-                        UpdateStatus(p[2]),
-                        u32::from_le_bytes([p[3], p[4], p[5], p[6]]),
-                    ));
-                }
-                Ok(_) => continue,
-                Err(_) => return Err(Error::QueryTimeout),
-            }
-        }
+    /// Run one blocking update call on a thread of its own and await the result.
+    ///
+    /// The transfer is a credit-windowed conversation with its own timeouts, and this crate carries
+    /// no runtime and no timer, so an `async` reimplementation would have nothing to bound its waits
+    /// with. Driving the sync path instead keeps one implementation of the wire, which is the whole
+    /// point: a duplicated loop is where sync and async quietly stop agreeing.
+    async fn offload<T, F>(&self, f: F) -> Result<T>
+    where
+        T: Send + 'static,
+        F: FnOnce(&Device) -> Result<T> + Send + 'static,
+    {
+        let device = Device {
+            link: self.link.clone(),
+        };
+        let (tx, rx) = flume::bounded(1);
+        std::thread::Builder::new()
+            .name("medius-update".into())
+            .spawn(move || {
+                let _ = tx.send(f(&device));
+            })
+            .map_err(Error::Io)?;
+        rx.recv_async().await.map_err(|_| Error::Disconnected)?
     }
 
     /// Query the box health flags, awaiting the correlated `RESP` with the default timeout.

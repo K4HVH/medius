@@ -644,6 +644,7 @@ pub(crate) struct MockUpdate {
     pub(crate) sha: [u8; 32],
     pub(crate) hasher: Vec<u8>,
     pub(crate) staged: bool,
+    pub(crate) data_seq: u8,
 }
 
 impl MockUpdate {
@@ -672,10 +673,11 @@ impl MockUpdate {
     /// Returns `Some((status, arg))` only when the box owes an answer, exactly like the firmware:
     /// a chunk inside an open window is written and not acknowledged.
     fn data(&mut self, body: &[u8]) -> Option<(u8, u32)> {
-        if !self.active {
-            return Some((0x1A, 0));
-        }
+        // Length before state, and BAD_STATE names the op it wanted, exactly as the firmware does.
         if body.len() < 3 {
+            return Some((0x1A, 1));
+        }
+        if !self.active {
             return Some((0x1A, 0));
         }
         let seq = u16::from_le_bytes([body[0], body[1]]);
@@ -688,7 +690,13 @@ impl MockUpdate {
             self.active = false;
             return Some((0x13, want));
         }
-        if bytes.is_empty() || bytes.len() > 504 || self.got + bytes.len() as u32 > self.size {
+        // The firmware separates these: a chunk outside 1..=504 is BAD_STATE naming the chunk size,
+        // and only an overrun of the declared image is TOO_BIG.
+        if bytes.is_empty() || bytes.len() > 504 {
+            self.active = false;
+            return Some((0x1A, 504));
+        }
+        if self.got + bytes.len() as u32 > self.size {
             self.active = false;
             return Some((0x12, self.size));
         }
@@ -772,12 +780,16 @@ impl MockBox {
                     1 => st.update.data(body),
                     2 => Some(st.update.end()),
                     3 => {
+                        let seq = st.update.data_seq;
                         st.update = MockUpdate::default();
+                        st.update.data_seq = seq;
                         Some((0x00, 0))
                     }
                     4 => {
                         if st.update.staged {
+                            let seq = st.update.data_seq;
                             st.update = MockUpdate::default();
+                            st.update.data_seq = seq;
                             Some((0x00, 0))
                         } else {
                             Some((0x19, 0))
@@ -789,7 +801,17 @@ impl MockBox {
                     Some((status, arg)) => {
                         let mut p = vec![op, payload.get(1).copied().unwrap_or(0), status];
                         p.extend_from_slice(&arg.to_le_bytes());
-                        encode(FrameType::UpdateResp, seq, &p).expect("resp fits")
+                        // A DATA acknowledgement answers a whole window, so the firmware gives it a
+                        // rolling SEQ of its own rather than echoing the command's. Echoing it here
+                        // would let a client that correlated on SEQ pass the mock and fail on the box.
+                        let rseq = if op == 1 {
+                            let v = st.update.data_seq;
+                            st.update.data_seq = st.update.data_seq.wrapping_add(1);
+                            v
+                        } else {
+                            seq
+                        };
+                        encode(FrameType::UpdateResp, rseq, &p).expect("resp fits")
                     }
                     None => Vec::new(),
                 };
