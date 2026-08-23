@@ -44,6 +44,11 @@ pub(crate) struct ReconnectCtx {
     /// committing in between leaves this path re-adding the entry it just removed, into a box whose
     /// table no later diff will ever narrow again.
     pub(crate) catch_lock: Arc<Mutex<()>>,
+    /// Both halves of the update reply path. A reply from before the box went away answers a command
+    /// the box no longer remembers, and the parked ones survive a transport swap where the bytes
+    /// still in the old handle's buffer do not.
+    pub(crate) held_updates: Arc<Mutex<Vec<Vec<u8>>>>,
+    pub(crate) updates_rx: flume::Receiver<Vec<u8>>,
 }
 
 // Runs its own query loop (the reader thread isn't up yet) so a rescan confirms the MAC before adopting.
@@ -117,6 +122,8 @@ fn reconnect(ctx: &ReconnectCtx) -> Result<()> {
             }
         }
         ctx.transport.swap(Arc::new(serial));
+        ctx.held_updates.lock().clear();
+        while ctx.updates_rx.try_recv().is_ok() {}
         ctx.counters.inc_reconnects();
         trace_event!(
             target: "medius::device",
@@ -202,6 +209,8 @@ impl Link {
             reconnect_lock: Arc::clone(&self.inner.reconnect_lock),
             identity: Arc::clone(&self.inner.identity),
             catch_lock: Arc::clone(&self.inner.catch_lock),
+            held_updates: Arc::clone(&self.inner.held_updates),
+            updates_rx: self.inner.updates_rx.clone(),
         }
     }
 

@@ -417,3 +417,35 @@ mod correlation {
         assert_eq!(u2.data_for_test(&long), Some((0x12, 10)));
     }
 }
+
+#[cfg(feature = "mock")]
+mod stale_replies {
+    use super::*;
+
+    /// An abandoned transfer leaves its last acknowledgement in the channel. Taking that as the first
+    /// window's answer would run the loop a window ahead of the box for the rest of the image, which
+    /// is twice the credit in flight against a receiver sized for one window. Dropping it has to
+    /// happen after the BEGIN reply, because awaiting that reply is what moves it out of the channel.
+    #[test]
+    fn a_leftover_data_ack_does_not_answer_the_next_transfers_first_window() {
+        let mock = crate::MockBox::new();
+        let dev = crate::Device::with_mock(mock.clone());
+        // op, target, status ACK, then an offset from an image that is no longer being sent.
+        let mut stale = vec![OTA_OP_DATA, UpdateTarget::Device.as_u8(), 0x02];
+        stale.extend_from_slice(&9999u32.to_le_bytes());
+        dev.link.inject_update(stale);
+
+        let img: Vec<u8> = (0..(OTA_CHUNK * 40)).map(|i| i as u8).collect();
+        let mut seen = Vec::new();
+        dev.stage_firmware(UpdateTarget::Device, &img, &mut |p| seen.push(p.sent))
+            .expect("the stale acknowledgement must not be mistaken for this transfer's");
+        assert_eq!(seen.last().copied(), Some(img.len()));
+        // Monotonic and never ahead of the image: a window-ahead loop reports an offset the box has
+        // not written yet.
+        assert!(
+            seen.windows(2).all(|w| w[0] < w[1]),
+            "not monotonic: {seen:?}"
+        );
+        assert!(seen.iter().all(|&s| s <= img.len()));
+    }
+}

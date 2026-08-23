@@ -43,9 +43,11 @@ pub(crate) struct LinkInner {
     seq: Arc<AtomicU8>,
     query_gen: Arc<AtomicU64>,
     pending: Arc<Mutex<HashMap<u8, PendingEntry>>>,
+    #[cfg(test)]
+    updates_tx: flume::Sender<Vec<u8>>,
     logs_rx: flume::Receiver<LogLine>,
     updates_rx: flume::Receiver<Vec<u8>>,
-    held_updates: Mutex<Vec<Vec<u8>>>,
+    held_updates: Arc<Mutex<Vec<Vec<u8>>>>,
     desired: Arc<Mutex<DesiredState>>,
     events: Arc<Mutex<CatchReg>>,
     catch_gen: Arc<AtomicU64>,
@@ -119,13 +121,14 @@ impl Link {
         let transport = Arc::new(TransportSlot::new(transport));
         let reconnect_lock = Arc::new(Mutex::new(()));
         let identity: Arc<Mutex<Option<BoxIdentity>>> = Arc::new(Mutex::new(None));
+        let held_updates: Arc<Mutex<Vec<Vec<u8>>>> = Arc::new(Mutex::new(Vec::new()));
 
         let reader = reader::spawn_reader(
             Arc::clone(&transport),
             Arc::clone(&pending),
             logs_tx.clone(),
             logs_rx.clone(),
-            updates_tx,
+            updates_tx.clone(),
             Arc::clone(&events),
             Arc::clone(&counters),
             Arc::clone(&stop),
@@ -138,6 +141,8 @@ impl Link {
                 reconnect_lock: Arc::clone(&reconnect_lock),
                 identity: Arc::clone(&identity),
                 catch_lock: Arc::clone(&catch_lock),
+                held_updates: Arc::clone(&held_updates),
+                updates_rx: updates_rx.clone(),
             },
         );
 
@@ -160,8 +165,10 @@ impl Link {
                 query_gen,
                 pending,
                 logs_rx,
+                #[cfg(test)]
+                updates_tx,
                 updates_rx,
-                held_updates: Mutex::new(Vec::new()),
+                held_updates: Arc::clone(&held_updates),
                 desired,
                 events,
                 catch_gen,
@@ -216,6 +223,13 @@ impl Link {
     /// Replies taken off the channel that answer somebody else's op; see `Device::recv_update`.
     pub(crate) fn held_updates(&self) -> &Mutex<Vec<Vec<u8>>> {
         &self.inner.held_updates
+    }
+
+    /// Puts a reply on the channel as if the box had sent it, for tests about what happens to a
+    /// reply that outlived the caller who asked for it.
+    #[cfg(test)]
+    pub(crate) fn inject_update(&self, payload: Vec<u8>) {
+        let _ = self.inner.updates_tx.send(payload);
     }
 
     pub(crate) fn hold_update(&self, payload: Vec<u8>) {
