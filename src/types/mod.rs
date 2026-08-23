@@ -24,6 +24,7 @@ mod port;
 mod rate;
 mod reboot;
 mod stats;
+mod update;
 mod usage;
 mod version;
 
@@ -57,5 +58,8 @@ pub use port::PortInfo;
 pub use rate::Rate;
 pub use reboot::RebootTarget;
 pub use stats::Stats;
+pub use update::{
+    ChipFirmware, FirmwareInfo, ImageState, UpdateProgress, UpdateStatus, UpdateTarget,
+};
 pub use usage::{Axis, Class, Usage};
 pub use version::Version;

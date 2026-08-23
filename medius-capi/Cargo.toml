@@ -13,7 +13,6 @@ crate-type = ["lib", "cdylib", "staticlib"]
 [features]
 default = []
 mock = ["medius/mock"]
-flash = ["medius/flash"]
 
 [dependencies]
 medius = { path = ".." }

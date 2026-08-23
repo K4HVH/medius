@@ -1949,3 +1949,113 @@ fn every_enum_byte_on_the_boundary_is_refused_rather_than_materialized() {
         medius_mock_free(mock);
     }
 }
+
+#[test]
+fn firmware_update_frames_match_the_native_crate() {
+    let image: Vec<u8> = (0..1200u32).map(|i| (i % 251) as u8).collect();
+    let native = native_frames(|d| {
+        d.stage_firmware(medius::UpdateTarget::Host, &image, &mut |_| {})
+            .expect("staged");
+        d.activate_firmware().expect("activated");
+    });
+    let img = image.clone();
+    let capi = unsafe {
+        capi_frames(|dev| {
+            assert_eq!(
+                unsafe {
+                    medius_device_stage_firmware(
+                        dev,
+                        1,
+                        img.as_ptr(),
+                        img.len(),
+                        None,
+                        ptr::null_mut(),
+                    )
+                },
+                MediusStatus::Ok
+            );
+            assert_eq!(
+                unsafe { medius_device_activate_firmware(dev) },
+                MediusStatus::Ok
+            );
+        })
+    };
+    assert_eq!(native, capi, "the two paths must put identical bytes on the wire");
+    assert!(
+        native.iter().any(|f| f.ty == medius::FrameType::Update),
+        "the transfer must actually have sent UPDATE frames"
+    );
+}
+
+#[test]
+fn firmware_info_decodes_the_same_through_both() {
+    let mock = MockBox::new();
+    let dev = Device::with_mock(mock.clone());
+    let native = dev.firmware_info().expect("native");
+
+    let cmock = unsafe { medius_mock_new() };
+    let mut cdev: *mut MediusDevice = ptr::null_mut();
+    assert_eq!(
+        unsafe { medius_device_with_mock(cmock, &mut cdev) },
+        MediusStatus::Ok
+    );
+    let mut out = MediusFirmwareInfo {
+        device: MediusChipFirmware {
+            major: 0,
+            minor: 0,
+            patch: 0,
+            slot: 0,
+            state: 0,
+        },
+        host_present: 0,
+        host: MediusChipFirmware {
+            major: 0,
+            minor: 0,
+            patch: 0,
+            slot: 0,
+            state: 0,
+        },
+        slot_size: 0,
+        device_staged: 0,
+        host_staged: 0,
+    };
+    assert_eq!(
+        unsafe { medius_device_firmware_info(cdev, &mut out) },
+        MediusStatus::Ok
+    );
+    unsafe {
+        medius_device_free(cdev);
+        medius_mock_free(cmock);
+    }
+
+    assert_eq!(out.device.major, native.device.major);
+    assert_eq!(out.device.slot, native.device.slot);
+    assert_eq!(out.slot_size, native.slot_size);
+    assert_eq!(out.host_present, u8::from(native.host.is_some()));
+}
+
+#[test]
+fn a_bad_update_target_is_refused_rather_than_sent() {
+    let frames = unsafe {
+        capi_frames(|dev| {
+            let img = [1u8, 2, 3, 4];
+            assert_eq!(
+                unsafe {
+                    medius_device_stage_firmware(
+                        dev,
+                        9,
+                        img.as_ptr(),
+                        img.len(),
+                        None,
+                        ptr::null_mut(),
+                    )
+                },
+                MediusStatus::ErrInvalidArg
+            );
+        })
+    };
+    assert!(
+        !frames.iter().any(|f| f.ty == medius::FrameType::Update),
+        "a rejected target must not reach the wire"
+    );
+}

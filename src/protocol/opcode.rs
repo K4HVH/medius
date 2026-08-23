@@ -58,6 +58,22 @@ pub const BEARING_VECTOR: u8 = 1;
 
 /// Buffered-clip status selector: `QUERY [Q_CLIP]` → `RESP(CLIP)` (§4.15).
 pub const Q_CLIP: u8 = 10;
+/// Both chips' firmware versions and slot state: `QUERY [Q_FIRMWARE]` → `RESP(FIRMWARE)` (§4.16).
+pub const Q_FIRMWARE: u8 = 11;
+
+/// `UPDATE` sub-ops (§3.13).
+pub const OTA_OP_BEGIN: u8 = 0;
+pub const OTA_OP_DATA: u8 = 1;
+pub const OTA_OP_END: u8 = 2;
+pub const OTA_OP_ABORT: u8 = 3;
+pub const OTA_OP_ACTIVATE: u8 = 4;
+/// Image bytes per `DATA` frame: the frame's 512 minus op, target and a 2-byte chunk index, rounded
+/// down to a multiple of four so every flash write on the box is aligned.
+pub const OTA_CHUNK: usize = 504;
+/// `DATA` frames the box accepts before it must acknowledge, when it does not say otherwise.
+pub const OTA_CREDIT: usize = 16;
+/// `UPDATE_RESP` payload length: op, target, status, arg.
+pub const UPD_RESP_LEN: usize = 7;
 /// `CLIP_CTRL` engine verbs. Ops 0..5 are the shared action space (also a trigger `action` byte).
 pub const CLIP_OP_START: u8 = 0;
 pub const CLIP_OP_STOP: u8 = 1;
@@ -273,6 +289,10 @@ pub enum FrameType {
     ClipSet = 0x14,
     /// `CLIP_TRIGGER`: add/remove a clip trigger binding `[class][id u16][edge][action][flags]` (PC→box).
     ClipTrigger = 0x15,
+    /// `UPDATE`: stage and activate firmware on either chip (PC→box) (§3.13).
+    Update = 0x17,
+    /// `UPDATE_RESP`: the answer to one `UPDATE` op (box→PC) (§4.16).
+    UpdateResp = 0x18,
 }
 
 /// Error returned when a byte does not name a known [`FrameType`].
@@ -310,6 +330,8 @@ impl TryFrom<u8> for FrameType {
             0x13 => FrameType::ClipCtrl,
             0x14 => FrameType::ClipSet,
             0x15 => FrameType::ClipTrigger,
+            0x17 => FrameType::Update,
+            0x18 => FrameType::UpdateResp,
             other => return Err(UnknownFrameType(other)),
         })
     }

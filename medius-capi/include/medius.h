@@ -109,7 +109,7 @@ enum MediusStatus
     MEDIUS_STATUS_ERR_QUERY_TIMEOUT = 5,
     MEDIUS_STATUS_ERR_DISCONNECTED = 6,
     MEDIUS_STATUS_ERR_FRAME_TOO_LONG = 7,
-    MEDIUS_STATUS_ERR_FLASH_TOOL = 8,
+    MEDIUS_STATUS_ERR_UPDATE = 8,
     MEDIUS_STATUS_ERR_INVALID_ARG = 9,
     MEDIUS_STATUS_ERR_PANIC = 10,
     MEDIUS_STATUS_ERR_UNKNOWN = 11,
@@ -336,6 +336,8 @@ enum MediusFrameType
     MEDIUS_FRAME_TYPE_CLIP_CTRL = 19,
     MEDIUS_FRAME_TYPE_CLIP_SET = 20,
     MEDIUS_FRAME_TYPE_CLIP_TRIGGER = 21,
+    MEDIUS_FRAME_TYPE_UPDATE = 23,
+    MEDIUS_FRAME_TYPE_UPDATE_RESP = 24,
 };
 #ifndef __cplusplus
 #if __STDC_VERSION__ >= 202311L
@@ -765,6 +767,29 @@ typedef struct MediusPortInfo {
 } MediusPortInfo;
 
 // Decoded firmware version; `mac` is the device chip's base MAC, a stable per-box identity.
+// One chip's firmware version and which of its two app slots it booted.
+typedef struct MediusChipFirmware {
+    uint8_t major;
+    uint8_t minor;
+    uint8_t patch;
+    // 0 = ota_0, 1 = ota_1.
+    uint8_t slot;
+    // 0 new, 1 pending-verify, 2 valid, 3 invalid, 4 aborted, 0xFF unknown.
+    uint8_t state;
+} MediusChipFirmware;
+
+// Both chips' firmware state (RESP(FIRMWARE)).
+typedef struct MediusFirmwareInfo {
+    struct MediusChipFirmware device;
+    // 0 when the host chip has not answered over the inter-chip link; `host` is then meaningless.
+    uint8_t host_present;
+    struct MediusChipFirmware host;
+    // Usable bytes in a spare slot; the same on both chips.
+    uint32_t slot_size;
+    uint8_t device_staged;
+    uint8_t host_staged;
+} MediusFirmwareInfo;
+
 typedef struct MediusVersion {
     uint8_t proto_ver;
     uint8_t fw_major;
@@ -1563,6 +1588,27 @@ MediusStatus medius_device_clear_name(struct MediusDevice *dev);
 
 MediusStatus medius_device_query_version(struct MediusDevice *dev, struct MediusVersion *out);
 
+// Both chips' firmware versions and slot state.
+MediusStatus medius_device_firmware_info(struct MediusDevice *dev, struct MediusFirmwareInfo *out);
+
+// Progress callback for medius_device_stage_firmware: user pointer, bytes sent, image total.
+typedef void (*MediusUpdateProgress)(void *user, size_t sent, size_t total);
+
+// Write `len` bytes into `target`'s spare slot (0 = device chip, 1 = host chip). The image stays
+// inert until medius_device_activate_firmware. `progress` may be NULL.
+MediusStatus medius_device_stage_firmware(struct MediusDevice *dev,
+                                          uint8_t target,
+                                          const uint8_t *image,
+                                          size_t len,
+                                          MediusUpdateProgress progress,
+                                          void *user);
+
+// Drop whatever is staged or in flight for one target; the clone comes back without a reboot.
+MediusStatus medius_device_abort_update(struct MediusDevice *dev, uint8_t target);
+
+// Commit every staged image and reboot into it. Blocks while the host chip reboots and comes back.
+MediusStatus medius_device_activate_firmware(struct MediusDevice *dev);
+
 MediusStatus medius_device_query_health(struct MediusDevice *dev, struct MediusHealth *out);
 
 MediusStatus medius_device_device_info(struct MediusDevice *dev, struct MediusDeviceInfo *out);
@@ -1935,11 +1981,6 @@ bool medius_log_stream_try_recv(struct MediusLogStream *stream, struct MediusLog
 bool medius_log_stream_recv_timeout(struct MediusLogStream *stream,
                                     uint64_t timeout_ms,
                                     struct MediusLogLine *out);
-
-#if defined(MEDIUS_FEATURE_FLASH)
-// Reboot a chip to ROM download and flash `bin_path` via esptool; `host` selects the host chip.
-MediusStatus medius_flash(const char *port, const char *bin_path, bool host);
-#endif
 
 #if defined(MEDIUS_FEATURE_MOCK)
 // Create a fresh mock that records commands and auto-answers queries with defaults.

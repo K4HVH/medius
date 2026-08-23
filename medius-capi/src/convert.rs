@@ -6,8 +6,8 @@ use std::time::Duration;
 use medius::{
     Action, Axis, Bearing, BearingMode, Blanket, BoxInfo, Button, Caps, CatchEntry, CatchEvent,
     CatchFilter, CatchState, Class, ClipState, ClipStatus, ClockDomain, ClockEstimate,
-    CountersSnapshot, DeviceInfo, DeviceKind, Direction, EmitPace, EmitPaceStatus, Health,
-    ImperfectStatus, Input, InputEvent, KbdCaps, Key, LedMode, LedTarget, LockEntry, LockScope,
+    ChipFirmware, CountersSnapshot, DeviceInfo, DeviceKind, Direction, EmitPace, EmitPaceStatus,
+    FirmwareInfo, Health, ImageState, ImperfectStatus, Input, InputEvent, KbdCaps, Key, LedMode, LedTarget, LockEntry, LockScope,
     LockTarget, Locks, LogLevel, LogLine, MediaKey, Motion, MouseCaps, MoveTiming, PendingMotion,
     PortInfo, Rate, RebootTarget, Stats, Usage, Version,
 };
@@ -272,6 +272,44 @@ fn axis_target(kind: MediusLockTargetKind) -> MediusLockTarget {
     MediusLockTarget {
         kind: kind as u8,
         usage: blank_usage(),
+    }
+}
+
+impl From<ChipFirmware> for MediusChipFirmware {
+    fn from(c: ChipFirmware) -> Self {
+        MediusChipFirmware {
+            major: c.major,
+            minor: c.minor,
+            patch: c.patch,
+            slot: c.slot,
+            state: match c.state {
+                ImageState::New => 0,
+                ImageState::PendingVerify => 1,
+                ImageState::Valid => 2,
+                ImageState::Invalid => 3,
+                ImageState::Aborted => 4,
+                ImageState::Unknown(v) => v,
+            },
+        }
+    }
+}
+
+impl From<FirmwareInfo> for MediusFirmwareInfo {
+    fn from(f: FirmwareInfo) -> Self {
+        MediusFirmwareInfo {
+            device: f.device.into(),
+            host_present: u8::from(f.host.is_some()),
+            host: f.host.unwrap_or(ChipFirmware {
+                major: 0,
+                minor: 0,
+                patch: 0,
+                slot: 0xFF,
+                state: ImageState::Unknown(0xFF),
+            }).into(),
+            slot_size: f.slot_size,
+            device_staged: u8::from(f.device_staged),
+            host_staged: u8::from(f.host_staged),
+        }
     }
 }
 
@@ -977,6 +1015,8 @@ impl From<medius::FrameType> for MediusFrameType {
             F::ClipCtrl => MediusFrameType::ClipCtrl,
             F::ClipSet => MediusFrameType::ClipSet,
             F::ClipTrigger => MediusFrameType::ClipTrigger,
+            F::Update => MediusFrameType::Update,
+            F::UpdateResp => MediusFrameType::UpdateResp,
         }
     }
 }

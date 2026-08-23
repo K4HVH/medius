@@ -9,13 +9,15 @@ use crate::protocol::opcode::{
     DI_HAS_SERIAL, KBC_CONSUMER, KBC_NKRO, KBC_REPORT_ID, KBC_SYSTEM, LOCK_AXIS_WHEEL,
     LOCK_CLS_AXIS, LOCK_CLS_BTN, LOCK_CLS_KEY, LOCK_CLS_MEDIA, LOCK_DIR_AGAINST, LOCK_DIR_BOTH,
     LOCK_DIR_NEG, LOCK_DIR_POS, LOCK_DIR_WITH, LOCK_ID_ALL, LOCK_SCALE_BLOCK, LOCK_SCALE_PASS,
-    OPT_BEARING, OPT_EMIT, OPT_IMPERFECT, OPT_MOVE_RIDE, OPT_NAME, RATE_CONFIDENT,
+    OPT_BEARING, OPT_EMIT, OPT_IMPERFECT, OPT_MOVE_RIDE, OPT_NAME, Q_FIRMWARE, RATE_CONFIDENT,
 };
 use crate::protocol::opcode::{
     CLIP_CFG_F_FINALIZED, CLIP_CFG_F_LOOP, CLIP_CFG_F_RETAIN, CLIP_CFG_F_RIDE, CLIP_TRIG_MAX,
     CLK_RATE_NONE,
 };
 use crate::protocol::{DecodedFrame, FrameType, encode};
+use sha2::{Digest, Sha256};
+
 use crate::transport::mock::MockTransport;
 use crate::types::lock::blanket_scope;
 use crate::types::{
@@ -27,6 +29,7 @@ use crate::types::{
 
 #[derive(Debug)]
 struct State {
+    update: MockUpdate,
     version: Version,
     health: Health,
     device_info: DeviceInfo,
@@ -50,6 +53,7 @@ struct State {
 impl Default for State {
     fn default() -> Self {
         State {
+            update: MockUpdate::default(),
             version: Version {
                 proto_ver: crate::protocol::PROTO_VER,
                 fw_major: 0,
@@ -628,6 +632,106 @@ pub struct MockBox {
     transport: Arc<MockTransport>,
 }
 
+
+/// The box's side of an update session, so a transfer against the mock exercises the same sequencing
+/// the firmware does. A handler that just answered OK would let every deliberate break pass.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct MockUpdate {
+    pub(crate) active: bool,
+    pub(crate) size: u32,
+    pub(crate) got: u32,
+    pub(crate) next_seq: u16,
+    pub(crate) since_ack: u16,
+    pub(crate) sha: [u8; 32],
+    pub(crate) hasher: Vec<u8>,
+    pub(crate) staged: bool,
+}
+
+impl MockUpdate {
+    fn begin(&mut self, body: &[u8]) -> (u8, u32) {
+        if body.len() < 36 {
+            return (0x1A, 0);
+        }
+        if self.active {
+            return (0x10, 0);
+        }
+        let size = u32::from_le_bytes([body[0], body[1], body[2], body[3]]);
+        if size == 0 || size > MOCK_SLOT_SIZE {
+            return (0x12, MOCK_SLOT_SIZE);
+        }
+        self.active = true;
+        self.staged = false;
+        self.size = size;
+        self.got = 0;
+        self.next_seq = 0;
+        self.since_ack = 0;
+        self.hasher.clear();
+        self.sha.copy_from_slice(&body[4..36]);
+        (0x01, 16)
+    }
+
+    /// Returns `Some((status, arg))` only when the box owes an answer, exactly like the firmware:
+    /// a chunk inside an open window is written and not acknowledged.
+    fn data(&mut self, body: &[u8]) -> Option<(u8, u32)> {
+        if !self.active {
+            return Some((0x1A, 0));
+        }
+        if body.len() < 3 {
+            return Some((0x1A, 0));
+        }
+        let seq = u16::from_le_bytes([body[0], body[1]]);
+        let bytes = &body[2..];
+        if self.next_seq > 0 && seq == self.next_seq.wrapping_sub(1) {
+            return Some((0x02, u32::from(self.next_seq)));
+        }
+        if seq != self.next_seq {
+            let want = u32::from(self.next_seq);
+            self.active = false;
+            return Some((0x13, want));
+        }
+        if bytes.is_empty() || bytes.len() > 504 || self.got + bytes.len() as u32 > self.size {
+            self.active = false;
+            return Some((0x12, self.size));
+        }
+        self.hasher.extend_from_slice(bytes);
+        self.got += bytes.len() as u32;
+        self.next_seq = self.next_seq.wrapping_add(1);
+        self.since_ack += 1;
+        if self.since_ack >= 16 || self.got == self.size {
+            self.since_ack = 0;
+            return Some((0x02, u32::from(self.next_seq)));
+        }
+        None
+    }
+
+    fn end(&mut self) -> (u8, u32) {
+        if !self.active {
+            return (0x1A, 0);
+        }
+        if self.got != self.size {
+            self.active = false;
+            return (0x1A, self.size - self.got);
+        }
+        let digest: [u8; 32] = Sha256::digest(&self.hasher).into();
+        self.active = false;
+        if digest != self.sha {
+            return (0x15, 0);
+        }
+        self.staged = true;
+        (0x03, self.size)
+    }
+}
+
+pub(crate) const MOCK_SLOT_SIZE: u32 = 0xF_0000;
+
+fn firmware_payload(dev: &Version, staged: bool) -> Vec<u8> {
+    let mut p = vec![Q_FIRMWARE, dev.fw_major, dev.fw_minor, dev.fw_patch, 0, 2];
+    p.extend_from_slice(&[1, dev.fw_major, dev.fw_minor, dev.fw_patch, 0, 2]);
+    p.extend_from_slice(&MOCK_SLOT_SIZE.to_le_bytes());
+    p.push(u8::from(staged));
+    p
+}
+
 impl Default for MockBox {
     fn default() -> Self {
         Self::new()
@@ -654,6 +758,38 @@ impl MockBox {
                 // option is NVS-backed and survives it.
                 FrameType::Reset => st.table = LockTable::default(),
                 _ => {}
+            }
+            if ty == FrameType::Update && st.respond {
+                let Some(&op) = payload.first() else {
+                    return Vec::new();
+                };
+                let body = if payload.len() > 2 { &payload[2..] } else { &[][..] };
+                let answer = match op {
+                    0 => Some(st.update.begin(body)),
+                    1 => st.update.data(body),
+                    2 => Some(st.update.end()),
+                    3 => {
+                        st.update = MockUpdate::default();
+                        Some((0x00, 0))
+                    }
+                    4 => {
+                        if st.update.staged {
+                            st.update = MockUpdate::default();
+                            Some((0x00, 0))
+                        } else {
+                            Some((0x19, 0))
+                        }
+                    }
+                    _ => None,
+                };
+                return match answer {
+                    Some((status, arg)) => {
+                        let mut p = vec![op, payload.get(1).copied().unwrap_or(0), status];
+                        p.extend_from_slice(&arg.to_le_bytes());
+                        encode(FrameType::UpdateResp, seq, &p).expect("resp fits")
+                    }
+                    None => Vec::new(),
+                };
             }
             if ty == FrameType::Query && st.respond {
                 match payload.first().copied() {
@@ -705,6 +841,12 @@ impl MockBox {
                         }
                         _ => Vec::new(),
                     },
+                    Some(11) => encode(
+                        FrameType::Resp,
+                        seq,
+                        &firmware_payload(&st.version, st.update.staged),
+                    )
+                    .expect("resp fits"),
                     Some(10) => encode(
                         FrameType::Resp,
                         seq,

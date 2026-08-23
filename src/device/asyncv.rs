@@ -4,14 +4,19 @@ use crate::error::{Error, Result};
 use crate::link::Link;
 use crate::protocol::opcode::{
     OPT_BEARING, OPT_EMIT, OPT_IMPERFECT, OPT_MOVE_RIDE, Q_CAPS, Q_CATCH, Q_CLIP, Q_DEVICE_INFO,
-    Q_HEALTH, Q_LOCKS, Q_RATE, Q_STATS, Q_VERSION,
+    Q_FIRMWARE, Q_HEALTH, Q_LOCKS, Q_RATE, Q_STATS, Q_VERSION,
 };
-use crate::protocol::{Resp, parse_resp};
+use crate::protocol::opcode::{
+    OTA_OP_ABORT, OTA_OP_ACTIVATE, OTA_OP_BEGIN, OTA_OP_DATA, OTA_OP_END, UPD_RESP_LEN,
+};
+use crate::protocol::{FrameType, Resp, parse_resp};
+use super::update::{ACTIVATE_TIMEOUT, CONFIRM_TIMEOUT, ChunkPlan, OP_TIMEOUT, begin_body};
 use crate::types::{
     Action, Axis, Bearing, BearingMode, Blanket, Caps, CatchFilter, CatchState, ClipBuilder,
     ClipSettings, ClipStatus, ClipTrigger, CountersSnapshot, DeviceInfo, Direction, Edge, EmitPace,
-    EmitPaceStatus, Health, ImperfectStatus, LedMode, LedTarget, LockTarget, Locks, Motion,
-    MoveTiming, PendingMotion, Rate, RebootTarget, Stats, Usage, Version,
+    EmitPaceStatus, FirmwareInfo, Health, ImperfectStatus, LedMode, LedTarget, LockTarget, Locks,
+    Motion, MoveTiming, PendingMotion, Rate, RebootTarget, Stats, UpdateProgress, UpdateStatus,
+    UpdateTarget, Usage, Version,
 };
 
 use super::Device;
@@ -252,6 +257,172 @@ impl AsyncDevice {
         match parse_resp(&payload) {
             Some(Resp::Version(v)) => Ok(v),
             _ => Err(Error::NoReply),
+        }
+    }
+
+    /// Both chips' firmware versions and slot state (§4.16), awaiting the correlated `RESP`.
+    pub async fn firmware_info(&self) -> Result<FirmwareInfo> {
+        let payload = self
+            .link
+            .query_async(Q_FIRMWARE, self.link.query_timeout_default())
+            .await?;
+        match parse_resp(&payload) {
+            Some(Resp::Firmware(f)) => Ok(f),
+            _ => Err(Error::NoReply),
+        }
+    }
+
+    /// Write one image into the target chip's spare slot; it stays inert until
+    /// [`activate_firmware`](Self::activate_firmware). Drives the same `ChunkPlan` as the sync path,
+    /// so the two cannot disagree about the wire.
+    pub async fn stage_firmware(
+        &self,
+        target: UpdateTarget,
+        image: &[u8],
+        progress: &mut dyn FnMut(UpdateProgress),
+    ) -> Result<u32> {
+        if image.is_empty() {
+            return Err(Error::Update {
+                op: OTA_OP_BEGIN,
+                status: UpdateStatus::TOO_BIG,
+                arg: 0,
+            });
+        }
+        self.wait_firmware_confirmed().await?;
+
+        let (status, arg) = self
+            .update_op(OTA_OP_BEGIN, target, &begin_body(image), OP_TIMEOUT)
+            .await?;
+        if status != UpdateStatus::READY {
+            return Err(Error::Update {
+                op: OTA_OP_BEGIN,
+                status,
+                arg,
+            });
+        }
+
+        let mut plan = ChunkPlan::new(image, target, arg);
+        while !plan.done() {
+            while let Some(frame) = plan.next_frame() {
+                self.link.send(FrameType::Update, &frame)?;
+            }
+            if plan.awaiting_ack() {
+                let (status, arg) = self.recv_update(OTA_OP_DATA, OP_TIMEOUT).await?;
+                progress(plan.on_ack(status, arg)?);
+            }
+        }
+
+        let (status, arg) = self
+            .update_op(OTA_OP_END, target, &[], OP_TIMEOUT)
+            .await?;
+        if status != UpdateStatus::STAGED {
+            return Err(Error::Update {
+                op: OTA_OP_END,
+                status,
+                arg,
+            });
+        }
+        Ok(arg)
+    }
+
+    /// Drop whatever is staged or in flight for one target.
+    pub async fn abort_update(&self, target: UpdateTarget) -> Result<()> {
+        let (status, arg) = self
+            .update_op(OTA_OP_ABORT, target, &[], OP_TIMEOUT)
+            .await?;
+        if status != UpdateStatus::OK {
+            return Err(Error::Update {
+                op: OTA_OP_ABORT,
+                status,
+                arg,
+            });
+        }
+        Ok(())
+    }
+
+    /// Commit every staged image and reboot into it.
+    pub async fn activate_firmware(&self) -> Result<()> {
+        let (status, arg) = self
+            .update_op(OTA_OP_ACTIVATE, UpdateTarget::Device, &[], ACTIVATE_TIMEOUT)
+            .await?;
+        if status != UpdateStatus::OK {
+            return Err(Error::Update {
+                op: OTA_OP_ACTIVATE,
+                status,
+                arg,
+            });
+        }
+        Ok(())
+    }
+
+    /// Stage one image and activate it.
+    pub async fn update_firmware(
+        &self,
+        target: UpdateTarget,
+        image: &[u8],
+        progress: &mut dyn FnMut(UpdateProgress),
+    ) -> Result<()> {
+        self.stage_firmware(target, image, progress).await?;
+        self.activate_firmware().await
+    }
+
+    /// Block until neither chip is still on probation.
+    pub async fn wait_firmware_confirmed(&self) -> Result<FirmwareInfo> {
+        let deadline = std::time::Instant::now() + CONFIRM_TIMEOUT;
+        loop {
+            let info = self.firmware_info().await?;
+            if !info.any_pending() {
+                return Ok(info);
+            }
+            if std::time::Instant::now() >= deadline {
+                return Err(Error::Update {
+                    op: OTA_OP_BEGIN,
+                    status: UpdateStatus::ON_PROBATION,
+                    arg: 0,
+                });
+            }
+            // No runtime to sleep on in a runtime-agnostic crate; flume's timeout is the one wait
+            // primitive already in the dependency set.
+            let _ = self.link.updates_rx().recv_timeout(Duration::from_millis(500));
+        }
+    }
+
+    async fn update_op(
+        &self,
+        op: u8,
+        target: UpdateTarget,
+        body: &[u8],
+        timeout: Duration,
+    ) -> Result<(UpdateStatus, u32)> {
+        while let Ok(p) = self.link.updates_rx().try_recv() {
+            if p.first() != Some(&op) {
+                continue;
+            }
+        }
+        let mut frame = Vec::with_capacity(2 + body.len());
+        frame.push(op);
+        frame.push(target.as_u8());
+        frame.extend_from_slice(body);
+        self.link.send(FrameType::Update, &frame)?;
+        self.recv_update(op, timeout).await
+    }
+
+    async fn recv_update(&self, op: u8, timeout: Duration) -> Result<(UpdateStatus, u32)> {
+        let deadline = std::time::Instant::now() + timeout;
+        loop {
+            if std::time::Instant::now() >= deadline {
+                return Err(Error::QueryTimeout);
+            }
+            match self.link.updates_rx().recv_async().await {
+                Ok(p) if p.len() >= UPD_RESP_LEN && p[0] == op => {
+                    return Ok((
+                        UpdateStatus(p[2]),
+                        u32::from_le_bytes([p[3], p[4], p[5], p[6]]),
+                    ));
+                }
+                Ok(_) => continue,
+                Err(_) => return Err(Error::QueryTimeout),
+            }
         }
     }
 

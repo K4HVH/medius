@@ -1,10 +1,11 @@
 //! The opaque `MediusDevice` handle and every command, query, and lifecycle function.
 
 use std::ffi::CStr;
-use std::os::raw::c_char;
+use std::os::raw::{c_char, c_void};
 use std::time::Duration;
 
 use medius::Device;
+use medius::{UpdateProgress, UpdateTarget};
 
 use crate::convert::{
     action_from_c, blanket_from_c, emit_pace_from_c, input_to_medius, led_mode_from_c,
@@ -626,6 +627,63 @@ pub unsafe extern "C" fn medius_device_query_version(
     out: *mut MediusVersion,
 ) -> MediusStatus {
     query(dev, out, |d| d.query_version())
+}
+
+/// Both chips' firmware versions and slot state.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn medius_device_firmware_info(
+    dev: *mut MediusDevice,
+    out: *mut MediusFirmwareInfo,
+) -> MediusStatus {
+    query(dev, out, |d| d.firmware_info())
+}
+
+/// Write `len` bytes into `target`'s spare slot (0 = device chip, 1 = host chip). The image stays
+/// inert until medius_device_activate_firmware. `progress`, if non-null, is called with bytes sent
+/// and the total.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn medius_device_stage_firmware(
+    dev: *mut MediusDevice,
+    target: u8,
+    image: *const u8,
+    len: usize,
+    progress: Option<unsafe extern "C" fn(*mut c_void, usize, usize)>,
+    user: *mut c_void,
+) -> MediusStatus {
+    let Some(tgt) = UpdateTarget::from_u8(target) else {
+        return fail(MediusStatus::ErrInvalidArg, "target must be 0 or 1");
+    };
+    if image.is_null() || len == 0 {
+        return fail(MediusStatus::ErrInvalidArg, "image is empty");
+    }
+    let bytes = unsafe { std::slice::from_raw_parts(image, len) };
+    let user_addr = user as usize;
+    with_device(dev, |d| {
+        let mut cb = |p: UpdateProgress| {
+            if let Some(f) = progress {
+                unsafe { f(user_addr as *mut c_void, p.sent, p.total) };
+            }
+        };
+        d.stage_firmware(tgt, bytes, &mut cb).map(|_| ())
+    })
+}
+
+/// Drop whatever is staged or in flight for one target; the clone comes back without a reboot.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn medius_device_abort_update(
+    dev: *mut MediusDevice,
+    target: u8,
+) -> MediusStatus {
+    let Some(tgt) = UpdateTarget::from_u8(target) else {
+        return fail(MediusStatus::ErrInvalidArg, "target must be 0 or 1");
+    };
+    with_device(dev, |d| d.abort_update(tgt))
+}
+
+/// Commit every staged image and reboot into it. Blocks while the host chip reboots and comes back.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn medius_device_activate_firmware(dev: *mut MediusDevice) -> MediusStatus {
+    with_device(dev, |d| d.activate_firmware())
 }
 
 #[unsafe(no_mangle)]

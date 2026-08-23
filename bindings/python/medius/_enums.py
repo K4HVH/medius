@@ -5,6 +5,24 @@ from __future__ import annotations
 from enum import IntEnum
 
 
+class ImageState(IntEnum):
+    """What the bootloader thinks of the image a chip is running (§4.16)."""
+
+    NEW = 0
+    PENDING_VERIFY = 1
+    VALID = 2
+    INVALID = 3
+    ABORTED = 4
+    UNKNOWN = 0xFF
+
+
+class UpdateTarget(IntEnum):
+    """Which chip a firmware update addresses (§3.13)."""
+
+    DEVICE = 0
+    HOST = 1
+
+
 class Status(IntEnum):
     OK = 0
     ERR_IO = 1
@@ -14,7 +32,7 @@ class Status(IntEnum):
     ERR_QUERY_TIMEOUT = 5
     ERR_DISCONNECTED = 6
     ERR_FRAME_TOO_LONG = 7
-    ERR_FLASH_TOOL = 8
+    ERR_UPDATE = 8
     ERR_INVALID_ARG = 9
     ERR_PANIC = 10
     ERR_UNKNOWN = 11
