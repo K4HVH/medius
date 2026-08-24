@@ -228,56 +228,41 @@ use crate::protocol::opcode::{
     OTA_OP_ABORT, OTA_OP_ACTIVATE, OTA_OP_BEGIN, OTA_OP_DATA, OTA_OP_END,
 };
 
-/// What the box was being asked to do, for an error message. The op number alone means nothing to
-/// whoever is holding the box.
+/// What the box was being asked to do. An op number means nothing to the reader.
 pub(crate) fn update_doing(op: u8) -> &'static str {
     match op {
-        OTA_OP_BEGIN => "Starting the firmware transfer",
-        OTA_OP_DATA => "Sending the firmware",
-        OTA_OP_END => "Finishing the firmware transfer",
-        OTA_OP_ABORT => "Cancelling the firmware transfer",
-        OTA_OP_ACTIVATE => "Activating the new firmware",
-        _ => "The firmware update",
+        OTA_OP_BEGIN => "starting the transfer",
+        OTA_OP_DATA => "sending the firmware",
+        OTA_OP_END => "finishing the transfer",
+        OTA_OP_ABORT => "cancelling the transfer",
+        OTA_OP_ACTIVATE => "activating",
+        _ => "the update",
     }
 }
 
-/// What a refusal means and what to do about it. A status name and a bare number read as a code dump;
-/// the point of an error is that the reader knows what to do next.
+/// Why it was refused, and what to do where that is not obvious.
 pub(crate) fn update_reason(op: u8, status: UpdateStatus, arg: u32) -> String {
     match status {
-        UpdateStatus::BUSY => "the box already has an update open on that chip.".into(),
-        UpdateStatus::NO_SLOT => "this box still has the single-slot firmware layout, so it cannot be \
-             updated over this port. It needs one flash over ROM download first."
-            .into(),
-        UpdateStatus::TOO_BIG => format!("the image does not fit. A slot holds {arg} bytes."),
-        UpdateStatus::SEQ_GAP => {
-            format!("a chunk went missing, so the box dropped the transfer. It was expecting chunk {arg}.")
+        UpdateStatus::BUSY => "an update is already open on that chip".into(),
+        UpdateStatus::NO_SLOT => {
+            "the box has one firmware slot; it needs a ROM-download flash first".into()
         }
-        UpdateStatus::WRITE_FAILED => format!("the box could not write to its flash (error {arg})."),
-        UpdateStatus::BAD_SHA => "the image arrived corrupted: its digest did not match what was \
-             declared. Try again."
-            .into(),
-        UpdateStatus::BAD_IMAGE => format!("those bytes are not a bootable image (error {arg})."),
-        UpdateStatus::LINK_DOWN => {
-            "the box cannot reach its mouse-side chip over the inter-chip link.".into()
+        UpdateStatus::TOO_BIG => format!("image too big; a slot holds {arg} bytes"),
+        UpdateStatus::SEQ_GAP => format!("a chunk went missing; the box wanted {arg}"),
+        UpdateStatus::WRITE_FAILED => format!("flash write failed (error {arg})"),
+        UpdateStatus::BAD_SHA => "image corrupted in transit; retry".into(),
+        UpdateStatus::BAD_IMAGE => format!("not a bootable image (error {arg})"),
+        UpdateStatus::LINK_DOWN => "the mouse-side chip is not reachable".into(),
+        UpdateStatus::TIMEOUT if op == OTA_OP_ACTIVATE => {
+            "the mouse-side chip did not come back; power cycle the box".into()
         }
-        UpdateStatus::TIMEOUT if op == OTA_OP_ACTIVATE => "the mouse-side chip did not come back \
-             after committing its firmware. Power cycle the box, then check which slot each chip is \
-             running before trying again."
-            .into(),
-        UpdateStatus::TIMEOUT => "the box stopped answering partway through and dropped the transfer \
-             after ten seconds of silence."
-            .into(),
-        UpdateStatus::NOTHING_STAGED => "there is nothing staged to activate.".into(),
-        UpdateStatus::BAD_STATE => {
-            format!("the box was not expecting that step; it wanted op {arg}.")
+        UpdateStatus::TIMEOUT => "the box stopped answering; transfer dropped".into(),
+        UpdateStatus::NOTHING_STAGED => "nothing is staged".into(),
+        UpdateStatus::BAD_STATE => format!("out of order; the box wanted op {arg}"),
+        UpdateStatus::ON_PROBATION => {
+            "a chip is still verifying its new firmware; retry in a few seconds".into()
         }
-        UpdateStatus::ON_PROBATION => "a chip is still proving the firmware it just booted. Wait a \
-             few seconds and try again."
-            .into(),
-        UpdateStatus::UNTOUCHED => "the box refused before writing anything, so whatever was already \
-             staged is untouched."
-            .into(),
-        other => format!("the box answered {other} (arg {arg})."),
+        UpdateStatus::UNTOUCHED => "refused before writing; anything staged is untouched".into(),
+        other => format!("{other} (arg {arg})"),
     }
 }
