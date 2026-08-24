@@ -61,5 +61,6 @@ pub use stats::Stats;
 pub use update::{
     ChipFirmware, FirmwareInfo, ImageState, UpdateProgress, UpdateStatus, UpdateTarget,
 };
+pub(crate) use update::{update_doing, update_reason};
 pub use usage::{Axis, Class, Usage};
 pub use version::Version;
