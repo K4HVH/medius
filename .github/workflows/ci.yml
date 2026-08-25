@@ -29,10 +29,9 @@ jobs:
           - ""
           - "async"
           - "mock"
-          - "flash"
           - "tracing"
           - "async,mock"
-          - "async,mock,flash,tracing"
+          - "async,mock,tracing"
     steps:
     - uses: actions/checkout@v4
     - uses: dtolnay/rust-toolchain@stable
@@ -279,7 +278,10 @@ jobs:
       always()
       && needs.bindings_sdist.result == 'success'
       && needs.bindings_wheels.result == 'success'
-      && (needs.publish.outputs.should_publish == 'true' || github.event_name == 'workflow_dispatch')
+      && (
+           (needs.publish.result == 'success' && needs.publish.outputs.should_publish == 'true')
+           || github.event_name == 'workflow_dispatch'
+         )
     runs-on: ubuntu-latest
     environment: pypi
     permissions:
@@ -396,8 +398,8 @@ jobs:
     - uses: Swatinem/rust-cache@v2
     - name: Build (default features)
       run: cargo build -p medius-capi --verbose
-    - name: Build (mock + flash)
-      run: cargo build -p medius-capi --features mock,flash --verbose
+    - name: Build (mock)
+      run: cargo build -p medius-capi --features mock --verbose
     - name: Test (mock)
       run: cargo test -p medius-capi --features mock --verbose
 
