@@ -46,6 +46,7 @@ struct State {
     bearing: Bearing,
     emit_pace: EmitPace,
     emit_force_hz: Option<u16>,
+    advertised_hz: u16,
     clip: ClipStatus,
     clip_settings: ClipSettings,
     recorded: Vec<DecodedFrame>,
@@ -82,6 +83,7 @@ impl Default for State {
             bearing: Bearing::default(),
             emit_pace: EmitPace::Learned,
             emit_force_hz: None,
+            advertised_hz: 0,
             clip: ClipStatus::default(),
             clip_settings: ClipSettings::default(),
             recorded: Vec::new(),
@@ -331,6 +333,9 @@ impl State {
     }
 
     fn apply_option_frame(&mut self, p: &[u8]) {
+        if p.is_empty() {
+            return;
+        }
         match (p.first().copied(), &p[1..]) {
             (Some(OPT_IMPERFECT), [allow, ..]) => self.imperfect.allowed = *allow != 0,
             (Some(OPT_MOVE_RIDE), [lo, hi, ..]) => {
@@ -538,7 +543,7 @@ fn options_bearing_payload(b: Bearing) -> Vec<u8> {
     p
 }
 
-fn options_emit_payload(pace: EmitPace, force_hz: Option<u16>) -> Vec<u8> {
+fn options_emit_payload(pace: EmitPace, force_hz: Option<u16>, native_hz: u16, allowed: bool) -> Vec<u8> {
     // Mirror the firmware: Fixed clamps the echoed rate to 1..=1000 (0 -> 1000) and snaps resolved
     // to the 1 ms frame clock (1000/n); Learned/Interval echo 0 (no real device to resolve).
     let (mode, fixed_hz, resolved) = match pace {
@@ -552,8 +557,9 @@ fn options_emit_payload(pace: EmitPace, force_hz: Option<u16>) -> Vec<u8> {
     };
     // The box resolves a forced rate to a bInterval in whole 1 ms frames and advertises 1000/n, so a
     // request that is not a divisor of 1000 comes back as something else. A naive echo would diverge.
-    let (advertised, active) = match force_hz {
-        None => (1000u16, false),
+    // A force only applies with the imperfect opt-in on; without it the clone still advertises its own.
+    let (advertised, active) = match force_hz.filter(|hz| *hz != 0 && allowed) {
+        None => (native_hz, false),
         Some(hz) => {
             let n = ((1000u32 + hz as u32 / 2) / hz as u32).clamp(1, 255);
             ((1000u32 / n) as u16, true)
@@ -890,7 +896,9 @@ impl MockBox {
                                     .expect("resp fits")
                             }
                             Some(OPT_EMIT) => {
-                                encode(FrameType::Resp, seq, &options_emit_payload(st.emit_pace, st.emit_force_hz))
+                                encode(FrameType::Resp, seq, &options_emit_payload(
+                                    st.emit_pace, st.emit_force_hz, st.advertised_hz,
+                                    st.imperfect.allowed))
                                     .expect("resp fits")
                             }
                             _ => Vec::new(),
@@ -1061,16 +1069,23 @@ impl MockBox {
         self.state.lock().emit_pace = pace;
     }
 
-    /// Set the forced wire rate answered to `QUERY(OPTIONS, EMIT)` (builder style).
+    /// Set the forced wire rate answered to `QUERY(OPTIONS, EMIT)` (builder style); `Some(0)` is off.
     #[must_use]
     pub fn with_rate_force(self, force_hz: Option<u16>) -> Self {
-        self.state.lock().emit_force_hz = force_hz;
+        self.set_rate_force(force_hz);
         self
     }
 
-    /// Update the forced wire rate answered to `QUERY(OPTIONS, EMIT)` in place.
+    /// Update the forced wire rate answered to `QUERY(OPTIONS, EMIT)` in place; `Some(0)` is off.
     pub fn set_rate_force(&self, force_hz: Option<u16>) {
-        self.state.lock().emit_force_hz = force_hz;
+        self.state.lock().emit_force_hz = force_hz.filter(|hz| *hz != 0);
+    }
+
+    /// Set the rate the mock's clone advertises unforced, in Hz; 0 is the default and means no clone.
+    #[must_use]
+    pub fn with_advertised_hz(self, hz: u16) -> Self {
+        self.state.lock().advertised_hz = hz;
+        self
     }
 
     /// Set the [`ClipStatus`] answered to `QUERY(CLIP)` (builder style).

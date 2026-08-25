@@ -87,7 +87,8 @@ impl Device {
     /// on, since the descriptor stops matching the real device, and changing the resolved interval
     /// re-clones the box, which drops the control port briefly.
     ///
-    /// Both fields ride one command, so every call writes both.
+    /// Both fields ride one command, so every call writes both. `Some(0)` is the wire's "off" and reads
+    /// back as `None`.
     pub fn set_emit_pace(&self, pace: EmitPace, force_hz: Option<u16>) -> Result<()> {
         let (mode, hz) = emit_pace_wire(pace);
         self.link.send(

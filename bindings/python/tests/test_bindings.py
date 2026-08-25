@@ -604,12 +604,14 @@ def test_emit_pace_roundtrip():
         assert status.resolved_hz == 0  # learnt/adaptive
         assert status.force_hz is None
         assert status.force_active is False
-        assert status.advertised_hz == 1000  # the clone's own, with nothing forced
+        assert status.advertised_hz == 0  # 0 = no clone, the documented sentinel
 
 
 def test_rate_force_roundtrip():
     # The five numbers occupy five ctypes fields in one struct, so a layout slip shows as a swap.
     with MockBox() as mock:
+        mock.set_advertised_hz(125)
+        mock.set_imperfect_status(ImperfectStatus(allowed=True, over_capacity=False, clone_imperfect=False))
         # 400 is not a divisor of 1000: the box resolves bInterval 3 and advertises 333.
         mock.set_emit_pace(EmitPace.fixed(500), 400)
         with Device.with_mock(mock) as d:
@@ -624,12 +626,31 @@ def test_rate_force_roundtrip():
             status = d.query_emit_pace()
         assert status.force_hz is None
         assert status.force_active is False
+        assert status.advertised_hz == 125  # back to what the clone declares
+
+
+def test_rate_force_needs_the_imperfect_opt_in():
+    # The box leaves a force inert without the opt-in, so a mock that applied it regardless would green
+    # -light host code that disagrees with every real box.
+    with MockBox() as mock:
+        mock.set_advertised_hz(125)
+        with Device.with_mock(mock) as d:
+            d.set_emit_pace(EmitPace.learned(), 1000)
+            status = d.query_emit_pace()
+            assert status.force_hz == 1000
+            assert status.force_active is False
+            assert status.advertised_hz == 125
+            d.allow_imperfect_clones(True)
+            status = d.query_emit_pace()
+            assert status.force_active is True
+            assert status.advertised_hz == 1000
 
 
 def test_rate_force_through_the_setter():
     # Drives OPTION(EMIT) out of the setter and reads the box's own state back, so a setter that drops
     # the force on the wire fails here rather than passing on a mock nobody sent anything to.
     with MockBox() as mock, Device.with_mock(mock) as d:
+        d.allow_imperfect_clones(True)
         d.set_emit_pace(EmitPace.fixed(250), 125)
         status = d.query_emit_pace()
         assert status.mode == EmitPace.fixed(250)
