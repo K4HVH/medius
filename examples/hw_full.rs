@@ -442,14 +442,14 @@ mod linux {
             // Wire round-trip + NVS-persistence check for the EMIT option; the pacing behaviour itself
             // needs the rig. Restores LEARNED (the default) afterward.
             let dev = device.as_ref().unwrap();
-            let set_ok = dev.set_emit_pace(EmitPace::Fixed(500)).is_ok();
+            let set_ok = dev.set_emit_pace(EmitPace::Fixed(500), None).is_ok();
             std::thread::sleep(Duration::from_millis(60));
             let read = dev.query_emit_pace();
             let matched = read
                 .as_ref()
                 .map(|s| s.mode == EmitPace::Fixed(500) && s.resolved_hz == 500)
                 .unwrap_or(false);
-            let off_ok = dev.set_emit_pace(EmitPace::Learned).is_ok();
+            let off_ok = dev.set_emit_pace(EmitPace::Learned, None).is_ok();
             std::thread::sleep(Duration::from_millis(60));
             let read_off = dev.query_emit_pace();
             let off_matched = read_off

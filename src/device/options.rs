@@ -79,11 +79,21 @@ impl Device {
         )
     }
 
-    /// `OPTION(EMIT)`: pick what paces injected motion ([`EmitPace::Learned`], [`EmitPace::Interval`], or [`EmitPace::Fixed`] Hz capped at [`EMIT_MAX_HZ`]); persisted in NVS.
-    pub fn set_emit_pace(&self, pace: EmitPace) -> Result<()> {
+    /// `OPTION(EMIT)`: pick what paces injected motion ([`EmitPace::Learned`], [`EmitPace::Interval`], or [`EmitPace::Fixed`] Hz capped at [`EMIT_MAX_HZ`]), and what rate the clone runs at; persisted in NVS.
+    ///
+    /// `force_hz` writes a chosen `bInterval` onto every HID interrupt-IN endpoint of the served
+    /// descriptor and polls the real device at the same interval, snapping to `1000/n` Hz; `None` leaves
+    /// the device's own. It applies only with [`allow_imperfect_clones`](Self::allow_imperfect_clones)
+    /// on, since the descriptor stops matching the real device, and changing the resolved interval
+    /// re-clones the box, which drops the control port briefly.
+    ///
+    /// Both fields ride one command, so every call writes both.
+    pub fn set_emit_pace(&self, pace: EmitPace, force_hz: Option<u16>) -> Result<()> {
         let (mode, hz) = emit_pace_wire(pace);
-        self.link
-            .send(FrameType::Option, &emit_pace_payload(mode, hz))
+        self.link.send(
+            FrameType::Option,
+            &emit_pace_payload(mode, hz, force_hz.unwrap_or(0)),
+        )
     }
 
     /// `OPTION(NAME)`: set the box's persistent name (leading printable-ASCII run, capped at [`NAME_MAX`] bytes); read it back off [`query_version`](Device::query_version). Persisted in NVS.
