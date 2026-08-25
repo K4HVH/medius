@@ -2084,6 +2084,11 @@ void medius_mock_set_emit_pace(struct MediusMockBox *mock,
 #endif
 
 #if defined(MEDIUS_FEATURE_MOCK)
+// Set the rate the mock's clone advertises unforced, in Hz; 0 means no clone.
+void medius_mock_set_advertised_hz(struct MediusMockBox *mock, uint16_t hz);
+#endif
+
+#if defined(MEDIUS_FEATURE_MOCK)
 // Set the [`ClipStatus`](medius::ClipStatus) the mock answers to `medius_clip_query_status`.
 // `value.state` takes a `MEDIUS_CLIP_STATE_*` constant; any other value is ignored.
 void medius_mock_set_clip_status(struct MediusMockBox *mock, struct MediusClipStatus value);

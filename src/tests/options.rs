@@ -77,7 +77,7 @@ fn decode_emit_pace_through_parse_resp() {
             force_active: true,
         }
     );
-    // Unforced still reports what the clone advertises, so one query shows the before and the after.
+    // Unforced still reports what the clone advertises, so a host can see the device's own rate.
     let Some(Resp::EmitPace(native)) = parse_resp(&[9, 2, 0, 0, 0, 0, 0, 0, 0, 0xE8, 0x03, 0]) else {
         panic!("expected EmitPace");
     };
@@ -113,7 +113,7 @@ fn mock_emit_pace_matches_firmware_snap() {
             mode: EmitPace::Fixed(400),
             resolved_hz: 333,
             force_hz: None,
-            advertised_hz: 1000,
+            advertised_hz: 0,
             force_active: false,
         }
     );
@@ -124,7 +124,7 @@ fn mock_emit_pace_matches_firmware_snap() {
             mode: EmitPace::Fixed(1000),
             resolved_hz: 1000,
             force_hz: None,
-            advertised_hz: 1000,
+            advertised_hz: 0,
             force_active: false,
         }
     );
@@ -135,7 +135,7 @@ fn mock_emit_pace_matches_firmware_snap() {
             mode: EmitPace::Learned,
             resolved_hz: 0,
             force_hz: None,
-            advertised_hz: 1000,
+            advertised_hz: 0,
             force_active: false,
         }
     );
@@ -145,9 +145,11 @@ fn mock_emit_pace_matches_firmware_snap() {
 #[test]
 fn mock_rate_force_matches_firmware_snap() {
     use crate::{Device, MockBox};
-    // 300 Hz is not a divisor of 1000: the firmware resolves bInterval 3 and advertises 333.
-    let mock = MockBox::new().with_rate_force(Some(300));
+    // A clone that declares 125 Hz, with the opt-in on so a force can actually apply.
+    let mock = MockBox::new().with_advertised_hz(125).with_rate_force(Some(300));
     let device = Device::with_mock(mock.clone());
+    device.allow_imperfect_clones(true).unwrap();
+    // 300 Hz is not a divisor of 1000: the firmware resolves bInterval 3 and advertises 333.
     let s = device.query_emit_pace().unwrap();
     assert_eq!(s.force_hz, Some(300));
     assert_eq!(s.advertised_hz, 333);
@@ -163,10 +165,34 @@ fn mock_rate_force_matches_firmware_snap() {
     // bInterval is one byte, so the slowest a full-speed clone can advertise is 1000/255.
     mock.set_rate_force(Some(1));
     assert_eq!(device.query_emit_pace().unwrap().advertised_hz, 3);
+    // Some(0) is what the wire calls off, and dividing by it would panic.
+    mock.set_rate_force(Some(0));
+    let s = device.query_emit_pace().unwrap();
+    assert_eq!(s.force_hz, None);
+    assert!(!s.force_active);
     mock.set_rate_force(None);
     let s = device.query_emit_pace().unwrap();
     assert_eq!(s.force_hz, None);
     assert!(!s.force_active);
+    assert_eq!(s.advertised_hz, 125);
+}
+
+#[cfg(feature = "mock")]
+#[test]
+fn mock_leaves_a_force_inert_without_the_opt_in() {
+    use crate::{Device, EmitPace, MockBox};
+    // The box gates a force on the imperfect opt-in, so a mock that reported it active regardless would
+    // green-light host code that disagrees with every real box.
+    let mock = MockBox::new().with_advertised_hz(125);
+    let device = Device::with_mock(mock.clone());
+    device.set_emit_pace(EmitPace::Learned, Some(1000)).unwrap();
+    let s = device.query_emit_pace().unwrap();
+    assert_eq!(s.force_hz, Some(1000));
+    assert!(!s.force_active);
+    assert_eq!(s.advertised_hz, 125);
+    device.allow_imperfect_clones(true).unwrap();
+    let s = device.query_emit_pace().unwrap();
+    assert!(s.force_active);
     assert_eq!(s.advertised_hz, 1000);
 }
 

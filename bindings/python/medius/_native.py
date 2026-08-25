@@ -606,6 +606,7 @@ if HAS_MOCK:
     _decl("medius_mock_set_locks", None, [HANDLE, MediusLocks])
     _decl("medius_mock_set_catch_state", None, [HANDLE, MediusCatchState])
     _decl("medius_mock_set_imperfect_status", None, [HANDLE, MediusImperfectStatus])
+    _decl("medius_mock_set_advertised_hz", None, [HANDLE, u16])
     _decl("medius_mock_set_movement_riding", None, [HANDLE, c_bool, u32])
     _decl("medius_mock_set_bearing", None, [HANDLE, u16, u8])
     _decl("medius_mock_set_emit_pace", None, [HANDLE, u8, u16, u16])

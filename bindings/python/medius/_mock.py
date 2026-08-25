@@ -113,6 +113,10 @@ class MockBox:
     def set_imperfect_status(self, status: ImperfectStatus):
         _native.lib.medius_mock_set_imperfect_status(self._handle, imperfect_to_c(status))
 
+    def set_advertised_hz(self, hz: int):
+        """The rate the mock's clone advertises unforced; 0 means no clone."""
+        _native.lib.medius_mock_set_advertised_hz(self._handle, _u16(hz, "hz"))
+
     def set_movement_riding(self, window_ms: Optional[int]):
         enabled = window_ms is not None
         _native.lib.medius_mock_set_movement_riding(

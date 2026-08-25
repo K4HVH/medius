@@ -214,6 +214,14 @@ pub unsafe extern "C" fn medius_mock_set_emit_pace(
     });
 }
 
+/// Set the rate the mock's clone advertises unforced, in Hz; 0 means no clone.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn medius_mock_set_advertised_hz(mock: *mut MediusMockBox, hz: u16) {
+    with_mock(mock, |m| {
+        let _ = m.clone().with_advertised_hz(hz);
+    });
+}
+
 /// Set the [`ClipStatus`](medius::ClipStatus) the mock answers to `medius_clip_query_status`.
 /// `value.state` takes a `MEDIUS_CLIP_STATE_*` constant; any other value is ignored.
 #[unsafe(no_mangle)]
