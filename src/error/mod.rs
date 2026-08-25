@@ -46,6 +46,15 @@ pub enum Error {
     WildcardNotInput,
 
     #[error(
+        "{direction:?} is measured against the bearing at emit time, which a {what} is addressed \
+         before; use Both, Positive or Negative"
+    )]
+    RelativeDirection {
+        direction: crate::types::Direction,
+        what: &'static str,
+    },
+
+    #[error(
         "id 0x{id:04X} is the blanket sentinel on the wire, so an exact {class:?} subscription to it \
          would address the whole class instead"
     )]
@@ -58,9 +67,14 @@ pub enum Error {
     )]
     HalfEdgeInputFilter,
 
-    #[cfg(feature = "flash")]
-    #[error("flash tool failed: {0}")]
-    FlashTool(String),
+    /// The box refused a firmware update op (§4.16). `arg` is that status's argument: the slot size
+    /// for `TOO_BIG`, the chunk it expected for `SEQ_GAP`, an `esp_err_t` for a write or image failure.
+    #[error("{} failed: {}", crate::types::update_doing(*op), crate::types::update_reason(*op, *status, *arg))]
+    Update {
+        op: u8,
+        status: crate::types::UpdateStatus,
+        arg: u32,
+    },
 }
 
 /// The crate-wide [`Result`](core::result::Result) alias.

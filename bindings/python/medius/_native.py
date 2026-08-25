@@ -88,6 +88,27 @@ class MediusVersion(ctypes.Structure):
     ]
 
 
+class MediusChipFirmware(ctypes.Structure):
+    _fields_ = [
+        ("major", u8),
+        ("minor", u8),
+        ("patch", u8),
+        ("slot", u8),
+        ("state", u8),
+    ]
+
+
+class MediusFirmwareInfo(ctypes.Structure):
+    _fields_ = [
+        ("device", MediusChipFirmware),
+        ("host_present", u8),
+        ("host", MediusChipFirmware),
+        ("slot_size", u32),
+        ("device_staged", u8),
+        ("host_staged", u8),
+    ]
+
+
 class MediusHealth(ctypes.Structure):
     _fields_ = [
         ("link_up", u8),
@@ -178,8 +199,8 @@ class MediusLockEntry(ctypes.Structure):
     _fields_ = [
         ("target", MediusLockTarget),
         ("is_blanket", c_bool),
-        ("positive", c_bool),
-        ("negative", c_bool),
+        ("direction", u8),
+        ("scale", u8),
     ]
 
 
@@ -213,8 +234,19 @@ class MediusImperfectStatus(ctypes.Structure):
     _fields_ = [("allowed", u8), ("over_capacity", u8), ("clone_imperfect", u8)]
 
 
+class MediusBearing(ctypes.Structure):
+    _fields_ = [("window_ms", u16), ("mode", u8)]
+
+
 class MediusEmitPaceStatus(ctypes.Structure):
-    _fields_ = [("mode", u8), ("fixed_hz", u16), ("resolved_hz", u16)]
+    _fields_ = [
+        ("mode", u8),
+        ("fixed_hz", u16),
+        ("resolved_hz", u16),
+        ("force_hz", u16),
+        ("advertised_hz", u16),
+        ("force_active", u8),
+    ]
 
 
 class MediusClipStatus(ctypes.Structure):
@@ -377,6 +409,8 @@ _decl("medius_device_lock", i32, [HANDLE, MediusLockTarget, u8])
 _decl("medius_device_unlock", i32, [HANDLE, MediusLockTarget, u8])
 _decl("medius_device_lock_all", i32, [HANDLE, u8, u8])
 _decl("medius_device_unlock_all", i32, [HANDLE, u8, u8])
+_decl("medius_device_scale", i32, [HANDLE, MediusLockTarget, u8, u8])
+_decl("medius_device_scale_all", i32, [HANDLE, u8, u8, u8])
 _decl("medius_device_led", i32, [HANDLE, u8, u8, u8])
 _decl("medius_device_reset", i32, [HANDLE])
 _decl("medius_device_reapply", i32, [HANDLE])
@@ -384,7 +418,8 @@ _decl("medius_device_reconnect", i32, [HANDLE])
 _decl("medius_device_reboot", i32, [HANDLE, u8])
 _decl("medius_device_allow_imperfect_clones", i32, [HANDLE, c_bool])
 _decl("medius_device_set_movement_riding", i32, [HANDLE, c_bool, u32])
-_decl("medius_device_set_emit_pace", i32, [HANDLE, u8, u16])
+_decl("medius_device_set_bearing", i32, [HANDLE, u16, u8])
+_decl("medius_device_set_emit_pace", i32, [HANDLE, u8, u16, u16])
 _decl("medius_device_set_name", i32, [HANDLE, ctypes.c_char_p])
 _decl("medius_device_clear_name", i32, [HANDLE])
 
@@ -395,6 +430,7 @@ _decl("medius_device_caps", i32, [HANDLE, ctypes.POINTER(MediusCaps)])
 _decl("medius_device_query_rate", i32, [HANDLE, ctypes.POINTER(MediusRate)])
 _decl("medius_device_query_stats", i32, [HANDLE, ctypes.POINTER(MediusStats)])
 _decl("medius_device_query_locks", i32, [HANDLE, ctypes.POINTER(MediusLocks)])
+_decl("medius_device_query_bearing", i32, [HANDLE, ctypes.POINTER(MediusBearing)])
 _decl("medius_device_query_catch", i32, [HANDLE, ctypes.POINTER(MediusCatchState)])
 _decl("medius_device_query_imperfect", i32, [HANDLE, ctypes.POINTER(MediusImperfectStatus)])
 _decl(
@@ -420,6 +456,7 @@ _decl("medius_motion_wheel", MediusMotion, [i16])
 _decl("medius_lock_target_axis", MediusLockTarget, [u8])
 _decl("medius_lock_target_usage", MediusLockTarget, [MediusUsage])
 _decl("medius_locks_is_locked", c_bool, [ctypes.POINTER(MediusLocks), MediusLockTarget, u8])
+_decl("medius_locks_scale_of", u8, [ctypes.POINTER(MediusLocks), MediusLockTarget, u8])
 _decl("medius_rate_native_hz", c_bool, [MediusRate, ctypes.POINTER(ctypes.c_float)])
 _decl("medius_usage_event_is_held", c_bool, [ctypes.POINTER(MediusUsageEvent), MediusUsage])
 _decl("medius_catch_filter_watch", MediusCatchFilter, [MediusUsage])
@@ -544,7 +581,15 @@ _decl("medius_clip_finalize", i32, [HANDLE])
 _decl("medius_clip_query_status", i32, [HANDLE, ctypes.POINTER(MediusClipStatus)])
 _decl("medius_clip_query_config", i32, [HANDLE, ctypes.POINTER(MediusClipSettings)])
 
-HAS_FLASH = _decl("medius_flash", i32, [ctypes.c_char_p, ctypes.c_char_p, c_bool], optional=True) is not None
+UPDATE_PROGRESS_CB = ctypes.CFUNCTYPE(None, ctypes.c_void_p, ctypes.c_size_t, ctypes.c_size_t)
+_decl("medius_device_firmware_info", i32, [HANDLE, ctypes.POINTER(MediusFirmwareInfo)])
+_decl(
+    "medius_device_stage_firmware",
+    i32,
+    [HANDLE, u8, ctypes.POINTER(u8), ctypes.c_size_t, UPDATE_PROGRESS_CB, ctypes.c_void_p],
+)
+_decl("medius_device_abort_update", i32, [HANDLE, u8])
+_decl("medius_device_activate_firmware", i32, [HANDLE])
 
 HAS_MOCK = _decl("medius_mock_new", HANDLE, [], optional=True) is not None
 if HAS_MOCK:
@@ -561,8 +606,10 @@ if HAS_MOCK:
     _decl("medius_mock_set_locks", None, [HANDLE, MediusLocks])
     _decl("medius_mock_set_catch_state", None, [HANDLE, MediusCatchState])
     _decl("medius_mock_set_imperfect_status", None, [HANDLE, MediusImperfectStatus])
+    _decl("medius_mock_set_advertised_hz", None, [HANDLE, u16])
     _decl("medius_mock_set_movement_riding", None, [HANDLE, c_bool, u32])
-    _decl("medius_mock_set_emit_pace", None, [HANDLE, u8, u16])
+    _decl("medius_mock_set_bearing", None, [HANDLE, u16, u8])
+    _decl("medius_mock_set_emit_pace", None, [HANDLE, u8, u16, u16])
     _decl("medius_mock_set_clip_status", None, [HANDLE, MediusClipStatus])
     _decl("medius_mock_set_clip_settings", None, [HANDLE, MediusClipSettings])
     _decl("medius_mock_silent", None, [HANDLE])

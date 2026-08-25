@@ -47,7 +47,7 @@ class FrameTooLongError(MediusError):
     pass
 
 
-class FlashToolError(MediusError):
+class UpdateError(MediusError):
     pass
 
 
@@ -87,6 +87,10 @@ class ReservedIdError(MediusError):
     """An exact id equal to the blanket sentinel, which would address the whole class."""
 
 
+class RelativeDirectionError(MediusError):
+    """`Direction.WITH` / `AGAINST` on something with no bearing to measure them against."""
+
+
 _STATUS_EXC = {
     Status.ERR_IO: IoError,
     Status.ERR_NOT_FOUND: NotFoundError,
@@ -95,7 +99,7 @@ _STATUS_EXC = {
     Status.ERR_QUERY_TIMEOUT: QueryTimeoutError,
     Status.ERR_DISCONNECTED: DisconnectedError,
     Status.ERR_FRAME_TOO_LONG: FrameTooLongError,
-    Status.ERR_FLASH_TOOL: FlashToolError,
+    Status.ERR_UPDATE: UpdateError,
     Status.ERR_INVALID_ARG: InvalidArgError,
     Status.ERR_PANIC: PanicError,
     Status.ERR_CATCH_TABLE_FULL: CatchTableFullError,
@@ -105,6 +109,7 @@ _STATUS_EXC = {
     Status.ERR_WILDCARD_NOT_INPUT: WildcardNotInputError,
     Status.ERR_HALF_EDGE_INPUT_FILTER: HalfEdgeInputFilterError,
     Status.ERR_RESERVED_ID: ReservedIdError,
+    Status.ERR_RELATIVE_DIRECTION: RelativeDirectionError,
 }
 
 

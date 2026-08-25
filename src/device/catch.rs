@@ -127,6 +127,15 @@ pub(crate) fn prepare(filters: impl IntoIterator<Item = CatchFilter>) -> Result<
     if wanted.is_empty() {
         return Err(Error::EmptySubscription);
     }
+    // WITH/AGAINST are resolved against the injection in flight when a report is weighed. A
+    // subscription is addressed long before any of that, so a relative direction here has nothing to
+    // resolve against and the box would drop the entry silently.
+    if let Some(f) = wanted.iter().find(|f| f.direction().is_relative()) {
+        return Err(Error::RelativeDirection {
+            direction: f.direction(),
+            what: "catch subscription",
+        });
+    }
     if let Some(f) = wanted.iter().find(|f| !f.capture_is_meaningful()) {
         return Err(Error::CaptureNotApplicable {
             class: f.class().expect("a meaningless capture names a class"),
@@ -167,8 +176,10 @@ impl Device {
     /// # Errors
     ///
     /// [`Error::EmptySubscription`] for no filters, [`Error::CaptureNotApplicable`] for a
-    /// [`Capture`](crate::Capture) on an input class, and [`Error::CatchTableFull`] when the union
-    /// with every other subscription in this process exceeds the box's table.
+    /// [`Capture`](crate::Capture) on an input class, [`Error::RelativeDirection`] for a filter
+    /// addressed [`With`](crate::Direction::With) or [`Against`](crate::Direction::Against), and
+    /// [`Error::CatchTableFull`] when the union with every other subscription in this process
+    /// exceeds the box's table.
     pub fn catch_events(
         &self,
         filters: impl IntoIterator<Item = CatchFilter>,

@@ -5,23 +5,23 @@ use crate::*;
 #[test]
 fn input_constructors_tag_and_value() {
     assert_eq!(
-        medius_usage_button(MediusButton::Side1),
+        medius_usage_button(MediusButton::Side1 as u8),
         MediusUsage {
-            kind: MediusClass::Button,
+            kind: MediusClass::Button as u8,
             id: 3
         }
     );
     assert_eq!(
         medius_usage_key(MEDIUS_KEY_A),
         MediusUsage {
-            kind: MediusClass::Key,
+            kind: MediusClass::Key as u8,
             id: 0x04
         }
     );
     assert_eq!(
         medius_usage_media(MEDIUS_MEDIA_VOLUME_UP),
         MediusUsage {
-            kind: MediusClass::Media,
+            kind: MediusClass::Media as u8,
             id: 0xE9
         }
     );
@@ -32,7 +32,7 @@ fn motion_constructors_select_the_right_arm() {
     assert_eq!(
         medius_motion_cursor(100, -50),
         MediusMotion {
-            kind: MediusMotionKind::Cursor,
+            kind: MediusMotionKind::Cursor as u8,
             dx: 100,
             dy: -50,
             wheel: 0
@@ -41,7 +41,7 @@ fn motion_constructors_select_the_right_arm() {
     assert_eq!(
         medius_motion_wheel(3),
         MediusMotion {
-            kind: MediusMotionKind::Wheel,
+            kind: MediusMotionKind::Wheel as u8,
             dx: 0,
             dy: 0,
             wheel: 3
@@ -51,10 +51,10 @@ fn motion_constructors_select_the_right_arm() {
 
 fn locks_with(entries: &[MediusLockEntry]) -> MediusLocks {
     let blank = MediusLockEntry {
-        target: medius_lock_target_axis(MediusLockTargetKind::X),
+        target: medius_lock_target_axis(MediusLockTargetKind::X as u8),
         is_blanket: false,
-        positive: false,
-        negative: false,
+        direction: MediusDirection::Both as u8,
+        scale: MEDIUS_LOCK_SCALE_PASS,
     };
     let mut l = MediusLocks {
         n: entries.len() as u16,
@@ -69,22 +69,22 @@ fn locks_with(entries: &[MediusLockEntry]) -> MediusLocks {
 #[test]
 fn is_locked_matches_entries() {
     let locked = |l: *const MediusLocks, t: MediusLockTarget, d: MediusDirection| unsafe {
-        medius_locks_is_locked(l, t, d)
+        medius_locks_is_locked(l, t, d as u8)
     };
-    let x = medius_lock_target_axis(MediusLockTargetKind::X);
-    let side2 = medius_lock_target_usage(medius_usage_button(MediusButton::Side2));
+    let x = medius_lock_target_axis(MediusLockTargetKind::X as u8);
+    let side2 = medius_lock_target_usage(medius_usage_button(MediusButton::Side2 as u8));
     let locks = locks_with(&[
         MediusLockEntry {
             target: x,
             is_blanket: false,
-            positive: true,
-            negative: false,
+            direction: MediusDirection::Positive as u8,
+            scale: MEDIUS_LOCK_SCALE_BLOCK,
         },
         MediusLockEntry {
             target: side2,
             is_blanket: false,
-            positive: false,
-            negative: true,
+            direction: MediusDirection::Negative as u8,
+            scale: MEDIUS_LOCK_SCALE_BLOCK,
         },
     ]);
     assert!(locked(&locks, x, MediusDirection::Positive));
@@ -95,15 +95,59 @@ fn is_locked_matches_entries() {
     assert!(!locked(std::ptr::null(), x, MediusDirection::Positive));
 
     let blanket = locks_with(&[MediusLockEntry {
-        target: medius_lock_target_usage(medius_usage_button(MediusButton::Left)),
+        target: medius_lock_target_usage(medius_usage_button(MediusButton::Left as u8)),
         is_blanket: true,
-        positive: true,
-        negative: true,
+        direction: MediusDirection::Both as u8,
+        scale: MEDIUS_LOCK_SCALE_BLOCK,
     }]);
     let key_a = medius_lock_target_usage(medius_usage_key(MEDIUS_KEY_A));
     assert!(locked(&blanket, side2, MediusDirection::Positive));
     assert!(!locked(&blanket, key_a, MediusDirection::Positive));
     assert!(!locked(&blanket, x, MediusDirection::Positive));
+}
+
+#[test]
+fn scale_of_reports_the_percentage_and_is_locked_does_not() {
+    let scale_of = |l: *const MediusLocks, t: MediusLockTarget, d: MediusDirection| unsafe {
+        medius_locks_scale_of(l, t, d as u8)
+    };
+    let locked = |l: *const MediusLocks, t: MediusLockTarget, d: MediusDirection| unsafe {
+        medius_locks_is_locked(l, t, d as u8)
+    };
+    let x = medius_lock_target_axis(MediusLockTargetKind::X as u8);
+    let y = medius_lock_target_axis(MediusLockTargetKind::Y as u8);
+    let locks = locks_with(&[
+        MediusLockEntry {
+            target: x,
+            is_blanket: false,
+            direction: MediusDirection::Against as u8,
+            scale: 40,
+        },
+        MediusLockEntry {
+            target: x,
+            is_blanket: false,
+            direction: MediusDirection::With as u8,
+            scale: 130,
+        },
+    ]);
+    assert_eq!(scale_of(&locks, x, MediusDirection::Against), 40);
+    assert_eq!(scale_of(&locks, x, MediusDirection::With), 130);
+    // A weighed direction is not a locked one, and an uncovered target passes untouched.
+    assert!(!locked(&locks, x, MediusDirection::Against));
+    assert_eq!(
+        scale_of(&locks, x, MediusDirection::Positive),
+        MEDIUS_LOCK_SCALE_PASS
+    );
+    assert_eq!(
+        scale_of(&locks, y, MediusDirection::Against),
+        MEDIUS_LOCK_SCALE_PASS
+    );
+    // Both takes the lowest of everything covering the target.
+    assert_eq!(scale_of(&locks, x, MediusDirection::Both), 40);
+    assert_eq!(
+        scale_of(std::ptr::null(), x, MediusDirection::Both),
+        MEDIUS_LOCK_SCALE_PASS
+    );
 }
 
 #[test]
@@ -129,11 +173,11 @@ fn rate_native_hz_divides_the_period() {
 
 fn usage_event(usages: &[MediusUsage]) -> MediusUsageEvent {
     let mut e = MediusUsageEvent {
-        class: usages.first().map_or(MediusClass::Button, |u| u.kind),
-        direction: MediusDirection::Positive,
+        class: usages.first().map_or(MediusClass::Button as u8, |u| u.kind),
+        direction: MediusDirection::Positive as u8,
         n: usages.len() as u16,
         usages: [MediusUsage {
-            kind: MediusClass::Button,
+            kind: MediusClass::Button as u8,
             id: 0,
         }; MEDIUS_MAX_USAGES],
     };
@@ -147,13 +191,15 @@ fn usage_event(usages: &[MediusUsage]) -> MediusUsageEvent {
 fn usage_event_is_held_matches_any_class() {
     let a = medius_usage_key(MEDIUS_KEY_A);
     let shift = medius_usage_key(MEDIUS_KEY_LEFT_SHIFT);
-    let side1 = medius_usage_button(MediusButton::Side1);
+    let side1 = medius_usage_button(MediusButton::Side1 as u8);
     let e = usage_event(&[a, shift, side1]);
     assert!(unsafe { medius_usage_event_is_held(&e, a) });
     assert!(unsafe { medius_usage_event_is_held(&e, shift) });
     assert!(unsafe { medius_usage_event_is_held(&e, side1) });
     assert!(!unsafe { medius_usage_event_is_held(&e, medius_usage_key(MEDIUS_KEY_B)) });
-    assert!(!unsafe { medius_usage_event_is_held(&e, medius_usage_button(MediusButton::Left)) });
+    assert!(!unsafe {
+        medius_usage_event_is_held(&e, medius_usage_button(MediusButton::Left as u8))
+    });
     assert!(!unsafe { medius_usage_event_is_held(std::ptr::null(), a) });
 }
 
@@ -211,7 +257,7 @@ fn usage_snapshot_count_caps_at_capacity_without_wrapping() {
     let ev = MediusCatchEvent::from(medius::CatchEvent::Usages(snap));
     assert_eq!(ev.kind, MediusCatchEventKind::Usages);
     assert_eq!(unsafe { ev.data.usages.n } as usize, MEDIUS_MAX_USAGES);
-    assert_eq!(unsafe { ev.data.usages.class }, MediusClass::Key);
+    assert_eq!(unsafe { ev.data.usages.class }, MediusClass::Key as u8);
 }
 
 #[test]
@@ -232,7 +278,7 @@ fn an_empty_snapshot_crosses_the_c_boundary_still_naming_its_class() {
         };
         let ev = MediusCatchEvent::from(medius::CatchEvent::Usages(snap));
         assert_eq!(unsafe { ev.data.usages.n }, 0);
-        assert_eq!(unsafe { ev.data.usages.class }, want);
+        assert_eq!(unsafe { ev.data.usages.class }, want as u8);
     }
 }
 
@@ -252,7 +298,7 @@ fn traffic_payload_caps_at_capacity_without_wrapping() {
     let t = unsafe { ev.data.traffic };
     assert_eq!(t.len as usize, MEDIUS_MAX_TRAFFIC_BYTES);
     assert_eq!(t.true_len, 1024);
-    assert_eq!(t.direction, MediusDirection::Negative);
+    assert_eq!(t.direction, MediusDirection::Negative as u8);
 }
 
 #[test]
@@ -306,11 +352,11 @@ fn the_input_filter_constructors_mirror_the_rust_ones() {
     // Watching an input is written like locking it, on this side too.
     let key = medius_catch_filter_watch(medius_usage_key(0x04));
     assert_eq!((key.class, key.id), (MEDIUS_CATCH_CLASS_KEY, 0x04));
-    let btn = medius_catch_filter_watch(medius_usage_button(MediusButton::Left));
+    let btn = medius_catch_filter_watch(medius_usage_button(MediusButton::Left as u8));
     assert_eq!((btn.class, btn.id), (MEDIUS_CATCH_CLASS_BTN, 0));
-    let wheel = medius_catch_filter_watch_axis(MediusAxis::Wheel);
+    let wheel = medius_catch_filter_watch_axis(MediusAxis::Wheel as u8);
     assert_eq!((wheel.class, wheel.id), (MEDIUS_CATCH_CLASS_AXIS, 2));
-    let keys = medius_catch_filter_watch_class(MediusClass::Key);
+    let keys = medius_catch_filter_watch_class(MediusClass::Key as u8);
     assert_eq!(
         (keys.class, keys.id),
         (MEDIUS_CATCH_CLASS_KEY, MEDIUS_CATCH_ID_ANY)
@@ -349,19 +395,19 @@ fn the_filter_setters_narrow_without_moving_the_address() {
 
     assert_eq!(
         medius_catch_filter_on_press(f).direction,
-        MediusDirection::Positive
+        MediusDirection::Positive as u8
     );
     assert_eq!(
         medius_catch_filter_on_release(f).direction,
-        MediusDirection::Negative
+        MediusDirection::Negative as u8
     );
     assert_eq!(
         medius_catch_filter_inbound(f).direction,
-        MediusDirection::Positive
+        MediusDirection::Positive as u8
     );
     assert_eq!(
         medius_catch_filter_outbound(f).direction,
-        MediusDirection::Negative
+        MediusDirection::Negative as u8
     );
     // Direction IS part of the address; capture is not.
     assert!(!medius_catch_filter_same_address(
@@ -395,7 +441,7 @@ fn the_class_predicates_split_the_address_space_the_same_way() {
 fn control_event(bytes: &[u8], flags: u8) -> MediusTrafficEvent {
     let mut e: MediusTrafficEvent = unsafe { std::mem::zeroed() };
     e.class = MEDIUS_CATCH_CLASS_CONTROL;
-    e.direction = MediusDirection::Positive;
+    e.direction = MediusDirection::Positive as u8;
     e.flags = flags;
     e.len = bytes.len() as u16;
     e.true_len = bytes.len() as u16;

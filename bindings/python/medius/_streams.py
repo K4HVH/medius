@@ -15,6 +15,7 @@ from ._types import (
     LogLine,
     Stamped,
     Usage,
+    _enum,
     decode_catch_event,
     decode_log_line,
     input_event_from_c,
@@ -127,7 +128,11 @@ class InputStream:
         cap = 16
         while True:
             buf = (_native.MediusUsage * cap)()
-            n = int(_native.lib.medius_input_stream_held(self._handle, int(input_class), buf, cap))
+            n = int(
+                _native.lib.medius_input_stream_held(
+                    self._handle, int(_enum(input_class, Class, "input_class")), buf, cap
+                )
+            )
             if n <= cap:
                 return [Usage(_native.MediusUsage(kind=u.kind, id=u.id)) for u in buf[:n]]
             cap = n
@@ -200,7 +205,9 @@ class Timeline:
         out = _native.MediusStamped()
         if isinstance(event, InputEvent):
             c = _native.MediusInputEvent(
-                kind=int(event.kind), ts_us=int(event.ts_us), clock=int(event.clock)
+                kind=int(event.kind),
+                ts_us=int(event.ts_us),
+                clock=int(_enum(event.clock, ClockDomain, "clock")),
             )
             if not _native.lib.medius_timeline_observe_input(
                 self._handle, ctypes.byref(c), int(now_ns), ctypes.byref(out)
@@ -210,7 +217,9 @@ class Timeline:
         # Only the stamp and the domain are read; rebuilding those two is cheaper and safer than
         # carrying the whole union back across the boundary.
         c = _native.MediusCatchEvent(
-            kind=int(event.kind), ts_us=int(event.ts_us), clock=int(event.clock)
+            kind=int(event.kind),
+            ts_us=int(event.ts_us),
+            clock=int(_enum(event.clock, ClockDomain, "clock")),
         )
         if not _native.lib.medius_timeline_observe(
             self._handle, ctypes.byref(c), int(now_ns), ctypes.byref(out)
@@ -220,10 +229,11 @@ class Timeline:
 
     def reset(self, domain: ClockDomain) -> None:
         """Forget one domain's rollover count and measured floor, for a chip that rebooted."""
-        _native.lib.medius_timeline_reset(self._handle, int(domain))
+        _native.lib.medius_timeline_reset(self._handle, int(_enum(domain, ClockDomain, "domain")))
 
     def samples(self, domain: ClockDomain) -> int:
         """Events observed for a domain; the floor is a minimum over these."""
+        domain = _enum(domain, ClockDomain, "domain")
         return int(_native.lib.medius_timeline_samples(self._handle, int(domain)))
 
     def close(self):

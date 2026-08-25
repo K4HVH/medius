@@ -1,3 +1,4 @@
+mod bearing;
 mod button;
 mod caps;
 pub(crate) mod catch;
@@ -23,9 +24,11 @@ mod port;
 mod rate;
 mod reboot;
 mod stats;
+mod update;
 mod usage;
 mod version;
 
+pub use bearing::{Bearing, BearingMode};
 pub use button::{Action, Button};
 pub use caps::Caps;
 pub use catch::{
@@ -55,5 +58,9 @@ pub use port::PortInfo;
 pub use rate::Rate;
 pub use reboot::RebootTarget;
 pub use stats::Stats;
+pub use update::{
+    ChipFirmware, FirmwareInfo, ImageState, UpdateProgress, UpdateStatus, UpdateTarget,
+};
+pub(crate) use update::{update_doing, update_reason};
 pub use usage::{Axis, Class, Usage};
 pub use version::Version;

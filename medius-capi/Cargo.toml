@@ -1,6 +1,6 @@
 [package]
 name = "medius-capi"
-version = "3.1.0"
+version = "3.2.0"
 edition = "2024"
 rust-version = "1.85"
 description = "C ABI for the medius host control library"
@@ -13,7 +13,6 @@ crate-type = ["lib", "cdylib", "staticlib"]
 [features]
 default = []
 mock = ["medius/mock"]
-flash = ["medius/flash"]
 
 [dependencies]
 medius = { path = ".." }

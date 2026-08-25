@@ -11,8 +11,6 @@ mod helpers;
 mod keys;
 mod stream;
 
-#[cfg(feature = "flash")]
-mod flash;
 #[cfg(feature = "mock")]
 mod mock;
 
@@ -27,7 +25,5 @@ pub use helpers::*;
 pub use keys::*;
 pub use stream::*;
 
-#[cfg(feature = "flash")]
-pub use flash::*;
 #[cfg(feature = "mock")]
 pub use mock::*;

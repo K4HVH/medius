@@ -3,9 +3,9 @@ use std::time::Duration;
 use crate::error::Result;
 use crate::protocol::FrameType;
 use crate::protocol::command::{
-    emit_pace_payload, imperfect_payload, move_ride_payload, name_payload,
+    bearing_payload, emit_pace_payload, imperfect_payload, move_ride_payload, name_payload,
 };
-use crate::types::EmitPace;
+use crate::types::{BearingMode, EmitPace};
 
 use super::Device;
 
@@ -22,6 +22,9 @@ pub(crate) fn ride_window_ms(window: Option<Duration>) -> u16 {
         Some(d) => (d.as_millis().min(u16::MAX as u128) as u16).max(1),
     }
 }
+
+/// The bearing window the box holds out of the box, before any host sets one.
+pub const BEARING_WINDOW_DEFAULT: Duration = Duration::from_millis(20);
 
 /// Encode an [`EmitPace`] to the wire `(mode, rate_hz)`: `Fixed(hz)` carries its rate, the other modes send 0.
 pub(crate) fn emit_pace_wire(pace: EmitPace) -> (u8, u16) {
@@ -49,11 +52,49 @@ impl Device {
         )
     }
 
-    /// `OPTION(EMIT)`: pick what paces injected motion ([`EmitPace::Learned`], [`EmitPace::Interval`], or [`EmitPace::Fixed`] Hz capped at [`EMIT_MAX_HZ`]); persisted in NVS.
-    pub fn set_emit_pace(&self, pace: EmitPace) -> Result<()> {
+    /// `OPTION(BEARING)`: how long the direction of the last injected delta stays the thing
+    /// [`Direction::With`](crate::Direction) and [`Direction::Against`](crate::Direction) are measured
+    /// against, and whether it is read per axis or as one vector; persisted in NVS.
+    ///
+    /// `None` turns the bearing off, which leaves the relative directions inert whatever their scale;
+    /// the absolute ones are unaffected. The box boots at [`BEARING_WINDOW_DEFAULT`] with
+    /// [`BearingMode::PerAxis`], so nothing engages until a scale is set.
+    ///
+    /// The window rounds to whole milliseconds; a non-zero `Some` is at least 1 ms and saturates at
+    /// 65535 ms.
+    ///
+    /// ```no_run
+    /// # use medius::{Axis, BearingMode, Device, Direction, Result};
+    /// # use std::time::Duration;
+    /// # fn main() -> Result<()> {
+    /// let device = Device::find()?;
+    /// device.set_bearing(Some(Duration::from_millis(20)), BearingMode::PerAxis)?;
+    /// device.scale(Axis::X, Direction::Against, 40)?;
+    /// # Ok(()) }
+    /// ```
+    pub fn set_bearing(&self, window: Option<Duration>, mode: BearingMode) -> Result<()> {
+        self.link.send(
+            FrameType::Option,
+            &bearing_payload(ride_window_ms(window), mode.as_u8()),
+        )
+    }
+
+    /// `OPTION(EMIT)`: pick what paces injected motion ([`EmitPace::Learned`], [`EmitPace::Interval`], or [`EmitPace::Fixed`] Hz capped at [`EMIT_MAX_HZ`]), and what rate the clone runs at; persisted in NVS.
+    ///
+    /// `force_hz` writes a chosen `bInterval` onto every HID interrupt-IN endpoint of the served
+    /// descriptor and polls the real device at the same interval, snapping to `1000/n` Hz; `None` leaves
+    /// the device's own. It applies only with [`allow_imperfect_clones`](Self::allow_imperfect_clones)
+    /// on, since the descriptor stops matching the real device, and changing the resolved interval
+    /// re-clones the box, which drops the control port briefly.
+    ///
+    /// Both fields ride one command, so every call writes both. `Some(0)` is the wire's "off" and reads
+    /// back as `None`.
+    pub fn set_emit_pace(&self, pace: EmitPace, force_hz: Option<u16>) -> Result<()> {
         let (mode, hz) = emit_pace_wire(pace);
-        self.link
-            .send(FrameType::Option, &emit_pace_payload(mode, hz))
+        self.link.send(
+            FrameType::Option,
+            &emit_pace_payload(mode, hz, force_hz.unwrap_or(0)),
+        )
     }
 
     /// `OPTION(NAME)`: set the box's persistent name (leading printable-ASCII run, capped at [`NAME_MAX`] bytes); read it back off [`query_version`](Device::query_version). Persisted in NVS.

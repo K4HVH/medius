@@ -5,6 +5,24 @@ from __future__ import annotations
 from enum import IntEnum
 
 
+class ImageState(IntEnum):
+    """What the bootloader thinks of the image a chip is running (§4.16)."""
+
+    NEW = 0
+    PENDING_VERIFY = 1
+    VALID = 2
+    INVALID = 3
+    ABORTED = 4
+    UNKNOWN = 0xFF
+
+
+class UpdateTarget(IntEnum):
+    """Which chip a firmware update addresses (§3.13)."""
+
+    DEVICE = 0
+    HOST = 1
+
+
 class Status(IntEnum):
     OK = 0
     ERR_IO = 1
@@ -14,7 +32,7 @@ class Status(IntEnum):
     ERR_QUERY_TIMEOUT = 5
     ERR_DISCONNECTED = 6
     ERR_FRAME_TOO_LONG = 7
-    ERR_FLASH_TOOL = 8
+    ERR_UPDATE = 8
     ERR_INVALID_ARG = 9
     ERR_PANIC = 10
     ERR_UNKNOWN = 11
@@ -25,6 +43,7 @@ class Status(IntEnum):
     ERR_WILDCARD_NOT_INPUT = 16
     ERR_HALF_EDGE_INPUT_FILTER = 17
     ERR_RESERVED_ID = 18
+    ERR_RELATIVE_DIRECTION = 19
 
 
 class DeviceKind(IntEnum):
@@ -123,11 +142,22 @@ class Direction(IntEnum):
 
     The members are named for the axis reading; `PRESS`/`RELEASE` and `IN`/`OUT` are the same two
     values under names that read at the call site. Which applies is decided by the class.
+
+    `WITH` and `AGAINST` name a sign relative to the bearing, the direction the box is currently
+    injecting, so the sign they cover follows the injection instead of the axis. Axes only, and inert until a bearing is
+    live (see `Device.set_bearing`).
     """
 
     BOTH = 0
     POSITIVE = 1
     NEGATIVE = 2
+    WITH = 3
+    AGAINST = 4
+
+    @property
+    def is_relative(self) -> bool:
+        """Whether this direction is measured against the bearing rather than a fixed sign."""
+        return self in (Direction.WITH, Direction.AGAINST)
 
 
 #: A momentary usage going down (`Direction.POSITIVE`).
@@ -138,6 +168,28 @@ Direction.RELEASE = Direction.NEGATIVE
 Direction.IN = Direction.POSITIVE
 #: Traffic from the PC to the device (`Direction.NEGATIVE`).
 Direction.OUT = Direction.NEGATIVE
+
+
+class BearingMode(IntEnum):
+    """How the box decides whether physical motion runs with or against its own injection."""
+
+    #: Each axis compares its own sign against its own bearing, independently.
+    PER_AXIS = 0
+    #: The physical delta is projected onto the injected XY vector. One
+    #: relative scale governs both axes, the lower of X's and Y's, and that is what reads back.
+    #: Each axis's absolute scale then applies to what the projection left, not to the sign the report
+    #: carried: it governs what reaches the PC.
+    VECTOR = 1
+
+
+#: LOCK scale: keep none of the physical value.
+LOCK_SCALE_BLOCK = 0
+#: LOCK scale: keep all of it, the unweighed default.
+LOCK_SCALE_PASS = 100
+#: LOCK scale ceiling: 2.55x.
+LOCK_SCALE_MAX = 255
+#: The bearing window the box holds before any host sets one, in ms.
+BEARING_WINDOW_DEFAULT_MS = 20
 
 
 class Axis(IntEnum):

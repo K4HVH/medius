@@ -1,7 +1,7 @@
 //! `LOCK` control vocabulary (§3.8): what a lock addresses, its edge, blanket groups, and decoded locks.
 
 use crate::protocol::opcode::{
-    LOCK_AXIS_WHEEL, LOCK_AXIS_X, LOCK_AXIS_Y, LOCK_CLS_AXIS, LOCK_DIRBIT_NEG, LOCK_DIRBIT_POS,
+    LOCK_AXIS_WHEEL, LOCK_AXIS_X, LOCK_AXIS_Y, LOCK_CLS_AXIS, LOCK_SCALE_BLOCK, LOCK_SCALE_PASS,
 };
 use crate::types::{Axis, Class, Direction, Usage};
 
@@ -86,15 +86,32 @@ pub enum LockScope {
     Blanket(Class),
 }
 
-/// One entry in a decoded `RESP(LOCKS)` (§4.8): what is locked and which edges are locked.
+/// One entry in a decoded `RESP(LOCKS)` (§4.8): what is weighed, in which direction, and by how much.
+///
+/// Entries mirror the `LOCK` frame field for field, so what comes back is what you would send to
+/// reproduce it. Only directions off [`LOCK_SCALE_PASS`] are reported; a target absent from the reply
+/// is passing untouched.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct LockEntry {
-    /// What this entry locks.
+    /// What this entry weighs.
     pub scope: LockScope,
-    /// The positive/press edge is locked.
-    pub positive: bool,
-    /// The negative/release edge is locked.
-    pub negative: bool,
+    /// Which direction of it.
+    pub direction: Direction,
+    /// Percent of the physical value kept: 0 blocks, 100 passes, above 100 amplifies. A momentary
+    /// usage carries one bit, so the box stores the block or pass it renders and one never reports a
+    /// value in between.
+    ///
+    /// This is the figure the box applies, not the byte it was sent. In
+    /// [`BearingMode::Vector`](crate::BearingMode) one relative scale governs the whole aim, the lower
+    /// of X's and Y's, and both relative entries carry that number.
+    pub scale: u8,
+}
+
+impl LockEntry {
+    /// Whether this entry blocks its direction outright, rather than merely weighing it.
+    pub fn is_block(&self) -> bool {
+        self.scale == LOCK_SCALE_BLOCK
+    }
 }
 
 /// Decoded `RESP(LOCKS)` (§4.8): every active lock across every class.
@@ -104,22 +121,24 @@ pub struct Locks {
 }
 
 impl Locks {
-    /// Decode a `RESP(LOCKS)` payload: `[what][n]` then `n × [class][id u16 LE][dirbits]`; unknown entries skip.
+    /// Decode a `RESP(LOCKS)` payload: `[what][n]` then `n × [class][id u16 LE][dir][scale]`; unknown entries skip.
     pub(crate) fn from_payload(p: &[u8]) -> Option<Locks> {
         let n = *p.get(1)? as usize;
         let mut entries = Vec::with_capacity(n);
         for i in 0..n {
-            let off = 2 + 4 * i;
+            let off = 2 + 5 * i;
             let cls = *p.get(off)?;
             let id = u16::from_le_bytes([*p.get(off + 1)?, *p.get(off + 2)?]);
-            let db = *p.get(off + 3)?;
-            let Some(scope) = decode_scope(cls, id) else {
+            let dir = *p.get(off + 3)?;
+            let scale = *p.get(off + 4)?;
+            let (Some(scope), Some(direction)) = (decode_scope(cls, id), Direction::from_u8(dir))
+            else {
                 continue;
             };
             entries.push(LockEntry {
                 scope,
-                positive: db & LOCK_DIRBIT_POS != 0,
-                negative: db & LOCK_DIRBIT_NEG != 0,
+                direction,
+                scale,
             });
         }
         Some(Locks { entries })
@@ -135,23 +154,44 @@ impl Locks {
         &self.entries
     }
 
-    /// Whether the given target is locked on the given edge, by a specific entry or a covering blanket.
+    /// Whether the given target is blocked outright on the given direction, by a specific entry or a
+    /// covering blanket. A direction merely weighed (any scale between block and pass) is not locked.
+    ///
+    /// [`Direction::Both`] asks about the two absolute signs, the pair it has always named. A relative
+    /// direction is asked for by name, because a target can be blocked against the bearing while both
+    /// of its fixed signs pass.
     pub fn is_locked(&self, target: impl Into<LockTarget>, dir: Direction) -> bool {
         let target = target.into();
-        self.entries.iter().any(|e| {
-            let covers = match e.scope {
-                LockScope::Target(t) => t == target,
-                LockScope::Blanket(class) => {
-                    matches!(target, LockTarget::Usage(u) if u.class == class)
-                }
-            };
-            covers
-                && match dir {
-                    Direction::Both => e.positive && e.negative,
-                    Direction::Positive => e.positive,
-                    Direction::Negative => e.negative,
-                }
-        })
+        match dir {
+            Direction::Both => {
+                self.scale_of(target, Direction::Positive) == LOCK_SCALE_BLOCK
+                    && self.scale_of(target, Direction::Negative) == LOCK_SCALE_BLOCK
+            }
+            d => self.scale_of(target, d) == LOCK_SCALE_BLOCK,
+        }
+    }
+
+    /// The scale in effect on one target and direction: percent of the physical value kept, so
+    /// [`LOCK_SCALE_PASS`] when nothing weighs it.
+    ///
+    /// [`Direction::Both`] reports the lowest scale across any direction. That is not what a delta
+    /// meets: a delta picks up one fixed-direction scale and one bearing-relative one, and the box
+    /// multiplies them, so `Negative` 50 with `Against` 40 lands at 20% while this returns 40. Ask by
+    /// direction and multiply if you need the figure a delta actually sees.
+    ///
+    /// A covering blanket counts, and where several entries cover the same direction the lowest wins.
+    pub fn scale_of(&self, target: impl Into<LockTarget>, dir: Direction) -> u8 {
+        let target = target.into();
+        let covers = |e: &LockEntry| match e.scope {
+            LockScope::Target(t) => t == target,
+            LockScope::Blanket(class) => matches!(target, LockTarget::Usage(u) if u.class == class),
+        };
+        self.entries
+            .iter()
+            .filter(|e| covers(e) && (dir == Direction::Both || e.direction.admits(dir)))
+            .map(|e| e.scale)
+            .min()
+            .unwrap_or(LOCK_SCALE_PASS)
     }
 }
 
