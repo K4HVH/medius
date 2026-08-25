@@ -21,7 +21,10 @@ fn option_payload_bytes() {
     assert_eq!(emit_pace_payload(1, 0, 0), [2, 1, 0, 0, 0, 0]);
     assert_eq!(emit_pace_payload(2, 1000, 0), [2, 2, 0xE8, 0x03, 0, 0]);
     assert_eq!(emit_pace_payload(0, 0, 125), [2, 0, 0, 0, 0x7D, 0]);
-    assert_eq!(emit_pace_payload(2, 500, 1000), [2, 2, 0xF4, 0x01, 0xE8, 0x03]);
+    assert_eq!(
+        emit_pace_payload(2, 500, 1000),
+        [2, 2, 0xF4, 0x01, 0xE8, 0x03]
+    );
     assert_eq!(name_payload("AB"), vec![3, b'A', b'B']);
     assert_eq!(name_payload(""), vec![3]);
 }
@@ -78,7 +81,8 @@ fn decode_emit_pace_through_parse_resp() {
         }
     );
     // Unforced still reports what the clone advertises, so a host can see the device's own rate.
-    let Some(Resp::EmitPace(native)) = parse_resp(&[9, 2, 0, 0, 0, 0, 0, 0, 0, 0xE8, 0x03, 0]) else {
+    let Some(Resp::EmitPace(native)) = parse_resp(&[9, 2, 0, 0, 0, 0, 0, 0, 0, 0xE8, 0x03, 0])
+    else {
         panic!("expected EmitPace");
     };
     assert_eq!(
@@ -146,25 +150,27 @@ fn mock_emit_pace_matches_firmware_snap() {
 fn mock_rate_force_matches_firmware_snap() {
     use crate::{Device, MockBox};
     // A clone that declares 125 Hz, with the opt-in on so a force can actually apply.
-    let mock = MockBox::new().with_advertised_hz(125).with_rate_force(Some(300));
+    let mock = MockBox::new()
+        .with_advertised_hz(125)
+        .with_rate_force(Some(300));
     let device = Device::with_mock(mock.clone());
     device.allow_imperfect_clones(true).unwrap();
-    // 300 Hz is not a divisor of 1000: the firmware resolves bInterval 3 and advertises 333.
+    // 300 Hz resolves to bInterval 2, the interval a host would actually keep for 1000/300.
     let s = device.query_emit_pace().unwrap();
     assert_eq!(s.force_hz, Some(300));
-    assert_eq!(s.advertised_hz, 333);
+    assert_eq!(s.advertised_hz, 500);
     assert!(s.force_active);
     // Above the frame-clock ceiling resolves to bInterval 1.
     mock.set_rate_force(Some(4000));
     let s = device.query_emit_pace().unwrap();
     assert_eq!(s.force_hz, Some(4000));
     assert_eq!(s.advertised_hz, 1000);
-    // 400 pins the rounding: nearest gives bInterval 3 (333 Hz), truncation would give 2 (500 Hz).
-    mock.set_rate_force(Some(400));
-    assert_eq!(device.query_emit_pace().unwrap().advertised_hz, 333);
-    // bInterval is one byte, so the slowest a full-speed clone can advertise is 1000/255.
+    // 125 is exactly a power-of-two interval, so it is the one rate that comes back unchanged.
+    mock.set_rate_force(Some(125));
+    assert_eq!(device.query_emit_pace().unwrap().advertised_hz, 125);
+    // The slowest a full-speed clone can advertise: bInterval 128, the largest power of two in a byte.
     mock.set_rate_force(Some(1));
-    assert_eq!(device.query_emit_pace().unwrap().advertised_hz, 3);
+    assert_eq!(device.query_emit_pace().unwrap().advertised_hz, 7);
     // Some(0) is what the wire calls off, and dividing by it would panic.
     mock.set_rate_force(Some(0));
     let s = device.query_emit_pace().unwrap();

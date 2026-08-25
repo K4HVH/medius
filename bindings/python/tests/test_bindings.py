@@ -612,14 +612,14 @@ def test_rate_force_roundtrip():
     with MockBox() as mock:
         mock.set_advertised_hz(125)
         mock.set_imperfect_status(ImperfectStatus(allowed=True, over_capacity=False, clone_imperfect=False))
-        # 400 is not a divisor of 1000: the box resolves bInterval 3 and advertises 333.
+        # 400 resolves to bInterval 2, the interval a host would actually keep.
         mock.set_emit_pace(EmitPace.fixed(500), 400)
         with Device.with_mock(mock) as d:
             status = d.query_emit_pace()
         assert status.mode == EmitPace.fixed(500)
         assert status.resolved_hz == 500
         assert status.force_hz == 400
-        assert status.advertised_hz == 333
+        assert status.advertised_hz == 500
         assert status.force_active is True
         mock.set_emit_pace(EmitPace.fixed(500), None)
         with Device.with_mock(mock) as d:

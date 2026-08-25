@@ -475,7 +475,8 @@ mod linux {
                 check(
                     "rate force",
                     true,
-                    "skipped: imperfect clones are allowed, so a force would re-clone the box".into(),
+                    "skipped: imperfect clones are allowed, so a force would re-clone the box"
+                        .into(),
                 );
             } else {
                 let native = dev.query_emit_pace().map(|s| s.advertised_hz).unwrap_or(0);
@@ -485,7 +486,9 @@ mod linux {
                 let read = dev.query_emit_pace();
                 let matched = read
                     .as_ref()
-                    .map(|s| s.force_hz == Some(asked) && !s.force_active && s.advertised_hz == native)
+                    .map(|s| {
+                        s.force_hz == Some(asked) && !s.force_active && s.advertised_hz == native
+                    })
                     .unwrap_or(false);
                 let off_ok = dev.set_emit_pace(EmitPace::Learned, None).is_ok();
                 std::thread::sleep(Duration::from_millis(60));
@@ -497,7 +500,9 @@ mod linux {
                 check(
                     "rate force",
                     set_ok && matched && off_ok && off_matched,
-                    format!("clone advertises {native} Hz, asked {asked} -> {read:?}, off -> {read_off:?}"),
+                    format!(
+                        "clone advertises {native} Hz, asked {asked} -> {read:?}, off -> {read_off:?}"
+                    ),
                 );
             }
         }
