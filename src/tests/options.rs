@@ -17,9 +17,11 @@ fn option_payload_bytes() {
     assert_eq!(move_ride_payload(5), [1, 5, 0]);
     assert_eq!(move_ride_payload(0), [1, 0, 0]);
     assert_eq!(move_ride_payload(1000), [1, 0xE8, 0x03]);
-    assert_eq!(emit_pace_payload(0, 0), [2, 0, 0, 0]);
-    assert_eq!(emit_pace_payload(1, 0), [2, 1, 0, 0]);
-    assert_eq!(emit_pace_payload(2, 1000), [2, 2, 0xE8, 0x03]);
+    assert_eq!(emit_pace_payload(0, 0, 0), [2, 0, 0, 0, 0, 0]);
+    assert_eq!(emit_pace_payload(1, 0, 0), [2, 1, 0, 0, 0, 0]);
+    assert_eq!(emit_pace_payload(2, 1000, 0), [2, 2, 0xE8, 0x03, 0, 0]);
+    assert_eq!(emit_pace_payload(0, 0, 125), [2, 0, 0, 0, 0x7D, 0]);
+    assert_eq!(emit_pace_payload(2, 500, 1000), [2, 2, 0xF4, 0x01, 0xE8, 0x03]);
     assert_eq!(name_payload("AB"), vec![3, b'A', b'B']);
     assert_eq!(name_payload(""), vec![3]);
 }
@@ -59,22 +61,42 @@ fn decode_move_ride_through_parse_resp() {
 
 #[test]
 fn decode_emit_pace_through_parse_resp() {
-    let Some(Resp::EmitPace(s)) = parse_resp(&[9, 2, 2, 0xF4, 0x01, 0xF4, 0x01]) else {
+    // Five distinct numbers, so swapping any two fields fails.
+    let Some(Resp::EmitPace(s)) =
+        parse_resp(&[9, 2, 2, 0xE8, 0x03, 0xFA, 0x00, 0x7D, 0x00, 0x64, 0x00, 1])
+    else {
         panic!("expected EmitPace");
     };
     assert_eq!(
         s,
         EmitPaceStatus {
-            mode: EmitPace::Fixed(500),
-            resolved_hz: 500
+            mode: EmitPace::Fixed(1000),
+            resolved_hz: 250,
+            force_hz: Some(125),
+            advertised_hz: 100,
+            force_active: true,
         }
     );
-    let Some(Resp::EmitPace(learned)) = parse_resp(&[9, 2, 0, 0, 0, 0, 0]) else {
+    // Unforced still reports what the clone advertises, so one query shows the before and the after.
+    let Some(Resp::EmitPace(native)) = parse_resp(&[9, 2, 0, 0, 0, 0, 0, 0, 0, 0xE8, 0x03, 0]) else {
         panic!("expected EmitPace");
     };
-    assert_eq!(learned, EmitPaceStatus::default());
-    assert!(parse_resp(&[9, 2, 0, 0, 0, 0]).is_none());
-    assert!(parse_resp(&[9, 2, 3, 0, 0, 0, 0]).is_none());
+    assert_eq!(
+        native,
+        EmitPaceStatus {
+            mode: EmitPace::Learned,
+            resolved_hz: 0,
+            force_hz: None,
+            advertised_hz: 1000,
+            force_active: false,
+        }
+    );
+    let Some(Resp::EmitPace(nothing)) = parse_resp(&[9, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]) else {
+        panic!("expected EmitPace");
+    };
+    assert_eq!(nothing, EmitPaceStatus::default());
+    assert!(parse_resp(&[9, 2, 2, 0xE8, 0x03, 0xFA, 0x00, 0x7D, 0x00, 0x64, 0x00]).is_none());
+    assert!(parse_resp(&[9, 2, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0]).is_none());
 }
 
 #[cfg(feature = "mock")]
@@ -89,7 +111,10 @@ fn mock_emit_pace_matches_firmware_snap() {
         device.query_emit_pace().unwrap(),
         EmitPaceStatus {
             mode: EmitPace::Fixed(400),
-            resolved_hz: 333
+            resolved_hz: 333,
+            force_hz: None,
+            advertised_hz: 1000,
+            force_active: false,
         }
     );
     mock.set_emit_pace(EmitPace::Fixed(2000));
@@ -97,7 +122,10 @@ fn mock_emit_pace_matches_firmware_snap() {
         device.query_emit_pace().unwrap(),
         EmitPaceStatus {
             mode: EmitPace::Fixed(1000),
-            resolved_hz: 1000
+            resolved_hz: 1000,
+            force_hz: None,
+            advertised_hz: 1000,
+            force_active: false,
         }
     );
     mock.set_emit_pace(EmitPace::Learned);
@@ -105,9 +133,41 @@ fn mock_emit_pace_matches_firmware_snap() {
         device.query_emit_pace().unwrap(),
         EmitPaceStatus {
             mode: EmitPace::Learned,
-            resolved_hz: 0
+            resolved_hz: 0,
+            force_hz: None,
+            advertised_hz: 1000,
+            force_active: false,
         }
     );
+}
+
+#[cfg(feature = "mock")]
+#[test]
+fn mock_rate_force_matches_firmware_snap() {
+    use crate::{Device, MockBox};
+    // 300 Hz is not a divisor of 1000: the firmware resolves bInterval 3 and advertises 333.
+    let mock = MockBox::new().with_rate_force(Some(300));
+    let device = Device::with_mock(mock.clone());
+    let s = device.query_emit_pace().unwrap();
+    assert_eq!(s.force_hz, Some(300));
+    assert_eq!(s.advertised_hz, 333);
+    assert!(s.force_active);
+    // Above the frame-clock ceiling resolves to bInterval 1.
+    mock.set_rate_force(Some(4000));
+    let s = device.query_emit_pace().unwrap();
+    assert_eq!(s.force_hz, Some(4000));
+    assert_eq!(s.advertised_hz, 1000);
+    // 400 pins the rounding: nearest gives bInterval 3 (333 Hz), truncation would give 2 (500 Hz).
+    mock.set_rate_force(Some(400));
+    assert_eq!(device.query_emit_pace().unwrap().advertised_hz, 333);
+    // bInterval is one byte, so the slowest a full-speed clone can advertise is 1000/255.
+    mock.set_rate_force(Some(1));
+    assert_eq!(device.query_emit_pace().unwrap().advertised_hz, 3);
+    mock.set_rate_force(None);
+    let s = device.query_emit_pace().unwrap();
+    assert_eq!(s.force_hz, None);
+    assert!(!s.force_active);
+    assert_eq!(s.advertised_hz, 1000);
 }
 
 #[test]
