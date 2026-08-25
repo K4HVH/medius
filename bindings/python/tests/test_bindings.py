@@ -602,6 +602,42 @@ def test_emit_pace_roundtrip():
             status = d.query_emit_pace()
         assert status.mode == EmitPace.learned()
         assert status.resolved_hz == 0  # learnt/adaptive
+        assert status.force_hz is None
+        assert status.force_active is False
+        assert status.advertised_hz == 1000  # the clone's own, with nothing forced
+
+
+def test_rate_force_roundtrip():
+    # The five numbers occupy five ctypes fields in one struct, so a layout slip shows as a swap.
+    with MockBox() as mock:
+        # 400 is not a divisor of 1000: the box resolves bInterval 3 and advertises 333.
+        mock.set_emit_pace(EmitPace.fixed(500), 400)
+        with Device.with_mock(mock) as d:
+            status = d.query_emit_pace()
+        assert status.mode == EmitPace.fixed(500)
+        assert status.resolved_hz == 500
+        assert status.force_hz == 400
+        assert status.advertised_hz == 333
+        assert status.force_active is True
+        mock.set_emit_pace(EmitPace.fixed(500), None)
+        with Device.with_mock(mock) as d:
+            status = d.query_emit_pace()
+        assert status.force_hz is None
+        assert status.force_active is False
+
+
+def test_rate_force_through_the_setter():
+    # Drives OPTION(EMIT) out of the setter and reads the box's own state back, so a setter that drops
+    # the force on the wire fails here rather than passing on a mock nobody sent anything to.
+    with MockBox() as mock, Device.with_mock(mock) as d:
+        d.set_emit_pace(EmitPace.fixed(250), 125)
+        status = d.query_emit_pace()
+        assert status.mode == EmitPace.fixed(250)
+        assert status.force_hz == 125
+        assert status.advertised_hz == 125
+        assert status.force_active is True
+        d.set_emit_pace(EmitPace.fixed(250), None)
+        assert d.query_emit_pace().force_hz is None
 
 
 def test_counters_readable():

@@ -196,14 +196,21 @@ pub unsafe extern "C" fn medius_mock_set_bearing(
     });
 }
 
-/// Set the emit-rate pacing mode the mock answers to an OPTION(EMIT) query; `hz` matters only for
-/// `Fixed`. `mode` takes a `MEDIUS_EMIT_MODE_*` constant; any other value is ignored.
+/// Set the emit-rate pacing mode and the forced wire rate the mock answers to an OPTION(EMIT) query;
+/// `hz` matters only for `Fixed`, `force_hz` 0 means unforced. `mode` takes a `MEDIUS_EMIT_MODE_*`
+/// constant; any other value leaves the pacing mode alone.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn medius_mock_set_emit_pace(mock: *mut MediusMockBox, mode: u8, hz: u16) {
+pub unsafe extern "C" fn medius_mock_set_emit_pace(
+    mock: *mut MediusMockBox,
+    mode: u8,
+    hz: u16,
+    force_hz: u16,
+) {
     with_mock(mock, |m| {
         if let Some(pace) = emit_pace_from_c(mode, hz) {
-            let _ = m.clone().with_emit_pace(pace);
+            m.set_emit_pace(pace);
         }
+        m.set_rate_force((force_hz != 0).then_some(force_hz));
     });
 }
 

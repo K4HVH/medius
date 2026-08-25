@@ -724,6 +724,9 @@ impl From<EmitPaceStatus> for MediusEmitPaceStatus {
             mode,
             fixed_hz,
             resolved_hz: s.resolved_hz,
+            force_hz: s.force_hz.unwrap_or(0),
+            advertised_hz: s.advertised_hz,
+            force_active: s.force_active as u8,
         }
     }
 }

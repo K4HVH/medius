@@ -767,29 +767,6 @@ typedef struct MediusPortInfo {
 } MediusPortInfo;
 
 // Decoded firmware version; `mac` is the device chip's base MAC, a stable per-box identity.
-// One chip's firmware version and which of its two app slots it booted.
-typedef struct MediusChipFirmware {
-    uint8_t major;
-    uint8_t minor;
-    uint8_t patch;
-    // 0 = ota_0, 1 = ota_1.
-    uint8_t slot;
-    // 0 new, 1 pending-verify, 2 valid, 3 invalid, 4 aborted, 0xFF unknown.
-    uint8_t state;
-} MediusChipFirmware;
-
-// Both chips' firmware state (RESP(FIRMWARE)).
-typedef struct MediusFirmwareInfo {
-    struct MediusChipFirmware device;
-    // 0 when the host chip has not answered over the inter-chip link; `host` is then meaningless.
-    uint8_t host_present;
-    struct MediusChipFirmware host;
-    // Usable bytes in a spare slot; the same on both chips.
-    uint32_t slot_size;
-    uint8_t device_staged;
-    uint8_t host_staged;
-} MediusFirmwareInfo;
-
 typedef struct MediusVersion {
     uint8_t proto_ver;
     uint8_t fw_major;
@@ -834,6 +811,29 @@ typedef struct MediusLockTarget {
     uint8_t kind;
     struct MediusUsage usage;
 } MediusLockTarget;
+
+// One chip's firmware version and which of its two app slots it booted.
+typedef struct MediusChipFirmware {
+    uint8_t major;
+    uint8_t minor;
+    uint8_t patch;
+    // 0 = ota_0, 1 = ota_1.
+    uint8_t slot;
+    // 0 new, 1 pending-verify, 2 valid, 3 invalid, 4 aborted, 0xFF unknown.
+    uint8_t state;
+} MediusChipFirmware;
+
+// Both chips' firmware state (`RESP(FIRMWARE)`).
+typedef struct MediusFirmwareInfo {
+    struct MediusChipFirmware device;
+    // 0 when the host chip has not answered over the inter-chip link; `host` is then meaningless.
+    uint8_t host_present;
+    struct MediusChipFirmware host;
+    // Usable bytes in a spare slot; the same on both chips.
+    uint32_t slot_size;
+    uint8_t device_staged;
+    uint8_t host_staged;
+} MediusFirmwareInfo;
 
 // Box health flags (each field is 0 or 1).
 typedef struct MediusHealth {
@@ -1000,11 +1000,17 @@ typedef struct MediusBearing {
     MediusBearingMode mode;
 } MediusBearing;
 
-// Emit-rate pacing mode plus the rate in effect.
+// Emit-rate pacing mode plus the rate in effect and the rate the clone advertises.
 typedef struct MediusEmitPaceStatus {
     MediusEmitMode mode;
     uint16_t fixed_hz;
     uint16_t resolved_hz;
+    // The forced wire rate requested, in Hz; 0 leaves the device's own.
+    uint16_t force_hz;
+    // What the clone's input endpoints advertise now, in Hz; 0 = no clone.
+    uint16_t advertised_hz;
+    // 1 when a forced interval is written into the descriptor being served.
+    uint8_t force_active;
 } MediusEmitPaceStatus;
 
 // Host-side always-on counters.
@@ -1576,9 +1582,13 @@ MediusStatus medius_device_set_bearing(struct MediusDevice *dev,
                                        uint16_t window_ms,
                                        uint8_t mode);
 
-// Set what paces injected motion; `hz` is the target rate for `Fixed` and ignored otherwise. `mode`
-// takes a `MEDIUS_EMIT_MODE_*` constant; any other value is `MEDIUS_STATUS_ERR_INVALID_ARG`.
-MediusStatus medius_device_set_emit_pace(struct MediusDevice *dev, uint8_t mode, uint16_t hz);
+// Set what paces injected motion and what rate the clone runs at; `hz` is the target rate for `Fixed`
+// and ignored otherwise, `force_hz` is the forced wire rate (0 = the device's own). `mode` takes a
+// `MEDIUS_EMIT_MODE_*` constant; any other value is `MEDIUS_STATUS_ERR_INVALID_ARG`.
+MediusStatus medius_device_set_emit_pace(struct MediusDevice *dev,
+                                         uint8_t mode,
+                                         uint16_t hz,
+                                         uint16_t force_hz);
 
 // Set the box's persistent name (`name`, NUL-terminated UTF-8); an empty string clears it.
 MediusStatus medius_device_set_name(struct MediusDevice *dev, const char *name);
@@ -1591,16 +1601,14 @@ MediusStatus medius_device_query_version(struct MediusDevice *dev, struct Medius
 // Both chips' firmware versions and slot state.
 MediusStatus medius_device_firmware_info(struct MediusDevice *dev, struct MediusFirmwareInfo *out);
 
-// Progress callback for medius_device_stage_firmware: user pointer, bytes sent, image total.
-typedef void (*MediusUpdateProgress)(void *user, size_t sent, size_t total);
-
 // Write `len` bytes into `target`'s spare slot (0 = device chip, 1 = host chip). The image stays
-// inert until medius_device_activate_firmware. `progress` may be NULL.
+// inert until medius_device_activate_firmware. `progress`, if non-null, is called with bytes sent
+// and the total.
 MediusStatus medius_device_stage_firmware(struct MediusDevice *dev,
                                           uint8_t target,
                                           const uint8_t *image,
-                                          size_t len,
-                                          MediusUpdateProgress progress,
+                                          uintptr_t len,
+                                          void (*progress)(void*, uintptr_t, uintptr_t),
                                           void *user);
 
 // Drop whatever is staged or in flight for one target; the clone comes back without a reboot.
@@ -2066,9 +2074,13 @@ void medius_mock_set_bearing(struct MediusMockBox *mock, uint16_t window_ms, uin
 #endif
 
 #if defined(MEDIUS_FEATURE_MOCK)
-// Set the emit-rate pacing mode the mock answers to an OPTION(EMIT) query; `hz` matters only for
-// `Fixed`. `mode` takes a `MEDIUS_EMIT_MODE_*` constant; any other value is ignored.
-void medius_mock_set_emit_pace(struct MediusMockBox *mock, uint8_t mode, uint16_t hz);
+// Set the emit-rate pacing mode and the forced wire rate the mock answers to an OPTION(EMIT) query;
+// `hz` matters only for `Fixed`, `force_hz` 0 means unforced. `mode` takes a `MEDIUS_EMIT_MODE_*`
+// constant; any other value leaves the pacing mode alone.
+void medius_mock_set_emit_pace(struct MediusMockBox *mock,
+                               uint8_t mode,
+                               uint16_t hz,
+                               uint16_t force_hz);
 #endif
 
 #if defined(MEDIUS_FEATURE_MOCK)

@@ -127,9 +127,11 @@ class MockBox:
             int(_enum(bearing.mode, BearingMode, "mode")),
         )
 
-    def set_emit_pace(self, pace: EmitPace):
+    def set_emit_pace(self, pace: EmitPace, force_hz: Optional[int] = None):
         mode = _enum(pace.mode, EmitMode, "mode")
-        _native.lib.medius_mock_set_emit_pace(self._handle, int(mode), _u16(pace.hz, "hz"))
+        _native.lib.medius_mock_set_emit_pace(
+            self._handle, int(mode), _u16(pace.hz, "hz"), _u16(force_hz or 0, "force_hz")
+        )
 
     def set_clip_status(self, status: ClipStatus):
         """Set the `ClipStatus` the mock answers to `ClipHandle.query_status`."""
