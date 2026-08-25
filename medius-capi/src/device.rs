@@ -596,7 +596,9 @@ pub unsafe extern "C" fn medius_device_set_emit_pace(
     let Some(pace) = emit_pace_from_c(mode, hz) else {
         return fail(MediusStatus::ErrInvalidArg, "invalid emit pacing mode");
     };
-    with_device(dev, |d| d.set_emit_pace(pace, (force_hz != 0).then_some(force_hz)))
+    with_device(dev, |d| {
+        d.set_emit_pace(pace, (force_hz != 0).then_some(force_hz))
+    })
 }
 
 /// Set the box's persistent name (`name`, NUL-terminated UTF-8); an empty string clears it.

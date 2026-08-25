@@ -543,7 +543,12 @@ fn options_bearing_payload(b: Bearing) -> Vec<u8> {
     p
 }
 
-fn options_emit_payload(pace: EmitPace, force_hz: Option<u16>, native_hz: u16, allowed: bool) -> Vec<u8> {
+fn options_emit_payload(
+    pace: EmitPace,
+    force_hz: Option<u16>,
+    native_hz: u16,
+    allowed: bool,
+) -> Vec<u8> {
     // Mirror the firmware: Fixed clamps the echoed rate to 1..=1000 (0 -> 1000) and snaps resolved
     // to the 1 ms frame clock (1000/n); Learned/Interval echo 0 (no real device to resolve).
     let (mode, fixed_hz, resolved) = match pace {
@@ -561,8 +566,14 @@ fn options_emit_payload(pace: EmitPace, force_hz: Option<u16>, native_hz: u16, a
     let (advertised, active) = match force_hz.filter(|hz| *hz != 0 && allowed) {
         None => (native_hz, false),
         Some(hz) => {
-            let n = ((1000u32 + hz as u32 / 2) / hz as u32).clamp(1, 255);
-            ((1000u32 / n) as u16, true)
+            // Mirror rate_force_binterval: a host rounds a full-speed interval down to a power of two,
+            // so the box only ever advertises one of those. Echoing the request would diverge.
+            let n = ((1000u32 + hz as u32 / 2) / hz as u32).min(128);
+            let mut p = 1u32;
+            while p * 2 <= n {
+                p *= 2;
+            }
+            ((1000u32 / p) as u16, true)
         }
     };
     let mut p = vec![9u8, OPT_EMIT, mode];
@@ -895,12 +906,17 @@ impl MockBox {
                                 encode(FrameType::Resp, seq, &options_bearing_payload(st.bearing))
                                     .expect("resp fits")
                             }
-                            Some(OPT_EMIT) => {
-                                encode(FrameType::Resp, seq, &options_emit_payload(
-                                    st.emit_pace, st.emit_force_hz, st.advertised_hz,
-                                    st.imperfect.allowed))
-                                    .expect("resp fits")
-                            }
+                            Some(OPT_EMIT) => encode(
+                                FrameType::Resp,
+                                seq,
+                                &options_emit_payload(
+                                    st.emit_pace,
+                                    st.emit_force_hz,
+                                    st.advertised_hz,
+                                    st.imperfect.allowed,
+                                ),
+                            )
+                            .expect("resp fits"),
                             _ => Vec::new(),
                         },
                         Some(11) => encode(
