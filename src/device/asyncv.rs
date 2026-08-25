@@ -290,7 +290,10 @@ impl AsyncDevice {
         self.offload(|d| d.activate_firmware()).await
     }
 
-    /// Stage one image and activate it. Not cancellable; see [`offload`](Self::offload).
+    /// Stage one image and activate it.
+    ///
+    /// NOT cancellable. Dropping the returned future stops the waiting, not the transfer: the work
+    /// runs to completion on a thread of its own and the box still reboots into the new image.
     pub async fn update_firmware(
         &self,
         target: UpdateTarget,
