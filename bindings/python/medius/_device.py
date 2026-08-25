@@ -271,12 +271,15 @@ class Device:
             )
         )
 
-    def set_emit_pace(self, pace: EmitPace):
-        """Set what paces injected motion (`hz` matters only for `EmitPace.fixed`)."""
+    def set_emit_pace(self, pace: EmitPace, force_hz: Optional[int] = None):
+        """Set what paces injected motion (`hz` matters only for `EmitPace.fixed`) and what rate the
+        clone advertises and the box polls the device at (`force_hz`, None = the device's own).
+        Both ride one command, so every call writes both."""
         mode = _enum(pace.mode, EmitMode, "mode")
         check(
             _native.lib.medius_device_set_emit_pace(
-                self._handle, int(mode), _u16(pace.hz, "hz")
+                self._handle, int(mode), _u16(pace.hz, "hz"),
+                _u16(force_hz or 0, "force_hz"),
             )
         )
 

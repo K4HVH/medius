@@ -127,8 +127,8 @@ pub enum MediusDirection {
     Both = 0,
     Positive = 1,
     Negative = 2,
-    /// The axis sign the box is currently injecting. Measured against the bearing, so it follows the
-    /// aim rather than the axis; inert while no bearing is live. Axes only.
+    /// The axis sign the box is currently injecting. Measured against the bearing, so the sign it covers follows the
+    /// injection rather than the axis; inert while no bearing is live. Axes only.
     With = 3,
     /// The axis sign opposing the box's injection. Measured against the bearing; axes only.
     Against = 4,
@@ -140,10 +140,10 @@ pub enum MediusDirection {
 pub enum MediusBearingMode {
     /// Each axis compares its own sign against its own bearing, independently.
     PerAxis = 0,
-    /// The aim is projected onto the injected XY vector; motion across it passes untouched. One
-    /// relative scale governs the whole aim, the lower of X's and Y's, and that is what reads back.
-    /// Each axis's absolute scale then applies to what the projection left, not to the sign the hand
-    /// moved: it is a statement about what reaches the PC.
+    /// The physical delta is projected onto the injected XY vector. One
+    /// relative scale governs both axes, the lower of X's and Y's, and that is what reads back.
+    /// Each axis's absolute scale then applies to what the projection left, not to the sign the report
+    /// carried: it governs what reaches the PC.
     Vector = 1,
 }
 
@@ -601,13 +601,19 @@ pub struct MediusImperfectStatus {
     pub clone_imperfect: u8,
 }
 
-/// Emit-rate pacing mode plus the rate in effect.
+/// Emit-rate pacing mode plus the rate in effect and the rate the clone advertises.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MediusEmitPaceStatus {
     pub mode: MediusEmitMode,
     pub fixed_hz: u16,
     pub resolved_hz: u16,
+    /// The forced wire rate requested, in Hz; 0 leaves the device's own.
+    pub force_hz: u16,
+    /// What the clone's input endpoints advertise now, in Hz; 0 = no clone.
+    pub advertised_hz: u16,
+    /// 1 when a forced interval is written into the descriptor being served.
+    pub force_active: u8,
 }
 
 /// The device-side clip lifecycle state (`medius_clip_query_status`).

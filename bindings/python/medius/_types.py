@@ -375,6 +375,9 @@ class EmitPace:
 class EmitPaceStatus:
     mode: EmitPace
     resolved_hz: int
+    force_hz: Optional[int] = None
+    advertised_hz: int = 0
+    force_active: bool = False
 
 
 @dataclass
@@ -1114,7 +1117,13 @@ def imperfect_to_c(i) -> "_native.MediusImperfectStatus":
 
 def emit_pace_status_from_c(c) -> EmitPaceStatus:
     mode = EmitMode(c.mode)
-    return EmitPaceStatus(EmitPace(mode, c.fixed_hz), c.resolved_hz)
+    return EmitPaceStatus(
+        EmitPace(mode, c.fixed_hz),
+        c.resolved_hz,
+        c.force_hz or None,
+        c.advertised_hz,
+        bool(c.force_active),
+    )
 
 
 @dataclass
