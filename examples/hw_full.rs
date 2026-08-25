@@ -464,6 +464,34 @@ mod linux {
         }
 
         {
+            // Forcing a rate the clone does not already advertise re-clones the box, which would drop
+            // the control port mid-suite. So this asks for the rate already in force: the readback
+            // still proves the field reaches the box and comes back, and advertised_hz proves the box
+            // is reading its own descriptor rather than echoing what it was sent.
+            let dev = device.as_ref().unwrap();
+            let native = dev.query_emit_pace().map(|s| s.advertised_hz).unwrap_or(0);
+            let set_ok = native > 0 && dev.set_emit_pace(EmitPace::Learned, Some(native)).is_ok();
+            std::thread::sleep(Duration::from_millis(60));
+            let read = dev.query_emit_pace();
+            let matched = read
+                .as_ref()
+                .map(|s| s.force_hz == Some(native) && s.advertised_hz == native)
+                .unwrap_or(false);
+            let off_ok = dev.set_emit_pace(EmitPace::Learned, None).is_ok();
+            std::thread::sleep(Duration::from_millis(60));
+            let read_off = dev.query_emit_pace();
+            let off_matched = read_off
+                .as_ref()
+                .map(|s| s.force_hz.is_none() && s.advertised_hz == native)
+                .unwrap_or(false);
+            check(
+                "rate force",
+                set_ok && matched && off_ok && off_matched,
+                format!("clone advertises {native} Hz, forced -> {read:?}, off -> {read_off:?}"),
+            );
+        }
+
+        {
             // The name rides RESP(VERSION) like the MAC; clearing reverts to the synthesized
             // "Medius-XXXX" default.
             let dev = device.as_ref().unwrap();
