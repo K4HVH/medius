@@ -4,7 +4,7 @@ resolver = "3"
 
 [package]
 name = "medius"
-version = "3.1.0"
+version = "3.2.0"
 edition = "2024"
 rust-version = "1.85"
 description = "Host control library for the medius transparent mouse passthrough box"
@@ -20,7 +20,6 @@ all-features = true
 default = []
 async = ["dep:futures-core"]            # thin wrapper over the sync core (flume async recv, no runtime dep)
 mock = []                               # public scriptable fake box
-flash = []                              # esptool reboot+flash handoff
 tracing = ["dep:tracing"]               # library-side instrumentation
 
 [dependencies]
@@ -30,6 +29,7 @@ futures-core = { version = "0.3", default-features = false, optional = true }
 parking_lot = "0.12"
 serialport = "4"
 tracing = { version = "0.1", optional = true }
+sha2 = { version = "0.11.0", default-features = false }
 
 # Windows I/O goes over serial2's overlapped COM handle. serialport's handle is synchronous, so the
 # kernel serializes reads against writes and injection stalls behind the reader thread; serialport

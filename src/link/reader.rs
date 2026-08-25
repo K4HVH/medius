@@ -24,6 +24,7 @@ pub(crate) fn spawn_reader(
     pending: Arc<Mutex<HashMap<u8, PendingEntry>>>,
     logs_tx: flume::Sender<LogLine>,
     logs_rx: flume::Receiver<LogLine>,
+    updates_tx: flume::Sender<Vec<u8>>,
     events: Arc<Mutex<CatchReg>>,
     counters: Arc<Counters>,
     stop: Arc<AtomicBool>,
@@ -37,6 +38,7 @@ pub(crate) fn spawn_reader(
                 &pending,
                 &logs_tx,
                 &logs_rx,
+                &updates_tx,
                 &events,
                 &counters,
                 &stop,
@@ -52,6 +54,7 @@ fn reader_loop(
     pending: &Mutex<HashMap<u8, PendingEntry>>,
     logs_tx: &flume::Sender<LogLine>,
     logs_rx: &flume::Receiver<LogLine>,
+    updates_tx: &flume::Sender<Vec<u8>>,
     events: &Mutex<CatchReg>,
     counters: &Counters,
     stop: &AtomicBool,
@@ -77,7 +80,9 @@ fn reader_loop(
             }
             Ok(n) => {
                 decoder.feed(&buf[..n], |frame| {
-                    route_frame(frame, pending, logs_tx, logs_rx, events, counters);
+                    route_frame(
+                        frame, pending, logs_tx, logs_rx, updates_tx, events, counters,
+                    );
                 });
                 counters.set_crc_drops(decoder.crc_error_count());
             }
@@ -89,11 +94,13 @@ fn reader_loop(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn route_frame(
     frame: DecodedFrame,
     pending: &Mutex<HashMap<u8, PendingEntry>>,
     logs_tx: &flume::Sender<LogLine>,
     logs_rx: &flume::Receiver<LogLine>,
+    updates_tx: &flume::Sender<Vec<u8>>,
     events: &Mutex<CatchReg>,
     counters: &Counters,
 ) {
@@ -116,6 +123,11 @@ fn route_frame(
         }
         FrameType::MotionEvent | FrameType::UsageEvent | FrameType::TrafficEvent => {
             catch::deliver_event(events, frame.ty, &frame.payload)
+        }
+        // Not correlated by SEQ like a RESP: one acknowledgement answers a whole window of DATA
+        // frames, so it carries a rolling SEQ and the caller matches on the op byte instead.
+        FrameType::UpdateResp => {
+            let _ = updates_tx.send(frame.payload);
         }
         _ => {}
     }

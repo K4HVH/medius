@@ -9,6 +9,10 @@ from typing import List, Optional, Union
 from . import _native
 from ._enums import (
     Axis,
+    ImageState,
+    UpdateTarget,
+    BEARING_WINDOW_DEFAULT_MS,
+    BearingMode,
     Blanket,
     BusEventKind,
     CatchClass,
@@ -30,6 +34,50 @@ from ._enums import (
     Key,
     MediaKey,
 )
+
+
+# Scalar checks for the parameters that reach ctypes. ctypes truncates silently, so an unchecked
+# 300 becomes 44 and an unchecked -1 becomes 255, and every enum crosses the C ABI as a plain byte
+# the library refuses rather than trusts. Everything that reaches a ctypes argument goes through one
+# of these.
+def _enum(value, kind, what):
+    """`value` as `kind`, or ValueError: the library would read a stray byte as whichever member its
+    low bits happen to name."""
+    try:
+        return kind(value)
+    except ValueError:
+        raise ValueError(f"{what} must be a {kind.__name__}, got {value!r}") from None
+
+
+def _u8(value, what):
+    v = int(value)
+    if not 0 <= v <= 0xFF:
+        raise ValueError(f"{what} must be 0..255, got {value!r}")
+    return v
+
+
+def _u16(value, what):
+    v = int(value)
+    if not 0 <= v <= 0xFFFF:
+        raise ValueError(f"{what} must be 0..65535, got {value!r}")
+    return v
+
+
+def _i16(value, what):
+    v = int(value)
+    if not -0x8000 <= v <= 0x7FFF:
+        raise ValueError(f"{what} must be -32768..32767, got {value!r}")
+    return v
+
+
+def _window_ms(window_ms):
+    """A window in whole ms for the wire `u16`: `None` = 0 (off), saturating like the Rust API."""
+    if window_ms is None:
+        return 0
+    v = int(window_ms)
+    if v < 0:
+        raise ValueError(f"window_ms must not be negative, got {window_ms!r}")
+    return min(v, 0xFFFF)
 
 
 def _as_usage(usage) -> "Usage":
@@ -57,6 +105,32 @@ def _as_usage(usage) -> "Usage":
 def _cstr(buf) -> str:
     raw = bytes(buf)
     return raw.split(b"\x00", 1)[0].decode("utf-8", "replace")
+
+
+@dataclass
+class ChipFirmware:
+    major: int
+    minor: int
+    patch: int
+    slot: int
+    state: ImageState
+
+    def __str__(self) -> str:
+        return f"{self.major}.{self.minor}.{self.patch} on ota_{self.slot} ({self.state.name.lower()})"
+
+
+@dataclass
+class FirmwareInfo:
+    device: ChipFirmware
+    host: "ChipFirmware | None"
+    slot_size: int
+    device_staged: bool
+    host_staged: bool
+
+    def any_pending(self) -> bool:
+        """True while either chip has not confirmed the image it booted, which is when an update is refused."""
+        pend = ImageState.PENDING_VERIFY
+        return self.device.state == pend or (self.host is not None and self.host.state == pend)
 
 
 @dataclass
@@ -162,12 +236,25 @@ class Stats:
 
 @dataclass
 class LockEntry:
-    """One active lock: what is locked and which edges."""
+    """One weighed direction: what it addresses, which way, and how much of it survives.
+
+    `scale` is a percent of the physical value: 0 blocks, 100 passes untouched, above 100 amplifies.
+    A momentary usage carries one bit, so the box stores the block or pass it renders and one never
+    reports a value in between.
+
+    It is the figure the box applies, not the byte it was sent: in `BearingMode.VECTOR` one relative
+    scale governs the whole aim, the lower of X's and Y's, and both relative entries carry it.
+    """
 
     target: "LockTarget"
     is_blanket: bool
-    positive: bool
-    negative: bool
+    direction: Direction
+    scale: int
+
+    @property
+    def is_block(self) -> bool:
+        """Whether this entry blocks its direction outright, rather than merely weighing it."""
+        return self.scale == 0
 
 
 @dataclass
@@ -175,9 +262,25 @@ class Locks:
     entries: List[LockEntry] = field(default_factory=list)
 
     def is_locked(self, target: "LockTarget", direction) -> bool:
+        """Whether the target is blocked outright on that direction. A direction merely weighed is
+        not locked. `Direction.BOTH` asks about the two fixed signs; ask for a relative one by name.
+        """
         c = locks_to_c(self)
         return bool(
-            _native.lib.medius_locks_is_locked(ctypes.byref(c), target._c, int(direction))
+            _native.lib.medius_locks_is_locked(
+                ctypes.byref(c), target._c, int(_enum(direction, Direction, "direction"))
+            )
+        )
+
+    def scale_of(self, target: "LockTarget", direction) -> int:
+        """The percent of the physical value kept on that target and direction; 100 when nothing
+        weighs it. `Direction.BOTH` reports the lowest across every direction.
+        """
+        c = locks_to_c(self)
+        return int(
+            _native.lib.medius_locks_scale_of(
+                ctypes.byref(c), target._c, int(_enum(direction, Direction, "direction"))
+            )
         )
 
 
@@ -232,6 +335,23 @@ class ImperfectStatus:
 
 
 @dataclass(frozen=True)
+class Bearing:
+    """The configured bearing: what `Direction.WITH` and `Direction.AGAINST` are measured against.
+
+    `window_ms` is how long the last injected delta's direction stays the bearing. `None` is off,
+    which leaves the relative directions inert whatever their scale.
+    """
+
+    window_ms: Optional[int] = BEARING_WINDOW_DEFAULT_MS
+    mode: BearingMode = BearingMode.PER_AXIS
+
+    @property
+    def is_live(self) -> bool:
+        """Whether a bearing is held at all; the relative directions do nothing when it is not."""
+        return self.window_ms is not None
+
+
+@dataclass(frozen=True)
 class EmitPace:
     """What paces injected motion. Build with `EmitPace.learned/interval/fixed`."""
 
@@ -255,6 +375,9 @@ class EmitPace:
 class EmitPaceStatus:
     mode: EmitPace
     resolved_hz: int
+    force_hz: Optional[int] = None
+    advertised_hz: int = 0
+    force_active: bool = False
 
 
 @dataclass
@@ -448,15 +571,15 @@ class Usage:
 
     @classmethod
     def button(cls, button) -> "Usage":
-        return cls(_native.lib.medius_usage_button(int(button)))
+        return cls(_native.lib.medius_usage_button(int(_enum(button, Button, "button"))))
 
     @classmethod
     def key(cls, key) -> "Usage":
-        return cls(_native.lib.medius_usage_key(int(key)))
+        return cls(_native.lib.medius_usage_key(_u8(key, "key")))
 
     @classmethod
     def media(cls, media) -> "Usage":
-        return cls(_native.lib.medius_usage_media(int(media)))
+        return cls(_native.lib.medius_usage_media(_u16(media, "media")))
 
     @property
     def kind(self) -> Class:
@@ -489,11 +612,11 @@ class Motion:
 
     @classmethod
     def cursor(cls, dx, dy) -> "Motion":
-        return cls(_native.lib.medius_motion_cursor(int(dx), int(dy)))
+        return cls(_native.lib.medius_motion_cursor(_i16(dx, "dx"), _i16(dy, "dy")))
 
     @classmethod
     def wheel(cls, delta) -> "Motion":
-        return cls(_native.lib.medius_motion_wheel(int(delta)))
+        return cls(_native.lib.medius_motion_wheel(_i16(delta, "delta")))
 
 
 class LockTarget:
@@ -591,12 +714,16 @@ class CatchFilter:
     @classmethod
     def watch_axis(cls, axis: Axis) -> "CatchFilter":
         """One relative axis."""
-        return cls(_native.lib.medius_catch_filter_watch_axis(int(axis)))
+        return cls(_native.lib.medius_catch_filter_watch_axis(int(_enum(axis, Axis, "axis"))))
 
     @classmethod
     def watch_class(cls, input_class: Class) -> "CatchFilter":
         """Every usage in one momentary class."""
-        return cls(_native.lib.medius_catch_filter_watch_class(int(input_class)))
+        return cls(
+            _native.lib.medius_catch_filter_watch_class(
+                int(_enum(input_class, Class, "input_class"))
+            )
+        )
 
     @classmethod
     def watch_axes(cls) -> "CatchFilter":
@@ -613,12 +740,20 @@ class CatchFilter:
     @classmethod
     def traffic(cls, traffic_class: TrafficClass, id: int) -> "CatchFilter":
         """One traffic address: an endpoint, an interface, or a control endpoint number."""
-        return cls(_native.lib.medius_catch_filter_traffic(int(traffic_class), int(id)))
+        return cls(
+            _native.lib.medius_catch_filter_traffic(
+                int(_enum(traffic_class, TrafficClass, "traffic_class")), _u16(id, "id")
+            )
+        )
 
     @classmethod
     def traffic_class(cls, traffic_class: TrafficClass) -> "CatchFilter":
         """Every id within one traffic class."""
-        return cls(_native.lib.medius_catch_filter_traffic_class(int(traffic_class)))
+        return cls(
+            _native.lib.medius_catch_filter_traffic_class(
+                int(_enum(traffic_class, TrafficClass, "traffic_class"))
+            )
+        )
 
     @classmethod
     def everything(cls) -> "CatchFilter":
@@ -632,12 +767,16 @@ class CatchFilter:
     def with_direction(self, direction: Direction) -> "CatchFilter":
         """A copy restricted to one direction, sign or edge."""
         return CatchFilter(
-            _native.lib.medius_catch_filter_with_direction(self._c, int(direction))
+            _native.lib.medius_catch_filter_with_direction(
+                self._c, int(_enum(direction, Direction, "direction"))
+            )
         )
 
     def with_capture(self, n: int) -> "CatchFilter":
         """A copy keeping only the first `n` bytes of each packet; 0 keeps the whole packet."""
-        return CatchFilter(_native.lib.medius_catch_filter_with_capture(self._c, int(n)))
+        return CatchFilter(
+            _native.lib.medius_catch_filter_with_capture(self._c, _u8(n, "capture"))
+        )
 
     def on_press(self) -> "CatchFilter":
         """A copy restricted to the press edge."""
@@ -746,6 +885,24 @@ def input_event_from_c(c) -> InputEvent:
     return InputEvent(kind, int(c.ts_us), ClockDomain(c.clock), usage, int(c.dx), int(c.dy), int(c.dz))
 
 
+def _chip_firmware_from_c(c) -> ChipFirmware:
+    try:
+        state = ImageState(c.state)
+    except ValueError:
+        state = ImageState.UNKNOWN
+    return ChipFirmware(int(c.major), int(c.minor), int(c.patch), int(c.slot), state)
+
+
+def firmware_info_from_c(c) -> FirmwareInfo:
+    return FirmwareInfo(
+        _chip_firmware_from_c(c.device),
+        _chip_firmware_from_c(c.host) if c.host_present else None,
+        int(c.slot_size),
+        bool(c.device_staged),
+        bool(c.host_staged),
+    )
+
+
 def version_from_c(c) -> Version:
     return Version(
         c.proto_ver, c.fw_major, c.fw_minor, c.fw_patch, bytes(c.mac), _cstr(c.name)
@@ -818,7 +975,7 @@ def device_info_to_c(m) -> "_native.MediusDeviceInfo":
         m.bcd_usb,
         int(m.has_serial),
         int(m.has_bos),
-        int(m.kind),
+        int(_enum(m.kind, DeviceKind, "kind")),
         m.product.encode("utf-8")[: _native.MEDIUS_MAX_PRODUCT - 1],
     )
 
@@ -960,7 +1117,13 @@ def imperfect_to_c(i) -> "_native.MediusImperfectStatus":
 
 def emit_pace_status_from_c(c) -> EmitPaceStatus:
     mode = EmitMode(c.mode)
-    return EmitPaceStatus(EmitPace(mode, c.fixed_hz), c.resolved_hz)
+    return EmitPaceStatus(
+        EmitPace(mode, c.fixed_hz),
+        c.resolved_hz,
+        c.force_hz or None,
+        c.advertised_hz,
+        bool(c.force_active),
+    )
 
 
 @dataclass
@@ -999,7 +1162,7 @@ def clip_status_from_c(c) -> ClipStatus:
 
 def clip_status_to_c(s) -> "_native.MediusClipStatus":
     c = _native.MediusClipStatus()
-    c.state = int(s.state)
+    c.state = int(_enum(s.state, ClipState, "state"))
     c.free = s.free
     c.total = s.total
     c.played = s.played
@@ -1070,7 +1233,7 @@ def clip_settings_from_c(c) -> ClipSettings:
 def clip_settings_to_c(s) -> "_native.MediusClipSettings":
     c = _native.MediusClipSettings()
     bit = {b: m for (m, b) in _BLANKET_BITS}
-    c.autolock_bits = sum(bit[b] for b in s.autolock)
+    c.autolock_bits = sum(bit[_enum(b, Blanket, "autolock")] for b in s.autolock)
     c.loop_ = 1 if s.loop else 0
     c.retain = 1 if s.retain else 0
     c.finalized = 1 if s.finalized else 0
@@ -1080,7 +1243,10 @@ def clip_settings_to_c(s) -> "_native.MediusClipSettings":
     for i in range(n):
         t = s.triggers[i]
         c.triggers[i] = _native.MediusClipTrigger(
-            t.on._c, int(t.edge), int(t.action), 1 if t.consume else 0
+            t.on._c,
+            int(_enum(t.edge, Edge, f"triggers[{i}].edge")),
+            int(_enum(t.action, ClipAction, f"triggers[{i}].action")),
+            1 if t.consume else 0,
         )
     return c
 
@@ -1101,9 +1267,14 @@ def lock_target_from_c(c) -> LockTarget:
     )
 
 
+def bearing_from_c(c) -> Bearing:
+    ms = int(c.window_ms)
+    return Bearing(ms if ms else None, BearingMode(c.mode))
+
+
 def lock_entry_from_c(c) -> LockEntry:
     return LockEntry(
-        lock_target_from_c(c.target), bool(c.is_blanket), bool(c.positive), bool(c.negative)
+        lock_target_from_c(c.target), bool(c.is_blanket), Direction(c.direction), int(c.scale)
     )
 
 
@@ -1121,8 +1292,8 @@ def locks_to_c(locks) -> "_native.MediusLocks":
         c.entries[i] = _native.MediusLockEntry(
             target=e.target._c,
             is_blanket=bool(e.is_blanket),
-            positive=bool(e.positive),
-            negative=bool(e.negative),
+            direction=int(_enum(e.direction, Direction, f"entries[{i}].direction")),
+            scale=_u8(e.scale, f"entries[{i}].scale"),
         )
     return c
 
@@ -1133,8 +1304,8 @@ def motion_event_to_c(e) -> "_native.MediusMotionEvent":
 
 def usage_snapshot_to_c(s) -> "_native.MediusUsageEvent":
     c = _native.MediusUsageEvent()
-    c.class_ = int(s.cls)
-    c.direction = int(s.direction)
+    c.class_ = int(_enum(s.cls, Class, "cls"))
+    c.direction = int(_enum(s.direction, Direction, "direction"))
     n = min(len(s.usages), _native.MEDIUS_MAX_USAGES)
     c.n = n
     for idx in range(n):
@@ -1144,11 +1315,11 @@ def usage_snapshot_to_c(s) -> "_native.MediusUsageEvent":
 
 def traffic_event_to_c(t) -> "_native.MediusTrafficEvent":
     c = _native.MediusTrafficEvent()
-    c.class_ = int(t.catch_class)
-    c.id = int(t.id)
-    c.direction = int(t.direction)
-    c.flags = int(t.flags)
-    c.true_len = int(t.true_len)
+    c.class_ = int(_enum(t.catch_class, CatchClass, "catch_class"))
+    c.id = _u16(t.id, "id")
+    c.direction = int(_enum(t.direction, Direction, "direction"))
+    c.flags = _u8(t.flags, "flags")
+    c.true_len = _u16(t.true_len, "true_len")
     raw = bytes(t.bytes)[: _native.MEDIUS_MAX_TRAFFIC_BYTES]
     c.len = len(raw)
     for i, b in enumerate(raw):

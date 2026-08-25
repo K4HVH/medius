@@ -122,10 +122,48 @@ pub enum MediusLedMode {
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MediusDirection {
+    /// Both edges, both signs, or both flows; on a `LOCK` scale the two fixed signs, with the
+    /// relative pair passing.
     Both = 0,
     Positive = 1,
     Negative = 2,
+    /// The axis sign the box is currently injecting. Measured against the bearing, so the sign it covers follows the
+    /// injection rather than the axis; inert while no bearing is live. Axes only.
+    With = 3,
+    /// The axis sign opposing the box's injection. Measured against the bearing; axes only.
+    Against = 4,
 }
+
+/// How the box decides whether physical motion runs with or against its own injection.
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MediusBearingMode {
+    /// Each axis compares its own sign against its own bearing, independently.
+    PerAxis = 0,
+    /// The physical delta is projected onto the injected XY vector. One
+    /// relative scale governs both axes, the lower of X's and Y's, and that is what reads back.
+    /// Each axis's absolute scale then applies to what the projection left, not to the sign the report
+    /// carried: it governs what reaches the PC.
+    Vector = 1,
+}
+
+/// The configured bearing: what `MEDIUS_DIRECTION_WITH` / `_AGAINST` are measured against.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MediusBearing {
+    /// How long the last injected delta's direction stays the bearing, in ms. 0 = never, which
+    /// leaves the relative directions inert whatever their scale.
+    pub window_ms: u16,
+    pub mode: MediusBearingMode,
+}
+
+/// `LOCK` scale: percent of the physical value kept. 0 blocks, 100 passes it untouched, above 100
+/// amplifies, to 255 (2.55x).
+pub const MEDIUS_LOCK_SCALE_BLOCK: u8 = 0;
+pub const MEDIUS_LOCK_SCALE_PASS: u8 = 100;
+pub const MEDIUS_LOCK_SCALE_MAX: u8 = 255;
+/// The bearing window the box holds before any host sets one, in ms.
+pub const MEDIUS_BEARING_WINDOW_DEFAULT_MS: u16 = 20;
 
 /// A whole input group for a blanket lock or a clip auto-lock scope.
 #[repr(u8)]
@@ -171,6 +209,8 @@ pub enum MediusFrameType {
     ClipCtrl = 0x13,
     ClipSet = 0x14,
     ClipTrigger = 0x15,
+    Update = 0x17,
+    UpdateResp = 0x18,
 }
 
 /// Which arm of a [`MediusCatchEvent`] is populated.
@@ -260,7 +300,8 @@ pub enum MediusLockTargetKind {
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MediusUsage {
-    pub kind: MediusClass,
+    /// A `MEDIUS_CLASS_*` value.
+    pub kind: u8,
     pub id: u16,
 }
 
@@ -290,8 +331,10 @@ pub enum MediusClipAction {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MediusClipTrigger {
     pub on: MediusUsage,
-    pub edge: MediusEdge,
-    pub action: MediusClipAction,
+    /// A `MEDIUS_EDGE_*` value.
+    pub edge: u8,
+    /// A `MEDIUS_CLIP_ACTION_*` value.
+    pub action: u8,
     pub consume: u8,
 }
 
@@ -299,7 +342,8 @@ pub struct MediusClipTrigger {
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MediusMotion {
-    pub kind: MediusMotionKind,
+    /// A `MEDIUS_MOTION_KIND_*` value.
+    pub kind: u8,
     pub dx: i16,
     pub dy: i16,
     pub wheel: i16,
@@ -309,7 +353,8 @@ pub struct MediusMotion {
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MediusLockTarget {
-    pub kind: MediusLockTargetKind,
+    /// A `MEDIUS_LOCK_TARGET_KIND_*` value.
+    pub kind: u8,
     pub usage: MediusUsage,
 }
 
@@ -332,6 +377,33 @@ pub struct MediusVersion {
     pub fw_patch: u8,
     pub mac: [u8; 6],
     pub name: [c_char; MEDIUS_MAX_NAME],
+}
+
+/// One chip's firmware version and which of its two app slots it booted.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MediusChipFirmware {
+    pub major: u8,
+    pub minor: u8,
+    pub patch: u8,
+    /// 0 = ota_0, 1 = ota_1.
+    pub slot: u8,
+    /// 0 new, 1 pending-verify, 2 valid, 3 invalid, 4 aborted, 0xFF unknown.
+    pub state: u8,
+}
+
+/// Both chips' firmware state (`RESP(FIRMWARE)`).
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MediusFirmwareInfo {
+    pub device: MediusChipFirmware,
+    /// 0 when the host chip has not answered over the inter-chip link; `host` is then meaningless.
+    pub host_present: u8,
+    pub host: MediusChipFirmware,
+    /// Usable bytes in a spare slot; the same on both chips.
+    pub slot_size: u32,
+    pub device_staged: u8,
+    pub host_staged: u8,
 }
 
 /// Box health flags (each field is 0 or 1).
@@ -391,7 +463,8 @@ pub struct MediusDeviceInfo {
     pub bcd_usb: u16,
     pub has_serial: u8,
     pub has_bos: u8,
-    pub kind: MediusDeviceKind,
+    /// A `MEDIUS_DEVICE_KIND_*` value.
+    pub kind: u8,
     pub product: [c_char; MEDIUS_MAX_PRODUCT],
 }
 
@@ -425,8 +498,19 @@ pub struct MediusStats {
 pub struct MediusLockEntry {
     pub target: MediusLockTarget,
     pub is_blanket: bool,
-    pub positive: bool,
-    pub negative: bool,
+    /// A `MEDIUS_DIRECTION_*` value: which direction of the target this entry weighs.
+    /// A byte rather than `MediusDirection`, so the boundary can validate it before anything reads it
+    /// as one; C++ renders the enum as `enum : uint8_t`, so assigning this to a `MediusDirection`
+    /// there needs a cast.
+    pub direction: u8,
+    /// Percent of the physical value kept: 0 blocks, 100 passes, above 100 amplifies. A momentary
+    /// usage carries one bit, so the box stores the block or pass it renders and one never reports a
+    /// value in between.
+    ///
+    /// This is the figure the box applies, not the byte it was sent: in `MEDIUS_BEARING_MODE_VECTOR`
+    /// one relative scale governs the whole aim, the lower of X's and Y's, and both relative entries
+    /// carry that number.
+    pub scale: u8,
 }
 
 /// The active locks: `entries[0..n]`. Use `medius_locks_is_locked` to test a target/direction.
@@ -452,9 +536,13 @@ pub struct MediusCatchFilter {
     pub class: MediusCatchClass,
     /// The class-specific id, or `MEDIUS_CATCH_ID_ANY`.
     pub id: u16,
-    /// The press/release edge on the momentary classes, the sign of the delta on axes, and IN
-    /// (`Positive`) / OUT (`Negative`) on the traffic classes.
-    pub direction: MediusDirection,
+    /// A `MEDIUS_DIRECTION_*` value: the press/release edge on the momentary classes, the sign of
+    /// the delta on axes, and IN (`Positive`) / OUT (`Negative`) on the traffic classes. A byte no
+    /// constant names is refused at subscribe time.
+    /// A byte rather than `MediusDirection`, so the boundary can validate it before anything reads it
+    /// as one; C++ renders the enum as `enum : uint8_t`, so assigning this to a `MediusDirection`
+    /// there needs a cast.
+    pub direction: u8,
     /// Bytes kept per event; 0 keeps the whole packet. Traffic classes only -- an input class carries
     /// no packet, and naming one with a non-zero capture is refused at subscribe time.
     pub capture: u8,
@@ -513,13 +601,19 @@ pub struct MediusImperfectStatus {
     pub clone_imperfect: u8,
 }
 
-/// Emit-rate pacing mode plus the rate in effect.
+/// Emit-rate pacing mode plus the rate in effect and the rate the clone advertises.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MediusEmitPaceStatus {
     pub mode: MediusEmitMode,
     pub fixed_hz: u16,
     pub resolved_hz: u16,
+    /// The forced wire rate requested, in Hz; 0 leaves the device's own.
+    pub force_hz: u16,
+    /// What the clone's input endpoints advertise now, in Hz; 0 = no clone.
+    pub advertised_hz: u16,
+    /// 1 when a forced interval is written into the descriptor being served.
+    pub force_active: u8,
 }
 
 /// The device-side clip lifecycle state (`medius_clip_query_status`).
@@ -540,7 +634,8 @@ pub enum MediusClipState {
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MediusClipStatus {
-    pub state: MediusClipState,
+    /// A `MEDIUS_CLIP_STATE_*` value.
+    pub state: u8,
     pub free: u32,
     /// The retained clip size in bytes (streaming: buffered-but-undrained bytes).
     pub total: u32,
@@ -623,10 +718,14 @@ pub struct MediusUsageEvent {
     /// Which class this snapshot is of, one of `MEDIUS_CLASS_*`. Carried here rather than read off
     /// the first entry, because the snapshot that most needs it is the one with `n == 0`: releasing
     /// the last held usage is the edge a caller waits for, and it lists nothing to read a class from.
-    pub class: MediusClass,
-    /// The edge that produced this snapshot: the subscribed set grew (`Positive`) or shrank
-    /// (`Negative`). Without it a direction on an input filter cannot be honoured at all.
-    pub direction: MediusDirection,
+    pub class: u8,
+    /// A `MEDIUS_DIRECTION_*` value: the edge that produced this snapshot, the subscribed set having
+    /// grown (`Positive`) or shrunk (`Negative`). Without it a direction on an input filter cannot be
+    /// honoured at all.
+    /// A byte rather than `MediusDirection`, so the boundary can validate it before anything reads it
+    /// as one; C++ renders the enum as `enum : uint8_t`, so assigning this to a `MediusDirection`
+    /// there needs a cast.
+    pub direction: u8,
     pub n: u16,
     pub usages: [MediusUsage; MEDIUS_MAX_USAGES],
 }
@@ -640,8 +739,11 @@ pub struct MediusTrafficEvent {
     pub class: MediusCatchClass,
     /// Endpoint address, interface number, or endpoint number, per the class.
     pub id: u16,
-    /// `Positive` is IN (device to PC), `Negative` is OUT.
-    pub direction: MediusDirection,
+    /// A `MEDIUS_DIRECTION_*` value: `Positive` is IN (device to PC), `Negative` is OUT.
+    /// A byte rather than `MediusDirection`, so the boundary can validate it before anything reads it
+    /// as one; C++ renders the enum as `enum : uint8_t`, so assigning this to a `MediusDirection`
+    /// there needs a cast.
+    pub direction: u8,
     /// Class-specific; read it with `medius_traffic_event_control_status` or `..._bus_event`.
     pub flags: u8,
     /// The packet's length before `capture` truncated it.

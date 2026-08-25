@@ -7,9 +7,13 @@ from typing import Optional
 
 from . import _native
 from ._device import Device
-from ._enums import ClockDomain, FrameType, LogLevel
+from ._enums import BearingMode, ClipState, ClockDomain, DeviceKind, EmitMode, FrameType, LogLevel
 from ._types import (
+    Bearing,
     Caps,
+    _enum,
+    _u16,
+    _window_ms,
     CatchState,
     ClipSettings,
     ClipStatus,
@@ -109,14 +113,29 @@ class MockBox:
     def set_imperfect_status(self, status: ImperfectStatus):
         _native.lib.medius_mock_set_imperfect_status(self._handle, imperfect_to_c(status))
 
+    def set_advertised_hz(self, hz: int):
+        """The rate the mock's clone advertises unforced; 0 means no clone."""
+        _native.lib.medius_mock_set_advertised_hz(self._handle, _u16(hz, "hz"))
+
     def set_movement_riding(self, window_ms: Optional[int]):
         enabled = window_ms is not None
         _native.lib.medius_mock_set_movement_riding(
             self._handle, enabled, int(window_ms) if enabled else 0
         )
 
-    def set_emit_pace(self, pace: EmitPace):
-        _native.lib.medius_mock_set_emit_pace(self._handle, int(pace.mode), int(pace.hz))
+    def set_bearing(self, bearing: Bearing):
+        """Set the `Bearing` the mock answers to `Device.query_bearing`."""
+        _native.lib.medius_mock_set_bearing(
+            self._handle,
+            _window_ms(bearing.window_ms),
+            int(_enum(bearing.mode, BearingMode, "mode")),
+        )
+
+    def set_emit_pace(self, pace: EmitPace, force_hz: Optional[int] = None):
+        mode = _enum(pace.mode, EmitMode, "mode")
+        _native.lib.medius_mock_set_emit_pace(
+            self._handle, int(mode), _u16(pace.hz, "hz"), _u16(force_hz or 0, "force_hz")
+        )
 
     def set_clip_status(self, status: ClipStatus):
         """Set the `ClipStatus` the mock answers to `ClipHandle.query_status`."""
@@ -137,6 +156,7 @@ class MockBox:
         _native.lib.medius_mock_push_raw(self._handle, buf, len(data))
 
     def push_log(self, level: LogLevel, text: str):
+        level = _enum(level, LogLevel, "level")
         _native.lib.medius_mock_push_log(self._handle, int(level), text.encode("utf-8"))
 
     def push_motion(self, seq: int, ts_us: int, event: MotionEvent):
@@ -148,6 +168,7 @@ class MockBox:
 
     def push_traffic(self, seq: int, ts_us: int, clock: ClockDomain, event: TrafficEvent):
         """Push a TRAFFIC_EVENT; a `true_len` above the byte count is how a cut capture looks."""
+        clock = _enum(clock, ClockDomain, "clock")
         c = traffic_event_to_c(event)
         _native.lib.medius_mock_push_traffic(self._handle, seq, ts_us, int(clock), ctypes.byref(c))
 
@@ -155,6 +176,7 @@ class MockBox:
         return int(_native.lib.medius_mock_recorded(self._handle))
 
     def saw(self, frame_type: FrameType) -> bool:
+        frame_type = _enum(frame_type, FrameType, "frame_type")
         return bool(_native.lib.medius_mock_saw(self._handle, int(frame_type)))
 
     def clear_recorded(self):

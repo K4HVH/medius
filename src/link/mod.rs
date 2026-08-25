@@ -31,6 +31,9 @@ use slot::TransportSlot;
 /// Default `RESP` wait before [`Error::QueryTimeout`](crate::Error::QueryTimeout).
 pub const DEFAULT_QUERY_TIMEOUT: Duration = Duration::from_secs(1);
 
+/// Replies parked for another caller. A window is 16 frames; this is slack on top.
+const HELD_UPDATES_MAX: usize = 64;
+
 /// Default keepalive cadence for refreshing a held override.
 pub const DEFAULT_KEEPALIVE_CADENCE: Duration = Duration::from_millis(500);
 
@@ -40,7 +43,11 @@ pub(crate) struct LinkInner {
     seq: Arc<AtomicU8>,
     query_gen: Arc<AtomicU64>,
     pending: Arc<Mutex<HashMap<u8, PendingEntry>>>,
+    #[cfg(all(test, feature = "mock"))]
+    updates_tx: flume::Sender<Vec<u8>>,
     logs_rx: flume::Receiver<LogLine>,
+    updates_rx: flume::Receiver<Vec<u8>>,
+    held_updates: Arc<Mutex<Vec<Vec<u8>>>>,
     desired: Arc<Mutex<DesiredState>>,
     events: Arc<Mutex<CatchReg>>,
     catch_gen: Arc<AtomicU64>,
@@ -99,6 +106,9 @@ impl Link {
         let query_timeout = DEFAULT_QUERY_TIMEOUT;
         let pending: Arc<Mutex<HashMap<u8, PendingEntry>>> = Arc::new(Mutex::new(HashMap::new()));
         let (logs_tx, logs_rx) = flume::bounded(logs::LOGS_CAPACITY);
+        // Unbounded: a stalled reader must never drop an acknowledgement, since the sender is blocked
+        // waiting for exactly that frame before it may send the next window.
+        let (updates_tx, updates_rx) = flume::unbounded();
         let counters = Arc::new(Counters::default());
         let stop = Arc::new(AtomicBool::new(false));
         let desired = Arc::new(Mutex::new(DesiredState::default()));
@@ -111,12 +121,14 @@ impl Link {
         let transport = Arc::new(TransportSlot::new(transport));
         let reconnect_lock = Arc::new(Mutex::new(()));
         let identity: Arc<Mutex<Option<BoxIdentity>>> = Arc::new(Mutex::new(None));
+        let held_updates: Arc<Mutex<Vec<Vec<u8>>>> = Arc::new(Mutex::new(Vec::new()));
 
         let reader = reader::spawn_reader(
             Arc::clone(&transport),
             Arc::clone(&pending),
             logs_tx.clone(),
             logs_rx.clone(),
+            updates_tx.clone(),
             Arc::clone(&events),
             Arc::clone(&counters),
             Arc::clone(&stop),
@@ -129,6 +141,8 @@ impl Link {
                 reconnect_lock: Arc::clone(&reconnect_lock),
                 identity: Arc::clone(&identity),
                 catch_lock: Arc::clone(&catch_lock),
+                held_updates: Arc::clone(&held_updates),
+                updates_rx: updates_rx.clone(),
             },
         );
 
@@ -151,6 +165,10 @@ impl Link {
                 query_gen,
                 pending,
                 logs_rx,
+                #[cfg(all(test, feature = "mock"))]
+                updates_tx,
+                updates_rx,
+                held_updates: Arc::clone(&held_updates),
                 desired,
                 events,
                 catch_gen,
@@ -196,6 +214,30 @@ impl Link {
 
     pub(crate) fn desired(&self) -> &Mutex<DesiredState> {
         &self.inner.desired
+    }
+
+    pub(crate) fn updates_rx(&self) -> &flume::Receiver<Vec<u8>> {
+        &self.inner.updates_rx
+    }
+
+    /// Replies taken off the channel that answer somebody else's op; see `Device::recv_update`.
+    pub(crate) fn held_updates(&self) -> &Mutex<Vec<Vec<u8>>> {
+        &self.inner.held_updates
+    }
+
+    /// Puts a reply on the channel as if the box had sent it, for tests about what happens to a
+    /// reply that outlived the caller who asked for it.
+    #[cfg(all(test, feature = "mock"))]
+    pub(crate) fn inject_update(&self, payload: Vec<u8>) {
+        let _ = self.inner.updates_tx.send(payload);
+    }
+
+    pub(crate) fn hold_update(&self, payload: Vec<u8>) {
+        let mut held = self.inner.held_updates.lock();
+        if held.len() >= HELD_UPDATES_MAX {
+            held.remove(0);
+        }
+        held.push(payload);
     }
 
     pub(crate) fn logs_rx(&self) -> flume::Receiver<LogLine> {

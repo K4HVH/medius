@@ -9,7 +9,7 @@ pub const SOF: u8 = 0xA5;
 pub const MAX_PAYLOAD: usize = 512;
 
 /// Protocol version in `RESP(VERSION)` (§4.1); the handshake requires this exact value.
-pub const PROTO_VER: u8 = 4;
+pub const PROTO_VER: u8 = 5;
 
 /// `INJECT` class byte: the momentary-usage field kind.
 pub const INJ_BTN: u8 = 0;
@@ -49,9 +49,31 @@ pub const OPT_MOVE_RIDE: u8 = 1;
 pub const OPT_EMIT: u8 = 2;
 /// `OPTION` id: box name. Value `[name ascii]` 1..32 printable ASCII (0 bytes clears to default); set-only, read off `RESP(VERSION)`.
 pub const OPT_NAME: u8 = 3;
+/// `OPTION` id: the bearing. Value `[window u16 LE ms][mode u8]`; what `LOCK_DIR_WITH`/`AGAINST` are measured against (§3.12).
+pub const OPT_BEARING: u8 = 4;
+/// `OPTION(BEARING)` mode: each axis reads its own sign against its own bearing.
+pub const BEARING_PER_AXIS: u8 = 0;
+/// `OPTION(BEARING)` mode: the aim is projected onto the injected XY vector; motion across it is untouched.
+pub const BEARING_VECTOR: u8 = 1;
 
 /// Buffered-clip status selector: `QUERY [Q_CLIP]` → `RESP(CLIP)` (§4.15).
 pub const Q_CLIP: u8 = 10;
+/// Both chips' firmware versions and slot state: `QUERY [Q_FIRMWARE]` → `RESP(FIRMWARE)` (§4.16).
+pub const Q_FIRMWARE: u8 = 11;
+
+/// `UPDATE` sub-ops (§3.13).
+pub const OTA_OP_BEGIN: u8 = 0;
+pub const OTA_OP_DATA: u8 = 1;
+pub const OTA_OP_END: u8 = 2;
+pub const OTA_OP_ABORT: u8 = 3;
+pub const OTA_OP_ACTIVATE: u8 = 4;
+/// Image bytes per `DATA` frame: the frame's 512 minus op, target and a 2-byte chunk index, rounded
+/// down to a multiple of four so every flash write on the box is aligned.
+pub const OTA_CHUNK: usize = 504;
+/// `DATA` frames the box accepts before it must acknowledge, when it does not say otherwise.
+pub const OTA_CREDIT: usize = 16;
+/// `UPDATE_RESP` payload length: op, target, status, arg.
+pub const UPD_RESP_LEN: usize = 7;
 /// `CLIP_CTRL` engine verbs. Ops 0..5 are the shared action space (also a trigger `action` byte).
 pub const CLIP_OP_START: u8 = 0;
 pub const CLIP_OP_STOP: u8 = 1;
@@ -95,7 +117,6 @@ pub const BTN_RIGHT: u8 = 1;
 pub const BTN_MIDDLE: u8 = 2;
 pub const BTN_SIDE1: u8 = 3;
 pub const BTN_SIDE2: u8 = 4;
-#[allow(dead_code)]
 pub const BTN_COUNT: u8 = 5;
 
 /// Clear our injected press; defer to physical state.
@@ -176,13 +197,18 @@ pub const LOCK_ID_ALL: u16 = 0xFFFF;
 pub const LOCK_AXIS_X: u16 = 0;
 pub const LOCK_AXIS_Y: u16 = 1;
 pub const LOCK_AXIS_WHEEL: u16 = 2;
-/// `LOCK` direction byte: both / positive-or-press / negative-or-release.
+/// `LOCK` direction byte: both / positive-or-press / negative-or-release, then the two measured
+/// against the bearing rather than a fixed sign (§3.12).
 pub const LOCK_DIR_BOTH: u8 = 0;
 pub const LOCK_DIR_POS: u8 = 1;
 pub const LOCK_DIR_NEG: u8 = 2;
-/// `RESP(LOCKS)` per-entry dirbits (§4.8): b0 = positive/press locked, b1 = negative/release locked.
-pub const LOCK_DIRBIT_POS: u8 = 0x01;
-pub const LOCK_DIRBIT_NEG: u8 = 0x02;
+pub const LOCK_DIR_WITH: u8 = 3;
+pub const LOCK_DIR_AGAINST: u8 = 4;
+/// `LOCK` scale byte (§3.8): percent of the physical value kept. 0 blocks, 100 passes it untouched,
+/// above 100 amplifies, to a ceiling of 255 (2.55x).
+pub const LOCK_SCALE_BLOCK: u8 = 0;
+pub const LOCK_SCALE_PASS: u8 = 100;
+pub const LOCK_SCALE_MAX: u8 = 255;
 
 /// `CAPS` kbd_flags: keys are an NKRO bitmap (`n_keys` = 0xFF), else a keycode array (§4.4).
 pub const KBC_NKRO: u8 = 0x01;
@@ -263,6 +289,10 @@ pub enum FrameType {
     ClipSet = 0x14,
     /// `CLIP_TRIGGER`: add/remove a clip trigger binding `[class][id u16][edge][action][flags]` (PC→box).
     ClipTrigger = 0x15,
+    /// `UPDATE`: stage and activate firmware on either chip (PC→box) (§3.13).
+    Update = 0x17,
+    /// `UPDATE_RESP`: the answer to one `UPDATE` op (box→PC) (§4.16).
+    UpdateResp = 0x18,
 }
 
 /// Error returned when a byte does not name a known [`FrameType`].
@@ -300,6 +330,8 @@ impl TryFrom<u8> for FrameType {
             0x13 => FrameType::ClipCtrl,
             0x14 => FrameType::ClipSet,
             0x15 => FrameType::ClipTrigger,
+            0x17 => FrameType::Update,
+            0x18 => FrameType::UpdateResp,
             other => return Err(UnknownFrameType(other)),
         })
     }

@@ -17,9 +17,14 @@ fn option_payload_bytes() {
     assert_eq!(move_ride_payload(5), [1, 5, 0]);
     assert_eq!(move_ride_payload(0), [1, 0, 0]);
     assert_eq!(move_ride_payload(1000), [1, 0xE8, 0x03]);
-    assert_eq!(emit_pace_payload(0, 0), [2, 0, 0, 0]);
-    assert_eq!(emit_pace_payload(1, 0), [2, 1, 0, 0]);
-    assert_eq!(emit_pace_payload(2, 1000), [2, 2, 0xE8, 0x03]);
+    assert_eq!(emit_pace_payload(0, 0, 0), [2, 0, 0, 0, 0, 0]);
+    assert_eq!(emit_pace_payload(1, 0, 0), [2, 1, 0, 0, 0, 0]);
+    assert_eq!(emit_pace_payload(2, 1000, 0), [2, 2, 0xE8, 0x03, 0, 0]);
+    assert_eq!(emit_pace_payload(0, 0, 125), [2, 0, 0, 0, 0x7D, 0]);
+    assert_eq!(
+        emit_pace_payload(2, 500, 1000),
+        [2, 2, 0xF4, 0x01, 0xE8, 0x03]
+    );
     assert_eq!(name_payload("AB"), vec![3, b'A', b'B']);
     assert_eq!(name_payload(""), vec![3]);
 }
@@ -59,22 +64,43 @@ fn decode_move_ride_through_parse_resp() {
 
 #[test]
 fn decode_emit_pace_through_parse_resp() {
-    let Some(Resp::EmitPace(s)) = parse_resp(&[9, 2, 2, 0xF4, 0x01, 0xF4, 0x01]) else {
+    // Five distinct numbers, so swapping any two fields fails.
+    let Some(Resp::EmitPace(s)) =
+        parse_resp(&[9, 2, 2, 0xE8, 0x03, 0xFA, 0x00, 0x7D, 0x00, 0x64, 0x00, 1])
+    else {
         panic!("expected EmitPace");
     };
     assert_eq!(
         s,
         EmitPaceStatus {
-            mode: EmitPace::Fixed(500),
-            resolved_hz: 500
+            mode: EmitPace::Fixed(1000),
+            resolved_hz: 250,
+            force_hz: Some(125),
+            advertised_hz: 100,
+            force_active: true,
         }
     );
-    let Some(Resp::EmitPace(learned)) = parse_resp(&[9, 2, 0, 0, 0, 0, 0]) else {
+    // Unforced still reports what the clone advertises, so a host can see the device's own rate.
+    let Some(Resp::EmitPace(native)) = parse_resp(&[9, 2, 0, 0, 0, 0, 0, 0, 0, 0xE8, 0x03, 0])
+    else {
         panic!("expected EmitPace");
     };
-    assert_eq!(learned, EmitPaceStatus::default());
-    assert!(parse_resp(&[9, 2, 0, 0, 0, 0]).is_none());
-    assert!(parse_resp(&[9, 2, 3, 0, 0, 0, 0]).is_none());
+    assert_eq!(
+        native,
+        EmitPaceStatus {
+            mode: EmitPace::Learned,
+            resolved_hz: 0,
+            force_hz: None,
+            advertised_hz: 1000,
+            force_active: false,
+        }
+    );
+    let Some(Resp::EmitPace(nothing)) = parse_resp(&[9, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]) else {
+        panic!("expected EmitPace");
+    };
+    assert_eq!(nothing, EmitPaceStatus::default());
+    assert!(parse_resp(&[9, 2, 2, 0xE8, 0x03, 0xFA, 0x00, 0x7D, 0x00, 0x64, 0x00]).is_none());
+    assert!(parse_resp(&[9, 2, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0]).is_none());
 }
 
 #[cfg(feature = "mock")]
@@ -89,7 +115,10 @@ fn mock_emit_pace_matches_firmware_snap() {
         device.query_emit_pace().unwrap(),
         EmitPaceStatus {
             mode: EmitPace::Fixed(400),
-            resolved_hz: 333
+            resolved_hz: 333,
+            force_hz: None,
+            advertised_hz: 0,
+            force_active: false,
         }
     );
     mock.set_emit_pace(EmitPace::Fixed(2000));
@@ -97,7 +126,10 @@ fn mock_emit_pace_matches_firmware_snap() {
         device.query_emit_pace().unwrap(),
         EmitPaceStatus {
             mode: EmitPace::Fixed(1000),
-            resolved_hz: 1000
+            resolved_hz: 1000,
+            force_hz: None,
+            advertised_hz: 0,
+            force_active: false,
         }
     );
     mock.set_emit_pace(EmitPace::Learned);
@@ -105,9 +137,69 @@ fn mock_emit_pace_matches_firmware_snap() {
         device.query_emit_pace().unwrap(),
         EmitPaceStatus {
             mode: EmitPace::Learned,
-            resolved_hz: 0
+            resolved_hz: 0,
+            force_hz: None,
+            advertised_hz: 0,
+            force_active: false,
         }
     );
+}
+
+#[cfg(feature = "mock")]
+#[test]
+fn mock_rate_force_matches_firmware_snap() {
+    use crate::{Device, MockBox};
+    // A clone that declares 125 Hz, with the opt-in on so a force can actually apply.
+    let mock = MockBox::new()
+        .with_advertised_hz(125)
+        .with_rate_force(Some(300));
+    let device = Device::with_mock(mock.clone());
+    device.allow_imperfect_clones(true).unwrap();
+    // 300 Hz resolves to bInterval 2, the interval a host would actually keep for 1000/300.
+    let s = device.query_emit_pace().unwrap();
+    assert_eq!(s.force_hz, Some(300));
+    assert_eq!(s.advertised_hz, 500);
+    assert!(s.force_active);
+    // Above the frame-clock ceiling resolves to bInterval 1.
+    mock.set_rate_force(Some(4000));
+    let s = device.query_emit_pace().unwrap();
+    assert_eq!(s.force_hz, Some(4000));
+    assert_eq!(s.advertised_hz, 1000);
+    // 125 is exactly a power-of-two interval, so it is the one rate that comes back unchanged.
+    mock.set_rate_force(Some(125));
+    assert_eq!(device.query_emit_pace().unwrap().advertised_hz, 125);
+    // The slowest a full-speed clone can advertise: bInterval 128, the largest power of two in a byte.
+    mock.set_rate_force(Some(1));
+    assert_eq!(device.query_emit_pace().unwrap().advertised_hz, 7);
+    // Some(0) is what the wire calls off, and dividing by it would panic.
+    mock.set_rate_force(Some(0));
+    let s = device.query_emit_pace().unwrap();
+    assert_eq!(s.force_hz, None);
+    assert!(!s.force_active);
+    mock.set_rate_force(None);
+    let s = device.query_emit_pace().unwrap();
+    assert_eq!(s.force_hz, None);
+    assert!(!s.force_active);
+    assert_eq!(s.advertised_hz, 125);
+}
+
+#[cfg(feature = "mock")]
+#[test]
+fn mock_leaves_a_force_inert_without_the_opt_in() {
+    use crate::{Device, EmitPace, MockBox};
+    // The box gates a force on the imperfect opt-in, so a mock that reported it active regardless would
+    // green-light host code that disagrees with every real box.
+    let mock = MockBox::new().with_advertised_hz(125);
+    let device = Device::with_mock(mock.clone());
+    device.set_emit_pace(EmitPace::Learned, Some(1000)).unwrap();
+    let s = device.query_emit_pace().unwrap();
+    assert_eq!(s.force_hz, Some(1000));
+    assert!(!s.force_active);
+    assert_eq!(s.advertised_hz, 125);
+    device.allow_imperfect_clones(true).unwrap();
+    let s = device.query_emit_pace().unwrap();
+    assert!(s.force_active);
+    assert_eq!(s.advertised_hz, 1000);
 }
 
 #[test]
@@ -189,4 +281,136 @@ fn set_name_sends_the_value_raw_for_the_box_to_sanitize() {
         .find(|f| f.ty == FrameType::Option)
         .unwrap();
     assert_eq!(frame.payload, vec![3, b'A', b'\t', b'B']);
+}
+
+#[test]
+fn bearing_payload_bytes() {
+    use crate::protocol::command::bearing_payload;
+    use crate::protocol::opcode::{BEARING_PER_AXIS, BEARING_VECTOR};
+    assert_eq!(bearing_payload(20, BEARING_PER_AXIS), [4, 20, 0, 0]);
+    assert_eq!(bearing_payload(500, BEARING_VECTOR), [4, 0xF4, 0x01, 1]);
+    assert_eq!(bearing_payload(0, BEARING_PER_AXIS), [4, 0, 0, 0]);
+}
+
+#[test]
+fn bearing_decodes_from_a_resp() {
+    use crate::protocol::{Resp, parse_resp};
+    use crate::types::BearingMode;
+    use std::time::Duration;
+    let Some(Resp::Bearing(b)) = parse_resp(&[9, 4, 20, 0, 0]) else {
+        panic!("expected Bearing");
+    };
+    assert_eq!(b.window, Some(Duration::from_millis(20)));
+    assert_eq!(b.mode, BearingMode::PerAxis);
+    assert!(b.is_live());
+
+    // A zero window is off, not a zero-length one: the relative directions do nothing at all.
+    let Some(Resp::Bearing(off)) = parse_resp(&[9, 4, 0, 0, 1]) else {
+        panic!("expected Bearing");
+    };
+    assert_eq!(off.window, None);
+    assert_eq!(off.mode, BearingMode::Vector);
+    assert!(!off.is_live());
+
+    // An unknown mode is not silently read as per-axis.
+    assert!(parse_resp(&[9, 4, 20, 0, 7]).is_none());
+    assert!(parse_resp(&[9, 4, 20, 0]).is_none());
+}
+
+#[cfg(feature = "mock")]
+#[test]
+fn set_bearing_sends_the_option_frame() {
+    use crate::types::BearingMode;
+    use crate::{Device, MockBox};
+    use std::time::Duration;
+    let mock = MockBox::new();
+    let device = Device::with_mock(mock.clone());
+    device
+        .set_bearing(Some(Duration::from_millis(20)), BearingMode::Vector)
+        .unwrap();
+    let frame = mock
+        .recorded_frames()
+        .into_iter()
+        .find(|f| f.ty == FrameType::Option)
+        .unwrap();
+    assert_eq!(frame.payload, vec![4, 20, 0, 1]);
+
+    device.set_bearing(None, BearingMode::PerAxis).unwrap();
+    let off = mock
+        .recorded_frames()
+        .into_iter()
+        .rfind(|f| f.ty == FrameType::Option)
+        .unwrap();
+    assert_eq!(off.payload, vec![4, 0, 0, 0]);
+}
+
+#[cfg(feature = "mock")]
+#[test]
+fn query_bearing_round_trips_through_the_mock() {
+    use crate::types::{Bearing, BearingMode};
+    use crate::{Device, MockBox};
+    use std::time::Duration;
+    let want = Bearing {
+        window: Some(Duration::from_millis(35)),
+        mode: BearingMode::Vector,
+    };
+    let mock = MockBox::new().with_bearing(want);
+    let device = Device::with_mock(mock);
+    assert_eq!(device.query_bearing().unwrap(), want);
+}
+
+#[cfg(feature = "mock")]
+#[test]
+fn scale_sends_the_lock_frame_with_the_percentage() {
+    use crate::{Axis, Device, Direction, MockBox};
+    let mock = MockBox::new();
+    let device = Device::with_mock(mock.clone());
+    device.scale(Axis::X, Direction::Against, 40).unwrap();
+    device.scale(Axis::Y, Direction::With, 130).unwrap();
+    let frames: Vec<Vec<u8>> = mock
+        .recorded_frames()
+        .into_iter()
+        .filter(|f| f.ty == FrameType::Lock)
+        .map(|f| f.payload)
+        .collect();
+    assert_eq!(frames, vec![vec![3, 0, 0, 4, 40], vec![3, 1, 0, 3, 130]]);
+}
+
+#[cfg(feature = "mock")]
+#[test]
+fn lock_and_unlock_are_the_two_ends_of_the_scale() {
+    use crate::{Axis, Device, Direction, MockBox};
+    let mock = MockBox::new();
+    let device = Device::with_mock(mock.clone());
+    device.lock(Axis::X, Direction::Positive).unwrap();
+    device.unlock(Axis::X, Direction::Positive).unwrap();
+    let frames: Vec<Vec<u8>> = mock
+        .recorded_frames()
+        .into_iter()
+        .filter(|f| f.ty == FrameType::Lock)
+        .map(|f| f.payload)
+        .collect();
+    assert_eq!(frames, vec![vec![3, 0, 0, 1, 0], vec![3, 0, 0, 1, 100]]);
+}
+
+#[cfg(feature = "mock")]
+#[test]
+fn a_relative_direction_is_refused_on_a_catch_subscription() {
+    use crate::{CatchFilter, Device, Direction, Error, MockBox, TrafficClass};
+    let device = Device::with_mock(MockBox::new());
+    let err = device
+        .catch_events([
+            CatchFilter::traffic(TrafficClass::VendorBulk, 0x83).with_direction(Direction::Against)
+        ])
+        .unwrap_err();
+    assert!(
+        matches!(
+            err,
+            Error::RelativeDirection {
+                direction: Direction::Against,
+                ..
+            }
+        ),
+        "expected RelativeDirection, got {err:?}"
+    );
 }

@@ -18,7 +18,7 @@ pub enum MediusStatus {
     ErrQueryTimeout = 5,
     ErrDisconnected = 6,
     ErrFrameTooLong = 7,
-    ErrFlashTool = 8,
+    ErrUpdate = 8,
     ErrInvalidArg = 9,
     ErrPanic = 10,
     ErrUnknown = 11,
@@ -36,6 +36,8 @@ pub enum MediusStatus {
     ErrHalfEdgeInputFilter = 17,
     /// An exact id equal to the blanket sentinel, which would address the whole class.
     ErrReservedId = 18,
+    /// `MEDIUS_DIRECTION_WITH` / `_AGAINST` on something with no bearing to measure them against.
+    ErrRelativeDirection = 19,
 }
 
 #[derive(Default)]
@@ -80,8 +82,8 @@ fn status_for(err: &Error) -> MediusStatus {
         Error::WildcardNotInput => MediusStatus::ErrWildcardNotInput,
         Error::HalfEdgeInputFilter => MediusStatus::ErrHalfEdgeInputFilter,
         Error::ReservedId { .. } => MediusStatus::ErrReservedId,
-        #[cfg(feature = "flash")]
-        Error::FlashTool(_) => MediusStatus::ErrFlashTool,
+        Error::RelativeDirection { .. } => MediusStatus::ErrRelativeDirection,
+        Error::Update { .. } => MediusStatus::ErrUpdate,
         _ => MediusStatus::ErrUnknown,
     }
 }

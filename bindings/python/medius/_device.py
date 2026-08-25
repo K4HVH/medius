@@ -3,15 +3,24 @@
 from __future__ import annotations
 
 import ctypes
+import time
 from typing import Optional, Sequence, Union
 
 from . import _native
-from ._enums import (Action, Blanket, LedMode, LedTarget, Direction, MoveTiming, PendingMotion,
-                     RebootTarget, Status)
+from ._enums import (Action, BearingMode, Blanket, EmitMode, LedMode, LedTarget, Direction,
+                     MoveTiming, PendingMotion, RebootTarget, Status, UpdateTarget)
 from ._errors import InvalidArgError, MediusError, check
 from ._clip import ClipHandle
 from ._streams import EventStream, InputStream, LogStream
 from ._types import (
+    Bearing,
+    FirmwareInfo,
+    firmware_info_from_c,
+    _enum,
+    _i16,
+    _u8,
+    _u16,
+    _window_ms,
     Caps,
     CatchFilter,
     CatchState,
@@ -28,6 +37,7 @@ from ._types import (
     Rate,
     Stats,
     Version,
+    bearing_from_c,
     caps_from_c,
     catch_state_from_c,
     counters_from_c,
@@ -113,18 +123,18 @@ class Device:
         return Device(handle)
 
     def move_rel(self, dx, dy):
-        check(_native.lib.medius_device_move_rel(self._handle, dx, dy))
+        check(_native.lib.medius_device_move_rel(self._handle, _i16(dx, "dx"), _i16(dy, "dy")))
 
     def wheel(self, delta):
-        check(_native.lib.medius_device_wheel(self._handle, delta))
+        check(_native.lib.medius_device_wheel(self._handle, _i16(delta, "delta")))
 
     def move_rel_now(self, dx, dy):
         """A cursor move that bypasses movement riding: it emits on the box's own clock."""
-        check(_native.lib.medius_device_move_rel_now(self._handle, dx, dy))
+        check(_native.lib.medius_device_move_rel_now(self._handle, _i16(dx, "dx"), _i16(dy, "dy")))
 
     def wheel_now(self, delta):
         """A wheel move that bypasses movement riding."""
-        check(_native.lib.medius_device_wheel_now(self._handle, delta))
+        check(_native.lib.medius_device_wheel_now(self._handle, _i16(delta, "delta")))
 
     def flush_motion(self):
         """Emit the motion held for a ride now, ignoring the ride window."""
@@ -136,9 +146,12 @@ class Device:
 
     def move_axis(self, motion: Motion, timing: MoveTiming = MoveTiming.RIDE,
                   pending: PendingMotion = PendingMotion.KEEP):
+        timing = _enum(timing, MoveTiming, "timing")
+        pending = _enum(pending, PendingMotion, "pending")
         check(_native.lib.medius_device_move_axis(self._handle, motion._c, int(timing), int(pending)))
 
     def inject(self, input: Usage, action: Action):
+        action = _enum(action, Action, "action")
         check(_native.lib.medius_device_inject(self._handle, input._c, int(action)))
 
     def press(self, input: Usage):
@@ -151,19 +164,70 @@ class Device:
         check(_native.lib.medius_device_force_release(self._handle, input._c))
 
     def lock(self, target: LockTarget, direction: Direction):
+        direction = _enum(direction, Direction, "direction")
         check(_native.lib.medius_device_lock(self._handle, target._c, int(direction)))
 
     def unlock(self, target: LockTarget, direction: Direction):
+        direction = _enum(direction, Direction, "direction")
         check(_native.lib.medius_device_unlock(self._handle, target._c, int(direction)))
 
+    def scale(self, target: LockTarget, direction: Direction, scale: int):
+        """Weigh physical input on a target and direction.
+
+        `scale` is the percent of the physical value the box keeps: 0 blocks, 100 passes it
+        untouched, above that amplifies to 255 (2.55x). `lock` and `unlock` are its two ends.
+
+        A delta picks up at most two scales, its absolute direction's and its relative direction's,
+        and they multiply, so a block anywhere wins. `Direction.BOTH` is the exception: it writes the
+        scale to the two fixed signs and a full pass to the relative pair, so a `BOTH` of 50 is 50%
+        with or without a bearing rather than 25% with one. Name a relative direction to weigh it.
+
+        `Direction.WITH` and `Direction.AGAINST` need a live bearing (see `set_bearing`) and only an
+        axis has one, so either on a button, key or media usage raises `RelativeDirectionError`. A
+        momentary usage carries one bit, so any scale below a full pass locks it and any scale at or
+        above one unlocks it. A media usage has no edges and is sent as `Direction.BOTH` whatever
+        edge is named, which is what `query_locks` reports it as.
+        """
+        direction = _enum(direction, Direction, "direction")
+        check(
+            _native.lib.medius_device_scale(
+                self._handle, target._c, int(direction), _u8(scale, "scale")
+            )
+        )
+
+    def scale_all(self, what: Blanket, direction: Direction, scale: int):
+        """Weigh a whole class blanket; see `scale` for what the number means."""
+        what = _enum(what, Blanket, "what")
+        direction = _enum(direction, Direction, "direction")
+        check(
+            _native.lib.medius_device_scale_all(
+                self._handle, int(what), int(direction), _u8(scale, "scale")
+            )
+        )
+
     def lock_all(self, what: Blanket, direction: Direction):
+        """Block a whole class blanket.
+
+        `Blanket.KEYS` honours the direction: `POSITIVE` blocks press edges only, `NEGATIVE` release
+        edges only.
+        """
+        what = _enum(what, Blanket, "what")
+        direction = _enum(direction, Direction, "direction")
         check(_native.lib.medius_device_lock_all(self._handle, int(what), int(direction)))
 
     def unlock_all(self, what: Blanket, direction: Direction):
+        what = _enum(what, Blanket, "what")
+        direction = _enum(direction, Direction, "direction")
         check(_native.lib.medius_device_unlock_all(self._handle, int(what), int(direction)))
 
     def led(self, target: LedTarget, mode: LedMode, level):
-        check(_native.lib.medius_device_led(self._handle, int(target), int(mode), int(level)))
+        target = _enum(target, LedTarget, "target")
+        mode = _enum(mode, LedMode, "mode")
+        check(
+            _native.lib.medius_device_led(
+                self._handle, int(target), int(mode), _u8(level, "level")
+            )
+        )
 
     def reset(self):
         check(_native.lib.medius_device_reset(self._handle))
@@ -175,6 +239,7 @@ class Device:
         check(_native.lib.medius_device_reconnect(self._handle))
 
     def reboot(self, target: RebootTarget):
+        target = _enum(target, RebootTarget, "target")
         check(_native.lib.medius_device_reboot(self._handle, int(target)))
 
     def allow_imperfect_clones(self, allow: bool):
@@ -185,13 +250,38 @@ class Device:
         enabled = window_ms is not None
         check(
             _native.lib.medius_device_set_movement_riding(
-                self._handle, enabled, int(window_ms) if enabled else 0
+                self._handle, enabled, _window_ms(window_ms)
             )
         )
 
-    def set_emit_pace(self, pace: EmitPace):
-        """Set what paces injected motion (`hz` matters only for `EmitPace.fixed`)."""
-        check(_native.lib.medius_device_set_emit_pace(self._handle, int(pace.mode), int(pace.hz)))
+    def set_bearing(self, window_ms: Optional[int], mode: BearingMode):
+        """Set what `Direction.WITH` and `Direction.AGAINST` are measured against.
+
+        `window_ms` is how long the last injected delta's direction stays the bearing; `None` turns
+        it off, leaving the relative directions inert whatever their scale. It saturates at 65535 ms,
+        as the Rust API does.
+
+        Both fields ride one frame and the box persists them together, so `mode` is required: a
+        default here would revert a box configured for `VECTOR` on any window change.
+        """
+        mode = _enum(mode, BearingMode, "mode")
+        check(
+            _native.lib.medius_device_set_bearing(
+                self._handle, _window_ms(window_ms), int(mode)
+            )
+        )
+
+    def set_emit_pace(self, pace: EmitPace, force_hz: Optional[int] = None):
+        """Set what paces injected motion (`hz` matters only for `EmitPace.fixed`) and what rate the
+        clone advertises and the box polls the device at (`force_hz`, None = the device's own).
+        Both ride one command, so every call writes both."""
+        mode = _enum(pace.mode, EmitMode, "mode")
+        check(
+            _native.lib.medius_device_set_emit_pace(
+                self._handle, int(mode), _u16(pace.hz, "hz"),
+                _u16(force_hz or 0, "force_hz"),
+            )
+        )
 
     def set_name(self, name: str):
         """Set the box's persistent human-readable name; an empty string clears it."""
@@ -205,6 +295,53 @@ class Device:
         out = _native.MediusVersion()
         check(_native.lib.medius_device_query_version(self._handle, ctypes.byref(out)))
         return version_from_c(out)
+
+    def firmware_info(self) -> FirmwareInfo:
+        """Both chips' firmware versions and which app slot each booted."""
+        out = _native.MediusFirmwareInfo()
+        check(_native.lib.medius_device_firmware_info(self._handle, ctypes.byref(out)))
+        return firmware_info_from_c(out)
+
+    def wait_firmware_confirmed(self, timeout: float = 45.0) -> FirmwareInfo:
+        """Block until neither chip is still on probation; a chip on probation refuses an update."""
+        deadline = time.monotonic() + timeout
+        while True:
+            info = self.firmware_info()
+            if not info.any_pending():
+                return info
+            if time.monotonic() >= deadline:
+                raise RuntimeError(f"still on probation after {timeout}s")
+            time.sleep(0.5)
+
+    def stage_firmware(self, target: UpdateTarget, image: bytes, progress=None) -> None:
+        """Write one image into that chip's spare slot; it stays inert until activate_firmware()."""
+        if not image:
+            raise ValueError("image is empty")
+        buf = (ctypes.c_uint8 * len(image)).from_buffer_copy(image)
+
+        def _cb(_user, sent, total):
+            if progress is not None:
+                progress(int(sent), int(total))
+
+        cb = _native.UPDATE_PROGRESS_CB(_cb)
+        check(
+            _native.lib.medius_device_stage_firmware(
+                self._handle, int(target), buf, len(image), cb, None
+            )
+        )
+
+    def abort_update(self, target: UpdateTarget) -> None:
+        """Drop whatever is staged or in flight for one target."""
+        check(_native.lib.medius_device_abort_update(self._handle, int(target)))
+
+    def activate_firmware(self) -> None:
+        """Commit every staged image and reboot into it; the host chip goes first."""
+        check(_native.lib.medius_device_activate_firmware(self._handle))
+
+    def update_firmware(self, target: UpdateTarget, image: bytes, progress=None) -> None:
+        """Stage one image and activate it."""
+        self.stage_firmware(target, image, progress)
+        self.activate_firmware()
 
     def query_health(self) -> Health:
         out = _native.MediusHealth()
@@ -235,6 +372,12 @@ class Device:
         out = _native.MediusLocks()
         check(_native.lib.medius_device_query_locks(self._handle, ctypes.byref(out)))
         return locks_from_c(out)
+
+    def query_bearing(self) -> Bearing:
+        """The configured bearing: its window and how it is read."""
+        out = _native.MediusBearing()
+        check(_native.lib.medius_device_query_bearing(self._handle, ctypes.byref(out)))
+        return bearing_from_c(out)
 
     def query_catch(self) -> CatchState:
         out = _native.MediusCatchState()

@@ -3,15 +3,16 @@ use std::time::Duration;
 use crate::error::{Error, Result};
 use crate::link::Link;
 use crate::protocol::opcode::{
-    OPT_EMIT, OPT_IMPERFECT, OPT_MOVE_RIDE, Q_CAPS, Q_CATCH, Q_CLIP, Q_DEVICE_INFO, Q_HEALTH,
-    Q_LOCKS, Q_RATE, Q_STATS, Q_VERSION,
+    OPT_BEARING, OPT_EMIT, OPT_IMPERFECT, OPT_MOVE_RIDE, Q_CAPS, Q_CATCH, Q_CLIP, Q_DEVICE_INFO,
+    Q_FIRMWARE, Q_HEALTH, Q_LOCKS, Q_RATE, Q_STATS, Q_VERSION,
 };
 use crate::protocol::{Resp, parse_resp};
 use crate::types::{
-    Action, Axis, Blanket, Caps, CatchFilter, CatchState, ClipBuilder, ClipSettings, ClipStatus,
-    ClipTrigger, CountersSnapshot, DeviceInfo, Direction, Edge, EmitPace, EmitPaceStatus, Health,
-    ImperfectStatus, LedMode, LedTarget, LockTarget, Locks, Motion, MoveTiming, PendingMotion,
-    Rate, RebootTarget, Stats, Usage, Version,
+    Action, Axis, Bearing, BearingMode, Blanket, Caps, CatchFilter, CatchState, ClipBuilder,
+    ClipSettings, ClipStatus, ClipTrigger, CountersSnapshot, DeviceInfo, Direction, Edge, EmitPace,
+    EmitPaceStatus, FirmwareInfo, Health, ImperfectStatus, LedMode, LedTarget, LockTarget, Locks,
+    Motion, MoveTiming, PendingMotion, Rate, RebootTarget, Stats, UpdateProgress, UpdateTarget,
+    Usage, Version,
 };
 
 use super::Device;
@@ -147,6 +148,26 @@ impl AsyncDevice {
         self.dev().led(target, mode, level)
     }
 
+    /// `LOCK`: weigh physical input on a target. Instant; see [`Device::scale`].
+    pub fn scale(
+        &self,
+        target: impl Into<LockTarget>,
+        direction: Direction,
+        scale: u8,
+    ) -> Result<()> {
+        self.dev().scale(target, direction, scale)
+    }
+
+    /// `LOCK`: weigh a relative axis by sign. Instant; see [`Device::scale_axis`].
+    pub fn scale_axis(&self, axis: Axis, direction: Direction, scale: u8) -> Result<()> {
+        self.dev().scale_axis(axis, direction, scale)
+    }
+
+    /// `LOCK`: weigh a whole [`Blanket`] group. Instant; see [`Device::scale_all`].
+    pub fn scale_all(&self, what: Blanket, direction: Direction, scale: u8) -> Result<()> {
+        self.dev().scale_all(what, direction, scale)
+    }
+
     /// `LOCK`: block a usage (button/key/media) or axis. Instant; see [`Device::lock`].
     pub fn lock(&self, target: impl Into<LockTarget>, direction: Direction) -> Result<()> {
         self.dev().lock(target, direction)
@@ -203,9 +224,14 @@ impl AsyncDevice {
         self.dev().set_movement_riding(window)
     }
 
-    /// `OPTION(EMIT)`: emit-rate pacing. Instant; see [`Device::set_emit_pace`].
-    pub fn set_emit_pace(&self, pace: EmitPace) -> Result<()> {
-        self.dev().set_emit_pace(pace)
+    /// `OPTION(BEARING)`: what `With`/`Against` are measured against. Instant; see [`Device::set_bearing`].
+    pub fn set_bearing(&self, window: Option<Duration>, mode: BearingMode) -> Result<()> {
+        self.dev().set_bearing(window, mode)
+    }
+
+    /// `OPTION(EMIT)`: emit-rate pacing and the forced wire rate. Instant; see [`Device::set_emit_pace`].
+    pub fn set_emit_pace(&self, pace: EmitPace, force_hz: Option<u16>) -> Result<()> {
+        self.dev().set_emit_pace(pace, force_hz)
     }
 
     /// `OPTION(NAME)`: set the box's persistent name. Instant; see [`Device::set_name`].
@@ -228,6 +254,87 @@ impl AsyncDevice {
             Some(Resp::Version(v)) => Ok(v),
             _ => Err(Error::NoReply),
         }
+    }
+
+    /// Both chips' firmware versions and slot state (§4.16), awaiting the correlated `RESP`.
+    pub async fn firmware_info(&self) -> Result<FirmwareInfo> {
+        let payload = self
+            .link
+            .query_async(Q_FIRMWARE, self.link.query_timeout_default())
+            .await?;
+        match parse_resp(&payload) {
+            Some(Resp::Firmware(f)) => Ok(f),
+            _ => Err(Error::NoReply),
+        }
+    }
+
+    /// Write one image into the target chip's spare slot; it stays inert until
+    /// [`activate_firmware`](Self::activate_firmware).
+    pub async fn stage_firmware(
+        &self,
+        target: UpdateTarget,
+        image: Vec<u8>,
+        mut progress: impl FnMut(UpdateProgress) + Send + 'static,
+    ) -> Result<u32> {
+        self.offload(move |d| d.stage_firmware(target, &image, &mut progress))
+            .await
+    }
+
+    /// Drop whatever is staged or in flight for one target.
+    pub async fn abort_update(&self, target: UpdateTarget) -> Result<()> {
+        self.offload(move |d| d.abort_update(target)).await
+    }
+
+    /// Commit every staged image and reboot into it.
+    pub async fn activate_firmware(&self) -> Result<()> {
+        self.offload(|d| d.activate_firmware()).await
+    }
+
+    /// Stage one image and activate it. Not cancellable; see [`offload`](Self::offload).
+    pub async fn update_firmware(
+        &self,
+        target: UpdateTarget,
+        image: Vec<u8>,
+        mut progress: impl FnMut(UpdateProgress) + Send + 'static,
+    ) -> Result<()> {
+        self.offload(move |d| {
+            d.stage_firmware(target, &image, &mut progress)?;
+            d.activate_firmware()
+        })
+        .await
+    }
+
+    /// Block until neither chip is still on probation.
+    pub async fn wait_firmware_confirmed(&self) -> Result<FirmwareInfo> {
+        self.offload(|d| d.wait_firmware_confirmed()).await
+    }
+
+    /// Run one blocking update call on a thread of its own and await the result.
+    ///
+    /// NOT cancellable. Dropping the returned future stops the waiting, not the transfer: the thread
+    /// runs to completion and `update_firmware` will still reboot the box. Wrap it in a timeout only
+    /// if that is acceptable.
+    ///
+    /// The transfer is a credit-windowed conversation with its own timeouts, and this crate carries
+    /// no runtime and no timer, so an `async` reimplementation would have nothing to bound its waits
+    /// with. Driving the sync path instead keeps one implementation of the wire, which is the whole
+    /// point: a duplicated loop is where sync and async quietly stop agreeing.
+    async fn offload<T, F>(&self, f: F) -> Result<T>
+    where
+        T: Send + 'static,
+        F: FnOnce(&Device) -> Result<T> + Send + 'static,
+    {
+        let device = Device {
+            link: self.link.clone(),
+        };
+        let (tx, rx) = flume::bounded(1);
+        std::thread::Builder::new()
+            .name("medius-update".into())
+            .spawn(move || {
+                let _ = tx.send(f(&device));
+            })
+            .map_err(Error::Io)?;
+        rx.recv_async().await.map_err(|_| Error::Disconnected)?
     }
 
     /// Query the box health flags, awaiting the correlated `RESP` with the default timeout.
@@ -334,6 +441,18 @@ impl AsyncDevice {
             .await?;
         match parse_resp(&payload) {
             Some(Resp::MovementRiding(w)) => Ok(w),
+            _ => Err(Error::NoReply),
+        }
+    }
+
+    /// Query the bearing (§4.14), awaiting the correlated `RESP`.
+    pub async fn query_bearing(&self) -> Result<Bearing> {
+        let payload = self
+            .link
+            .query_option_async(OPT_BEARING, self.link.query_timeout_default())
+            .await?;
+        match parse_resp(&payload) {
+            Some(Resp::Bearing(b)) => Ok(b),
             _ => Err(Error::NoReply),
         }
     }

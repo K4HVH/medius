@@ -6,9 +6,16 @@ from typing import List
 
 from . import _native
 from ._enums import (
+    ImageState,
+    UpdateTarget,
     Axis,
     Action,
+    BEARING_WINDOW_DEFAULT_MS,
+    BearingMode,
     Blanket,
+    LOCK_SCALE_BLOCK,
+    LOCK_SCALE_MAX,
+    LOCK_SCALE_PASS,
     BusEventKind,
     Button,
     CatchClass,
@@ -43,7 +50,7 @@ from ._errors import (
     CatchTableFullError,
     DisconnectedError,
     EmptySubscriptionError,
-    FlashToolError,
+    UpdateError,
     FrameTooLongError,
     HalfEdgeInputFilterError,
     InvalidArgError,
@@ -54,6 +61,7 @@ from ._errors import (
     NotFoundError,
     PanicError,
     QueryTimeoutError,
+    RelativeDirectionError,
     ReservedIdError,
     WildcardNotInputError,
 )
@@ -62,6 +70,9 @@ from ._clip import ClipBuilder, ClipHandle
 from ._streams import EventStream, InputStream, LogStream, Timeline
 from ._mock import MockBox
 from ._types import (
+    ChipFirmware,
+    FirmwareInfo,
+    Bearing,
     BoxInfo,
     BusEvent,
     Caps,
@@ -102,7 +113,6 @@ from ._types import (
 )
 
 HAS_MOCK = _native.HAS_MOCK
-HAS_FLASH = _native.HAS_FLASH
 
 
 def find_ports(cap: int = 16) -> List[PortInfo]:
@@ -143,21 +153,14 @@ def version_string() -> str:
     return _native.lib.medius_version_string().decode("utf-8", "replace")
 
 
-def flash(port: str, bin_path: str, host: bool = False) -> None:
-    """Reboot a chip to ROM download and flash a firmware binary via esptool (Linux/Windows only)."""
-    if not HAS_FLASH:
-        raise RuntimeError(
-            "the loaded medius_capi library was built without the flash feature "
-            "(rebuild with --features flash)"
-        )
-    from ._errors import check
-
-    check(_native.lib.medius_flash(port.encode("utf-8"), bin_path.encode("utf-8"), bool(host)))
-
-
 __all__ = [
     "Action",
+    "BEARING_WINDOW_DEFAULT_MS",
+    "BearingMode",
     "Blanket",
+    "LOCK_SCALE_BLOCK",
+    "LOCK_SCALE_MAX",
+    "LOCK_SCALE_PASS",
     "BusEventKind",
     "Button",
     "CatchClass",
@@ -189,7 +192,7 @@ __all__ = [
     "QueryTimeoutError",
     "DisconnectedError",
     "FrameTooLongError",
-    "FlashToolError",
+    "UpdateError",
     "InvalidArgError",
     "PanicError",
     "Device",
@@ -218,8 +221,10 @@ __all__ = [
     "WildcardNotInputError",
     "HalfEdgeInputFilterError",
     "ReservedIdError",
+    "RelativeDirectionError",
     "CatchFilter",
     "CatchState",
+    "Bearing",
     "ClipSettings",
     "ClipStatus",
     "ClipTrigger",
@@ -247,6 +252,10 @@ __all__ = [
     "Stats",
     "TrafficEvent",
     "UsageSnapshot",
+    "ChipFirmware",
+    "FirmwareInfo",
+    "ImageState",
+    "UpdateTarget",
     "Version",
     "find_ports",
     "list_boxes",
@@ -254,7 +263,5 @@ __all__ = [
     "default_keepalive_cadence_ms",
     "abi_version",
     "version_string",
-    "flash",
     "HAS_MOCK",
-    "HAS_FLASH",
 ]

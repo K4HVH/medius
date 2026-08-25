@@ -11,6 +11,7 @@ mod lock;
 mod movement;
 mod options;
 mod robustness;
+mod update;
 
 mod correlation;
 mod reconcile;

@@ -6,13 +6,16 @@ import ctypes
 from typing import Optional, Sequence, Tuple
 
 from . import _native
-from ._enums import Action, Blanket, Edge
+from ._enums import Action, Blanket, ClipAction, Edge
 from ._errors import check
 from ._types import (
     ClipSettings,
     ClipStatus,
     ClipTrigger,
     Usage,
+    _enum,
+    _i16,
+    _u16,
     clip_settings_from_c,
     clip_status_from_c,
 )
@@ -47,17 +50,17 @@ class ClipBuilder:
 
     def gap(self, frames: int) -> "ClipBuilder":
         """Emit nothing for `frames` native frames (a zero count is a no-op)."""
-        check(_native.lib.medius_clip_builder_gap(self._ptr, frames))
+        check(_native.lib.medius_clip_builder_gap(self._ptr, _u16(frames, "frames")))
         return self
 
     def move(self, dx: int, dy: int) -> "ClipBuilder":
         """A cursor-motion frame."""
-        check(_native.lib.medius_clip_builder_move(self._ptr, dx, dy))
+        check(_native.lib.medius_clip_builder_move(self._ptr, _i16(dx, "dx"), _i16(dy, "dy")))
         return self
 
     def wheel(self, dz: int) -> "ClipBuilder":
         """A wheel frame."""
-        check(_native.lib.medius_clip_builder_wheel(self._ptr, dz))
+        check(_native.lib.medius_clip_builder_wheel(self._ptr, _i16(dz, "dz")))
         return self
 
     def press(self, usage: Usage) -> "ClipBuilder":
@@ -77,6 +80,7 @@ class ClipBuilder:
 
     def edge(self, usage: Usage, action: Action = Action.PRESS) -> "ClipBuilder":
         """A one-edge frame for any `Usage` (button, key, or media) with an explicit `Action`."""
+        action = _enum(action, Action, "action")
         check(_native.lib.medius_clip_builder_edge(self._ptr, usage._c, int(action)))
         return self
 
@@ -94,10 +98,20 @@ class ClipBuilder:
         actions = (ctypes.c_uint8 * n)()
         for i, (inp, action) in enumerate(edges):
             inputs[i] = inp._c
-            actions[i] = int(action)
+            actions[i] = int(_enum(action, Action, f"edges[{i}].action"))
         iptr = ctypes.cast(inputs, ctypes.POINTER(_native.MediusUsage)) if n else None
         aptr = ctypes.cast(actions, ctypes.POINTER(ctypes.c_uint8)) if n else None
-        check(_native.lib.medius_clip_builder_frame(self._ptr, dx, dy, wheel, iptr, aptr, n))
+        check(
+            _native.lib.medius_clip_builder_frame(
+                self._ptr,
+                _i16(dx, "dx"),
+                _i16(dy, "dy"),
+                _i16(wheel, "wheel"),
+                iptr,
+                aptr,
+                n,
+            )
+        )
         return self
 
 
@@ -128,7 +142,7 @@ class ClipHandle:
 
     def set_autolock(self, scope: Optional[Sequence[Blanket]] = None):
         """Auto-lock these input groups while the clip plays (clip-owned, released on stop). Set before the first append."""
-        groups = [int(b) for b in (scope or [])]
+        groups = [int(_enum(b, Blanket, "scope")) for b in (scope or [])]
         arr = (_native.u8 * len(groups))(*groups)
         ptr = ctypes.cast(arr, ctypes.POINTER(_native.u8)) if groups else ctypes.POINTER(_native.u8)()
         check(_native.lib.medius_clip_set_autolock(self._handle, ptr, len(groups)))
@@ -148,12 +162,16 @@ class ClipHandle:
     def bind(self, trigger: ClipTrigger):
         """Add or overwrite a trigger binding: `trigger.on`'s edge fires its action on the box, no host round-trip."""
         t = _native.MediusClipTrigger(
-            trigger.on._c, int(trigger.edge), int(trigger.action), 1 if trigger.consume else 0
+            trigger.on._c,
+            int(_enum(trigger.edge, Edge, "edge")),
+            int(_enum(trigger.action, ClipAction, "action")),
+            1 if trigger.consume else 0,
         )
         check(_native.lib.medius_clip_bind(self._handle, t))
 
     def unbind(self, usage: Usage, edge: Edge):
         """Remove the trigger binding on `usage`'s `edge`."""
+        edge = _enum(edge, Edge, "edge")
         check(_native.lib.medius_clip_unbind(self._handle, usage._c, int(edge)))
 
     def clear_triggers(self):
