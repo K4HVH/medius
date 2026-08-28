@@ -10,8 +10,6 @@ pub enum EmitPace {
     Interval,
     /// A fixed rate in Hz. The 1 ms frame clock snaps it to `1000/n` Hz and caps it at 1 kHz.
     Fixed(u16),
-    /// Pace to the renderer, which gates every 1 ms frame tick (1 kHz resolved).
-    Rendered,
 }
 
 /// The configured [`EmitPace`] plus the emit-rate ceiling and the wire rate actually in effect (§4.14).
@@ -19,6 +17,8 @@ pub enum EmitPace {
 pub struct EmitPaceStatus {
     /// The selected mode (for [`EmitPace::Fixed`], the rate the host requested).
     pub mode: EmitPace,
+    /// Whether the renderer composes onto the mode, gating every 1 ms frame tick.
+    pub rendered: bool,
     /// The ceiling currently in effect (Hz); 0 = learnt/adaptive, or no device yet in [`EmitPace::Interval`].
     pub resolved_hz: u16,
     /// The forced wire rate the host asked for (Hz); `None` leaves the device's own.
@@ -39,15 +39,16 @@ impl EmitPaceStatus {
         let resolved_hz = u16::from_le_bytes([p[5], p[6]]);
         let force_hz = u16::from_le_bytes([p[7], p[8]]);
         let advertised_hz = u16::from_le_bytes([p[9], p[10]]);
-        let mode = match p[2] {
+        let rendered = p[2] & 0x80 != 0;
+        let mode = match p[2] & 0x7F {
             0 => EmitPace::Learned,
             1 => EmitPace::Interval,
             2 => EmitPace::Fixed(fixed_hz),
-            3 => EmitPace::Rendered,
             _ => return None,
         };
         Some(EmitPaceStatus {
             mode,
+            rendered,
             resolved_hz,
             force_hz: (force_hz != 0).then_some(force_hz),
             advertised_hz,

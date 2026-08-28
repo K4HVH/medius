@@ -442,14 +442,14 @@ mod linux {
             // Wire round-trip + NVS-persistence check for the EMIT option; the pacing behaviour itself
             // needs the rig. Restores LEARNED (the default) afterward.
             let dev = device.as_ref().unwrap();
-            let set_ok = dev.set_emit_pace(EmitPace::Fixed(500), None).is_ok();
+            let set_ok = dev.set_emit_pace(EmitPace::Fixed(500), false, None).is_ok();
             std::thread::sleep(Duration::from_millis(60));
             let read = dev.query_emit_pace();
             let matched = read
                 .as_ref()
                 .map(|s| s.mode == EmitPace::Fixed(500) && s.resolved_hz == 500)
                 .unwrap_or(false);
-            let off_ok = dev.set_emit_pace(EmitPace::Learned, None).is_ok();
+            let off_ok = dev.set_emit_pace(EmitPace::Learned, false, None).is_ok();
             std::thread::sleep(Duration::from_millis(60));
             let read_off = dev.query_emit_pace();
             let off_matched = read_off
@@ -464,27 +464,35 @@ mod linux {
         }
 
         {
-            // Rendered has no rate of its own; the renderer gates every 1 ms tick, so resolved reads
-            // 1000. Restores LEARNED afterward.
+            // Rendered is a flag composed onto the pace. Onto LEARNED it forces resolved to 1 kHz (the
+            // renderer gates every 1 ms tick); onto a Fixed rate the snapped value stands. Restores
+            // LEARNED afterward.
             let dev = device.as_ref().unwrap();
-            let set_ok = dev.set_emit_pace(EmitPace::Rendered, None).is_ok();
+            let set_ok = dev.set_emit_pace(EmitPace::Learned, true, None).is_ok();
             std::thread::sleep(Duration::from_millis(60));
             let read = dev.query_emit_pace();
             let matched = read
                 .as_ref()
-                .map(|s| s.mode == EmitPace::Rendered && s.resolved_hz == 1000)
+                .map(|s| s.rendered && s.resolved_hz == 1000 && s.mode == EmitPace::Learned)
                 .unwrap_or(false);
-            let off_ok = dev.set_emit_pace(EmitPace::Learned, None).is_ok();
+            let comp_ok = dev.set_emit_pace(EmitPace::Fixed(250), true, None).is_ok();
+            std::thread::sleep(Duration::from_millis(60));
+            let read_comp = dev.query_emit_pace();
+            let comp_matched = read_comp
+                .as_ref()
+                .map(|s| s.rendered && s.mode == EmitPace::Fixed(250) && s.resolved_hz == 250)
+                .unwrap_or(false);
+            let off_ok = dev.set_emit_pace(EmitPace::Learned, false, None).is_ok();
             std::thread::sleep(Duration::from_millis(60));
             let read_off = dev.query_emit_pace();
             let off_matched = read_off
                 .as_ref()
-                .map(|s| s.mode == EmitPace::Learned)
+                .map(|s| s.mode == EmitPace::Learned && !s.rendered)
                 .unwrap_or(false);
             check(
                 "emit rendered",
-                set_ok && matched && off_ok && off_matched,
-                format!("set Rendered -> {read:?}, off -> {read_off:?}"),
+                set_ok && matched && comp_ok && comp_matched && off_ok && off_matched,
+                format!("Learned+rendered -> {read:?}, Fixed(250)+rendered -> {read_comp:?}, off -> {read_off:?}"),
             );
         }
 
@@ -506,7 +514,9 @@ mod linux {
             } else {
                 let native = dev.query_emit_pace().map(|s| s.advertised_hz).unwrap_or(0);
                 let asked = if native == 1000 { 125 } else { 1000 };
-                let set_ok = dev.set_emit_pace(EmitPace::Learned, Some(asked)).is_ok();
+                let set_ok = dev
+                    .set_emit_pace(EmitPace::Learned, false, Some(asked))
+                    .is_ok();
                 std::thread::sleep(Duration::from_millis(60));
                 let read = dev.query_emit_pace();
                 let matched = read
@@ -515,7 +525,7 @@ mod linux {
                         s.force_hz == Some(asked) && !s.force_active && s.advertised_hz == native
                     })
                     .unwrap_or(false);
-                let off_ok = dev.set_emit_pace(EmitPace::Learned, None).is_ok();
+                let off_ok = dev.set_emit_pace(EmitPace::Learned, false, None).is_ok();
                 std::thread::sleep(Duration::from_millis(60));
                 let read_off = dev.query_emit_pace();
                 let off_matched = read_off

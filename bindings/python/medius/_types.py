@@ -353,7 +353,7 @@ class Bearing:
 
 @dataclass(frozen=True)
 class EmitPace:
-    """What paces injected motion. Build with `EmitPace.learned/interval/fixed/rendered`."""
+    """What paces injected motion. Build with `EmitPace.learned/interval/fixed`."""
 
     mode: EmitMode
     hz: int = 0
@@ -370,14 +370,11 @@ class EmitPace:
     def fixed(cls, hz: int) -> "EmitPace":
         return cls(EmitMode.FIXED, int(hz))
 
-    @classmethod
-    def rendered(cls) -> "EmitPace":
-        return cls(EmitMode.RENDERED)
-
 
 @dataclass
 class EmitPaceStatus:
     mode: EmitPace
+    rendered: bool
     resolved_hz: int
     force_hz: Optional[int] = None
     advertised_hz: int = 0
@@ -1123,6 +1120,7 @@ def emit_pace_status_from_c(c) -> EmitPaceStatus:
     mode = EmitMode(c.mode)
     return EmitPaceStatus(
         EmitPace(mode, c.fixed_hz),
+        bool(c.rendered),
         c.resolved_hz,
         c.force_hz or None,
         c.advertised_hz,

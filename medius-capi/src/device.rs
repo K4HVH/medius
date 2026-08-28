@@ -584,20 +584,22 @@ pub unsafe extern "C" fn medius_device_set_bearing(
 }
 
 /// Set what paces injected motion and what rate the clone runs at; `hz` is the target rate for `Fixed`
-/// and ignored otherwise, `force_hz` is the forced wire rate (0 = the device's own). `mode` takes a
-/// `MEDIUS_EMIT_MODE_*` constant; any other value is `MEDIUS_STATUS_ERR_INVALID_ARG`.
+/// and ignored otherwise, `rendered` composes the renderer onto the mode, `force_hz` is the forced wire
+/// rate (0 = the device's own). `mode` takes a `MEDIUS_EMIT_MODE_*` constant; any other value is
+/// `MEDIUS_STATUS_ERR_INVALID_ARG`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_device_set_emit_pace(
     dev: *mut MediusDevice,
     mode: u8,
     hz: u16,
+    rendered: bool,
     force_hz: u16,
 ) -> MediusStatus {
     let Some(pace) = emit_pace_from_c(mode, hz) else {
         return fail(MediusStatus::ErrInvalidArg, "invalid emit pacing mode");
     };
     with_device(dev, |d| {
-        d.set_emit_pace(pace, (force_hz != 0).then_some(force_hz))
+        d.set_emit_pace(pace, rendered, (force_hz != 0).then_some(force_hz))
     })
 }
 

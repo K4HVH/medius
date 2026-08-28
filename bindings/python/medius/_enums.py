@@ -122,7 +122,6 @@ class EmitMode(IntEnum):
     LEARNED = 0
     INTERVAL = 1
     FIXED = 2
-    RENDERED = 3
 
 
 class LedTarget(IntEnum):

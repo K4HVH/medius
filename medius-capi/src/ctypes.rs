@@ -97,7 +97,6 @@ pub enum MediusEmitMode {
     Learned = 0,
     Interval = 1,
     Fixed = 2,
-    Rendered = 3,
 }
 
 /// Which status LED a command addresses.
@@ -607,6 +606,8 @@ pub struct MediusImperfectStatus {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MediusEmitPaceStatus {
     pub mode: MediusEmitMode,
+    /// 1 when the renderer composes onto `mode`, gating every 1 ms frame tick.
+    pub rendered: u8,
     pub fixed_hz: u16,
     pub resolved_hz: u16,
     /// The forced wire rate requested, in Hz; 0 leaves the device's own.

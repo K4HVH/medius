@@ -26,14 +26,14 @@ pub(crate) fn ride_window_ms(window: Option<Duration>) -> u16 {
 /// The bearing window the box holds out of the box, before any host sets one.
 pub const BEARING_WINDOW_DEFAULT: Duration = Duration::from_millis(20);
 
-/// Encode an [`EmitPace`] to the wire `(mode, rate_hz)`: `Fixed(hz)` carries its rate, the other modes send 0.
-pub(crate) fn emit_pace_wire(pace: EmitPace) -> (u8, u16) {
-    match pace {
+/// Encode an [`EmitPace`] plus the `rendered` flag to the wire `(mode, rate_hz)`: `Fixed(hz)` carries its rate, the other modes send 0, and `rendered` sets bit `0x80` of the mode byte.
+pub(crate) fn emit_pace_wire(pace: EmitPace, rendered: bool) -> (u8, u16) {
+    let (mode, hz) = match pace {
         EmitPace::Learned => (0, 0),
         EmitPace::Interval => (1, 0),
         EmitPace::Fixed(hz) => (2, hz),
-        EmitPace::Rendered => (3, 0),
-    }
+    };
+    (mode | if rendered { 0x80 } else { 0 }, hz)
 }
 
 impl Device {
@@ -80,7 +80,7 @@ impl Device {
         )
     }
 
-    /// `OPTION(EMIT)`: pick what paces injected motion ([`EmitPace::Learned`], [`EmitPace::Interval`], [`EmitPace::Fixed`] Hz capped at [`EMIT_MAX_HZ`], or [`EmitPace::Rendered`]), and what rate the clone runs at; persisted in NVS.
+    /// `OPTION(EMIT)`: pick what paces injected motion ([`EmitPace::Learned`], [`EmitPace::Interval`], or [`EmitPace::Fixed`] Hz capped at [`EMIT_MAX_HZ`]), whether the renderer composes onto it (`rendered`), and what rate the clone runs at; persisted in NVS.
     ///
     /// `force_hz` writes a chosen `bInterval` onto every HID interrupt-IN endpoint of the served
     /// descriptor and polls the real device at the same interval, snapping to `1000/n` Hz; `None` leaves
@@ -88,10 +88,10 @@ impl Device {
     /// on, since the descriptor stops matching the real device, and changing the resolved interval
     /// re-clones the box, which drops the control port briefly.
     ///
-    /// Both fields ride one command, so every call writes both. `Some(0)` is the wire's "off" and reads
+    /// All three ride one command, so every call writes them. `Some(0)` is the wire's "off" and reads
     /// back as `None`.
-    pub fn set_emit_pace(&self, pace: EmitPace, force_hz: Option<u16>) -> Result<()> {
-        let (mode, hz) = emit_pace_wire(pace);
+    pub fn set_emit_pace(&self, pace: EmitPace, rendered: bool, force_hz: Option<u16>) -> Result<()> {
+        let (mode, hz) = emit_pace_wire(pace, rendered);
         self.link.send(
             FrameType::Option,
             &emit_pace_payload(mode, hz, force_hz.unwrap_or(0)),
