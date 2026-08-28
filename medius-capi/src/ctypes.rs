@@ -606,7 +606,7 @@ pub struct MediusImperfectStatus {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MediusEmitPaceStatus {
     pub mode: MediusEmitMode,
-    /// 1 when the renderer composes onto `mode`, gating every 1 ms frame tick.
+    /// 1 when the renderer composes onto the pace.
     pub rendered: u8,
     pub fixed_hz: u16,
     pub resolved_hz: u16,

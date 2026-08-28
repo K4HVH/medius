@@ -17,7 +17,7 @@ pub enum EmitPace {
 pub struct EmitPaceStatus {
     /// The selected mode (for [`EmitPace::Fixed`], the rate the host requested).
     pub mode: EmitPace,
-    /// Whether the renderer composes onto the mode, gating every 1 ms frame tick.
+    /// Whether the renderer composes onto the pace.
     pub rendered: bool,
     /// The ceiling currently in effect (Hz); 0 = learnt/adaptive, or no device yet in [`EmitPace::Interval`].
     pub resolved_hz: u16,

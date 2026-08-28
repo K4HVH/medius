@@ -1003,7 +1003,7 @@ typedef struct MediusBearing {
 // Emit-rate pacing mode plus the rate in effect and the rate the clone advertises.
 typedef struct MediusEmitPaceStatus {
     MediusEmitMode mode;
-    // 1 when the renderer composes onto `mode`, gating every 1 ms frame tick.
+    // 1 when the renderer composes onto the pace.
     uint8_t rendered;
     uint16_t fixed_hz;
     uint16_t resolved_hz;
