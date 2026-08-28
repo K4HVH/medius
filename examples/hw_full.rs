@@ -472,7 +472,7 @@ mod linux {
             let read = dev.query_emit_pace();
             let matched = read
                 .as_ref()
-                .map(|s| s.mode == EmitPace::Rendered)
+                .map(|s| s.mode == EmitPace::Rendered && s.resolved_hz == 1000)
                 .unwrap_or(false);
             let off_ok = dev.set_emit_pace(EmitPace::Learned, None).is_ok();
             std::thread::sleep(Duration::from_millis(60));
