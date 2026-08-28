@@ -10,6 +10,8 @@ pub enum EmitPace {
     Interval,
     /// A fixed rate in Hz. The 1 ms frame clock snaps it to `1000/n` Hz and caps it at 1 kHz.
     Fixed(u16),
+    /// Pace to the renderer, which gates every 1 ms frame tick (1 kHz resolved).
+    Rendered,
 }
 
 /// The configured [`EmitPace`] plus the emit-rate ceiling and the wire rate actually in effect (§4.14).
@@ -41,6 +43,7 @@ impl EmitPaceStatus {
             0 => EmitPace::Learned,
             1 => EmitPace::Interval,
             2 => EmitPace::Fixed(fixed_hz),
+            3 => EmitPace::Rendered,
             _ => return None,
         };
         Some(EmitPaceStatus {

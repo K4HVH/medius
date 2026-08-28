@@ -347,6 +347,7 @@ impl State {
                 self.emit_pace = match mode {
                     1 => EmitPace::Interval,
                     2 => EmitPace::Fixed(hz),
+                    3 => EmitPace::Rendered,
                     _ => EmitPace::Learned,
                 };
                 self.emit_force_hz = (force != 0).then_some(force);
@@ -559,6 +560,7 @@ fn options_emit_payload(
             let n = (((1_000_000u32 / hz as u32) + 500) / 1000).max(1);
             (2, hz, (1000 / n) as u16)
         }
+        EmitPace::Rendered => (3, 0, 1000),
     };
     // The box resolves a forced rate to a bInterval in whole 1 ms frames and advertises 1000/n, so a
     // request that is not a divisor of 1000 comes back as something else. A naive echo would diverge.

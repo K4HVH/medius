@@ -607,6 +607,17 @@ def test_emit_pace_roundtrip():
         assert status.advertised_hz == 0  # 0 = no clone, the documented sentinel
 
 
+def test_emit_pace_rendered_roundtrip():
+    with MockBox() as mock:
+        mock.set_emit_pace(EmitPace.rendered())
+        with Device.with_mock(mock) as d:
+            status = d.query_emit_pace()
+        assert status.mode == EmitPace.rendered()
+        assert status.resolved_hz == 1000  # the renderer gates every 1 ms tick
+        assert status.force_hz is None
+        assert status.force_active is False
+
+
 def test_rate_force_roundtrip():
     # The five numbers occupy five ctypes fields in one struct, so a layout slip shows as a swap.
     with MockBox() as mock:

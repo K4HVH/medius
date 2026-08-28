@@ -170,6 +170,7 @@ pub(crate) fn emit_pace_from_c(mode: u8, hz: u16) -> Option<EmitPace> {
         0 => EmitPace::Learned,
         1 => EmitPace::Interval,
         2 => EmitPace::Fixed(hz),
+        3 => EmitPace::Rendered,
         _ => return None,
     })
 }
@@ -719,6 +720,7 @@ impl From<EmitPaceStatus> for MediusEmitPaceStatus {
             EmitPace::Learned => (MediusEmitMode::Learned, 0),
             EmitPace::Interval => (MediusEmitMode::Interval, 0),
             EmitPace::Fixed(hz) => (MediusEmitMode::Fixed, hz),
+            EmitPace::Rendered => (MediusEmitMode::Rendered, 0),
         };
         MediusEmitPaceStatus {
             mode,

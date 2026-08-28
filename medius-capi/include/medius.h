@@ -169,6 +169,7 @@ enum MediusEmitMode
     MEDIUS_EMIT_MODE_LEARNED = 0,
     MEDIUS_EMIT_MODE_INTERVAL = 1,
     MEDIUS_EMIT_MODE_FIXED = 2,
+    MEDIUS_EMIT_MODE_RENDERED = 3,
 };
 #ifndef __cplusplus
 #if __STDC_VERSION__ >= 202311L

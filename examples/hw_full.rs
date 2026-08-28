@@ -464,6 +464,31 @@ mod linux {
         }
 
         {
+            // Rendered has no rate of its own; the renderer gates every 1 ms tick, so resolved reads
+            // 1000. Restores LEARNED afterward.
+            let dev = device.as_ref().unwrap();
+            let set_ok = dev.set_emit_pace(EmitPace::Rendered, None).is_ok();
+            std::thread::sleep(Duration::from_millis(60));
+            let read = dev.query_emit_pace();
+            let matched = read
+                .as_ref()
+                .map(|s| s.mode == EmitPace::Rendered)
+                .unwrap_or(false);
+            let off_ok = dev.set_emit_pace(EmitPace::Learned, None).is_ok();
+            std::thread::sleep(Duration::from_millis(60));
+            let read_off = dev.query_emit_pace();
+            let off_matched = read_off
+                .as_ref()
+                .map(|s| s.mode == EmitPace::Learned)
+                .unwrap_or(false);
+            check(
+                "emit rendered",
+                set_ok && matched && off_ok && off_matched,
+                format!("set Rendered -> {read:?}, off -> {read_off:?}"),
+            );
+        }
+
+        {
             // Any force re-clones the box when the imperfect opt-in is on, which would drop the control
             // port mid-suite, so this only runs faithful-only, where the box stores the request and
             // leaves it inert. That is the discriminating half anyway: force_active must stay 0 and
