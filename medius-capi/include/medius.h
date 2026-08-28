@@ -169,7 +169,6 @@ enum MediusEmitMode
     MEDIUS_EMIT_MODE_LEARNED = 0,
     MEDIUS_EMIT_MODE_INTERVAL = 1,
     MEDIUS_EMIT_MODE_FIXED = 2,
-    MEDIUS_EMIT_MODE_RENDERED = 3,
 };
 #ifndef __cplusplus
 #if __STDC_VERSION__ >= 202311L
@@ -1004,6 +1003,8 @@ typedef struct MediusBearing {
 // Emit-rate pacing mode plus the rate in effect and the rate the clone advertises.
 typedef struct MediusEmitPaceStatus {
     MediusEmitMode mode;
+    // 1 when the renderer composes onto `mode`, gating every 1 ms frame tick.
+    uint8_t rendered;
     uint16_t fixed_hz;
     uint16_t resolved_hz;
     // The forced wire rate requested, in Hz; 0 leaves the device's own.
@@ -1584,11 +1585,13 @@ MediusStatus medius_device_set_bearing(struct MediusDevice *dev,
                                        uint8_t mode);
 
 // Set what paces injected motion and what rate the clone runs at; `hz` is the target rate for `Fixed`
-// and ignored otherwise, `force_hz` is the forced wire rate (0 = the device's own). `mode` takes a
-// `MEDIUS_EMIT_MODE_*` constant; any other value is `MEDIUS_STATUS_ERR_INVALID_ARG`.
+// and ignored otherwise, `rendered` composes the renderer onto the mode, `force_hz` is the forced wire
+// rate (0 = the device's own). `mode` takes a `MEDIUS_EMIT_MODE_*` constant; any other value is
+// `MEDIUS_STATUS_ERR_INVALID_ARG`.
 MediusStatus medius_device_set_emit_pace(struct MediusDevice *dev,
                                          uint8_t mode,
                                          uint16_t hz,
+                                         bool rendered,
                                          uint16_t force_hz);
 
 // Set the box's persistent name (`name`, NUL-terminated UTF-8); an empty string clears it.

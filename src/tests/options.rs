@@ -30,6 +30,18 @@ fn option_payload_bytes() {
 }
 
 #[test]
+fn emit_pace_wire_sets_the_rendered_bit() {
+    use crate::device::options::emit_pace_wire;
+    assert_eq!(emit_pace_wire(EmitPace::Learned, false), (0, 0));
+    assert_eq!(emit_pace_wire(EmitPace::Interval, false), (1, 0));
+    assert_eq!(emit_pace_wire(EmitPace::Fixed(500), false), (2, 500));
+    // rendered composes onto the pace as bit 0x80: Fixed(500) rendered is mode byte 0x82.
+    assert_eq!(emit_pace_wire(EmitPace::Fixed(500), true), (0x82, 500));
+    assert_eq!(emit_pace_wire(EmitPace::Learned, true), (0x80, 0));
+    assert_eq!(emit_pace_wire(EmitPace::Interval, true), (0x81, 0));
+}
+
+#[test]
 fn decode_imperfect_through_parse_resp() {
     let Some(Resp::Imperfect(i)) = parse_resp(&[9, 0, 1, 1, 1]) else {
         panic!("expected Imperfect");
@@ -74,6 +86,7 @@ fn decode_emit_pace_through_parse_resp() {
         s,
         EmitPaceStatus {
             mode: EmitPace::Fixed(1000),
+            rendered: false,
             resolved_hz: 250,
             force_hz: Some(125),
             advertised_hz: 100,
@@ -89,6 +102,7 @@ fn decode_emit_pace_through_parse_resp() {
         native,
         EmitPaceStatus {
             mode: EmitPace::Learned,
+            rendered: false,
             resolved_hz: 0,
             force_hz: None,
             advertised_hz: 1000,
@@ -100,22 +114,32 @@ fn decode_emit_pace_through_parse_resp() {
     };
     assert_eq!(nothing, EmitPaceStatus::default());
     assert!(parse_resp(&[9, 2, 2, 0xE8, 0x03, 0xFA, 0x00, 0x7D, 0x00, 0x64, 0x00]).is_none());
-    // Rendered is a full 12-byte reply with mode 3 and no rate of its own.
+    // Byte 0x00: Learned, not rendered.
+    let Some(Resp::EmitPace(plain)) = parse_resp(&[9, 2, 0x00, 0, 0, 0, 0, 0, 0, 0, 0, 0]) else {
+        panic!("expected EmitPace");
+    };
+    assert_eq!(plain.mode, EmitPace::Learned);
+    assert!(!plain.rendered);
+    // Byte 0x80: the rendered bit over pace 0, so Learned + rendered, resolved 1 kHz.
     let Some(Resp::EmitPace(rendered)) =
-        parse_resp(&[9, 2, 3, 0, 0, 0xFA, 0x00, 0x7D, 0x00, 0x64, 0x00, 1])
+        parse_resp(&[9, 2, 0x80, 0, 0, 0xE8, 0x03, 0, 0, 0, 0, 0])
     else {
         panic!("expected EmitPace");
     };
-    assert_eq!(
-        rendered,
-        EmitPaceStatus {
-            mode: EmitPace::Rendered,
-            resolved_hz: 250,
-            force_hz: Some(125),
-            advertised_hz: 100,
-            force_active: true,
-        }
-    );
+    assert_eq!(rendered.mode, EmitPace::Learned);
+    assert!(rendered.rendered);
+    assert_eq!(rendered.resolved_hz, 1000);
+    // Byte 0x82: the rendered bit over pace 2, so Fixed(fixed_hz) + rendered.
+    let Some(Resp::EmitPace(fixed_rendered)) =
+        parse_resp(&[9, 2, 0x82, 0xFA, 0x00, 0xFA, 0x00, 0, 0, 0, 0, 0])
+    else {
+        panic!("expected EmitPace");
+    };
+    assert_eq!(fixed_rendered.mode, EmitPace::Fixed(250));
+    assert!(fixed_rendered.rendered);
+    // A pace of 3 (the old Rendered slot) is no longer a pace and is rejected, bit set or not.
+    assert!(parse_resp(&[9, 2, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0]).is_none());
+    assert!(parse_resp(&[9, 2, 0x83, 0, 0, 0, 0, 0, 0, 0, 0, 0]).is_none());
 }
 
 #[cfg(feature = "mock")]
@@ -130,6 +154,7 @@ fn mock_emit_pace_matches_firmware_snap() {
         device.query_emit_pace().unwrap(),
         EmitPaceStatus {
             mode: EmitPace::Fixed(400),
+            rendered: false,
             resolved_hz: 333,
             force_hz: None,
             advertised_hz: 0,
@@ -141,28 +166,46 @@ fn mock_emit_pace_matches_firmware_snap() {
         device.query_emit_pace().unwrap(),
         EmitPaceStatus {
             mode: EmitPace::Fixed(1000),
+            rendered: false,
             resolved_hz: 1000,
             force_hz: None,
             advertised_hz: 0,
             force_active: false,
         }
     );
-    mock.set_emit_pace(EmitPace::Rendered);
-    assert_eq!(
-        device.query_emit_pace().unwrap(),
-        EmitPaceStatus {
-            mode: EmitPace::Rendered,
-            resolved_hz: 1000,
-            force_hz: None,
-            advertised_hz: 0,
-            force_active: false,
-        }
-    );
-    mock.set_emit_pace(EmitPace::Learned);
+    // Rendered is a flag that composes onto the pace, sent over the real command path. Onto Learned it
+    // forces resolved to 1 kHz; the round-trip returns the same (pace, rendered).
+    device.set_emit_pace(EmitPace::Learned, true, None).unwrap();
     assert_eq!(
         device.query_emit_pace().unwrap(),
         EmitPaceStatus {
             mode: EmitPace::Learned,
+            rendered: true,
+            resolved_hz: 1000,
+            force_hz: None,
+            advertised_hz: 0,
+            force_active: false,
+        }
+    );
+    // Onto a Fixed rate the snapped value stands rather than jumping to 1 kHz.
+    device.set_emit_pace(EmitPace::Fixed(250), true, None).unwrap();
+    assert_eq!(
+        device.query_emit_pace().unwrap(),
+        EmitPaceStatus {
+            mode: EmitPace::Fixed(250),
+            rendered: true,
+            resolved_hz: 250,
+            force_hz: None,
+            advertised_hz: 0,
+            force_active: false,
+        }
+    );
+    device.set_emit_pace(EmitPace::Learned, false, None).unwrap();
+    assert_eq!(
+        device.query_emit_pace().unwrap(),
+        EmitPaceStatus {
+            mode: EmitPace::Learned,
+            rendered: false,
             resolved_hz: 0,
             force_hz: None,
             advertised_hz: 0,
@@ -217,7 +260,9 @@ fn mock_leaves_a_force_inert_without_the_opt_in() {
     // green-light host code that disagrees with every real box.
     let mock = MockBox::new().with_advertised_hz(125);
     let device = Device::with_mock(mock.clone());
-    device.set_emit_pace(EmitPace::Learned, Some(1000)).unwrap();
+    device
+        .set_emit_pace(EmitPace::Learned, false, Some(1000))
+        .unwrap();
     let s = device.query_emit_pace().unwrap();
     assert_eq!(s.force_hz, Some(1000));
     assert!(!s.force_active);

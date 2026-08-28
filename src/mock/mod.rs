@@ -45,6 +45,7 @@ struct State {
     move_ride_ms: u16,
     bearing: Bearing,
     emit_pace: EmitPace,
+    emit_rendered: bool,
     emit_force_hz: Option<u16>,
     advertised_hz: u16,
     clip: ClipStatus,
@@ -82,6 +83,7 @@ impl Default for State {
             move_ride_ms: 0,
             bearing: Bearing::default(),
             emit_pace: EmitPace::Learned,
+            emit_rendered: false,
             emit_force_hz: None,
             advertised_hz: 0,
             clip: ClipStatus::default(),
@@ -344,10 +346,10 @@ impl State {
             (Some(OPT_EMIT), [mode, lo, hi, flo, fhi, ..]) => {
                 let hz = u16::from_le_bytes([*lo, *hi]);
                 let force = u16::from_le_bytes([*flo, *fhi]);
-                self.emit_pace = match mode {
+                self.emit_rendered = *mode & 0x80 != 0;
+                self.emit_pace = match *mode & 0x7F {
                     1 => EmitPace::Interval,
                     2 => EmitPace::Fixed(hz),
-                    3 => EmitPace::Rendered,
                     _ => EmitPace::Learned,
                 };
                 self.emit_force_hz = (force != 0).then_some(force);
@@ -546,13 +548,14 @@ fn options_bearing_payload(b: Bearing) -> Vec<u8> {
 
 fn options_emit_payload(
     pace: EmitPace,
+    rendered: bool,
     force_hz: Option<u16>,
     native_hz: u16,
     allowed: bool,
 ) -> Vec<u8> {
     // Mirror the firmware: Fixed clamps the echoed rate to 1..=1000 (0 -> 1000) and snaps resolved
     // to the 1 ms frame clock (1000/n); Learned/Interval echo 0 (no real device to resolve).
-    let (mode, fixed_hz, resolved) = match pace {
+    let (base, fixed_hz, mut resolved) = match pace {
         EmitPace::Learned => (0u8, 0u16, 0u16),
         EmitPace::Interval => (1, 0, 0),
         EmitPace::Fixed(h) => {
@@ -560,8 +563,13 @@ fn options_emit_payload(
             let n = (((1_000_000u32 / hz as u32) + 500) / 1000).max(1);
             (2, hz, (1000 / n) as u16)
         }
-        EmitPace::Rendered => (3, 0, 1000),
     };
+    // Rendered composes onto the pace and sets bit 0x80, but only forces resolved to 1 kHz when the
+    // pace has no rate of its own (Learned); a Fixed rate keeps its snapped value.
+    if rendered && matches!(pace, EmitPace::Learned) {
+        resolved = 1000;
+    }
+    let mode = base | if rendered { 0x80 } else { 0 };
     // The box resolves a forced rate to a bInterval in whole 1 ms frames and advertises 1000/n, so a
     // request that is not a divisor of 1000 comes back as something else. A naive echo would diverge.
     // A force only applies with the imperfect opt-in on; without it the clone still advertises its own.
@@ -913,6 +921,7 @@ impl MockBox {
                                 seq,
                                 &options_emit_payload(
                                     st.emit_pace,
+                                    st.emit_rendered,
                                     st.emit_force_hz,
                                     st.advertised_hz,
                                     st.imperfect.allowed,

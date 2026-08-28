@@ -596,11 +596,13 @@ def test_emit_pace_roundtrip():
         with Device.with_mock(mock) as d:
             status = d.query_emit_pace()
         assert status.mode == EmitPace.fixed(500)
+        assert status.rendered is False
         assert status.resolved_hz == 500  # Fixed clamps to its hz
         mock.set_emit_pace(EmitPace.learned())
         with Device.with_mock(mock) as d:
             status = d.query_emit_pace()
         assert status.mode == EmitPace.learned()
+        assert status.rendered is False
         assert status.resolved_hz == 0  # learnt/adaptive
         assert status.force_hz is None
         assert status.force_active is False
@@ -608,14 +610,26 @@ def test_emit_pace_roundtrip():
 
 
 def test_emit_pace_rendered_roundtrip():
-    with MockBox() as mock:
-        mock.set_emit_pace(EmitPace.rendered())
-        with Device.with_mock(mock) as d:
-            status = d.query_emit_pace()
-        assert status.mode == EmitPace.rendered()
-        assert status.resolved_hz == 1000  # the renderer gates every 1 ms tick
+    # rendered is a flag composed onto the pace, driven through the real set_emit_pace ABI and read back.
+    with MockBox() as mock, Device.with_mock(mock) as d:
+        d.set_emit_pace(EmitPace.learned(), rendered=True)
+        status = d.query_emit_pace()
+        assert status.mode == EmitPace.learned()
+        assert status.rendered is True
+        assert status.resolved_hz == 1000  # rendered onto Learned forces the 1 ms tick
         assert status.force_hz is None
         assert status.force_active is False
+        # Composed onto a Fixed rate the snapped value stands rather than jumping to 1 kHz.
+        d.set_emit_pace(EmitPace.fixed(250), rendered=True)
+        status = d.query_emit_pace()
+        assert status.mode == EmitPace.fixed(250)
+        assert status.rendered is True
+        assert status.resolved_hz == 250
+        # And cleared again with the default rendered=False.
+        d.set_emit_pace(EmitPace.learned())
+        status = d.query_emit_pace()
+        assert status.rendered is False
+        assert status.resolved_hz == 0
 
 
 def test_rate_force_roundtrip():
@@ -646,7 +660,7 @@ def test_rate_force_needs_the_imperfect_opt_in():
     with MockBox() as mock:
         mock.set_advertised_hz(125)
         with Device.with_mock(mock) as d:
-            d.set_emit_pace(EmitPace.learned(), 1000)
+            d.set_emit_pace(EmitPace.learned(), force_hz=1000)
             status = d.query_emit_pace()
             assert status.force_hz == 1000
             assert status.force_active is False
@@ -662,13 +676,13 @@ def test_rate_force_through_the_setter():
     # the force on the wire fails here rather than passing on a mock nobody sent anything to.
     with MockBox() as mock, Device.with_mock(mock) as d:
         d.allow_imperfect_clones(True)
-        d.set_emit_pace(EmitPace.fixed(250), 125)
+        d.set_emit_pace(EmitPace.fixed(250), force_hz=125)
         status = d.query_emit_pace()
         assert status.mode == EmitPace.fixed(250)
         assert status.force_hz == 125
         assert status.advertised_hz == 125
         assert status.force_active is True
-        d.set_emit_pace(EmitPace.fixed(250), None)
+        d.set_emit_pace(EmitPace.fixed(250), force_hz=None)
         assert d.query_emit_pace().force_hz is None
 
 
