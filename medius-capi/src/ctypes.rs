@@ -97,6 +97,7 @@ pub enum MediusEmitMode {
     Learned = 0,
     Interval = 1,
     Fixed = 2,
+    Rendered = 3,
 }
 
 /// Which status LED a command addresses.

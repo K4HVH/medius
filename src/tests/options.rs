@@ -100,7 +100,22 @@ fn decode_emit_pace_through_parse_resp() {
     };
     assert_eq!(nothing, EmitPaceStatus::default());
     assert!(parse_resp(&[9, 2, 2, 0xE8, 0x03, 0xFA, 0x00, 0x7D, 0x00, 0x64, 0x00]).is_none());
-    assert!(parse_resp(&[9, 2, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0]).is_none());
+    // Rendered is a full 12-byte reply with mode 3 and no rate of its own.
+    let Some(Resp::EmitPace(rendered)) =
+        parse_resp(&[9, 2, 3, 0, 0, 0xFA, 0x00, 0x7D, 0x00, 0x64, 0x00, 1])
+    else {
+        panic!("expected EmitPace");
+    };
+    assert_eq!(
+        rendered,
+        EmitPaceStatus {
+            mode: EmitPace::Rendered,
+            resolved_hz: 250,
+            force_hz: Some(125),
+            advertised_hz: 100,
+            force_active: true,
+        }
+    );
 }
 
 #[cfg(feature = "mock")]
@@ -126,6 +141,17 @@ fn mock_emit_pace_matches_firmware_snap() {
         device.query_emit_pace().unwrap(),
         EmitPaceStatus {
             mode: EmitPace::Fixed(1000),
+            resolved_hz: 1000,
+            force_hz: None,
+            advertised_hz: 0,
+            force_active: false,
+        }
+    );
+    mock.set_emit_pace(EmitPace::Rendered);
+    assert_eq!(
+        device.query_emit_pace().unwrap(),
+        EmitPaceStatus {
+            mode: EmitPace::Rendered,
             resolved_hz: 1000,
             force_hz: None,
             advertised_hz: 0,

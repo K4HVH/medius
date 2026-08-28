@@ -32,6 +32,7 @@ pub(crate) fn emit_pace_wire(pace: EmitPace) -> (u8, u16) {
         EmitPace::Learned => (0, 0),
         EmitPace::Interval => (1, 0),
         EmitPace::Fixed(hz) => (2, hz),
+        EmitPace::Rendered => (3, 0),
     }
 }
 

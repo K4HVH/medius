@@ -353,7 +353,7 @@ class Bearing:
 
 @dataclass(frozen=True)
 class EmitPace:
-    """What paces injected motion. Build with `EmitPace.learned/interval/fixed`."""
+    """What paces injected motion. Build with `EmitPace.learned/interval/fixed/rendered`."""
 
     mode: EmitMode
     hz: int = 0
@@ -369,6 +369,10 @@ class EmitPace:
     @classmethod
     def fixed(cls, hz: int) -> "EmitPace":
         return cls(EmitMode.FIXED, int(hz))
+
+    @classmethod
+    def rendered(cls) -> "EmitPace":
+        return cls(EmitMode.RENDERED)
 
 
 @dataclass
