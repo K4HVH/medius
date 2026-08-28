@@ -80,16 +80,10 @@ impl Device {
         )
     }
 
-    /// `OPTION(EMIT)`: pick what paces injected motion ([`EmitPace::Learned`], [`EmitPace::Interval`], or [`EmitPace::Fixed`] Hz capped at [`EMIT_MAX_HZ`]), whether the renderer composes onto it (`rendered`), and what rate the clone runs at; persisted in NVS.
+    /// `OPTION(EMIT)`: set the pace ([`EmitPace`], the rate ceiling), whether the renderer composes onto it (`rendered`), and the forced wire rate (`force_hz`); persisted in NVS.
     ///
-    /// `force_hz` writes a chosen `bInterval` onto every HID interrupt-IN endpoint of the served
-    /// descriptor and polls the real device at the same interval, snapping to `1000/n` Hz; `None` leaves
-    /// the device's own. It applies only with [`allow_imperfect_clones`](Self::allow_imperfect_clones)
-    /// on, since the descriptor stops matching the real device, and changing the resolved interval
-    /// re-clones the box, which drops the control port briefly.
-    ///
-    /// All three ride one command, so every call writes them. `Some(0)` is the wire's "off" and reads
-    /// back as `None`.
+    /// A non-zero `force_hz` re-clones the box to advertise a `bInterval` the device did not (needs
+    /// [`allow_imperfect_clones`](Self::allow_imperfect_clones)), snapping to `1000/n` Hz; `Some(0)`/`None` is off.
     pub fn set_emit_pace(&self, pace: EmitPace, rendered: bool, force_hz: Option<u16>) -> Result<()> {
         let (mode, hz) = emit_pace_wire(pace, rendered);
         self.link.send(
