@@ -80,7 +80,7 @@ impl Device {
         )
     }
 
-    /// `OPTION(EMIT)`: pick what paces injected motion ([`EmitPace::Learned`], [`EmitPace::Interval`], or [`EmitPace::Fixed`] Hz capped at [`EMIT_MAX_HZ`]), and what rate the clone runs at; persisted in NVS.
+    /// `OPTION(EMIT)`: pick what paces injected motion ([`EmitPace::Learned`], [`EmitPace::Interval`], [`EmitPace::Fixed`] Hz capped at [`EMIT_MAX_HZ`], or [`EmitPace::Rendered`]), and what rate the clone runs at; persisted in NVS.
     ///
     /// `force_hz` writes a chosen `bInterval` onto every HID interrupt-IN endpoint of the served
     /// descriptor and polls the real device at the same interval, snapping to `1000/n` Hz; `None` leaves
