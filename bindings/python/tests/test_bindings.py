@@ -87,7 +87,7 @@ def test_mock_feature_present():
 def test_meta_functions():
     # These are a hand-written mirror of the C structs, so a bumped ABI means they are stale until
     # someone re-reads the header. Pin it rather than accept anything newer.
-    assert medius.abi_version() == 5
+    assert medius.abi_version() == 6
     assert medius.version_string()
     assert medius.default_query_timeout_ms() > 0
     assert medius.default_keepalive_cadence_ms() > 0
@@ -632,10 +632,10 @@ def test_emit_pace_render_mode_roundtrip():
         assert d.query_emit_pace().render == RenderMode.DESPIKED
         d.set_emit_pace(EmitPace.learned(), RenderMode.UNSMOOTHED)
         assert d.query_emit_pace().render == RenderMode.UNSMOOTHED
-        # An omitted render argument is the box's factory De-spiked, not off.
-        d.set_emit_pace(EmitPace.learned())
-        assert d.query_emit_pace().render == RenderMode.DESPIKED
-        # Turning it off takes an explicit RenderMode.OFF.
+        # render has no default: OPTION(EMIT) persists all three fields, so an omitted one would
+        # silently rewrite a setting the caller never named.
+        with pytest.raises(TypeError):
+            d.set_emit_pace(EmitPace.learned())
         d.set_emit_pace(EmitPace.learned(), RenderMode.OFF)
         status = d.query_emit_pace()
         assert status.render == RenderMode.OFF
@@ -670,7 +670,7 @@ def test_rate_force_needs_the_imperfect_opt_in():
     with MockBox() as mock:
         mock.set_advertised_hz(125)
         with Device.with_mock(mock) as d:
-            d.set_emit_pace(EmitPace.learned(), force_hz=1000)
+            d.set_emit_pace(EmitPace.learned(), RenderMode.OFF, force_hz=1000)
             status = d.query_emit_pace()
             assert status.force_hz == 1000
             assert status.force_active is False
@@ -686,13 +686,13 @@ def test_rate_force_through_the_setter():
     # the force on the wire fails here rather than passing on a mock nobody sent anything to.
     with MockBox() as mock, Device.with_mock(mock) as d:
         d.allow_imperfect_clones(True)
-        d.set_emit_pace(EmitPace.fixed(250), force_hz=125)
+        d.set_emit_pace(EmitPace.fixed(250), RenderMode.OFF, force_hz=125)
         status = d.query_emit_pace()
         assert status.mode == EmitPace.fixed(250)
         assert status.force_hz == 125
         assert status.advertised_hz == 125
         assert status.force_active is True
-        d.set_emit_pace(EmitPace.fixed(250), force_hz=None)
+        d.set_emit_pace(EmitPace.fixed(250), RenderMode.OFF, force_hz=None)
         assert d.query_emit_pace().force_hz is None
 
 
@@ -1263,7 +1263,7 @@ def test_every_enum_parameter_is_checked_before_it_reaches_the_boundary():
         with pytest.raises(ValueError):
             d.inject(Usage.button(Button.LEFT), 200)
         with pytest.raises(ValueError):
-            d.set_emit_pace(EmitPace(9, 1000))
+            d.set_emit_pace(EmitPace(9, 1000), RenderMode.OFF)
         with pytest.raises(ValueError):
             d.move_axis(Motion.cursor(1, 2), 9, PendingMotion.KEEP)
         with pytest.raises(ValueError):

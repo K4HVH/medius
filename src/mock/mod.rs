@@ -344,15 +344,22 @@ impl State {
                 self.move_ride_ms = u16::from_le_bytes([*lo, *hi])
             }
             (Some(OPT_EMIT), [mode, lo, hi, flo, fhi, render, ..]) => {
-                let hz = u16::from_le_bytes([*lo, *hi]);
-                let force = u16::from_le_bytes([*flo, *fhi]);
-                self.emit_render = RenderMode::from_wire(*render).unwrap_or(RenderMode::Off);
-                self.emit_pace = match *mode {
-                    1 => EmitPace::Interval,
-                    2 => EmitPace::Fixed(hz),
-                    _ => EmitPace::Learned,
-                };
-                self.emit_force_hz = (force != 0).then_some(force);
+                // The box discards the whole command on a mode or render it does not know, force_hz
+                // included, and answers nothing. Coercing here would model a box that does not exist.
+                if let (Some(r), Some(p)) = (
+                    RenderMode::from_wire(*render),
+                    match *mode {
+                        0 => Some(EmitPace::Learned),
+                        1 => Some(EmitPace::Interval),
+                        2 => Some(EmitPace::Fixed(u16::from_le_bytes([*lo, *hi]))),
+                        _ => None,
+                    },
+                ) {
+                    let force = u16::from_le_bytes([*flo, *fhi]);
+                    self.emit_render = r;
+                    self.emit_pace = p;
+                    self.emit_force_hz = (force != 0).then_some(force);
+                }
             }
             (Some(OPT_NAME), name) => {
                 self.version.name = String::from_utf8_lossy(name).into_owned()
