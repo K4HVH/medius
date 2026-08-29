@@ -9,7 +9,8 @@ use medius::{
     ClockEstimate, CountersSnapshot, DeviceInfo, DeviceKind, Direction, EmitPace, EmitPaceStatus,
     FirmwareInfo, Health, ImageState, ImperfectStatus, Input, InputEvent, KbdCaps, Key, LedMode,
     LedTarget, LockEntry, LockScope, LockTarget, Locks, LogLevel, LogLine, MediaKey, Motion,
-    MouseCaps, MoveTiming, PendingMotion, PortInfo, Rate, RebootTarget, RenderMode, Stats, Usage, Version,
+    MouseCaps, MoveTiming, PendingMotion, PortInfo, Rate, RebootTarget, RenderMode, Stats, Usage,
+    Version,
 };
 
 use crate::ctypes::*;
@@ -162,16 +163,6 @@ pub(crate) fn clock_domain_from_c(v: u8) -> Option<ClockDomain> {
         1 => ClockDomain::DeviceChip,
         _ => return None,
     })
-}
-
-/// A `MediusRenderMode` to the crate [`RenderMode`].
-pub(crate) fn render_from_c(r: MediusRenderMode) -> RenderMode {
-    match r {
-        MediusRenderMode::Off => RenderMode::Off,
-        MediusRenderMode::Stock => RenderMode::Stock,
-        MediusRenderMode::Despiked => RenderMode::Despiked,
-        MediusRenderMode::Unsmoothed => RenderMode::Unsmoothed,
-    }
 }
 
 /// A crate [`RenderMode`] to its `MediusRenderMode`.

@@ -1853,7 +1853,10 @@ fn every_enum_byte_on_the_boundary_is_refused_rather_than_materialized() {
         ("led mode", unsafe { medius_device_led(dev, 0, BAD, 5) }),
         ("reboot target", unsafe { medius_device_reboot(dev, BAD) }),
         ("emit mode", unsafe {
-            medius_device_set_emit_pace(dev, BAD, 1000, MediusRenderMode::Off, 0)
+            medius_device_set_emit_pace(dev, BAD, 1000, MediusRenderMode::Off as u8, 0)
+        }),
+        ("render mode", unsafe {
+            medius_device_set_emit_pace(dev, MediusEmitMode::Learned as u8, 0, BAD, 0)
         }),
         ("inject action", unsafe {
             medius_device_inject(dev, left, BAD)

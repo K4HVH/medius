@@ -277,6 +277,7 @@ class Device:
         None = the device's own). All three ride one command and all three persist, so `render` is
         required: an omitted one would silently rewrite a setting you did not name."""
         mode = _enum(pace.mode, EmitMode, "mode")
+        render = _enum(render, RenderMode, "render")
         check(
             _native.lib.medius_device_set_emit_pace(
                 self._handle, int(mode), _u16(pace.hz, "hz"), int(render),

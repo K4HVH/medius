@@ -10,9 +10,9 @@ use crate::protocol::{Resp, parse_resp};
 use crate::types::{
     Action, Axis, Bearing, BearingMode, Blanket, Caps, CatchFilter, CatchState, ClipBuilder,
     ClipSettings, ClipStatus, ClipTrigger, CountersSnapshot, DeviceInfo, Direction, Edge, EmitPace,
-    EmitPaceStatus, FirmwareInfo, RenderMode, Health, ImperfectStatus, LedMode, LedTarget, LockTarget, Locks,
-    Motion, MoveTiming, PendingMotion, Rate, RebootTarget, Stats, UpdateProgress, UpdateTarget,
-    Usage, Version,
+    EmitPaceStatus, FirmwareInfo, Health, ImperfectStatus, LedMode, LedTarget, LockTarget, Locks,
+    Motion, MoveTiming, PendingMotion, Rate, RebootTarget, RenderMode, Stats, UpdateProgress,
+    UpdateTarget, Usage, Version,
 };
 
 use super::Device;
@@ -230,7 +230,12 @@ impl AsyncDevice {
     }
 
     /// `OPTION(EMIT)`: emit-rate pacing, render mode, and the forced wire rate. Instant; see [`Device::set_emit_pace`].
-    pub fn set_emit_pace(&self, pace: EmitPace, render: RenderMode, force_hz: Option<u16>) -> Result<()> {
+    pub fn set_emit_pace(
+        &self,
+        pace: EmitPace,
+        render: RenderMode,
+        force_hz: Option<u16>,
+    ) -> Result<()> {
         self.dev().set_emit_pace(pace, render, force_hz)
     }
 

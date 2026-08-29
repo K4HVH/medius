@@ -359,6 +359,10 @@ def test_scalars_are_checked_before_ctypes_truncates_them():
             d.lock_all(99, Direction.BOTH)
         with pytest.raises(ValueError):
             d.set_bearing(20, 7)
+        # render crosses the ABI as a byte, so an out-of-range one must be refused here rather
+        # than reaching the Rust enum.
+        with pytest.raises(ValueError):
+            d.set_emit_pace(EmitPace.learned(), 4)
         with pytest.raises(ValueError):
             d.set_bearing(-1, BearingMode.PER_AXIS)
         # The window saturates rather than wrapping, as the Rust API does: 70000 ms would arrive as

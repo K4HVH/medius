@@ -138,26 +138,6 @@ typedef int32_t MediusStatus;
 #endif // __STDC_VERSION__ >= 202311L
 #endif // __cplusplus
 
-// How injected motion is emitted: off is the paced fill, the rest render the device's texture and
-// differ only in the onboard smoother.
-enum MediusRenderMode
-#if defined(__cplusplus) || __STDC_VERSION__ >= 202311L
-  : uint8_t
-#endif // defined(__cplusplus) || __STDC_VERSION__ >= 202311L
- {
-    MEDIUS_RENDER_MODE_OFF = 0,
-    MEDIUS_RENDER_MODE_STOCK = 1,
-    MEDIUS_RENDER_MODE_DESPIKED = 2,
-    MEDIUS_RENDER_MODE_UNSMOOTHED = 3,
-};
-#ifndef __cplusplus
-#if __STDC_VERSION__ >= 202311L
-typedef enum MediusRenderMode MediusRenderMode;
-#else
-typedef uint8_t MediusRenderMode;
-#endif // __STDC_VERSION__ >= 202311L
-#endif // __cplusplus
-
 // How the box reads whether physical motion runs with or against its own injection.
 enum MediusBearingMode
 #if defined(__cplusplus) || __STDC_VERSION__ >= 202311L
@@ -195,6 +175,26 @@ enum MediusEmitMode
 typedef enum MediusEmitMode MediusEmitMode;
 #else
 typedef uint8_t MediusEmitMode;
+#endif // __STDC_VERSION__ >= 202311L
+#endif // __cplusplus
+
+// How injected motion is emitted: off is the paced fill, the rest render the device's texture and
+// differ only in the onboard smoother.
+enum MediusRenderMode
+#if defined(__cplusplus) || __STDC_VERSION__ >= 202311L
+  : uint8_t
+#endif // defined(__cplusplus) || __STDC_VERSION__ >= 202311L
+ {
+    MEDIUS_RENDER_MODE_OFF = 0,
+    MEDIUS_RENDER_MODE_STOCK = 1,
+    MEDIUS_RENDER_MODE_DESPIKED = 2,
+    MEDIUS_RENDER_MODE_UNSMOOTHED = 3,
+};
+#ifndef __cplusplus
+#if __STDC_VERSION__ >= 202311L
+typedef enum MediusRenderMode MediusRenderMode;
+#else
+typedef uint8_t MediusRenderMode;
 #endif // __STDC_VERSION__ >= 202311L
 #endif // __cplusplus
 
@@ -1606,12 +1606,12 @@ MediusStatus medius_device_set_bearing(struct MediusDevice *dev,
 
 // Set what paces injected motion and what rate the clone runs at; `hz` is the target rate for `Fixed`
 // and ignored otherwise, `render` is the render mode composed onto the pace, `force_hz` is the forced wire
-// rate (0 = the device's own). `mode` takes a `MEDIUS_EMIT_MODE_*` constant; any other value is
-// `MEDIUS_STATUS_ERR_INVALID_ARG`.
+// rate (0 = the device's own). `mode` takes a `MEDIUS_EMIT_MODE_*` constant and `render` a
+// `MEDIUS_RENDER_MODE_*` one; any other value is `MEDIUS_STATUS_ERR_INVALID_ARG`.
 MediusStatus medius_device_set_emit_pace(struct MediusDevice *dev,
                                          uint8_t mode,
                                          uint16_t hz,
-                                         MediusRenderMode render,
+                                         uint8_t render,
                                          uint16_t force_hz);
 
 // Set the box's persistent name (`name`, NUL-terminated UTF-8); an empty string clears it.
