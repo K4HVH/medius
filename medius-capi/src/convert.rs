@@ -9,7 +9,7 @@ use medius::{
     ClockEstimate, CountersSnapshot, DeviceInfo, DeviceKind, Direction, EmitPace, EmitPaceStatus,
     FirmwareInfo, Health, ImageState, ImperfectStatus, Input, InputEvent, KbdCaps, Key, LedMode,
     LedTarget, LockEntry, LockScope, LockTarget, Locks, LogLevel, LogLine, MediaKey, Motion,
-    MouseCaps, MoveTiming, PendingMotion, PortInfo, Rate, RebootTarget, Stats, Usage, Version,
+    MouseCaps, MoveTiming, PendingMotion, PortInfo, Rate, RebootTarget, RenderMode, Stats, Usage, Version,
 };
 
 use crate::ctypes::*;
@@ -162,6 +162,26 @@ pub(crate) fn clock_domain_from_c(v: u8) -> Option<ClockDomain> {
         1 => ClockDomain::DeviceChip,
         _ => return None,
     })
+}
+
+/// A `MediusRenderMode` to the crate [`RenderMode`].
+pub(crate) fn render_from_c(r: MediusRenderMode) -> RenderMode {
+    match r {
+        MediusRenderMode::Off => RenderMode::Off,
+        MediusRenderMode::Stock => RenderMode::Stock,
+        MediusRenderMode::Despiked => RenderMode::Despiked,
+        MediusRenderMode::Unsmoothed => RenderMode::Unsmoothed,
+    }
+}
+
+/// A crate [`RenderMode`] to its `MediusRenderMode`.
+pub(crate) fn render_to_c(r: RenderMode) -> MediusRenderMode {
+    match r {
+        RenderMode::Off => MediusRenderMode::Off,
+        RenderMode::Stock => MediusRenderMode::Stock,
+        RenderMode::Despiked => MediusRenderMode::Despiked,
+        RenderMode::Unsmoothed => MediusRenderMode::Unsmoothed,
+    }
 }
 
 /// `(mode, hz)` to an [`EmitPace`]; `hz` matters only for `Fixed`.
@@ -722,7 +742,7 @@ impl From<EmitPaceStatus> for MediusEmitPaceStatus {
         };
         MediusEmitPaceStatus {
             mode,
-            rendered: s.rendered as u8,
+            render: render_to_c(s.render),
             fixed_hz,
             resolved_hz: s.resolved_hz,
             force_hz: s.force_hz.unwrap_or(0),

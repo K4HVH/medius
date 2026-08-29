@@ -7,7 +7,7 @@ import time
 from typing import Optional, Sequence, Union
 
 from . import _native
-from ._enums import (Action, BearingMode, Blanket, EmitMode, LedMode, LedTarget, Direction,
+from ._enums import (Action, BearingMode, Blanket, EmitMode, RenderMode, LedMode, LedTarget, Direction,
                      MoveTiming, PendingMotion, RebootTarget, Status, UpdateTarget)
 from ._errors import InvalidArgError, MediusError, check
 from ._clip import ClipHandle
@@ -271,14 +271,14 @@ class Device:
             )
         )
 
-    def set_emit_pace(self, pace: EmitPace, rendered: bool = False, force_hz: Optional[int] = None):
-        """Set what paces injected motion (`hz` matters only for `EmitPace.fixed`), whether the renderer
-        composes onto it (`rendered`), and what rate the clone advertises and the box polls the device
-        at (`force_hz`, None = the device's own). All ride one command, so every call writes them."""
+    def set_emit_pace(self, pace: EmitPace, render: RenderMode = RenderMode.OFF, force_hz: Optional[int] = None):
+        """Set what paces injected motion (`hz` matters only for `EmitPace.fixed`), the `render` mode
+        composed onto it, and what rate the clone advertises and the box polls the device at (`force_hz`,
+        None = the device's own). All ride one command, so every call writes them."""
         mode = _enum(pace.mode, EmitMode, "mode")
         check(
             _native.lib.medius_device_set_emit_pace(
-                self._handle, int(mode), _u16(pace.hz, "hz"), bool(rendered),
+                self._handle, int(mode), _u16(pace.hz, "hz"), int(render),
                 _u16(force_hz or 0, "force_hz"),
             )
         )

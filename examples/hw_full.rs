@@ -20,7 +20,7 @@ mod linux {
 
     use medius::{
         Action, Axis, BearingMode, Blanket, Button, CatchClass, CatchFilter, Class, ClipAction,
-        ClipBuilder, ClipState, ClipTrigger, Device, Direction, Edge, EmitPace, Input, Key,
+        ClipBuilder, ClipState, ClipTrigger, Device, Direction, Edge, EmitPace, Input, Key, RenderMode,
         LedMode, LedTarget, MediaKey, RebootTarget, Timeline, TrafficClass,
     };
     use medius::{BEARING_WINDOW_DEFAULT, PROTO_VER};
@@ -442,14 +442,14 @@ mod linux {
             // Wire round-trip + NVS-persistence check for the EMIT option; the pacing behaviour itself
             // needs the rig. Restores LEARNED (the default) afterward.
             let dev = device.as_ref().unwrap();
-            let set_ok = dev.set_emit_pace(EmitPace::Fixed(500), false, None).is_ok();
+            let set_ok = dev.set_emit_pace(EmitPace::Fixed(500), RenderMode::Off, None).is_ok();
             std::thread::sleep(Duration::from_millis(60));
             let read = dev.query_emit_pace();
             let matched = read
                 .as_ref()
                 .map(|s| s.mode == EmitPace::Fixed(500) && s.resolved_hz == 500)
                 .unwrap_or(false);
-            let off_ok = dev.set_emit_pace(EmitPace::Learned, false, None).is_ok();
+            let off_ok = dev.set_emit_pace(EmitPace::Learned, RenderMode::Off, None).is_ok();
             std::thread::sleep(Duration::from_millis(60));
             let read_off = dev.query_emit_pace();
             let off_matched = read_off
@@ -468,31 +468,41 @@ mod linux {
             // renderer gates every 1 ms tick); onto a Fixed rate the snapped value stands. Restores
             // LEARNED afterward.
             let dev = device.as_ref().unwrap();
-            let set_ok = dev.set_emit_pace(EmitPace::Learned, true, None).is_ok();
+            let set_ok = dev.set_emit_pace(EmitPace::Learned, RenderMode::Stock, None).is_ok();
             std::thread::sleep(Duration::from_millis(60));
             let read = dev.query_emit_pace();
             let matched = read
                 .as_ref()
-                .map(|s| s.rendered && s.resolved_hz == 1000 && s.mode == EmitPace::Learned)
+                .map(|s| s.render == RenderMode::Stock && s.resolved_hz == 1000 && s.mode == EmitPace::Learned)
                 .unwrap_or(false);
-            let comp_ok = dev.set_emit_pace(EmitPace::Fixed(250), true, None).is_ok();
+            let comp_ok = dev.set_emit_pace(EmitPace::Fixed(250), RenderMode::Stock, None).is_ok();
             std::thread::sleep(Duration::from_millis(60));
             let read_comp = dev.query_emit_pace();
             let comp_matched = read_comp
                 .as_ref()
-                .map(|s| s.rendered && s.mode == EmitPace::Fixed(250) && s.resolved_hz == 250)
+                .map(|s| s.render == RenderMode::Stock && s.mode == EmitPace::Fixed(250) && s.resolved_hz == 250)
                 .unwrap_or(false);
-            let off_ok = dev.set_emit_pace(EmitPace::Learned, false, None).is_ok();
+            // The smoother is a 3-way onto rendered: stock, de-spiked, or off. Each round-trips.
+            let despiked_ok = dev.set_emit_pace(EmitPace::Learned, RenderMode::Despiked, None).is_ok();
+            std::thread::sleep(Duration::from_millis(60));
+            let read_desp = dev.query_emit_pace();
+            let desp_matched = read_desp.as_ref().map(|s| s.render == RenderMode::Despiked).unwrap_or(false);
+            let unsmoothed_ok = dev.set_emit_pace(EmitPace::Learned, RenderMode::Unsmoothed, None).is_ok();
+            std::thread::sleep(Duration::from_millis(60));
+            let read_uns = dev.query_emit_pace();
+            let uns_matched = read_uns.as_ref().map(|s| s.render == RenderMode::Unsmoothed).unwrap_or(false);
+            let off_ok = dev.set_emit_pace(EmitPace::Learned, RenderMode::Off, None).is_ok();
             std::thread::sleep(Duration::from_millis(60));
             let read_off = dev.query_emit_pace();
             let off_matched = read_off
                 .as_ref()
-                .map(|s| s.mode == EmitPace::Learned && !s.rendered)
+                .map(|s| s.mode == EmitPace::Learned && s.render == RenderMode::Off)
                 .unwrap_or(false);
             check(
                 "emit rendered",
-                set_ok && matched && comp_ok && comp_matched && off_ok && off_matched,
-                format!("Learned+rendered -> {read:?}, Fixed(250)+rendered -> {read_comp:?}, off -> {read_off:?}"),
+                set_ok && matched && comp_ok && comp_matched && despiked_ok && desp_matched
+                    && unsmoothed_ok && uns_matched && off_ok && off_matched,
+                format!("Learned+stock -> {read:?}, Fixed(250)+stock -> {read_comp:?}, de-spiked -> {read_desp:?}, unsmoothed -> {read_uns:?}, off -> {read_off:?}"),
             );
         }
 
@@ -515,7 +525,7 @@ mod linux {
                 let native = dev.query_emit_pace().map(|s| s.advertised_hz).unwrap_or(0);
                 let asked = if native == 1000 { 125 } else { 1000 };
                 let set_ok = dev
-                    .set_emit_pace(EmitPace::Learned, false, Some(asked))
+                    .set_emit_pace(EmitPace::Learned, RenderMode::Off, Some(asked))
                     .is_ok();
                 std::thread::sleep(Duration::from_millis(60));
                 let read = dev.query_emit_pace();
@@ -525,7 +535,7 @@ mod linux {
                         s.force_hz == Some(asked) && !s.force_active && s.advertised_hz == native
                     })
                     .unwrap_or(false);
-                let off_ok = dev.set_emit_pace(EmitPace::Learned, false, None).is_ok();
+                let off_ok = dev.set_emit_pace(EmitPace::Learned, RenderMode::Off, None).is_ok();
                 std::thread::sleep(Duration::from_millis(60));
                 let read_off = dev.query_emit_pace();
                 let off_matched = read_off

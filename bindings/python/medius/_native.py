@@ -241,7 +241,7 @@ class MediusBearing(ctypes.Structure):
 class MediusEmitPaceStatus(ctypes.Structure):
     _fields_ = [
         ("mode", u8),
-        ("rendered", u8),
+        ("render", u8),
         ("fixed_hz", u16),
         ("resolved_hz", u16),
         ("force_hz", u16),
@@ -420,7 +420,7 @@ _decl("medius_device_reboot", i32, [HANDLE, u8])
 _decl("medius_device_allow_imperfect_clones", i32, [HANDLE, c_bool])
 _decl("medius_device_set_movement_riding", i32, [HANDLE, c_bool, u32])
 _decl("medius_device_set_bearing", i32, [HANDLE, u16, u8])
-_decl("medius_device_set_emit_pace", i32, [HANDLE, u8, u16, c_bool, u16])
+_decl("medius_device_set_emit_pace", i32, [HANDLE, u8, u16, u8, u16])
 _decl("medius_device_set_name", i32, [HANDLE, ctypes.c_char_p])
 _decl("medius_device_clear_name", i32, [HANDLE])
 

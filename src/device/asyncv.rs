@@ -10,7 +10,7 @@ use crate::protocol::{Resp, parse_resp};
 use crate::types::{
     Action, Axis, Bearing, BearingMode, Blanket, Caps, CatchFilter, CatchState, ClipBuilder,
     ClipSettings, ClipStatus, ClipTrigger, CountersSnapshot, DeviceInfo, Direction, Edge, EmitPace,
-    EmitPaceStatus, FirmwareInfo, Health, ImperfectStatus, LedMode, LedTarget, LockTarget, Locks,
+    EmitPaceStatus, FirmwareInfo, RenderMode, Health, ImperfectStatus, LedMode, LedTarget, LockTarget, Locks,
     Motion, MoveTiming, PendingMotion, Rate, RebootTarget, Stats, UpdateProgress, UpdateTarget,
     Usage, Version,
 };
@@ -229,9 +229,9 @@ impl AsyncDevice {
         self.dev().set_bearing(window, mode)
     }
 
-    /// `OPTION(EMIT)`: emit-rate pacing, renderer composition, and the forced wire rate. Instant; see [`Device::set_emit_pace`].
-    pub fn set_emit_pace(&self, pace: EmitPace, rendered: bool, force_hz: Option<u16>) -> Result<()> {
-        self.dev().set_emit_pace(pace, rendered, force_hz)
+    /// `OPTION(EMIT)`: emit-rate pacing, render mode, and the forced wire rate. Instant; see [`Device::set_emit_pace`].
+    pub fn set_emit_pace(&self, pace: EmitPace, render: RenderMode, force_hz: Option<u16>) -> Result<()> {
+        self.dev().set_emit_pace(pace, render, force_hz)
     }
 
     /// `OPTION(NAME)`: set the box's persistent name. Instant; see [`Device::set_name`].

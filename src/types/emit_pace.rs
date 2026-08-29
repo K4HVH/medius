@@ -12,13 +12,53 @@ pub enum EmitPace {
     Fixed(u16),
 }
 
+/// How injected motion is emitted. [`Off`](RenderMode::Off) is the paced fill; the others render the
+/// device's report texture and differ only in the onboard path smoother.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum RenderMode {
+    /// Paced fill, renderer off (the default).
+    #[default]
+    Off,
+    /// Rendered with the bit-exact triangular smoother.
+    Stock,
+    /// Rendered with the smoother's onset ramped rather than stepped.
+    Despiked,
+    /// Rendered with no smoother; the model renders raw injection.
+    Unsmoothed,
+}
+
+impl RenderMode {
+    /// The `RENDERED` bit plus the smoother field of the mode byte.
+    pub(crate) fn to_wire(self) -> u8 {
+        match self {
+            RenderMode::Off => 0,
+            RenderMode::Stock => 0x80,
+            RenderMode::Despiked => 0x80 | (1 << 2),
+            RenderMode::Unsmoothed => 0x80 | (2 << 2),
+        }
+    }
+
+    /// Decode those bits; `None` is an unknown smoother field.
+    pub(crate) fn from_wire(mode: u8) -> Option<RenderMode> {
+        if mode & 0x80 == 0 {
+            return Some(RenderMode::Off);
+        }
+        match (mode >> 2) & 3 {
+            0 => Some(RenderMode::Stock),
+            1 => Some(RenderMode::Despiked),
+            2 => Some(RenderMode::Unsmoothed),
+            _ => None,
+        }
+    }
+}
+
 /// The configured [`EmitPace`] plus the emit-rate ceiling and the wire rate actually in effect (§4.14).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct EmitPaceStatus {
     /// The selected mode (for [`EmitPace::Fixed`], the rate the host requested).
     pub mode: EmitPace,
-    /// Whether the renderer composes onto the pace.
-    pub rendered: bool,
+    /// The render mode composing onto the pace.
+    pub render: RenderMode,
     /// The ceiling currently in effect (Hz); 0 = learnt/adaptive, or no device yet in [`EmitPace::Interval`].
     pub resolved_hz: u16,
     /// The forced wire rate the host asked for (Hz); `None` leaves the device's own.
@@ -39,8 +79,8 @@ impl EmitPaceStatus {
         let resolved_hz = u16::from_le_bytes([p[5], p[6]]);
         let force_hz = u16::from_le_bytes([p[7], p[8]]);
         let advertised_hz = u16::from_le_bytes([p[9], p[10]]);
-        let rendered = p[2] & 0x80 != 0;
-        let mode = match p[2] & 0x7F {
+        let render = RenderMode::from_wire(p[2])?;
+        let mode = match p[2] & 0x03 {
             0 => EmitPace::Learned,
             1 => EmitPace::Interval,
             2 => EmitPace::Fixed(fixed_hz),
@@ -48,7 +88,7 @@ impl EmitPaceStatus {
         };
         Some(EmitPaceStatus {
             mode,
-            rendered,
+            render,
             resolved_hz,
             force_hz: (force_hz != 0).then_some(force_hz),
             advertised_hz,

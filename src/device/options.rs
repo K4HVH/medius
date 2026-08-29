@@ -5,7 +5,7 @@ use crate::protocol::FrameType;
 use crate::protocol::command::{
     bearing_payload, emit_pace_payload, imperfect_payload, move_ride_payload, name_payload,
 };
-use crate::types::{BearingMode, EmitPace};
+use crate::types::{BearingMode, EmitPace, RenderMode};
 
 use super::Device;
 
@@ -26,14 +26,14 @@ pub(crate) fn ride_window_ms(window: Option<Duration>) -> u16 {
 /// The bearing window the box holds out of the box, before any host sets one.
 pub const BEARING_WINDOW_DEFAULT: Duration = Duration::from_millis(20);
 
-/// Encode an [`EmitPace`] plus the `rendered` flag to the wire `(mode, rate_hz)`: `Fixed(hz)` carries its rate, the other modes send 0, and `rendered` sets bit `0x80` of the mode byte.
-pub(crate) fn emit_pace_wire(pace: EmitPace, rendered: bool) -> (u8, u16) {
+/// Encode an [`EmitPace`] and a [`RenderMode`] to the wire `(mode, rate_hz)`: `Fixed(hz)` carries its rate, the other paces send 0, and the render mode is OR'd into the top of the mode byte.
+pub(crate) fn emit_pace_wire(pace: EmitPace, render: RenderMode) -> (u8, u16) {
     let (mode, hz) = match pace {
         EmitPace::Learned => (0, 0),
         EmitPace::Interval => (1, 0),
         EmitPace::Fixed(hz) => (2, hz),
     };
-    (mode | if rendered { 0x80 } else { 0 }, hz)
+    (mode | render.to_wire(), hz)
 }
 
 impl Device {
@@ -80,12 +80,12 @@ impl Device {
         )
     }
 
-    /// `OPTION(EMIT)`: set the pace ([`EmitPace`], the rate ceiling), whether the renderer composes onto it (`rendered`), and the forced wire rate (`force_hz`); persisted in NVS.
+    /// `OPTION(EMIT)`: set the pace ([`EmitPace`], the rate ceiling), the [`RenderMode`] composing onto it, and the forced wire rate (`force_hz`); persisted in NVS.
     ///
     /// A non-zero `force_hz` re-clones the box to advertise a `bInterval` the device did not (needs
     /// [`allow_imperfect_clones`](Self::allow_imperfect_clones)), snapping to `1000/n` Hz; `Some(0)`/`None` is off.
-    pub fn set_emit_pace(&self, pace: EmitPace, rendered: bool, force_hz: Option<u16>) -> Result<()> {
-        let (mode, hz) = emit_pace_wire(pace, rendered);
+    pub fn set_emit_pace(&self, pace: EmitPace, render: RenderMode, force_hz: Option<u16>) -> Result<()> {
+        let (mode, hz) = emit_pace_wire(pace, render);
         self.link.send(
             FrameType::Option,
             &emit_pace_payload(mode, hz, force_hz.unwrap_or(0)),

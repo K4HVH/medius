@@ -26,6 +26,7 @@ from ._enums import (
     Direction,
     Edge,
     EmitMode,
+    RenderMode,
     InputKind,
     LockTargetKind,
     LogLevel,
@@ -374,7 +375,7 @@ class EmitPace:
 @dataclass
 class EmitPaceStatus:
     mode: EmitPace
-    rendered: bool
+    render: "RenderMode"
     resolved_hz: int
     force_hz: Optional[int] = None
     advertised_hz: int = 0
@@ -1120,7 +1121,7 @@ def emit_pace_status_from_c(c) -> EmitPaceStatus:
     mode = EmitMode(c.mode)
     return EmitPaceStatus(
         EmitPace(mode, c.fixed_hz),
-        bool(c.rendered),
+        RenderMode(c.render),
         c.resolved_hz,
         c.force_hz or None,
         c.advertised_hz,

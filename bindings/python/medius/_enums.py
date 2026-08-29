@@ -124,6 +124,13 @@ class EmitMode(IntEnum):
     FIXED = 2
 
 
+class RenderMode(IntEnum):
+    OFF = 0
+    STOCK = 1
+    DESPIKED = 2
+    UNSMOOTHED = 3
+
+
 class LedTarget(IntEnum):
     DEVICE = 0
     HOST = 1

@@ -41,7 +41,7 @@ pub use clock::{ClockDomain, ClockEstimate, Stamped, Timeline, Timestamped};
 pub use counters::CountersSnapshot;
 pub use device_info::{DeviceInfo, DeviceKind};
 pub use direction::Direction;
-pub use emit_pace::{EmitPace, EmitPaceStatus};
+pub use emit_pace::{EmitPace, EmitPaceStatus, RenderMode};
 pub use event::{BusEvent, CatchEvent, ControlStatus, MotionEvent, TrafficEvent, UsageSnapshot};
 pub use health::Health;
 pub use imperfect::ImperfectStatus;
