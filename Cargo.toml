@@ -32,7 +32,7 @@ tracing = { version = "0.1", optional = true }
 sha2 = { version = "0.11.0", default-features = false }
 
 # Windows I/O goes over serial2's overlapped COM handle. serialport's handle is synchronous, so the
-# kernel serializes reads against writes and injection stalls behind the reader thread; serialport
+# kernel serialises reads against writes and injection stalls behind the reader thread; serialport
 # stays for port discovery, which it is the only one of the two to carry USB VID/PID for.
 [target.'cfg(windows)'.dependencies]
 serial2 = { version = "0.2", features = ["windows"] }
