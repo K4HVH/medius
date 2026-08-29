@@ -10,6 +10,7 @@ import pytest
 
 import medius
 from medius import (
+    RenderMode,
     Axis,
     BadProtoVerError,
     BEARING_WINDOW_DEFAULT_MS,
@@ -596,39 +597,44 @@ def test_emit_pace_roundtrip():
         with Device.with_mock(mock) as d:
             status = d.query_emit_pace()
         assert status.mode == EmitPace.fixed(500)
-        assert status.rendered is False
+        assert status.render == RenderMode.OFF
         assert status.resolved_hz == 500  # Fixed clamps to its hz
         mock.set_emit_pace(EmitPace.learned())
         with Device.with_mock(mock) as d:
             status = d.query_emit_pace()
         assert status.mode == EmitPace.learned()
-        assert status.rendered is False
+        assert status.render == RenderMode.OFF
         assert status.resolved_hz == 0  # learnt/adaptive
         assert status.force_hz is None
         assert status.force_active is False
         assert status.advertised_hz == 0  # 0 = no clone, the documented sentinel
 
 
-def test_emit_pace_rendered_roundtrip():
-    # rendered is a flag composed onto the pace, driven through the real set_emit_pace ABI and read back.
+def test_emit_pace_render_mode_roundtrip():
+    # The render mode composes onto the pace, driven through the real set_emit_pace ABI and read back.
     with MockBox() as mock, Device.with_mock(mock) as d:
-        d.set_emit_pace(EmitPace.learned(), rendered=True)
+        d.set_emit_pace(EmitPace.learned(), RenderMode.STOCK)
         status = d.query_emit_pace()
         assert status.mode == EmitPace.learned()
-        assert status.rendered is True
+        assert status.render == RenderMode.STOCK
         assert status.resolved_hz == 1000  # rendered onto Learned forces the 1 ms tick
         assert status.force_hz is None
         assert status.force_active is False
         # Composed onto a Fixed rate the snapped value stands rather than jumping to 1 kHz.
-        d.set_emit_pace(EmitPace.fixed(250), rendered=True)
+        d.set_emit_pace(EmitPace.fixed(250), RenderMode.STOCK)
         status = d.query_emit_pace()
         assert status.mode == EmitPace.fixed(250)
-        assert status.rendered is True
+        assert status.render == RenderMode.STOCK
         assert status.resolved_hz == 250
-        # And cleared again with the default rendered=False.
+        # The smoother field round-trips for de-spiked and unsmoothed too.
+        d.set_emit_pace(EmitPace.learned(), RenderMode.DESPIKED)
+        assert d.query_emit_pace().render == RenderMode.DESPIKED
+        d.set_emit_pace(EmitPace.learned(), RenderMode.UNSMOOTHED)
+        assert d.query_emit_pace().render == RenderMode.UNSMOOTHED
+        # And cleared again with the default RenderMode.OFF.
         d.set_emit_pace(EmitPace.learned())
         status = d.query_emit_pace()
-        assert status.rendered is False
+        assert status.render == RenderMode.OFF
         assert status.resolved_hz == 0
 
 

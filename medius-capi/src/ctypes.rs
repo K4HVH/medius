@@ -99,6 +99,17 @@ pub enum MediusEmitMode {
     Fixed = 2,
 }
 
+/// How injected motion is emitted: off is the paced fill, the rest render the device's texture and
+/// differ only in the onboard smoother.
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MediusRenderMode {
+    Off = 0,
+    Stock = 1,
+    Despiked = 2,
+    Unsmoothed = 3,
+}
+
 /// Which status LED a command addresses.
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -606,8 +617,8 @@ pub struct MediusImperfectStatus {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MediusEmitPaceStatus {
     pub mode: MediusEmitMode,
-    /// 1 when the renderer composes onto the pace.
-    pub rendered: u8,
+    /// The render mode composing onto the pace.
+    pub render: MediusRenderMode,
     pub fixed_hz: u16,
     pub resolved_hz: u16,
     /// The forced wire rate requested, in Hz; 0 leaves the device's own.
