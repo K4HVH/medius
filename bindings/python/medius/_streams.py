@@ -55,7 +55,7 @@ class EventStream:
     def is_connected(self) -> bool:
         """Whether the box is still delivering.
 
-        `try_recv` and `recv_timeout` both answer `None` for "nothing yet" and for "nothing ever
+        `try_recv` and `recv_timeout` both return `None` for "nothing yet" and for "nothing ever
         again". This separates them: one means wait longer, the other means stop.
         """
         return bool(_native.lib.medius_event_stream_is_connected(self._handle))
@@ -185,8 +185,8 @@ class Timeline:
                 print(ev, time.observe(ev).host_ns)
 
     Each domain is tracked separately. The mapping keeps a per-domain minimum of (elapsed here minus
-    elapsed on the box) rather than an average, because the error is one-sided -- an event can arrive
-    late but never early -- so it improves as it runs and never degrades.
+    elapsed on the box) rather than an average, because the error is one-sided (an event can arrive
+    late but never early), so it improves as it runs and never degrades.
     """
 
     def __init__(self):

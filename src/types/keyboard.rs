@@ -1,4 +1,4 @@
-//! Keyboard command vocabulary: a key by HID keycode, and the keyboard catch snapshot (v2.0.0).
+//! Keyboard command vocabulary: a key by HID keycode, and the keyboard catch snapshot.
 
 /// A keyboard key, addressed by HID Usage (Keyboard/Keypad page, §3.10).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]

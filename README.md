@@ -27,7 +27,7 @@ Same MAKCU box, different firmware. Both clone your mouse's USB descriptor byte 
 
 ```toml
 [dependencies]
-medius = "3.2"
+medius = "3.3"
 ```
 
 ```rust
@@ -58,7 +58,7 @@ The base crate is the lean sync core. Optional features:
 | `tracing` | per-frame TX/RX `tracing` instrumentation |
 
 ```toml
-medius = { version = "3.2", features = ["async", "mock"] }
+medius = { version = "3.3", features = ["async", "mock"] }
 ```
 
 ## API
@@ -128,6 +128,29 @@ for _ in 0..1000 {
 }
 ```
 
+### Emit pacing and render mode
+
+`set_emit_pace` carries three settings in one `OPTION(EMIT)` frame, all persisted in NVS: what paces injected motion, how it is rendered, and what rate the clone advertises.
+
+```rust
+use medius::{EmitPace, RenderMode};
+
+device.set_emit_pace(EmitPace::Learned, RenderMode::Despiked, None)?;
+device.set_emit_pace(EmitPace::Fixed(500), RenderMode::Off, Some(1000))?;
+let s = device.query_emit_pace()?;  // mode, render, resolved_hz, force_hz, advertised_hz, force_active
+```
+
+`EmitPace::Learned` (the default) paces to the mouse's learnt native report rate, `EmitPace::Interval` to the clone's `bInterval` poll rate, and `EmitPace::Fixed(hz)` to a rate you name, which the 1 ms frame clock snaps to `1000/n` Hz and caps at `EMIT_MAX_HZ`.
+
+| `RenderMode` | What the box emits |
+|---|---|
+| `Off` | the paced fill, renderer off |
+| `Stock` | rendered with the bit-exact triangular smoother |
+| `Despiked` | rendered with the smoother's onset ramped rather than stepped (the box's factory default) |
+| `Unsmoothed` | rendered with no smoother; the model renders raw injection |
+
+A non-zero `force_hz` re-clones the box to advertise a `bInterval` the device did not, snapping to `1000/n` Hz; it needs `allow_imperfect_clones`, and `None` leaves the device's own.
+
 ### Weighing the user's own input
 
 `lock` blocks the physical device on one input while injection still drives it. `scale` is the same
@@ -144,10 +167,10 @@ device.unlock(Axis::X, Direction::Both)?;        // back to passing untouched (s
 
 `Direction::With` and `Direction::Against` are measured against the **bearing**, the direction the box
 is currently injecting, rather than a fixed sign. That makes the merge asymmetric: motion helping the
-aim passes while motion fighting it is damped, decided on the box at the merge point where the pending
+aim passes while motion fighting it is damped, resolved on the box at the merge point where the pending
 injection and the arriving report are in hand at once. Set how long a bearing is held with
-`set_bearing`; past that window an axis has no bearing, the relative directions stand down, and the aim
-goes back to the user with no host command.
+`set_bearing`; past that window an axis has no bearing, the relative directions stop applying, and the
+physical delta reaches the PC unweighed, with no host command.
 
 ```rust
 use medius::{Axis, BearingMode, Direction};
@@ -162,21 +185,23 @@ A delta picks up at most two scales, its fixed direction's and its relative dire
 multiply, so a block in either wins. `Direction::Both` is the exception: it writes the scale to the two
 fixed signs and a full pass to the relative pair, so a `Both` of 50 is 50% with a bearing live and 50%
 without, not 25%. `BearingMode::Vector` projects onto the injected vector instead, leaving motion
-across it untouched; one relative scale then governs the whole aim, the lower of X's and Y's, and
+across it untouched; one relative scale then governs both axes, the lower of X's and Y's, and
 `query_locks` reports that effective number on both axes. Each axis's absolute scale applies to what
-the projection left rather than to the sign the hand moved, so a block still covers motion the
+the projection left rather than to the sign the report carried, so a block still covers motion the
 projection put on that axis.
 
 Only an axis has a bearing, so `With`/`Against` on a button, key or media usage is
 `Error::RelativeDirection` rather than a frame the box would drop. A button, key, or media usage
 carries one bit: any scale under 100 locks it, any scale at or above 100 unlocks it. A media usage has
-no edges at all -- it is suppressed whole -- so an edge on one is sent as `Both`, which is what
+no edges at all (it is suppressed whole), so an edge on one is sent as `Both`, which is what
 `query_locks` reports. `lock_all(Blanket::Keys, ...)` does honour the edge: `Positive` blocks presses
 only, `Negative` releases only.
 
 ### Buffered clip playback
 
-For jitter-free playback, preload per-frame input into a device-side ring and let the box drain one entry per native frame, box-clocked, so it carries none of the host's scheduling jitter and none of the per-command send floor. Motion is a per-frame delta, edges (buttons/keys/media) are sticky until changed, and a gap run emits nothing for N frames. Pace top-ups off `query_status().free`.
+For jitter-free playback, preload per-frame input into a device-side ring and let the box drain one entry per native frame, box-clocked, so it carries none of the host's scheduling jitter and none of the per-command send floor.
+
+Motion is a per-frame delta, edges (buttons/keys/media) are sticky until changed, and a gap run emits nothing for N frames. Pace top-ups off `query_status().free`.
 
 ```rust
 use medius::{ClipBuilder, Button};
@@ -283,10 +308,10 @@ It uses `flume`'s async recv, so there's no runtime dependency and it runs on an
 ### Mock (feature = `mock`)
 
 ```rust
-use medius::{Button, Device, FrameType, Health, MockBox, Rate, Version};
+use medius::{Button, Device, FrameType, Health, MockBox, PROTO_VER, Rate, Version};
 
 let mock = MockBox::new()
-    .with_version(Version { proto_ver: 3, fw_major: 1, fw_minor: 2, fw_patch: 3, mac: [0; 6], name: "my-box".into() })
+    .with_version(Version { proto_ver: PROTO_VER, fw_major: 1, fw_minor: 2, fw_patch: 3, mac: [0; 6], name: "my-box".into() })
     .with_health(Health::from_flags(0x0F))
     .with_rate(Rate { native_period_us: 1000, poll_period_us: 1000, confident: true, change_driven: false });
 
@@ -307,7 +332,14 @@ cargo run --example hw_full --all-features   # on-hardware validation suite (Lin
 
 ## Architecture
 
-Four layers, `protocol → transport → link → device`, each depending only on the one below it. `protocol` is the wire codec: framed binary (SOF, type, rolling SEQ, length, payload, CRC16), no I/O. `transport` is the byte pipe (no `unsafe`) plus VID/PID discovery, over `serialport` everywhere except Windows, where `serial2`'s overlapped COM handle keeps a read and a write in flight at once. `link` runs the live connection: the reader thread, SEQ-correlated queries, keepalive, and reconnect. `device` is the typed API on top, where each command is one `link.send(...)`.
+Four layers, `protocol → transport → link → device`, each depending only on the one below it.
+
+| Layer | What |
+|---|---|
+| `protocol` | the wire codec: framed binary (SOF, type, rolling SEQ, length, payload, CRC16), no I/O |
+| `transport` | the byte pipe (no `unsafe`) plus VID/PID discovery, over `serialport` everywhere except Windows, where `serial2`'s overlapped COM handle keeps a read and a write in flight at once |
+| `link` | the live connection: the reader thread, SEQ-correlated queries, keepalive, and reconnect |
+| `device` | the typed API on top, where each command is one `link.send(...)` |
 
 `Device` takes `&self`, is `Send + Sync`, and clones cheaply. The link runs at a fixed 4 Mbaud in framed binary (no baud dance, no ASCII REPL), and queries correlate by SEQ rather than arrival order. If the host goes quiet for ~1 s the firmware clears all injection, so a crash never leaves a button stuck; a keepalive thread keeps an intentionally-held button alive. Tested on Linux and Windows.
 

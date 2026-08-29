@@ -555,7 +555,7 @@ mod linux {
         }
 
         {
-            // The name rides RESP(VERSION) like the MAC; clearing reverts to the synthesized
+            // The name rides RESP(VERSION) like the MAC; clearing reverts to the synthesised
             // "Medius-XXXX" default.
             let dev = device.as_ref().unwrap();
             let set_ok = dev.set_name("hw-full box").is_ok();
@@ -708,7 +708,7 @@ mod linux {
 
         {
             // BEARING: the mode changes what the box reports for the relative pair. In VECTOR one
-            // scale governs the whole aim -- the lower of X's and Y's -- so the readback names that
+            // scale governs both axes (the lower of X's and Y's), so the readback names that
             // number on both axes, and switching back to PER_AXIS names each axis's own again. A host
             // echoing its own writes would report 130/60 in both modes.
             let dev = device.as_ref().unwrap();
@@ -896,7 +896,7 @@ mod linux {
             // AND disconnects the host stream.
             //
             // Subscribed to the INPUT classes, not everything. An idle mouse produces no input event,
-            // which is what makes "quiet while idle" a real assertion -- but the everything filter
+            // which is what makes "quiet while idle" a real assertion, but the everything filter
             // covers HID_IN and EMIT, which fire on every report a streaming device sends, so against
             // one of those the same check asserted that a working box was broken.
             let dev = device.as_ref().unwrap();
@@ -980,8 +980,8 @@ mod linux {
             // yields plausible wrong deltas rather than an error, so the domain is asserted rather
             // than eyeballed.
             //
-            // EMIT is DRIVEN here, by injecting. A change-driven mouse NAKs at rest -- the Mamba
-            // Elite sends nothing at all when nobody touches it -- so a window that only waits sees
+            // EMIT is DRIVEN here, by injecting. A change-driven mouse NAKs at rest (the Mamba
+            // Elite sends nothing at all when nobody touches it), so a window that only waits sees
             // zero of both classes, and a check that demanded traffic failed the firmware for the
             // device being still. Injection always produces EMIT, so half of this is real on any
             // device; HID_IN needs the physical device to actually report, and says so when it does
@@ -1542,7 +1542,7 @@ mod linux {
 
         {
             // Halving is a SUSTAINED rate fault, so this measures the sustained rate. Injecting into
-            // an idle change-driven device -- one that NAKs at rest, which most real mice do -- takes
+            // an idle change-driven device (one that NAKs at rest, which most real mice do) takes
             // about 150 ms to reach full pace, and counting from cold charged that ramp against a
             // steady-state threshold: measured 83, 92, then a flat 100 reports per 100 ms for three
             // solid seconds. Every unit still arrives either way, merged rather than dropped, which is

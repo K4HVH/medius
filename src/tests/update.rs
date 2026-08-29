@@ -343,9 +343,9 @@ mod correlation {
     use super::*;
     use crate::protocol::FrameType;
 
-    /// A DATA acknowledgement answers a whole window, so the box gives it a rolling SEQ of its own
-    /// rather than echoing the command's. This reads the REPLY seqs: an earlier version of this test
-    /// only looked at the frames the client sent, so it passed whatever the mock answered.
+    // A DATA acknowledgement answers a whole window, so the box gives it a rolling SEQ of its own
+    // rather than echoing the command's. This reads the REPLY seqs: an earlier version of this test
+    // only looked at the frames the client sent, so it passed whatever the mock answered.
     #[test]
     fn data_acks_carry_a_rolling_seq_not_the_command_seq() {
         let mock = crate::MockBox::new();
@@ -382,8 +382,8 @@ mod correlation {
         );
     }
 
-    /// An oversized chunk is a malformed frame, not an image that does not fit. No client sends one,
-    /// so the box's answer is asserted against the mock's state machine directly.
+    // An oversized chunk is a malformed frame, not an image that does not fit. No client sends one,
+    // so the box's answer is asserted against the mock's state machine directly.
     #[test]
     fn an_oversized_chunk_is_bad_state_not_too_big() {
         let mut u = crate::mock::MockUpdate::default();
@@ -416,10 +416,10 @@ mod correlation {
 mod stale_replies {
     use super::*;
 
-    /// An abandoned transfer leaves its last acknowledgement in the channel. Taking that as the first
-    /// window's answer would run the loop a window ahead of the box for the rest of the image, which
-    /// is twice the credit in flight against a receiver sized for one window. Dropping it has to
-    /// happen after the BEGIN reply, because awaiting that reply is what moves it out of the channel.
+    // An abandoned transfer leaves its last acknowledgement in the channel. Taking that as the first
+    // window's answer would run the loop a window ahead of the box for the rest of the image, which
+    // is twice the credit in flight against a receiver sized for one window. Dropping it has to
+    // happen after the BEGIN reply, because awaiting that reply is what moves it out of the channel.
     #[test]
     fn a_leftover_data_ack_does_not_answer_the_next_transfers_first_window() {
         let mock = crate::MockBox::new();

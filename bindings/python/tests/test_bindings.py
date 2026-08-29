@@ -112,7 +112,7 @@ def test_configure_version_then_open_mock_matches():
 def test_set_name_and_clear_name():
     mock = MockBox()
     with mock.open() as d:
-        # No host-side validation (like the other setters): the box sanitizes. These all just send.
+        # No host-side validation (like the other setters): the box sanitises. These all just send.
         d.set_name("Left PC")
         d.set_name("x" * 40)  # over-length: the firmware caps it, the host does not error
         d.clear_name()
@@ -276,7 +276,7 @@ def test_the_box_lock_table_answers_query_locks():
         assert locks.scale_of(x, Direction.WITH) == LOCK_SCALE_PASS
         assert locks.scale_of(x, Direction.AGAINST) == LOCK_SCALE_PASS
 
-        # In vector mode one relative scale governs the whole aim, the lower of the two, and the box
+        # In vector mode one relative scale governs both axes, the lower of the two, and the box
         # reports that number on both axes rather than each axis's stored byte.
         d.unlock(x, Direction.BOTH)
         d.scale(x, Direction.WITH, 130)
@@ -304,7 +304,7 @@ def test_a_key_blanket_reports_the_edges_it_blocks():
         ]
 
 
-def test_a_one_bit_class_stores_the_block_or_pass_it_renders():
+def test_a_one_bit_class_stores_the_block_or_pass_it_amounts_to():
     left = LockTarget.usage(Usage.button(Button.LEFT))
     with MockBox() as mock, Device.with_mock(mock) as d:
         d.scale(left, Direction.POSITIVE, 50)
@@ -394,7 +394,7 @@ def test_mock_set_locks_checks_each_entry_before_ctypes_truncates_it():
 def test_catch_filter_scalars_are_checked_before_ctypes_truncates_them():
     f = CatchFilter.watch(Usage.button(Button.LEFT))
     # A direction byte no constant names would ride the filter to the box, where the subscription is
-    # refused -- a stream that never yields, reported nowhere near the mistake.
+    # refused: a stream that never yields, reported nowhere near the mistake.
     with pytest.raises(ValueError):
         f.with_direction(40)
     with pytest.raises(ValueError):
@@ -1048,7 +1048,7 @@ def test_ctypes_structs_match_the_c_header():
     This is not a decode concern, it is memory safety: `medius_event_stream_recv` writes
     `sizeof(MediusCatchEvent)` bytes into a buffer this module allocates, so a mirror short by one
     field lets the library write past the end of it on every event. A field added to the header and
-    missed here is silent until it corrupts the heap -- which is exactly how it happened.
+    missed here is silent until it corrupts the heap, which is exactly how it happened.
     """
     import ctypes
     import re
@@ -1167,7 +1167,7 @@ def test_input_events_refuse_what_they_cannot_decode():
         with pytest.raises(medius.CaptureNotApplicableError):
             d.catch_events(CatchFilter.watch_class(Class.KEY).with_capture(8))
         # 0xFFFF is the every-id sentinel, and a MediusCatchFilter carries nothing that could tell an
-        # exact id apart from the blanket -- so across this ABI a media usage of 0xFFFF IS the class
+        # exact id apart from the blanket, so across this ABI a media usage of 0xFFFF IS the class
         # blanket. The native API refuses it outright; here it is a documented wire limitation, and
         # what matters is that it is the blanket rather than something narrower.
         assert CatchFilter.watch(Usage.media(0xFFFF)).id is None
@@ -1211,7 +1211,7 @@ def test_the_filter_constructors_address_inputs_like_lock_does():
 
 def test_an_unknown_control_status_does_not_raise():
     # The C ABI reports a status this build does not know as OTHER, and the byte itself stays on
-    # `flags`. Without the member, decoding one raised ValueError -- the exact failure the distinct
+    # `flags`. Without the member, decoding one raised ValueError: the exact failure the distinct
     # variant was added to prevent, reintroduced one binding down.
     unknown = TrafficEvent(
         catch_class=CatchClass.CONTROL,
@@ -1248,7 +1248,7 @@ def test_timeline_unwraps_the_rollover_and_maps_onto_the_callers_clock():
 
 
 def test_every_enum_parameter_is_checked_before_it_reaches_the_boundary():
-    # Each of these used to hand the C ABI a byte it materialized as a `#[repr(u8)]` enum before any
+    # Each of these used to hand the C ABI a byte it materialised as a `#[repr(u8)]` enum before any
     # check could run: SIGSEGV where the value fell outside the jump table, and the wrong command on
     # the wire where it did not. There is no status to read back from a crashed interpreter.
     with MockBox() as mock, Device.with_mock(mock) as d:

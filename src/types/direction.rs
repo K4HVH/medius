@@ -8,11 +8,12 @@ use crate::protocol::opcode::{
 ///
 /// [`Positive`](Direction::Positive) and [`Negative`](Direction::Negative) name a fixed sign or edge.
 /// [`With`](Direction::With) and [`Against`](Direction::Against) name a sign relative to the bearing,
-/// the direction the box is currently injecting, so the sign they cover follows the injection instead of the axis; see
-/// [`Device::scale`](crate::Device::scale) and [`Device::set_bearing`](crate::Device::set_bearing).
+/// the direction the box is currently injecting, so the sign they cover follows the injection
+/// instead of the axis; see [`Device::scale`](crate::Device::scale) and
+/// [`Device::set_bearing`](crate::Device::set_bearing).
 ///
 /// The variants are named for the axis reading; the other two are the same values under names that
-/// read at the call site. Which applies is decided by the class, and no class carries two.
+/// read at the call site. The class selects which applies, and no class carries two.
 ///
 /// | Constant | Same as | Classes |
 /// |---|---|---|

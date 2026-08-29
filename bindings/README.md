@@ -78,13 +78,13 @@ test suite).
 
 The bindings cover everything; only the shape changes at the boundary.
 
-- **Errors.** Rust returns `Result`. C returns a `MediusStatus` and stashes the
-  detail in `medius_last_error_message()`; Python raises `MediusError`.
-- **`inject`.** Rust's `inject(Button::Left, ...)` is generic; the bindings take a
-  built value (`medius_input_button(...)`, `Input.button(...)`). The direct verbs
-  (`press`, `key_down`, `media_down`, …) are unchanged.
-- **No async.** The bindings are synchronous; use a thread or the stream's
-  `try_recv` / `recv_timeout` (Python: `asyncio.to_thread`).
+| | Rust | C | Python |
+|---|---|---|---|
+| Errors | `Result` | a `MediusStatus`, detail in `medius_last_error_message()` | raises `MediusError` |
+| `inject` | generic: `inject(Button::Left, ...)` | a built value: `medius_input_button(...)` | a built value: `Input.button(...)` |
+| Async | `AsyncDevice` (feature `async`) | none: use a thread, or `try_recv` / `recv_timeout` | none: `asyncio.to_thread`, or `try_recv` / `recv_timeout` |
+
+The direct verbs (`press`, `key_down`, `media_down`, …) are unchanged in all three.
 
 ## Packages
 
@@ -93,15 +93,19 @@ bump the version (`tools/bump_version.sh`) and push to master, and the `publish`
 job publishes the crate and creates the GitHub Release, then the bindings jobs
 build and ship the wheels and C/C++ assets for that same version.
 
-- **Python → PyPI.** Builds the wheel matrix + sdist and uploads via PyPI trusted
-  publishing (OIDC, no token). One-time setup, before the first publish (the
-  project doesn't exist on PyPI yet): register a *pending publisher* at
-  `pypi.org/manage/account/publishing/` with project `medius`, owner `K4HVH`,
-  repo `medius`, **workflow `ci.yml`**, environment `pypi`. Then `pip install medius`.
-- **C / C++ → GitHub Release assets.** Attaches a `medius-capi-<target>.tar.gz`
-  per platform to the release, each with `include/medius.h` and the prebuilt
-  `libmedius_capi` (shared + static). Download, include the header, link the
-  library; the same header works in C and C++.
+### Python → PyPI
+
+Builds the wheel matrix + sdist and uploads via PyPI trusted publishing (OIDC, no
+token). One-time setup, before the first publish (the project doesn't exist on PyPI
+yet): register a *pending publisher* at `pypi.org/manage/account/publishing/` with
+project `medius`, owner `K4HVH`, repo `medius`, **workflow `ci.yml`**, environment
+`pypi`. Then `pip install medius`.
+
+### C / C++ → GitHub Release assets
+
+Attaches a `medius-capi-<target>.tar.gz` per platform to the release, each with
+`include/medius.h` and the prebuilt `libmedius_capi` (shared + static). Download,
+include the header, link the library; the same header works in C and C++.
 
 There's no vcpkg or Conan port: those registries build C/C++ from source in
 hermetic CI with no Rust toolchain, so a Rust-backed library doesn't fit. C/C++

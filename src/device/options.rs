@@ -23,7 +23,7 @@ pub(crate) fn ride_window_ms(window: Option<Duration>) -> u16 {
     }
 }
 
-/// The bearing window the box holds out of the box, before any host sets one.
+/// The bearing window a box boots with, before any host sets one.
 pub const BEARING_WINDOW_DEFAULT: Duration = Duration::from_millis(20);
 
 /// Encode an [`EmitPace`] to the wire `(mode, rate_hz)`: `Fixed(hz)` carries its rate, the other paces send 0. The render mode is its own wire field, not part of this byte.
@@ -96,7 +96,7 @@ impl Device {
         self.link.send(FrameType::Option, &name_payload(name))
     }
 
-    /// `OPTION(NAME)` with an empty value: clear the custom name, reverting the box to its synthesized `Medius-XXXX` default.
+    /// `OPTION(NAME)` with an empty value: clear the custom name, reverting the box to its synthesised `Medius-XXXX` default.
     pub fn clear_name(&self) -> Result<()> {
         self.set_name("")
     }

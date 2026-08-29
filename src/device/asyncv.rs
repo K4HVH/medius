@@ -239,7 +239,7 @@ impl AsyncDevice {
         self.dev().set_name(name)
     }
 
-    /// `OPTION(NAME)` clear: revert to the synthesized default. Instant; see [`Device::clear_name`].
+    /// `OPTION(NAME)` clear: revert to the synthesised default. Instant; see [`Device::clear_name`].
     pub fn clear_name(&self) -> Result<()> {
         self.dev().clear_name()
     }
@@ -312,16 +312,16 @@ impl AsyncDevice {
         self.offload(|d| d.wait_firmware_confirmed()).await
     }
 
-    /// Run one blocking update call on a thread of its own and await the result.
-    ///
-    /// NOT cancellable. Dropping the returned future stops the waiting, not the transfer: the thread
-    /// runs to completion and `update_firmware` will still reboot the box. Wrap it in a timeout only
-    /// if that is acceptable.
-    ///
-    /// The transfer is a credit-windowed conversation with its own timeouts, and this crate carries
-    /// no runtime and no timer, so an `async` reimplementation would have nothing to bound its waits
-    /// with. Driving the sync path instead keeps one implementation of the wire, which is the whole
-    /// point: a duplicated loop is where sync and async quietly stop agreeing.
+    // Run one blocking update call on a thread of its own and await the result.
+    //
+    // NOT cancellable. Dropping the returned future stops the waiting, not the transfer: the thread
+    // runs to completion and `update_firmware` will still reboot the box. Wrap it in a timeout only
+    // if that is acceptable.
+    //
+    // The transfer is a credit-windowed conversation with its own timeouts, and this crate carries
+    // no runtime and no timer, so an `async` reimplementation would have nothing to bound its waits
+    // with. Driving the sync path instead keeps one implementation of the wire, which is the whole
+    // point: a duplicated loop is where sync and async quietly stop agreeing.
     async fn offload<T, F>(&self, f: F) -> Result<T>
     where
         T: Send + 'static,

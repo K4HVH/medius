@@ -20,14 +20,14 @@ use super::Link;
 /// Host-side buffer depth per subscription (~0.25 s at 1 kHz).
 pub(crate) const CATCH_CAPACITY: usize = 256;
 
-/// One entry per box table slot. The box holds a single entry per `(class, id, direction)`, so the
-/// host has to collapse onto the same key or two subscribers silently overwrite each other.
+// One entry per box table slot. The box holds a single entry per `(class, id, direction)`, so the
+// host has to collapse onto the same key or two subscribers silently overwrite each other.
 pub(crate) type FilterSet = BTreeMap<FilterKey, CatchFilter>;
 
-/// Collapse filters onto one entry per address, keeping the widest capture.
-///
-/// Widest-wins rather than last-wins: a pair naming one address at two captures has to mean the same
-/// thing in either order, and only one of the two orders can be the one the caller meant.
+// Collapse filters onto one entry per address, keeping the widest capture.
+//
+// Widest-wins rather than last-wins: a pair naming one address at two captures has to mean the same
+// thing in either order, and only one of the two orders can be the one the caller meant.
 pub(crate) fn collapse(filters: impl IntoIterator<Item = CatchFilter>) -> FilterSet {
     let mut out = FilterSet::new();
     for f in filters {
@@ -68,7 +68,7 @@ fn covers(o: CatchFilter, f: CatchFilter) -> bool {
 }
 
 // The box raises BUS events with direction BOTH, and its matcher lets a BOTH event match an entry of
-// any direction -- so two siblings at one address with opposite named directions tie on rank, and the
+// any direction, so two siblings at one address with opposite named directions tie on rank, and the
 // firmware breaks the tie by registration order. Nothing on this side models that. Collapsing the
 // pair into the one BOTH entry the box can represent exactly removes the tie; it costs no extra
 // traffic, because two named entries already had the box sending both directions.
@@ -115,8 +115,8 @@ pub(crate) struct CatchReg {
 }
 
 impl CatchReg {
-    /// The union every subscriber together asks for, each entry's capture widened to satisfy every
-    /// subscription that covers it.
+    // The union every subscriber together asks for, each entry's capture widened to satisfy every
+    // subscription that covers it.
     fn effective(&self) -> FilterSet {
         let all: Vec<CatchFilter> = self
             .subs
@@ -145,13 +145,13 @@ fn decode_event(ty: FrameType, payload: &[u8]) -> Option<CatchEvent> {
     }
 }
 
-/// Whether this subscriber asked for this event.
-///
-/// A traffic event carries its own `(class, id, direction)` and matches directly. The two input
-/// frames do not: they carry content, and the addresses they represent have to be read out of it.
-/// Passing `u16::MAX` for an input event, the wildcard on the wire but not on this side, made every
-/// exact-id input subscription match nothing, silently: the box accepted the entry, `RESP(CATCH)`
-/// listed it, its drop count stayed zero, and the stream was empty forever.
+// Whether this subscriber asked for this event.
+//
+// A traffic event carries its own `(class, id, direction)` and matches directly. The two input
+// frames do not: they carry content, and the addresses they represent have to be read out of it.
+// Passing `u16::MAX` for an input event, the wildcard on the wire but not on this side, made every
+// exact-id input subscription match nothing, silently: the box accepted the entry, `RESP(CATCH)`
+// listed it, its drop count stayed zero, and the stream was empty forever.
 fn wanted(sub: &CatchSub, event: &CatchEvent) -> bool {
     let any = |class, id, dir| sub.filters.values().any(|f| f.matches(class, id, dir));
     match event {
@@ -169,7 +169,7 @@ fn wanted(sub: &CatchSub, event: &CatchEvent) -> bool {
             moved.any(|(ax, d)| any(CatchClass::Axis, ax.as_u16(), Direction::of_delta(d)))
         }
         // A snapshot is the CLASS's state, not one usage's, so it routes on class and edge. Matching
-        // per-usage threw away exactly the edge a caller was waiting for -- and only when some OTHER
+        // per-usage threw away exactly the edge a caller was waiting for, and only when some OTHER
         // subscriber's usage happened to still be held, which is the shape that hides it from a
         // single-subscriber test.
         CatchEvent::Usages(u) => sub.filters.values().any(|f| {
@@ -179,12 +179,12 @@ fn wanted(sub: &CatchSub, event: &CatchEvent) -> bool {
     }
 }
 
-/// Deliver one decoded catch frame to the subscribers that asked for it, dropping the oldest on a
-/// full buffer.
-///
-/// Matched against each subscriber's own filters, not broadcast: the box holds one table, the union
-/// of every subscription, so without this check a caller watching one endpoint would also receive
-/// everything every other caller in the process had subscribed to.
+// Deliver one decoded catch frame to the subscribers that asked for it, dropping the oldest on a
+// full buffer.
+//
+// Matched against each subscriber's own filters, not broadcast: the box holds one table, the union
+// of every subscription, so without this check a caller watching one endpoint would also receive
+// everything every other caller in the process had subscribed to.
 pub(crate) fn deliver_event(reg: &Mutex<CatchReg>, ty: FrameType, payload: &[u8]) {
     let Some(event) = decode_event(ty, payload) else {
         return;
@@ -207,15 +207,15 @@ pub(crate) fn deliver_event(reg: &Mutex<CatchReg>, ty: FrameType, payload: &[u8]
 }
 
 impl Link {
-    /// Send an unsubscribe for anything `prev` holds that `next` does not, and a subscribe for every
-    /// entry that is new or whose capture changed.
-    ///
-    /// Only what changed, not all of `next`. This runs holding `catch_lock` and every frame is a
-    /// blocking serial write, so re-sending the whole table made dropping one stream cost up to a
-    /// write per entry, ahead of any other subscribe and of the keepalive.
+    // Send an unsubscribe for anything `prev` holds that `next` does not, and a subscribe for every
+    // entry that is new or whose capture changed.
+    //
+    // Only what changed, not all of `next`. This runs holding `catch_lock` and every frame is a
+    // blocking serial write, so re-sending the whole table made dropping one stream cost up to a
+    // write per entry, ahead of any other subscribe and of the keepalive.
     pub(crate) fn catch_sync(&self, prev: &FilterSet, next: &FilterSet) -> Result<()> {
         // An unsubscribe of the wildcard entry is byte-for-byte the frame the box treats as "clear
-        // the whole table" -- it does not look at the direction. So dropping an `everything()`
+        // the whole table": it does not look at the direction. So dropping an `everything()`
         // subscriber took every OTHER subscriber's entry with it, and the diff below then skipped
         // re-sending them because their captures had not changed: a silent hole in their streams
         // until the keepalive re-asserted, with no drop counted and no flag set.
@@ -262,13 +262,13 @@ impl Link {
         Ok(())
     }
 
-    /// Register a subscription, widen the box's table to the new union, and return the receiver plus
-    /// drop counter.
+    // Register a subscription, widen the box's table to the new union, and return the receiver plus
+    // drop counter.
     pub(crate) fn catch_subscribe(
         &self,
         filters: FilterSet,
     ) -> Result<(u64, flume::Receiver<CatchEvent>, Arc<AtomicU64>)> {
-        // Serialize subscribe/unsubscribe so the registry mutate, union recompute and CATCH sends
+        // Serialise subscribe/unsubscribe so the registry mutate, union recompute and CATCH sends
         // commit atomically; interleaving could leave the box streaming a table the registry dropped.
         let _serial = self.inner.catch_lock.lock();
         let (tx, rx) = flume::bounded::<CatchEvent>(CATCH_CAPACITY);
@@ -319,8 +319,8 @@ impl Link {
         let _ = self.catch_sync(&prev, &effective);
     }
 
-    /// Tear down every catch subscription (used by `reset()`). One blanket clear rather than a
-    /// per-entry diff: nothing is left to keep streaming.
+    // Tear down every catch subscription (used by `reset()`). One blanket clear rather than a
+    // per-entry diff: nothing is left to keep streaming.
     pub(crate) fn catch_disconnect_all(&self) {
         let _serial = self.inner.catch_lock.lock();
         self.inner.events.lock().subs.clear();

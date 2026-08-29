@@ -612,7 +612,7 @@ fn a_scale_reaches_the_box_lock_table_through_the_boundary() {
         unsafe { medius_locks_scale_of(&locks, x, MediusDirection::With as u8) },
         130
     );
-    // In vector mode one relative scale governs the aim, the lower of the two, and the box reports
+    // In vector mode one relative scale governs both axes, the lower of the two, and the box reports
     // that number on both axes rather than each axis's stored byte.
     assert_eq!(
         unsafe { medius_device_set_bearing(dev, 20, MediusBearingMode::Vector as u8) },
@@ -665,7 +665,7 @@ fn a_relative_direction_with_no_bearing_to_read_has_its_own_status() {
 fn an_unnamed_direction_byte_in_a_caller_built_lock_entry_is_dropped() {
     // `MediusLockEntry.direction` is a `uint8_t` the caller fills in through `medius_mock_set_locks`,
     // and Python has always handed it a raw byte. The setter has no status to return, so the entry is
-    // dropped rather than read as whichever direction the byte resembles -- a lock the host believes
+    // dropped rather than read as whichever direction the byte resembles: a lock the host believes
     // in and the box never took is the failure this prevents.
     const BAD: u8 = 40;
     let mock = medius_mock_new();
@@ -695,7 +695,7 @@ fn an_unnamed_direction_byte_in_a_caller_built_lock_entry_is_dropped() {
         unsafe { medius_device_query_locks(dev, &mut locks) },
         MediusStatus::Ok
     );
-    // The named entry survives and the unnamed one is gone, count included -- a caller reading `n`
+    // The named entry survives and the unnamed one is gone, count included: a caller reading `n`
     // must not walk an entry that was never decoded.
     assert_eq!(locks.n, 1);
     assert_eq!(locks.entries[0].direction, MediusDirection::Positive as u8);
@@ -711,8 +711,8 @@ fn an_unnamed_direction_byte_in_a_caller_built_lock_entry_is_dropped() {
 fn an_unnamed_direction_byte_in_a_catch_filter_is_refused() {
     // `MediusCatchFilter.direction` is a `uint8_t` the caller fills in, and Python has always handed
     // it a raw byte. A filter helper has no status to return, so the byte rides the struct and the
-    // subscription refuses it -- rather than the box being handed whichever direction its low bits
-    // resemble, or a stream that silently never yields.
+    // subscription refuses it, rather than the box being handed whichever direction its low bits
+    // resemble, or a stream that never yields.
     const BAD: u8 = 40;
     let mock = medius_mock_new();
     let mut dev: *mut MediusDevice = ptr::null_mut();
@@ -1048,7 +1048,7 @@ fn catch_events_rejects_an_empty_or_unknown_filter_list() {
         unsafe { medius_device_catch_events(dev, ptr::null(), 1, &mut stream) },
         MediusStatus::ErrInvalidArg
     );
-    // A class the box does not define must fail the whole call: a silently narrower subscription is
+    // A class the box does not define must fail the whole call: a narrower subscription is
     // indistinguishable from a box producing no events.
     let bogus = [medius_catch_filter_traffic_class(200)];
     assert_eq!(

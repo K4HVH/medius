@@ -1,4 +1,4 @@
-"""The scriptable mock box (feature = mock); errors clearly if the library lacks it."""
+"""The scriptable mock box (feature = mock); raises if the library was built without it."""
 
 from __future__ import annotations
 

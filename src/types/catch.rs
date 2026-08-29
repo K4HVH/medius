@@ -256,8 +256,8 @@ pub(crate) struct FilterKey {
 /// CatchFilter::everything().with_capture(Capture::First(16));
 /// ```
 ///
-/// The box resolves each event to its most specific matching entry: an exact `(class, id)` beats a
-/// class blanket, which beats [`CatchFilter::everything`], and a named direction beats
+/// The box resolves each event to its most specific matching entry: an exact `(class, id)` outranks
+/// a class blanket, which outranks [`CatchFilter::everything`], and a named direction outranks
 /// [`Direction::Both`]. That entry supplies the [`Capture`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct CatchFilter {
@@ -503,7 +503,7 @@ impl CatchState {
             }
             // An entry this build cannot name is SKIPPED, not fatal to the whole reply. Propagating
             // the failure discarded the drop counts and the clock estimate too, and surfaced as "no
-            // reply" -- a firmware that added one class would look like a dead link.
+            // reply": a firmware that added one class would look like a dead link.
             let Some(filter) = CatchFilter::from_wire(
                 p[o],
                 u16::from_le_bytes([p[o + 1], p[o + 2]]),

@@ -621,7 +621,7 @@ pub unsafe extern "C" fn medius_device_set_name(
     })
 }
 
-/// Clear the box's custom name, reverting it to its synthesized `Medius-XXXX` default.
+/// Clear the box's custom name, reverting it to its synthesised `Medius-XXXX` default.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_device_clear_name(dev: *mut MediusDevice) -> MediusStatus {
     with_device(dev, |d| d.clear_name())

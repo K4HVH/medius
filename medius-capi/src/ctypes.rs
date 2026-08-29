@@ -145,7 +145,7 @@ pub enum MediusDirection {
     Against = 4,
 }
 
-/// How the box decides whether physical motion runs with or against its own injection.
+/// How the box reads whether physical motion runs with or against its own injection.
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MediusBearingMode {
@@ -515,11 +515,11 @@ pub struct MediusLockEntry {
     /// there needs a cast.
     pub direction: u8,
     /// Percent of the physical value kept: 0 blocks, 100 passes, above 100 amplifies. A momentary
-    /// usage carries one bit, so the box stores the block or pass it renders and one never reports a
+    /// usage carries one bit, so the box stores the block or pass it amounts to and one never reports a
     /// value in between.
     ///
     /// This is the figure the box applies, not the byte it was sent: in `MEDIUS_BEARING_MODE_VECTOR`
-    /// one relative scale governs the whole aim, the lower of X's and Y's, and both relative entries
+    /// one relative scale governs both axes, the lower of X's and Y's, and both relative entries
     /// carry that number.
     pub scale: u8,
 }
@@ -535,8 +535,8 @@ pub struct MediusLocks {
 /// One CATCH subscription entry: what to observe, in which direction, and how much of each packet to
 /// keep. Build one with a `medius_catch_filter_*` helper.
 ///
-/// The box resolves each event to its most specific matching entry -- an exact `(class, id)` beats a
-/// class blanket, which beats the everything filter, and a named direction beats `Both` -- and that
+/// The box resolves each event to its most specific matching entry: an exact `(class, id)` outranks
+/// a class blanket, which outranks the everything filter, and a named direction outranks `Both`. That
 /// entry supplies `capture`. The wildcards are sentinels rather than a separate flag:
 /// `class = MEDIUS_CATCH_CLASS_ANY` matches every class and `id = MEDIUS_CATCH_ID_ANY` every id
 /// within one. The wildcard class with a real id addresses nothing and is refused.
@@ -554,7 +554,7 @@ pub struct MediusCatchFilter {
     /// as one; C++ renders the enum as `enum : uint8_t`, so assigning this to a `MediusDirection`
     /// there needs a cast.
     pub direction: u8,
-    /// Bytes kept per event; 0 keeps the whole packet. Traffic classes only -- an input class carries
+    /// Bytes kept per event; 0 keeps the whole packet. Traffic classes only: an input class carries
     /// no packet, and naming one with a non-zero capture is refused at subscribe time.
     pub capture: u8,
 }
