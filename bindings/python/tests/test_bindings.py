@@ -593,18 +593,19 @@ def test_movement_riding_roundtrip():
 
 def test_emit_pace_roundtrip():
     with MockBox() as mock:
+        # mock.set_emit_pace touches only the pace, so render stays the box's factory De-spiked.
         mock.set_emit_pace(EmitPace.fixed(500))
         with Device.with_mock(mock) as d:
             status = d.query_emit_pace()
         assert status.mode == EmitPace.fixed(500)
-        assert status.render == RenderMode.OFF
+        assert status.render == RenderMode.DESPIKED
         assert status.resolved_hz == 500  # Fixed clamps to its hz
         mock.set_emit_pace(EmitPace.learned())
         with Device.with_mock(mock) as d:
             status = d.query_emit_pace()
         assert status.mode == EmitPace.learned()
-        assert status.render == RenderMode.OFF
-        assert status.resolved_hz == 0  # learnt/adaptive
+        assert status.render == RenderMode.DESPIKED
+        assert status.resolved_hz == 1000  # rendered onto Learned forces the 1 ms tick
         assert status.force_hz is None
         assert status.force_active is False
         assert status.advertised_hz == 0  # 0 = no clone, the documented sentinel
@@ -631,8 +632,11 @@ def test_emit_pace_render_mode_roundtrip():
         assert d.query_emit_pace().render == RenderMode.DESPIKED
         d.set_emit_pace(EmitPace.learned(), RenderMode.UNSMOOTHED)
         assert d.query_emit_pace().render == RenderMode.UNSMOOTHED
-        # And cleared again with the default RenderMode.OFF.
+        # An omitted render argument is the box's factory De-spiked, not off.
         d.set_emit_pace(EmitPace.learned())
+        assert d.query_emit_pace().render == RenderMode.DESPIKED
+        # Turning it off takes an explicit RenderMode.OFF.
+        d.set_emit_pace(EmitPace.learned(), RenderMode.OFF)
         status = d.query_emit_pace()
         assert status.render == RenderMode.OFF
         assert status.resolved_hz == 0

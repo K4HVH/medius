@@ -13,40 +13,35 @@ pub enum EmitPace {
 }
 
 /// How injected motion is emitted. [`Off`](RenderMode::Off) is the paced fill; the others render the
-/// device's report texture and differ only in the onboard path smoother.
+/// device's report texture and differ only in the onboard path smoother. It is `OPTION(EMIT)`'s own
+/// `render` field, independent of the [`EmitPace`] beside it, which caps the rendered rate.
+#[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum RenderMode {
-    /// Paced fill, renderer off (the default).
-    #[default]
-    Off,
+    /// Paced fill, renderer off.
+    Off = 0,
     /// Rendered with the bit-exact triangular smoother.
-    Stock,
-    /// Rendered with the smoother's onset ramped rather than stepped.
-    Despiked,
+    Stock = 1,
+    /// Rendered with the smoother's onset ramped rather than stepped (the box's factory default).
+    #[default]
+    Despiked = 2,
     /// Rendered with no smoother; the model renders raw injection.
-    Unsmoothed,
+    Unsmoothed = 3,
 }
 
 impl RenderMode {
-    /// The `RENDERED` bit plus the smoother field of the mode byte.
+    /// The wire `render` byte.
     pub(crate) fn to_wire(self) -> u8 {
-        match self {
-            RenderMode::Off => 0,
-            RenderMode::Stock => 0x80,
-            RenderMode::Despiked => 0x80 | (1 << 2),
-            RenderMode::Unsmoothed => 0x80 | (2 << 2),
-        }
+        self as u8
     }
 
-    /// Decode those bits; `None` is an unknown smoother field.
-    pub(crate) fn from_wire(mode: u8) -> Option<RenderMode> {
-        if mode & 0x80 == 0 {
-            return Some(RenderMode::Off);
-        }
-        match (mode >> 2) & 3 {
-            0 => Some(RenderMode::Stock),
-            1 => Some(RenderMode::Despiked),
-            2 => Some(RenderMode::Unsmoothed),
+    /// Decode a wire `render` byte; `None` is a value this crate does not know.
+    pub(crate) fn from_wire(render: u8) -> Option<RenderMode> {
+        match render {
+            0 => Some(RenderMode::Off),
+            1 => Some(RenderMode::Stock),
+            2 => Some(RenderMode::Despiked),
+            3 => Some(RenderMode::Unsmoothed),
             _ => None,
         }
     }
@@ -72,15 +67,15 @@ pub struct EmitPaceStatus {
 impl EmitPaceStatus {
     /// Decode a `RESP(OPTIONS, EMIT)` payload (§4.14).
     pub(crate) fn from_payload(p: &[u8]) -> Option<EmitPaceStatus> {
-        if p.len() < 12 {
+        if p.len() < 13 {
             return None;
         }
         let fixed_hz = u16::from_le_bytes([p[3], p[4]]);
         let resolved_hz = u16::from_le_bytes([p[5], p[6]]);
         let force_hz = u16::from_le_bytes([p[7], p[8]]);
         let advertised_hz = u16::from_le_bytes([p[9], p[10]]);
-        let render = RenderMode::from_wire(p[2])?;
-        let mode = match p[2] & 0x03 {
+        let render = RenderMode::from_wire(p[12])?;
+        let mode = match p[2] {
             0 => EmitPace::Learned,
             1 => EmitPace::Interval,
             2 => EmitPace::Fixed(fixed_hz),

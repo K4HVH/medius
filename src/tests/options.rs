@@ -17,31 +17,43 @@ fn option_payload_bytes() {
     assert_eq!(move_ride_payload(5), [1, 5, 0]);
     assert_eq!(move_ride_payload(0), [1, 0, 0]);
     assert_eq!(move_ride_payload(1000), [1, 0xE8, 0x03]);
-    assert_eq!(emit_pace_payload(0, 0, 0), [2, 0, 0, 0, 0, 0]);
-    assert_eq!(emit_pace_payload(1, 0, 0), [2, 1, 0, 0, 0, 0]);
-    assert_eq!(emit_pace_payload(2, 1000, 0), [2, 2, 0xE8, 0x03, 0, 0]);
-    assert_eq!(emit_pace_payload(0, 0, 125), [2, 0, 0, 0, 0x7D, 0]);
+    assert_eq!(emit_pace_payload(0, 0, 0, 0), [2, 0, 0, 0, 0, 0, 0]);
+    assert_eq!(emit_pace_payload(1, 0, 0, 0), [2, 1, 0, 0, 0, 0, 0]);
+    assert_eq!(emit_pace_payload(2, 1000, 0, 0), [2, 2, 0xE8, 0x03, 0, 0, 0]);
+    assert_eq!(emit_pace_payload(0, 0, 125, 0), [2, 0, 0, 0, 0x7D, 0, 0]);
     assert_eq!(
-        emit_pace_payload(2, 500, 1000),
-        [2, 2, 0xF4, 0x01, 0xE8, 0x03]
+        emit_pace_payload(2, 500, 1000, 0),
+        [2, 2, 0xF4, 0x01, 0xE8, 0x03, 0]
     );
+    // The render byte is the value's own trailing field: it never touches the pace byte.
+    assert_eq!(emit_pace_payload(0, 0, 0, 1), [2, 0, 0, 0, 0, 0, 1]);
+    assert_eq!(emit_pace_payload(2, 500, 0, 3), [2, 2, 0xF4, 0x01, 0, 0, 3]);
     assert_eq!(name_payload("AB"), vec![3, b'A', b'B']);
     assert_eq!(name_payload(""), vec![3]);
 }
 
 #[test]
-fn emit_pace_wire_composes_render_mode() {
+fn emit_pace_wire_is_the_pace_alone() {
     use crate::device::options::emit_pace_wire;
-    assert_eq!(emit_pace_wire(EmitPace::Learned, RenderMode::Off), (0, 0));
-    assert_eq!(emit_pace_wire(EmitPace::Interval, RenderMode::Off), (1, 0));
-    assert_eq!(emit_pace_wire(EmitPace::Fixed(500), RenderMode::Off), (2, 500));
-    // The render mode ORs onto the pace: Stock is bit 0x80, so Fixed(500) Stock is mode byte 0x82.
-    assert_eq!(emit_pace_wire(EmitPace::Fixed(500), RenderMode::Stock), (0x82, 500));
-    assert_eq!(emit_pace_wire(EmitPace::Learned, RenderMode::Stock), (0x80, 0));
-    assert_eq!(emit_pace_wire(EmitPace::Interval, RenderMode::Stock), (0x81, 0));
-    // The smoother field is bits 2-3: de-spiked over Learned is 0x84, unsmoothed over Fixed is 0x8A.
-    assert_eq!(emit_pace_wire(EmitPace::Learned, RenderMode::Despiked), (0x84, 0));
-    assert_eq!(emit_pace_wire(EmitPace::Fixed(500), RenderMode::Unsmoothed), (0x8A, 500));
+    assert_eq!(emit_pace_wire(EmitPace::Learned), (0, 0));
+    assert_eq!(emit_pace_wire(EmitPace::Interval), (1, 0));
+    assert_eq!(emit_pace_wire(EmitPace::Fixed(500)), (2, 500));
+}
+
+#[test]
+fn render_mode_round_trips_its_own_wire_byte() {
+    for (m, w) in [
+        (RenderMode::Off, 0u8),
+        (RenderMode::Stock, 1),
+        (RenderMode::Despiked, 2),
+        (RenderMode::Unsmoothed, 3),
+    ] {
+        assert_eq!(m.to_wire(), w);
+        assert_eq!(RenderMode::from_wire(w), Some(m));
+    }
+    // A value this crate does not know is refused rather than silently read as Off.
+    assert_eq!(RenderMode::from_wire(4), None);
+    assert_eq!(RenderMode::from_wire(0x80), None);
 }
 
 #[test]
@@ -81,7 +93,7 @@ fn decode_move_ride_through_parse_resp() {
 fn decode_emit_pace_through_parse_resp() {
     // Five distinct numbers, so swapping any two fields fails.
     let Some(Resp::EmitPace(s)) =
-        parse_resp(&[9, 2, 2, 0xE8, 0x03, 0xFA, 0x00, 0x7D, 0x00, 0x64, 0x00, 1])
+        parse_resp(&[9, 2, 2, 0xE8, 0x03, 0xFA, 0x00, 0x7D, 0x00, 0x64, 0x00, 1, 0])
     else {
         panic!("expected EmitPace");
     };
@@ -97,7 +109,7 @@ fn decode_emit_pace_through_parse_resp() {
         }
     );
     // Unforced still reports what the clone advertises, so a host can see the device's own rate.
-    let Some(Resp::EmitPace(native)) = parse_resp(&[9, 2, 0, 0, 0, 0, 0, 0, 0, 0xE8, 0x03, 0])
+    let Some(Resp::EmitPace(native)) = parse_resp(&[9, 2, 0, 0, 0, 0, 0, 0, 0, 0xE8, 0x03, 0, 0])
     else {
         panic!("expected EmitPace");
     };
@@ -112,47 +124,56 @@ fn decode_emit_pace_through_parse_resp() {
             force_active: false,
         }
     );
-    let Some(Resp::EmitPace(nothing)) = parse_resp(&[9, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]) else {
+    let Some(Resp::EmitPace(nothing)) = parse_resp(&[9, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]) else {
         panic!("expected EmitPace");
     };
-    assert_eq!(nothing, EmitPaceStatus::default());
-    assert!(parse_resp(&[9, 2, 2, 0xE8, 0x03, 0xFA, 0x00, 0x7D, 0x00, 0x64, 0x00]).is_none());
-    // Byte 0x00: Learned, not rendered.
-    let Some(Resp::EmitPace(plain)) = parse_resp(&[9, 2, 0x00, 0, 0, 0, 0, 0, 0, 0, 0, 0]) else {
-        panic!("expected EmitPace");
-    };
-    assert_eq!(plain.mode, EmitPace::Learned);
-    assert_eq!(plain.render, RenderMode::Off);
-    // Byte 0x80: the rendered bit over pace 0, so Learned + rendered, resolved 1 kHz.
-    let Some(Resp::EmitPace(rendered)) =
-        parse_resp(&[9, 2, 0x80, 0, 0, 0xE8, 0x03, 0, 0, 0, 0, 0])
-    else {
-        panic!("expected EmitPace");
-    };
-    assert_eq!(rendered.mode, EmitPace::Learned);
-    assert_eq!(rendered.render, RenderMode::Stock);
-    assert_eq!(rendered.resolved_hz, 1000);
-    // Byte 0x82: the rendered bit over pace 2, so Fixed(fixed_hz) + rendered.
+    // Not EmitPaceStatus::default(): that carries the box's factory render mode (De-spiked), while an
+    // all-zero payload is a box reporting the renderer explicitly off.
+    assert_eq!(
+        nothing,
+        EmitPaceStatus {
+            mode: EmitPace::Learned,
+            render: RenderMode::Off,
+            resolved_hz: 0,
+            force_hz: None,
+            advertised_hz: 0,
+            force_active: false,
+        }
+    );
+    // A 12-byte value is the pre-render shape and is refused rather than read with a defaulted field.
+    assert!(parse_resp(&[9, 2, 2, 0xE8, 0x03, 0xFA, 0x00, 0x7D, 0x00, 0x64, 0x00, 1]).is_none());
+    // The render field is the last byte and the pace byte is only ever 0/1/2, so the two decode
+    // independently: every pace is read the same whatever the render byte beside it says.
+    for (pace_byte, pace) in [(0u8, EmitPace::Learned), (1, EmitPace::Interval)] {
+        for (render_byte, render) in [
+            (0u8, RenderMode::Off),
+            (1, RenderMode::Stock),
+            (2, RenderMode::Despiked),
+            (3, RenderMode::Unsmoothed),
+        ] {
+            let Some(Resp::EmitPace(s)) =
+                parse_resp(&[9, 2, pace_byte, 0, 0, 0, 0, 0, 0, 0, 0, 0, render_byte])
+            else {
+                panic!("expected EmitPace");
+            };
+            assert_eq!((s.mode, s.render), (pace, render));
+        }
+    }
+    // Fixed carries its rate whatever the render byte is.
     let Some(Resp::EmitPace(fixed_rendered)) =
-        parse_resp(&[9, 2, 0x82, 0xFA, 0x00, 0xFA, 0x00, 0, 0, 0, 0, 0])
+        parse_resp(&[9, 2, 2, 0xFA, 0x00, 0xFA, 0x00, 0, 0, 0, 0, 0, 1])
     else {
         panic!("expected EmitPace");
     };
     assert_eq!(fixed_rendered.mode, EmitPace::Fixed(250));
     assert_eq!(fixed_rendered.render, RenderMode::Stock);
-    // Smoother field (bits 2-3) over the rendered bit: 0x84 de-spiked, 0x88 unsmoothed, 0x8C rejected.
-    let Some(Resp::EmitPace(despiked)) = parse_resp(&[9, 2, 0x84, 0, 0, 0, 0, 0, 0, 0, 0, 0]) else {
-        panic!("expected EmitPace");
-    };
-    assert_eq!(despiked.render, RenderMode::Despiked);
-    let Some(Resp::EmitPace(unsmoothed)) = parse_resp(&[9, 2, 0x88, 0, 0, 0, 0, 0, 0, 0, 0, 0]) else {
-        panic!("expected EmitPace");
-    };
-    assert_eq!(unsmoothed.render, RenderMode::Unsmoothed);
-    assert!(parse_resp(&[9, 2, 0x8C, 0, 0, 0, 0, 0, 0, 0, 0, 0]).is_none());
-    // A pace of 3 (the old Rendered slot) is no longer a pace and is rejected, bit set or not.
-    assert!(parse_resp(&[9, 2, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0]).is_none());
-    assert!(parse_resp(&[9, 2, 0x83, 0, 0, 0, 0, 0, 0, 0, 0, 0]).is_none());
+    assert_eq!(fixed_rendered.resolved_hz, 250);
+    // An unknown value in either field is refused rather than silently read as a default.
+    assert!(parse_resp(&[9, 2, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]).is_none());
+    assert!(parse_resp(&[9, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4]).is_none());
+    // The old encoding's mode bytes are now just unknown paces, not rendered anything.
+    assert!(parse_resp(&[9, 2, 0x80, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]).is_none());
+    assert!(parse_resp(&[9, 2, 0x82, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]).is_none());
 }
 
 #[cfg(feature = "mock")]
@@ -161,13 +182,14 @@ fn mock_emit_pace_matches_firmware_snap() {
     use crate::{Device, EmitPace, EmitPaceStatus, MockBox, RenderMode};
     // The mock models firmware pacing: Fixed(400) snaps to 1000/3 = 333 Hz on the 1 ms frame clock
     // (not raw 400) and Fixed(2000) clamps to 1 kHz; a naive echo would diverge from hardware.
+    // An untouched mock models a fresh box, which boots rendering De-spiked.
     let mock = MockBox::new().with_emit_pace(EmitPace::Fixed(400));
     let device = Device::with_mock(mock.clone());
     assert_eq!(
         device.query_emit_pace().unwrap(),
         EmitPaceStatus {
             mode: EmitPace::Fixed(400),
-            render: RenderMode::Off,
+            render: RenderMode::Despiked,
             resolved_hz: 333,
             force_hz: None,
             advertised_hz: 0,
@@ -179,15 +201,15 @@ fn mock_emit_pace_matches_firmware_snap() {
         device.query_emit_pace().unwrap(),
         EmitPaceStatus {
             mode: EmitPace::Fixed(1000),
-            render: RenderMode::Off,
+            render: RenderMode::Despiked,
             resolved_hz: 1000,
             force_hz: None,
             advertised_hz: 0,
             force_active: false,
         }
     );
-    // Rendered is a flag that composes onto the pace, sent over the real command path. Onto Learned it
-    // forces resolved to 1 kHz; the round-trip returns the same (pace, rendered).
+    // Render is its own field beside the pace, sent over the real command path. Onto Learned it forces
+    // resolved to 1 kHz; the round-trip returns the same (pace, render).
     device.set_emit_pace(EmitPace::Learned, RenderMode::Stock, None).unwrap();
     assert_eq!(
         device.query_emit_pace().unwrap(),

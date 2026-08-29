@@ -26,14 +26,13 @@ pub(crate) fn ride_window_ms(window: Option<Duration>) -> u16 {
 /// The bearing window the box holds out of the box, before any host sets one.
 pub const BEARING_WINDOW_DEFAULT: Duration = Duration::from_millis(20);
 
-/// Encode an [`EmitPace`] and a [`RenderMode`] to the wire `(mode, rate_hz)`: `Fixed(hz)` carries its rate, the other paces send 0, and the render mode is OR'd into the top of the mode byte.
-pub(crate) fn emit_pace_wire(pace: EmitPace, render: RenderMode) -> (u8, u16) {
-    let (mode, hz) = match pace {
+/// Encode an [`EmitPace`] to the wire `(mode, rate_hz)`: `Fixed(hz)` carries its rate, the other paces send 0. The render mode is its own wire field, not part of this byte.
+pub(crate) fn emit_pace_wire(pace: EmitPace) -> (u8, u16) {
+    match pace {
         EmitPace::Learned => (0, 0),
         EmitPace::Interval => (1, 0),
         EmitPace::Fixed(hz) => (2, hz),
-    };
-    (mode | render.to_wire(), hz)
+    }
 }
 
 impl Device {
@@ -85,10 +84,10 @@ impl Device {
     /// A non-zero `force_hz` re-clones the box to advertise a `bInterval` the device did not (needs
     /// [`allow_imperfect_clones`](Self::allow_imperfect_clones)), snapping to `1000/n` Hz; `Some(0)`/`None` is off.
     pub fn set_emit_pace(&self, pace: EmitPace, render: RenderMode, force_hz: Option<u16>) -> Result<()> {
-        let (mode, hz) = emit_pace_wire(pace, render);
+        let (mode, hz) = emit_pace_wire(pace);
         self.link.send(
             FrameType::Option,
-            &emit_pace_payload(mode, hz, force_hz.unwrap_or(0)),
+            &emit_pace_payload(mode, hz, force_hz.unwrap_or(0), render.to_wire()),
         )
     }
 

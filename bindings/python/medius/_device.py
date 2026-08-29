@@ -271,10 +271,11 @@ class Device:
             )
         )
 
-    def set_emit_pace(self, pace: EmitPace, render: RenderMode = RenderMode.OFF, force_hz: Optional[int] = None):
+    def set_emit_pace(self, pace: EmitPace, render: RenderMode = RenderMode.DESPIKED, force_hz: Optional[int] = None):
         """Set what paces injected motion (`hz` matters only for `EmitPace.fixed`), the `render` mode
-        composed onto it, and what rate the clone advertises and the box polls the device at (`force_hz`,
-        None = the device's own). All ride one command, so every call writes them."""
+        beside it (defaulting to the box's own De-spiked), and what rate the clone advertises and the box
+        polls the device at (`force_hz`, None = the device's own). All ride one command, so every call
+        writes them."""
         mode = _enum(pace.mode, EmitMode, "mode")
         check(
             _native.lib.medius_device_set_emit_pace(

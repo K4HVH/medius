@@ -83,7 +83,7 @@ impl Default for State {
             move_ride_ms: 0,
             bearing: Bearing::default(),
             emit_pace: EmitPace::Learned,
-            emit_render: RenderMode::Off,
+            emit_render: RenderMode::Despiked,
             emit_force_hz: None,
             advertised_hz: 0,
             clip: ClipStatus::default(),
@@ -343,11 +343,11 @@ impl State {
             (Some(OPT_MOVE_RIDE), [lo, hi, ..]) => {
                 self.move_ride_ms = u16::from_le_bytes([*lo, *hi])
             }
-            (Some(OPT_EMIT), [mode, lo, hi, flo, fhi, ..]) => {
+            (Some(OPT_EMIT), [mode, lo, hi, flo, fhi, render, ..]) => {
                 let hz = u16::from_le_bytes([*lo, *hi]);
                 let force = u16::from_le_bytes([*flo, *fhi]);
-                self.emit_render = RenderMode::from_wire(*mode).unwrap_or(RenderMode::Off);
-                self.emit_pace = match *mode & 0x03 {
+                self.emit_render = RenderMode::from_wire(*render).unwrap_or(RenderMode::Off);
+                self.emit_pace = match *mode {
                     1 => EmitPace::Interval,
                     2 => EmitPace::Fixed(hz),
                     _ => EmitPace::Learned,
@@ -555,7 +555,7 @@ fn options_emit_payload(
 ) -> Vec<u8> {
     // Mirror the firmware: Fixed clamps the echoed rate to 1..=1000 (0 -> 1000) and snaps resolved
     // to the 1 ms frame clock (1000/n); Learned/Interval echo 0 (no real device to resolve).
-    let (base, fixed_hz, mut resolved) = match pace {
+    let (mode, fixed_hz, mut resolved) = match pace {
         EmitPace::Learned => (0u8, 0u16, 0u16),
         EmitPace::Interval => (1, 0, 0),
         EmitPace::Fixed(h) => {
@@ -564,12 +564,11 @@ fn options_emit_payload(
             (2, hz, (1000 / n) as u16)
         }
     };
-    // Rendered composes onto the pace and sets bit 0x80, but only forces resolved to 1 kHz when the
-    // pace has no rate of its own (Learned); a Fixed rate keeps its snapped value.
+    // Rendered rides its own field beside the pace, but only forces resolved to 1 kHz when the pace
+    // has no rate of its own (Learned); a Fixed rate keeps its snapped value.
     if render != RenderMode::Off && matches!(pace, EmitPace::Learned) {
         resolved = 1000;
     }
-    let mode = base | render.to_wire();
     // The box resolves a forced rate to a bInterval in whole 1 ms frames and advertises 1000/n, so a
     // request that is not a divisor of 1000 comes back as something else. A naive echo would diverge.
     // A force only applies with the imperfect opt-in on; without it the clone still advertises its own.
@@ -592,6 +591,7 @@ fn options_emit_payload(
     p.extend_from_slice(&force_hz.unwrap_or(0).to_le_bytes());
     p.extend_from_slice(&advertised.to_le_bytes());
     p.push(active as u8);
+    p.push(render.to_wire());
     p
 }
 
