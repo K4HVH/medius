@@ -39,10 +39,10 @@ pub use types::{
     CatchClass, CatchEntry, CatchEvent, CatchFilter, CatchState, ChipFirmware, Class, ClipAction,
     ClipBuilder, ClipSettings, ClipState, ClipStatus, ClipTrigger, ClockDomain, ClockEstimate,
     ControlStatus, CountersSnapshot, DeviceInfo, DeviceKind, Direction, DirectionMeaning, Edge,
-    EmitPace, EmitPaceStatus, RenderMode, FirmwareInfo, Health, ImageState, ImperfectStatus, Input, InputEvent,
+    EmitPace, EmitPaceStatus, FirmwareInfo, Health, ImageState, ImperfectStatus, Input, InputEvent,
     KbdCaps, Key, LedMode, LedTarget, LockEntry, LockScope, LockTarget, Locks, LogLevel, LogLine,
     MediaKey, Motion, MotionEvent, MouseCaps, MoveTiming, PendingMotion, PortInfo, Rate,
-    RebootTarget, Stamped, Stats, Timeline, Timestamped, TrafficClass, TrafficEvent,
+    RebootTarget, RenderMode, Stamped, Stats, Timeline, Timestamped, TrafficClass, TrafficEvent,
     UpdateProgress, UpdateStatus, UpdateTarget, Usage, UsageSnapshot, Version,
 };
 

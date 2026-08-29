@@ -35,15 +35,15 @@ impl RenderMode {
         self as u8
     }
 
-    /// Decode a wire `render` byte; `None` is a value this crate does not know.
-    pub(crate) fn from_wire(render: u8) -> Option<RenderMode> {
-        match render {
-            0 => Some(RenderMode::Off),
-            1 => Some(RenderMode::Stock),
-            2 => Some(RenderMode::Despiked),
-            3 => Some(RenderMode::Unsmoothed),
-            _ => None,
-        }
+    /// Map a wire `render` byte to a [`RenderMode`], or `None` for an unknown value.
+    pub fn from_u8(v: u8) -> Option<RenderMode> {
+        Some(match v {
+            0 => RenderMode::Off,
+            1 => RenderMode::Stock,
+            2 => RenderMode::Despiked,
+            3 => RenderMode::Unsmoothed,
+            _ => return None,
+        })
     }
 }
 
@@ -74,7 +74,7 @@ impl EmitPaceStatus {
         let resolved_hz = u16::from_le_bytes([p[5], p[6]]);
         let force_hz = u16::from_le_bytes([p[7], p[8]]);
         let advertised_hz = u16::from_le_bytes([p[9], p[10]]);
-        let render = RenderMode::from_wire(p[12])?;
+        let render = RenderMode::from_u8(p[12])?;
         let mode = match p[2] {
             0 => EmitPace::Learned,
             1 => EmitPace::Interval,

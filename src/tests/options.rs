@@ -19,7 +19,10 @@ fn option_payload_bytes() {
     assert_eq!(move_ride_payload(1000), [1, 0xE8, 0x03]);
     assert_eq!(emit_pace_payload(0, 0, 0, 0), [2, 0, 0, 0, 0, 0, 0]);
     assert_eq!(emit_pace_payload(1, 0, 0, 0), [2, 1, 0, 0, 0, 0, 0]);
-    assert_eq!(emit_pace_payload(2, 1000, 0, 0), [2, 2, 0xE8, 0x03, 0, 0, 0]);
+    assert_eq!(
+        emit_pace_payload(2, 1000, 0, 0),
+        [2, 2, 0xE8, 0x03, 0, 0, 0]
+    );
     assert_eq!(emit_pace_payload(0, 0, 125, 0), [2, 0, 0, 0, 0x7D, 0, 0]);
     assert_eq!(
         emit_pace_payload(2, 500, 1000, 0),
@@ -49,11 +52,11 @@ fn render_mode_round_trips_its_own_wire_byte() {
         (RenderMode::Unsmoothed, 3),
     ] {
         assert_eq!(m.to_wire(), w);
-        assert_eq!(RenderMode::from_wire(w), Some(m));
+        assert_eq!(RenderMode::from_u8(w), Some(m));
     }
     // A value this crate does not know is refused rather than silently read as Off.
-    assert_eq!(RenderMode::from_wire(4), None);
-    assert_eq!(RenderMode::from_wire(0x80), None);
+    assert_eq!(RenderMode::from_u8(4), None);
+    assert_eq!(RenderMode::from_u8(0x80), None);
 }
 
 #[test]
@@ -92,9 +95,9 @@ fn decode_move_ride_through_parse_resp() {
 #[test]
 fn decode_emit_pace_through_parse_resp() {
     // Five distinct numbers, so swapping any two fields fails.
-    let Some(Resp::EmitPace(s)) =
-        parse_resp(&[9, 2, 2, 0xE8, 0x03, 0xFA, 0x00, 0x7D, 0x00, 0x64, 0x00, 1, 0])
-    else {
+    let Some(Resp::EmitPace(s)) = parse_resp(&[
+        9, 2, 2, 0xE8, 0x03, 0xFA, 0x00, 0x7D, 0x00, 0x64, 0x00, 1, 0,
+    ]) else {
         panic!("expected EmitPace");
     };
     assert_eq!(
@@ -210,7 +213,9 @@ fn mock_emit_pace_matches_firmware_snap() {
     );
     // Render is its own field beside the pace, sent over the real command path. Onto Learned it forces
     // resolved to 1 kHz; the round-trip returns the same (pace, render).
-    device.set_emit_pace(EmitPace::Learned, RenderMode::Stock, None).unwrap();
+    device
+        .set_emit_pace(EmitPace::Learned, RenderMode::Stock, None)
+        .unwrap();
     assert_eq!(
         device.query_emit_pace().unwrap(),
         EmitPaceStatus {
@@ -223,7 +228,9 @@ fn mock_emit_pace_matches_firmware_snap() {
         }
     );
     // Onto a Fixed rate the snapped value stands rather than jumping to 1 kHz.
-    device.set_emit_pace(EmitPace::Fixed(250), RenderMode::Stock, None).unwrap();
+    device
+        .set_emit_pace(EmitPace::Fixed(250), RenderMode::Stock, None)
+        .unwrap();
     assert_eq!(
         device.query_emit_pace().unwrap(),
         EmitPaceStatus {
@@ -236,12 +243,24 @@ fn mock_emit_pace_matches_firmware_snap() {
         }
     );
     // De-spiked and unsmoothed compose the same way and round-trip their smoother field.
-    device.set_emit_pace(EmitPace::Learned, RenderMode::Despiked, None).unwrap();
-    assert_eq!(device.query_emit_pace().unwrap().render, RenderMode::Despiked);
-    device.set_emit_pace(EmitPace::Fixed(250), RenderMode::Unsmoothed, None).unwrap();
+    device
+        .set_emit_pace(EmitPace::Learned, RenderMode::Despiked, None)
+        .unwrap();
+    assert_eq!(
+        device.query_emit_pace().unwrap().render,
+        RenderMode::Despiked
+    );
+    device
+        .set_emit_pace(EmitPace::Fixed(250), RenderMode::Unsmoothed, None)
+        .unwrap();
     let s = device.query_emit_pace().unwrap();
-    assert_eq!((s.mode, s.render, s.resolved_hz), (EmitPace::Fixed(250), RenderMode::Unsmoothed, 250));
-    device.set_emit_pace(EmitPace::Learned, RenderMode::Off, None).unwrap();
+    assert_eq!(
+        (s.mode, s.render, s.resolved_hz),
+        (EmitPace::Fixed(250), RenderMode::Unsmoothed, 250)
+    );
+    device
+        .set_emit_pace(EmitPace::Learned, RenderMode::Off, None)
+        .unwrap();
     assert_eq!(
         device.query_emit_pace().unwrap(),
         EmitPaceStatus {

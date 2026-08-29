@@ -8,7 +8,7 @@ use medius::Device;
 use medius::{UpdateProgress, UpdateTarget};
 
 use crate::convert::{
-    action_from_c, blanket_from_c, emit_pace_from_c, input_to_medius, led_mode_from_c, render_from_c,
+    action_from_c, blanket_from_c, emit_pace_from_c, input_to_medius, led_mode_from_c,
     led_target_from_c, lock_target_to_medius, motion_from_c, move_timing_from_c,
     pending_motion_from_c, reboot_target_from_c,
 };
@@ -585,21 +585,24 @@ pub unsafe extern "C" fn medius_device_set_bearing(
 
 /// Set what paces injected motion and what rate the clone runs at; `hz` is the target rate for `Fixed`
 /// and ignored otherwise, `render` is the render mode composed onto the pace, `force_hz` is the forced wire
-/// rate (0 = the device's own). `mode` takes a `MEDIUS_EMIT_MODE_*` constant; any other value is
-/// `MEDIUS_STATUS_ERR_INVALID_ARG`.
+/// rate (0 = the device's own). `mode` takes a `MEDIUS_EMIT_MODE_*` constant and `render` a
+/// `MEDIUS_RENDER_MODE_*` one; any other value is `MEDIUS_STATUS_ERR_INVALID_ARG`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_device_set_emit_pace(
     dev: *mut MediusDevice,
     mode: u8,
     hz: u16,
-    render: MediusRenderMode,
+    render: u8,
     force_hz: u16,
 ) -> MediusStatus {
     let Some(pace) = emit_pace_from_c(mode, hz) else {
         return fail(MediusStatus::ErrInvalidArg, "invalid emit pacing mode");
     };
+    let Some(render) = medius::RenderMode::from_u8(render) else {
+        return fail(MediusStatus::ErrInvalidArg, "invalid render mode");
+    };
     with_device(dev, |d| {
-        d.set_emit_pace(pace, render_from_c(render), (force_hz != 0).then_some(force_hz))
+        d.set_emit_pace(pace, render, (force_hz != 0).then_some(force_hz))
     })
 }
 

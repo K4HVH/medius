@@ -22,9 +22,9 @@ use crate::transport::mock::MockTransport;
 use crate::types::lock::blanket_scope;
 use crate::types::{
     Axis, Bearing, BearingMode, Caps, CatchClass, CatchState, Class, ClipSettings, ClipState,
-    ClipStatus, ClockDomain, DeviceInfo, DeviceKind, Direction, EmitPace, Health, ImperfectStatus, RenderMode,
-    KbdCaps, LockEntry, LockScope, LockTarget, Locks, LogLevel, MouseCaps, Rate, Stats, Usage,
-    Version,
+    ClipStatus, ClockDomain, DeviceInfo, DeviceKind, Direction, EmitPace, Health, ImperfectStatus,
+    KbdCaps, LockEntry, LockScope, LockTarget, Locks, LogLevel, MouseCaps, Rate, RenderMode, Stats,
+    Usage, Version,
 };
 
 #[derive(Debug)]
@@ -347,7 +347,7 @@ impl State {
                 // The box discards the whole command on a mode or render it does not know, force_hz
                 // included, and answers nothing. Coercing here would model a box that does not exist.
                 if let (Some(r), Some(p)) = (
-                    RenderMode::from_wire(*render),
+                    RenderMode::from_u8(*render),
                     match *mode {
                         0 => Some(EmitPace::Learned),
                         1 => Some(EmitPace::Interval),

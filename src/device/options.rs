@@ -83,7 +83,12 @@ impl Device {
     ///
     /// A non-zero `force_hz` re-clones the box to advertise a `bInterval` the device did not (needs
     /// [`allow_imperfect_clones`](Self::allow_imperfect_clones)), snapping to `1000/n` Hz; `Some(0)`/`None` is off.
-    pub fn set_emit_pace(&self, pace: EmitPace, render: RenderMode, force_hz: Option<u16>) -> Result<()> {
+    pub fn set_emit_pace(
+        &self,
+        pace: EmitPace,
+        render: RenderMode,
+        force_hz: Option<u16>,
+    ) -> Result<()> {
         let (mode, hz) = emit_pace_wire(pace);
         self.link.send(
             FrameType::Option,
