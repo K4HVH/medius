@@ -464,9 +464,9 @@ mod linux {
         }
 
         {
-            // Rendered is a flag composed onto the pace. Onto LEARNED it forces resolved to 1 kHz (the
-            // renderer gates every 1 ms tick); onto a Fixed rate the snapped value stands. Restores
-            // LEARNED afterward.
+            // Render is its own EMIT field beside the pace. Onto LEARNED it forces resolved to 1 kHz (the
+            // renderer gates every 1 ms tick); onto a Fixed rate the snapped value stands. Restores the
+            // box's boot pair (LEARNED, De-spiked) afterward.
             let dev = device.as_ref().unwrap();
             let set_ok = dev.set_emit_pace(EmitPace::Learned, RenderMode::Stock, None).is_ok();
             std::thread::sleep(Duration::from_millis(60));
@@ -482,7 +482,7 @@ mod linux {
                 .as_ref()
                 .map(|s| s.render == RenderMode::Stock && s.mode == EmitPace::Fixed(250) && s.resolved_hz == 250)
                 .unwrap_or(false);
-            // The smoother is a 3-way onto rendered: stock, de-spiked, or off. Each round-trips.
+            // The three rendered values differ only in the smoother: stock, de-spiked, off. Each round-trips.
             let despiked_ok = dev.set_emit_pace(EmitPace::Learned, RenderMode::Despiked, None).is_ok();
             std::thread::sleep(Duration::from_millis(60));
             let read_desp = dev.query_emit_pace();
@@ -504,6 +504,8 @@ mod linux {
                     && unsmoothed_ok && uns_matched && off_ok && off_matched,
                 format!("Learned+stock -> {read:?}, Fixed(250)+stock -> {read_comp:?}, de-spiked -> {read_desp:?}, unsmoothed -> {read_uns:?}, off -> {read_off:?}"),
             );
+            // The checks above leave the renderer off, which is not where the box boots.
+            let _ = dev.set_emit_pace(EmitPace::Learned, RenderMode::Despiked, None);
         }
 
         {
