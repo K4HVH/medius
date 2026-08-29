@@ -39,14 +39,14 @@ pub(crate) struct ReconnectCtx {
     pub(crate) desired: Arc<Mutex<DesiredState>>,
     pub(crate) reconnect_lock: Arc<Mutex<()>>,
     pub(crate) identity: Arc<Mutex<Option<BoxIdentity>>>,
-    /// The lock subscribe and unsubscribe commit under. Held across the read of the desired catch set
-    /// AND the sends that replay it, for the same reason the keepalive holds it: an unsubscribe
-    /// committing in between leaves this path re-adding the entry it just removed, into a box whose
-    /// table no later diff will ever narrow again.
+    // The lock subscribe and unsubscribe commit under. Held across the read of the desired catch set
+    // AND the sends that replay it, for the same reason the keepalive holds it: an unsubscribe
+    // committing in between leaves this path re-adding the entry it just removed, into a box whose
+    // table no later diff will ever narrow again.
     pub(crate) catch_lock: Arc<Mutex<()>>,
-    /// Both halves of the update reply path. A reply from before the box went away answers a command
-    /// the box no longer remembers, and the parked ones survive a transport swap where the bytes
-    /// still in the old handle's buffer do not.
+    // Both halves of the update reply path. A reply from before the box went away answers a command
+    // the box no longer remembers, and the parked ones survive a transport swap where the bytes
+    // still in the old handle's buffer do not.
     pub(crate) held_updates: Arc<Mutex<Vec<Vec<u8>>>>,
     pub(crate) updates_rx: flume::Receiver<Vec<u8>>,
 }

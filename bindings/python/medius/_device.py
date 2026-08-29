@@ -289,7 +289,7 @@ class Device:
         check(_native.lib.medius_device_set_name(self._handle, name.encode("utf-8")))
 
     def clear_name(self):
-        """Clear the custom name, reverting the box to its synthesized `Medius-XXXX` default."""
+        """Clear the custom name, reverting the box to its synthesised `Medius-XXXX` default."""
         check(_native.lib.medius_device_clear_name(self._handle))
 
     def query_version(self) -> Version:
@@ -438,7 +438,7 @@ class Device:
     def input_events(self, filters: Union[CatchFilter, Sequence[CatchFilter]]) -> InputStream:
         """Subscribe to decoded input: press and release edges, and motion.
 
-        Every filter must name an input class and cover both edges -- build them with
+        Every filter must name an input class and cover both edges; build them with
         `CatchFilter.watch*` or `CatchFilter.all_input()`. A traffic class, `everything()`, or a
         filter narrowed to one edge is refused rather than silently yielding nothing.
         """

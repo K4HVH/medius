@@ -98,11 +98,11 @@ pub struct LockEntry {
     /// Which direction of it.
     pub direction: Direction,
     /// Percent of the physical value kept: 0 blocks, 100 passes, above 100 amplifies. A momentary
-    /// usage carries one bit, so the box stores the block or pass it renders and one never reports a
+    /// usage carries one bit, so the box stores the block or pass it amounts to and one never reports a
     /// value in between.
     ///
     /// This is the figure the box applies, not the byte it was sent. In
-    /// [`BearingMode::Vector`](crate::BearingMode) one relative scale governs the whole aim, the lower
+    /// [`BearingMode::Vector`](crate::BearingMode) one relative scale governs both axes, the lower
     /// of X's and Y's, and both relative entries carry that number.
     pub scale: u8,
 }

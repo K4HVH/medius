@@ -125,6 +125,8 @@ class EmitMode(IntEnum):
 
 
 class RenderMode(IntEnum):
+    """How injected motion is emitted: OFF is the paced fill, the rest render the device's texture and differ only in the onboard smoother."""
+
     OFF = 0
     STOCK = 1
     DESPIKED = 2
@@ -148,11 +150,11 @@ class Direction(IntEnum):
     """Which way, on the one byte LOCK, CLIP and CATCH all carry.
 
     The members are named for the axis reading; `PRESS`/`RELEASE` and `IN`/`OUT` are the same two
-    values under names that read at the call site. Which applies is decided by the class.
+    values under names that read at the call site. The class selects which applies.
 
     `WITH` and `AGAINST` name a sign relative to the bearing, the direction the box is currently
-    injecting, so the sign they cover follows the injection instead of the axis. Axes only, and inert until a bearing is
-    live (see `Device.set_bearing`).
+    injecting, so the sign they cover follows the injection instead of the axis. Axes only, and
+    inert until a bearing is live (see `Device.set_bearing`).
     """
 
     BOTH = 0
@@ -178,7 +180,7 @@ Direction.OUT = Direction.NEGATIVE
 
 
 class BearingMode(IntEnum):
-    """How the box decides whether physical motion runs with or against its own injection."""
+    """How the box reads whether physical motion runs with or against its own injection."""
 
     #: Each axis compares its own sign against its own bearing, independently.
     PER_AXIS = 0
@@ -296,7 +298,7 @@ class ControlStatus(IntEnum):
     NAKED = 2
     #: A status byte this build does not know; read `TrafficEvent.flags` for its value. Distinct from
     #: the three, so a future firmware's new status is not reported as a device fault that never
-    #: happened -- and so decoding one does not raise.
+    #: happened, and so decoding one does not raise.
     OTHER = 3
 
 

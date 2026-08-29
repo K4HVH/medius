@@ -62,7 +62,7 @@ pub fn move_ride_payload(timeout_ms: u16) -> [u8; 3] {
     [OPT_MOVE_RIDE, t[0], t[1]]
 }
 
-/// `OPTION(EMIT)` (§3.10): `[id=2][mode u8][rate_hz u16 LE][force_hz u16 LE]`; mode 0 learnt / 1 bInterval / 2 fixed.
+/// `OPTION(EMIT)` (§3.10): `[id=2][mode u8][rate_hz u16 LE][force_hz u16 LE][render u8]`; mode 0 learnt / 1 bInterval / 2 fixed.
 pub fn emit_pace_payload(mode: u8, hz: u16, force_hz: u16, render: u8) -> [u8; 7] {
     let h = hz.to_le_bytes();
     let f = force_hz.to_le_bytes();

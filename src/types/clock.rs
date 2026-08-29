@@ -104,7 +104,7 @@ impl ClockEstimate {
     }
 
     /// How far the offset has drifted over `elapsed`, in microseconds. Add this to
-    /// [`Self::error_bound_us`] for the honest bound on a stamp translated `elapsed` after the
+    /// [`Self::error_bound_us`] for the total bound on a stamp translated `elapsed` after the
     /// estimate was taken.
     /// 0 when the box has fitted no rate: it is what is known, not a claim that there is no drift.
     pub fn drift_us_over(&self, elapsed: Duration) -> i64 {
@@ -182,20 +182,20 @@ pub struct Stamped {
     pub excess: Duration,
 }
 
-/// Samples per floor block. The floor is the minimum over the current block plus the previous one,
-/// so its age is bounded by two blocks, about 8 s at 1 kHz. An all-time minimum cannot be right: the
-/// two crystals drift at up to 20 ppm, so a floor from an hour ago is 72 ms wrong and only ever gets
-/// worse. Bounding the window lets the floor rise as well as fall.
+// Samples per floor block. The floor is the minimum over the current block plus the previous one,
+// so its age is bounded by two blocks, about 8 s at 1 kHz. An all-time minimum cannot be right: the
+// two crystals drift at up to 20 ppm, so a floor from an hour ago is 72 ms wrong and only ever gets
+// worse. Bounding the window lets the floor rise as well as fall.
 const FLOOR_BLOCK: u32 = 4096;
 
-/// A [`Stamped::host`] correction larger than this re-anchors the timeline instead of being absorbed.
-/// Small corrections are smoothed so time never visibly runs backwards; a large one is the estimate
-/// being wrong, and holding a wrong answer to keep it monotonic wedges the stream for as long as the
-/// error lasts.
+// A [`Stamped::host`] correction larger than this re-anchors the timeline instead of being absorbed.
+// Small corrections are smoothed so time never visibly runs backwards; a large one is the estimate
+// being wrong, and holding a wrong answer to keep it monotonic wedges the stream for as long as the
+// error lasts.
 const RESYNC_NS: u64 = 1_000_000;
 
-/// Half the 32-bit stamp range. A backward step shorter than this is the box's own priority queues
-/// delivering out of tap order, not a rollover.
+// Half the 32-bit stamp range. A backward step shorter than this is the box's own priority queues
+// delivering out of tap order, not a rollover.
 const HALF_RANGE: u32 = 1 << 31;
 
 #[derive(Debug, Default, Clone, Copy)]
@@ -309,7 +309,7 @@ impl Timeline {
 
         // Non-negative by construction: at the sample that set the floor, box_ns + floor is exactly
         // that sample's own elapsed, and elapsed since our own origin cannot be negative. The cast is
-        // still saturated -- a fabricated epoch would otherwise wrap silently into a small number.
+        // still saturated: a fabricated epoch would otherwise wrap silently into a small number.
         let raw_host_ns = (box_ns + floor).max(0).min(u64::MAX as i128) as u64;
         // A small correction is absorbed so the timeline does not visibly run backwards; a large one
         // means the estimate was wrong, and pinning a wrong answer to stay monotonic would freeze the

@@ -114,7 +114,7 @@ fn capture_normalises_and_widens() {
 #[test]
 fn equality_covers_the_capture_and_addressing_does_not() {
     // The box dedups its table on (class, id, direction), so two filters differing only in capture
-    // are ONE box entry -- but a PartialEq that quietly said they were equal meant assert_eq! passed
+    // are ONE box entry, but a PartialEq that said they were equal meant assert_eq! passed
     // on two filters that behave differently. Addressing is same_address(); equality is equality.
     let a = CatchFilter::traffic(TrafficClass::VendorBulk, 0x83);
     let b = a.with_capture(Capture::First(16));
@@ -184,7 +184,7 @@ fn filter_builders_produce_the_right_wire_pair() {
 #[test]
 fn a_wildcard_class_carrying_a_real_id_addresses_nothing() {
     // `id` means something different in every class, so the box refuses this outright and the host
-    // has to as well -- reading it as a wildcard instead would silently subscribe to everything.
+    // has to as well: reading it as a wildcard instead would subscribe to everything, with no error.
     assert!(CatchFilter::from_wire(CATCH_CLS_ANY, 5, 0, 0).is_none());
     assert!(CatchFilter::from_wire(CATCH_CLS_ANY, CATCH_ID_ANY, 0, 0).is_some());
     assert!(CatchFilter::from_wire(200, 5, 0, 0).is_none()); // unknown class
@@ -199,7 +199,7 @@ fn a_wildcard_class_carrying_a_real_id_addresses_nothing() {
 
 #[test]
 fn motion_event_decodes_with_its_clock_domain() {
-    // [ts u32][clk u8][dx][dy][dz] -- clk sits between ts and the axes, so every field after it
+    // [ts u32][clk u8][dx][dy][dz]: clk sits between ts and the axes, so every field after it
     // shifted by one when the domain byte was added.
     let p = [
         0x04, 0x03, 0x02, 0x01, 0, 0x2C, 0x01, 0xCE, 0xFF, 0xFF, 0xFF,
@@ -256,7 +256,7 @@ fn an_empty_snapshot_still_names_the_class_that_went_quiet() {
 fn a_cut_setup_packet_is_not_reported_as_a_data_stage() {
     // A control event captured under 8 bytes keeps only part of its setup packet. Falling through to
     // "the whole buffer is the data" handed a decoder a GET_DESCRIPTOR request labelled as the
-    // descriptor it asked for -- bytes that are real, in a field that makes them a lie.
+    // descriptor it asked for: bytes that are real, in a field that makes them a lie.
     let p = [0, 0, 0, 0, 1, 8, 0, 0, 0, 0, 8, 0, 0x80, 0x06, 0x00, 0x01];
     let t = TrafficEvent::from_payload(&p).unwrap();
     assert_eq!(t.class, CatchClass::Control);
@@ -499,7 +499,7 @@ fn a_device_stamp_translates_into_the_host_domain() {
 #[test]
 fn an_unfitted_rate_is_distinct_from_a_measured_zero() {
     // Two different answers over the same wire field. A fitted 0 says the crystals are matched; the
-    // sentinel says nothing has been fitted -- which is the state a link too busy for clean exchanges
+    // sentinel says nothing has been fitted, which is the state a link too busy for clean exchanges
     // stays in, exactly when assuming no drift costs the most.
     let build = |rate: i32| {
         let mut p = vec![7u8, 0];
@@ -614,8 +614,8 @@ mod with_mock {
 
     #[test]
     fn a_capture_on_an_input_class_is_refused_not_ignored() {
-        // The firmware's input taps never read the capture -- they pass NULL where the traffic tap
-        // passes &snaplen -- so accepting one is a public knob wired to nothing.
+        // The firmware's input taps never read the capture: they pass NULL where the traffic tap
+        // passes &snaplen. Accepting one is therefore a public knob wired to nothing.
         let dev = Device::with_mock(MockBox::new());
         let err = dev
             .catch_events([CatchFilter::watch_class(Class::Key).with_capture(Capture::First(8))])
@@ -633,8 +633,8 @@ mod with_mock {
     #[test]
     fn an_exact_id_of_the_blanket_sentinel_is_refused() {
         // 0xFFFF is the every-id sentinel on the wire. An exact subscription to it becomes the whole
-        // class the moment it is sent -- a much wider stream than asked for, and silent. Only a media
-        // usage is 16 bits wide enough to express it.
+        // class the moment it is sent: a much wider stream than asked for, with no error to say so.
+        // Only a media usage is 16 bits wide enough to express it.
         let dev = Device::with_mock(MockBox::new());
         let err = dev
             .catch_events([CatchFilter::watch(Usage::new(Class::Media, 0xFFFF))])
@@ -643,7 +643,7 @@ mod with_mock {
             matches!(err, Error::ReservedId { class, id } if class == CatchClass::Media && id == 0xFFFF),
             "got {err:?}"
         );
-        // The blanket itself is still fine -- it means the whole class on purpose.
+        // The blanket itself is still fine: it means the whole class on purpose.
         let _ok = dev
             .catch_events([CatchFilter::watch_class(Class::Media)])
             .expect("a blanket is not an exact id");
@@ -668,7 +668,7 @@ mod with_mock {
             Error::WildcardNotInput
         ));
         // A press-only subscription never sees the release, so the NEXT press cannot be told from a
-        // chord -- the edge decoder would silently stop reporting a key after its first press.
+        // chord: the edge decoder would stop reporting a key after its first press.
         assert!(matches!(
             dev.input_events([CatchFilter::watch(Key::new(0x04)).on_press()])
                 .unwrap_err(),
@@ -768,9 +768,9 @@ mod with_mock {
     #[test]
     fn the_widest_capture_reaches_the_box() {
         // The box holds ONE entry per address, so two subscribers naming it with different captures
-        // have to be resolved rather than have one silently win. Taking either arbitrarily meant a
-        // caller asking for whole packets started receiving cut ones the moment unrelated code in the
-        // same process subscribed with a shorter one. Whole beats every finite length.
+        // have to be resolved rather than have one win. Taking either arbitrarily meant a caller
+        // asking for whole packets started receiving cut ones the moment unrelated code in the same
+        // process subscribed with a shorter one. Whole beats every finite length.
         let capture_sent_to_box = |a: Capture, b: Capture| {
             let mock = MockBox::new();
             let dev = Device::with_mock(mock.clone());
@@ -795,7 +795,7 @@ mod with_mock {
         // The box resolves an event to its most SPECIFIC matching entry and captures at THAT entry's
         // length. Resolving only between identical addresses is therefore not enough: a blanket
         // subscriber asking for whole packets had them cut to 8 the moment another caller subscribed
-        // to one endpoint with a shorter capture -- on that endpoint only, silently.
+        // to one endpoint with a shorter capture (on that endpoint only), and nothing marked the cut.
         let mock = MockBox::new();
         let dev = Device::with_mock(mock.clone());
         let _broad = dev.catch_events([CatchFilter::everything()]).unwrap();
@@ -818,7 +818,7 @@ mod with_mock {
     #[test]
     fn a_more_specific_entry_does_not_widen_a_broader_one() {
         // The flip side of the fold, and the direction that must NOT happen: an exact endpoint asking
-        // for whole packets does not force the blanket entry -- which serves every OTHER endpoint --
+        // for whole packets does not force the blanket entry, which serves every OTHER endpoint,
         // to stop capping. Folding by "overlaps at all" instead of "is no more specific" put the
         // blanket at whole packets and handed the link every byte of every bulk pipe.
         let mock = MockBox::new();
@@ -853,8 +853,8 @@ mod with_mock {
     fn direction_ranks_in_the_fold_the_same_way_it_ranks_in_the_box() {
         // Direction is part of specificity, not merely a filter, so it has to rank in the capture
         // fold too. A BOTH entry asking for whole packets covers the OUT events that resolve to a
-        // narrower OUT entry, so that entry has to be widened -- otherwise the broad subscriber's
-        // OUT packets come back cut, on that endpoint only.
+        // narrower OUT entry, so that entry has to be widened. Otherwise the broad subscriber's OUT
+        // packets come back cut, on that endpoint only.
         let sent = |broad: Capture, narrow: Capture| {
             let mock = MockBox::new();
             let dev = Device::with_mock(mock.clone());
@@ -879,7 +879,7 @@ mod with_mock {
             "got {widened:?}"
         );
         // The reverse must NOT happen: a narrower OUT entry asking for whole packets does not stop
-        // the BOTH entry -- which also serves every IN event -- from capping.
+        // the BOTH entry, which also serves every IN event, from capping.
         let kept = sent(Capture::First(8), Capture::Whole);
         assert!(
             kept.contains(&(Direction::Both.as_u8(), 8))
@@ -891,7 +891,7 @@ mod with_mock {
     #[test]
     fn a_subscription_past_the_box_s_table_is_refused_not_truncated() {
         // The box holds 32 entries and drops the rest, reporting it only in a flag nothing was
-        // obliged to read -- so the caller got a stream quietly missing whatever did not fit.
+        // obliged to read, so the caller got a stream missing whatever did not fit.
         use crate::protocol::opcode::CATCH_MAX_ENTRIES;
         let mock = MockBox::new();
         let dev = Device::with_mock(mock.clone());
@@ -1019,12 +1019,12 @@ mod with_mock {
     fn an_exact_input_filter_receives_its_class_and_diffs_it() {
         // The input frames carry content, not an address, so routing them means reading the address
         // out of the content. Sending the wire's wildcard id instead made every exact-id input
-        // subscription match nothing at all -- and silently: the box accepted the entry, listed it in
-        // RESP(CATCH), counted no drops, and the stream simply stayed empty.
+        // subscription match nothing at all: the box accepted the entry, listed it in RESP(CATCH),
+        // counted no drops, and the stream stayed empty.
         //
         // A snapshot lists what is HELD, so the RELEASE of Left is the snapshot that no longer
         // mentions Left. Delivering only snapshots that CONTAIN the subscriber's usage therefore
-        // discards precisely the edge it was waiting for -- and only when some other subscriber's
+        // discards precisely the edge it was waiting for, and only when some other subscriber's
         // usage is still held, so a single-subscriber test cannot see it.
         let mock = MockBox::new();
         let dev = Device::with_mock(mock.clone());
@@ -1071,7 +1071,7 @@ mod with_mock {
     #[test]
     fn an_input_filter_direction_selects_the_edge() {
         // The box emits on both edges as soon as any other subscriber holds a wider entry, so without
-        // the edge on the wire a press-only subscription silently received releases too.
+        // the edge on the wire a press-only subscription received releases too.
         let mock = MockBox::new();
         let dev = Device::with_mock(mock.clone());
         let press = dev
@@ -1115,7 +1115,7 @@ mod with_mock {
 
     #[test]
     fn an_axis_direction_selects_the_sign_of_the_movement() {
-        // An axis has no press or release, so its direction is the sign of the delta -- the same
+        // An axis has no press or release, so its direction is the sign of the delta, the same
         // reading an axis LOCK uses. A subscriber asking for wheel-up must not be handed wheel-down.
         let mock = MockBox::new();
         let dev = Device::with_mock(mock.clone());
@@ -1133,7 +1133,7 @@ mod with_mock {
     #[test]
     fn a_release_to_nothing_reaches_the_class_that_released() {
         // The empty snapshot is the release of the last held usage, and it lists nothing. It has to
-        // reach the subscriber for its own class and nobody else's -- it used to go to everyone
+        // reach the subscriber for its own class and nobody else's: it used to go to everyone
         // subscribed to anything, so a vendor-bulk trace received keyboard events.
         let mock = MockBox::new();
         let dev = Device::with_mock(mock.clone());
@@ -1154,7 +1154,7 @@ mod with_mock {
 
     #[test]
     fn each_subscriber_gets_only_what_it_asked_for() {
-        // The box holds ONE table -- the union of every subscription -- so without per-subscriber
+        // The box holds ONE table (the union of every subscription), so without per-subscriber
         // matching a caller's stream would change shape whenever unrelated code elsewhere in the
         // process subscribed to something else.
         let mock = MockBox::new();
@@ -1331,7 +1331,7 @@ mod with_mock {
     fn an_input_stream_gets_only_the_usages_it_asked_for() {
         // A snapshot is the CLASS's state, and the box sends every held usage of that class as soon
         // as ANY subscriber in the process widens the table. Routing must stay class-only or the
-        // release edge is lost -- so the DECODER has to filter, or a one-key stream reports edges for
+        // release edge is lost, so the DECODER has to filter, or a one-key stream reports edges for
         // every key someone else subscribed to.
         let mock = MockBox::new();
         let dev = Device::with_mock(mock.clone());
@@ -1393,7 +1393,7 @@ mod with_mock {
     #[test]
     fn a_report_that_moved_nothing_is_not_an_input_event() {
         // The routing fallback delivers an unaddressable motion report to every axis subscriber. Left
-        // undecoded that becomes a phantom zero-delta event -- the exact shape the emission
+        // undecoded that becomes a phantom zero-delta event, the exact shape the emission
         // suppression work was about.
         let mock = MockBox::new();
         let dev = Device::with_mock(mock.clone());
@@ -1413,8 +1413,8 @@ mod with_mock {
 
     #[test]
     fn a_snapshot_that_changes_nothing_yields_nothing() {
-        // Two identical snapshots are one state, not two events -- and recv_timeout must not restart
-        // its deadline on a report that decoded to no edge at all.
+        // Two identical snapshots are one state, not two events. The deadline in recv_timeout must
+        // not restart on a report that decoded to no edge at all.
         let mock = MockBox::new();
         let dev = Device::with_mock(mock.clone());
         let mut s = dev.input_events(CatchFilter::all_input()).unwrap();
@@ -1550,7 +1550,7 @@ mod timeline {
 
     #[test]
     fn the_host_mapping_follows_the_fastest_sample() {
-        // The error is one-sided -- an event can arrive late but never early -- so the mapping tracks
+        // The error is one-sided (an event can arrive late but never early), so the mapping tracks
         // the MINIMUM lag. An average would be dragged by every slow delivery and never recover.
         let origin = Instant::now();
         let mut t = Timeline::new();
@@ -1576,7 +1576,7 @@ mod timeline {
         // The floor only improves, and an improvement shifts later events earlier. A SMALL shift is
         // smoothed so the timeline does not visibly run backwards. A LARGE one is the estimate having
         // been wrong, and holding the wrong answer to stay monotonic wedged the stream for as long as
-        // the error lasted -- a 5 s first sample pinned 5000 events to one instant.
+        // the error lasted: a 5 s first sample pinned 5000 events to one instant.
         let origin = Instant::now();
         let mut t = Timeline::new();
         // Sub-millisecond correction: absorbed, no regression.
@@ -1600,7 +1600,7 @@ mod timeline {
 
     #[test]
     fn the_host_mapping_is_anchored_to_the_arrival_not_to_the_box_stamp() {
-        // Deleting the floor entirely -- host = box_us alone -- left every other timeline test green.
+        // Deleting the floor entirely (host = box_us alone) left every other timeline test green.
         // The mapping has to put an event NEAR the moment it arrived, not near the box's own epoch,
         // or it is not a host clock at all.
         let origin = Instant::now();
@@ -1644,7 +1644,7 @@ mod timeline {
         // A whole second of reordering is still reordering.
         assert_eq!(t.box_us(&motion_at(10_000_000)), 10_000_000);
         assert_eq!(t.box_us(&motion_at(9_000_000)), 9_000_000);
-        // And the real wrap still works. Walk up to it the way a running box does -- a single jump
+        // And the real wrap still works. Walk up to it the way a running box does: a single jump
         // of more than half the range is genuinely ambiguous and is read as reordering.
         let mut t = Timeline::new();
         for step in [

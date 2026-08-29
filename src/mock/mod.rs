@@ -107,7 +107,7 @@ const MEDIA_LOCK_MAX: usize = 8;
 // The rest of ctrl_proto.h's reply bounds. Every one of these sits behind a public builder that
 // takes a caller-supplied length, and the box truncates at each rather than refusing: it appends
 // what fits and answers. Encoding past them writes a count byte that wrapped past 255, or a payload
-// longer than a frame carries -- and since the responder runs inside `write_all`, that `encode`
+// longer than a frame carries, and since the responder runs inside `write_all`, that `encode`
 // failure unwinds back out of the caller's own query rather than answering it.
 const NAME_MAX: usize = 32; // CTRL_NAME_MAX
 const DEVICE_INFO_PRODUCT_MAX: usize = 127; // CTRL_DEVICE_INFO_PRODUCT_MAX
@@ -157,7 +157,7 @@ impl LockTable {
             if slots & (1 << i) == 0 {
                 continue;
             }
-            // One bit is all a button carries, so the box stores the block or pass it will render.
+            // One bit is all a button carries, so the box stores the block or pass it amounts to.
             let mut v = scale;
             if target >= LOCK_TGT_BTN_BASE {
                 v = if v < LOCK_SCALE_PASS {
@@ -248,7 +248,7 @@ impl LockTable {
         }
     }
 
-    // In vector mode one relative scale governs the whole aim, the lower of X's and Y's, so the
+    // In vector mode one relative scale governs both axes, the lower of X's and Y's, so the
     // readback names that number on both axes instead of each axis's stored byte.
     fn reported(&self, t: usize, slot: usize, vector: bool) -> u8 {
         let sc = self.mouse[t][slot];
@@ -294,7 +294,7 @@ impl LockTable {
             }
         }
         // Media before granular keys: media is bounded at MEDIA_LOCK_MAX and granular keys are not,
-        // so enumerating keys last is what keeps the unbounded class from starving the bounded one at
+        // so enumerating keys last is what keeps the unbounded class from crowding the bounded one out at
         // the entry cap. A media usage is suppressed whole, so the direction it reports is Both.
         if self.media_blanket {
             push(
@@ -310,8 +310,8 @@ impl LockTable {
                 LOCK_SCALE_BLOCK,
             );
         }
-        // Granular keys last, on whatever is left of the cap. Past it they truncate silently -- the
-        // reply has nowhere to say so -- which is why nothing bounded is enumerated after them.
+        // Granular keys last, on whatever is left of the cap. Past it they truncate silently (the
+        // reply has nowhere to say so), which is why nothing bounded is enumerated after them.
         for u in 0..256u16 {
             let usage = LockScope::Target(LockTarget::Usage(Usage::new(Class::Key, u)));
             if self.key_press[u as usize] {
@@ -684,8 +684,8 @@ pub struct MockBox {
     transport: Arc<MockTransport>,
 }
 
-/// The box's side of an update session, so a transfer against the mock exercises the same sequencing
-/// the firmware does. A handler that just answered OK would let every deliberate break pass.
+// The box's side of an update session, so a transfer against the mock exercises the same sequencing
+// the firmware does. A handler that just answered OK would let every deliberate break pass.
 #[derive(Debug, Clone, Default)]
 pub(crate) struct MockUpdate {
     pub(crate) active: bool,
@@ -732,8 +732,8 @@ impl MockUpdate {
         (0x01, 16)
     }
 
-    /// Returns `Some((status, arg))` only when the box owes an answer, exactly like the firmware:
-    /// a chunk inside an open window is written and not acknowledged.
+    // Returns `Some((status, arg))` only when the box owes an answer, exactly like the firmware:
+    // a chunk inside an open window is written and not acknowledged.
     fn data(&mut self, body: &[u8]) -> Option<(u8, u32)> {
         // Length before state, and BAD_STATE names the op it wanted, exactly as the firmware does.
         if body.len() < 3 {
@@ -1160,8 +1160,8 @@ impl MockBox {
 
     /// Push a `LOG` line as if the box emitted it; it surfaces on the device's `logs()` channel.
     pub fn push_log(&self, level: LogLevel, text: &str) {
-        // The protocol names no bound on LOG text -- emit_log_frame's 160-byte line buffer is one
-        // emitter's, not the wire's -- so the only bound to hold is the frame's own, less the level
+        // The protocol names no bound on LOG text (emit_log_frame's 160-byte line buffer is one
+        // emitter's, not the wire's), so the only bound to hold is the frame's own, less the level
         // byte. Bytes, as the box copies them; a split char decodes lossily.
         let n = text.len().min(crate::protocol::opcode::MAX_PAYLOAD - 1);
         let mut payload = Vec::with_capacity(1 + n);
@@ -1215,7 +1215,7 @@ impl MockBox {
 
     /// `ts_us` is the raw wire timestamp, as for [`push_motion`](Self::push_motion).
     /// A held-usage snapshot. `class` is carried in the frame rather than inferred, so a test can
-    /// push the EMPTY snapshot -- the release of the last held usage -- and still say which class
+    /// push the EMPTY snapshot (the release of the last held usage) and still say which class
     /// went quiet.
     /// `direction` is the edge that produced the snapshot: the subscribed set grew or shrank.
     pub fn push_usages(

@@ -382,7 +382,7 @@ fn set_name_sends_option_frame_and_clear_is_empty() {
 #[test]
 fn set_name_sends_the_value_raw_for_the_box_to_sanitize() {
     use crate::{Device, MockBox};
-    // set_name does no host-side validation: it sends the string as-is and the box sanitizes, so a
+    // set_name does no host-side validation: it sends the string as-is and the box sanitises, so a
     // control byte rides through on the wire (the box drops it) rather than raising a host error.
     let mock = MockBox::new();
     let device = Device::with_mock(mock.clone());

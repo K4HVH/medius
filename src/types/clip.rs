@@ -208,8 +208,8 @@ pub struct ClipSettings {
 }
 
 impl ClipSettings {
-    /// Decode the config view of a `RESP(CLIP)` payload: skip the runtime prefix + held list, then read
-    /// `[autolock][flags][n_trig]` and the trigger tuples. A wildcard binding (no concrete class) is skipped.
+    // Decode the config view of a `RESP(CLIP)` payload: skip the runtime prefix + held list, then read
+    // `[autolock][flags][n_trig]` and the trigger tuples. A wildcard binding (no concrete class) is skipped.
     pub(crate) fn from_payload(p: &[u8]) -> Option<ClipSettings> {
         if p.len() < 25 {
             return None;

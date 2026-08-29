@@ -53,7 +53,7 @@ impl Device {
     /// discards. A momentary usage carries one bit, so any scale below a full pass locks it and there
     /// is nothing in between; a scale at or above a full pass on one is an unlock.
     ///
-    /// A media usage has no edges -- it is suppressed whole -- so an edge direction on one is sent as
+    /// A media usage has no edges (it is suppressed whole), so an edge direction on one is sent as
     /// [`Direction::Both`], which is what `RESP(LOCKS)` reports it as.
     ///
     /// ```no_run
@@ -145,8 +145,8 @@ fn target_class_id(target: LockTarget) -> (u8, u16) {
 }
 
 // Only an axis has a bearing to be with or against; the box drops a relative direction on any other
-// class without a word. A media usage has no edges either -- it is suppressed whole, and RESP(LOCKS)
-// reports every media lock as Both -- so an edge there becomes the Both the box will report back.
+// class with no reply. A media usage has no edges either (it is suppressed whole, and RESP(LOCKS)
+// reports every media lock as Both), so an edge there becomes the Both the box will report back.
 fn lock_direction(class: u8, direction: Direction) -> Result<Direction> {
     if class == LOCK_CLS_AXIS {
         return Ok(direction);
