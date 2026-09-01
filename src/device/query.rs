@@ -104,20 +104,20 @@ impl Device {
         }
     }
 
-    /// Query the bearing (§4.14): the window `Direction::With`/`Against` are held over, and how it is read.
-    pub fn query_bearing(&self) -> Result<Bearing> {
-        let payload = self.link.query_option(OPT_BEARING)?;
-        match parse_resp(&payload) {
-            Some(Resp::Bearing(b)) => Ok(b),
-            _ => Err(Error::NoReply),
-        }
-    }
-
     /// Query the emit-rate pacing mode and the rate in effect (§4.14).
     pub fn query_emit_pace(&self) -> Result<EmitPaceStatus> {
         let payload = self.link.query_option(OPT_EMIT)?;
         match parse_resp(&payload) {
             Some(Resp::EmitPace(s)) => Ok(s),
+            _ => Err(Error::NoReply),
+        }
+    }
+
+    /// Query the bearing (§4.14): the window `Direction::With`/`Against` are held over, and how it is read.
+    pub fn query_bearing(&self) -> Result<Bearing> {
+        let payload = self.link.query_option(OPT_BEARING)?;
+        match parse_resp(&payload) {
+            Some(Resp::Bearing(b)) => Ok(b),
             _ => Err(Error::NoReply),
         }
     }
