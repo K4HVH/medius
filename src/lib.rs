@@ -42,8 +42,8 @@ pub use types::{
     EmitPace, EmitPaceStatus, FirmwareInfo, Health, ImageState, ImperfectStatus, Input, InputEvent,
     KbdCaps, Key, LedMode, LedTarget, LockEntry, LockScope, LockTarget, Locks, LogLevel, LogLine,
     MediaKey, Motion, MotionEvent, MouseCaps, MoveTiming, PendingMotion, PortInfo, Rate,
-    RebootTarget, RenderMode, Stamped, Stats, Timeline, Timestamped, TrafficClass, TrafficEvent,
-    UpdateProgress, UpdateStatus, UpdateTarget, Usage, UsageSnapshot, Version,
+    RebootTarget, RenderMode, RenderStatus, Stamped, Stats, Timeline, Timestamped, TrafficClass,
+    TrafficEvent, UpdateProgress, UpdateStatus, UpdateTarget, Usage, UsageSnapshot, Version,
 };
 
 #[cfg(feature = "async")]

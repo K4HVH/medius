@@ -584,26 +584,37 @@ pub unsafe extern "C" fn medius_device_set_bearing(
 }
 
 /// Set what paces injected motion and what rate the clone runs at; `hz` is the target rate for `Fixed`
-/// and ignored otherwise, `render` is the render mode composed onto the pace, `force_hz` is the forced wire
-/// rate (0 = the device's own). `mode` takes a `MEDIUS_EMIT_MODE_*` constant and `render` a
-/// `MEDIUS_RENDER_MODE_*` one; any other value is `MEDIUS_STATUS_ERR_INVALID_ARG`.
+/// and ignored otherwise, `force_hz` is the forced wire rate (0 = the device's own). `mode` takes a
+/// `MEDIUS_EMIT_MODE_*` constant; any other value is `MEDIUS_STATUS_ERR_INVALID_ARG`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_device_set_emit_pace(
     dev: *mut MediusDevice,
     mode: u8,
     hz: u16,
-    render: u8,
     force_hz: u16,
 ) -> MediusStatus {
     let Some(pace) = emit_pace_from_c(mode, hz) else {
         return fail(MediusStatus::ErrInvalidArg, "invalid emit pacing mode");
     };
-    let Some(render) = medius::RenderMode::from_u8(render) else {
+    with_device(dev, |d| {
+        d.set_emit_pace(pace, (force_hz != 0).then_some(force_hz))
+    })
+}
+
+/// Set the texture the box draws motion with, and whether the device's own motion is drawn by the
+/// model rather than relayed. `mode` takes a `MEDIUS_RENDER_MODE_*` constant and any other value is
+/// `MEDIUS_STATUS_ERR_INVALID_ARG`. `full` costs roughly 3 ms of latency on physical mouse movement
+/// and is off by default.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn medius_device_set_render(
+    dev: *mut MediusDevice,
+    mode: u8,
+    full: bool,
+) -> MediusStatus {
+    let Some(mode) = medius::RenderMode::from_u8(mode) else {
         return fail(MediusStatus::ErrInvalidArg, "invalid render mode");
     };
-    with_device(dev, |d| {
-        d.set_emit_pace(pace, render, (force_hz != 0).then_some(force_hz))
-    })
+    with_device(dev, |d| d.set_render(mode, full))
 }
 
 /// Set the box's persistent name (`name`, NUL-terminated UTF-8); an empty string clears it.
@@ -807,6 +818,14 @@ pub unsafe extern "C" fn medius_device_query_emit_pace(
 }
 
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn medius_device_query_render(
+    dev: *mut MediusDevice,
+    out: *mut MediusRenderStatus,
+) -> MediusStatus {
+    query(dev, out, |d| d.query_render())
+}
+
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_device_counters(
     dev: *mut MediusDevice,
     out: *mut MediusCountersSnapshot,
@@ -841,7 +860,7 @@ pub extern "C" fn medius_default_keepalive_cadence_ms() -> u32 {
 /// The C ABI version, bumped on any breaking change to this header.
 #[unsafe(no_mangle)]
 pub extern "C" fn medius_abi_version() -> u32 {
-    6
+    7
 }
 
 /// The medius-capi crate version as a static NUL-terminated string.

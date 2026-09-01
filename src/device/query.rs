@@ -2,13 +2,13 @@ use std::time::Duration;
 
 use crate::error::{Error, Result};
 use crate::protocol::opcode::{
-    OPT_BEARING, OPT_EMIT, OPT_IMPERFECT, OPT_MOVE_RIDE, Q_CAPS, Q_CATCH, Q_DEVICE_INFO, Q_HEALTH,
-    Q_LOCKS, Q_RATE, Q_STATS, Q_VERSION,
+    OPT_BEARING, OPT_EMIT, OPT_IMPERFECT, OPT_MOVE_RIDE, OPT_RENDER, Q_CAPS, Q_CATCH,
+    Q_DEVICE_INFO, Q_HEALTH, Q_LOCKS, Q_RATE, Q_STATS, Q_VERSION,
 };
 use crate::protocol::{Resp, parse_resp};
 use crate::types::{
     Bearing, Caps, CatchState, DeviceInfo, EmitPaceStatus, Health, ImperfectStatus, Locks, Rate,
-    Stats, Version,
+    RenderStatus, Stats, Version,
 };
 
 use super::Device;
@@ -118,6 +118,16 @@ impl Device {
         let payload = self.link.query_option(OPT_EMIT)?;
         match parse_resp(&payload) {
             Some(Resp::EmitPace(s)) => Ok(s),
+            _ => Err(Error::NoReply),
+        }
+    }
+
+    /// Query what motion is drawn with, whether the device's own goes through it, and whether a
+    /// profile has armed (§4.14).
+    pub fn query_render(&self) -> Result<RenderStatus> {
+        let payload = self.link.query_option(OPT_RENDER)?;
+        match parse_resp(&payload) {
+            Some(Resp::Render(s)) => Ok(s),
             _ => Err(Error::NoReply),
         }
     }

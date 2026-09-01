@@ -9,7 +9,8 @@ use crate::protocol::opcode::{
     DI_HAS_SERIAL, KBC_CONSUMER, KBC_NKRO, KBC_REPORT_ID, KBC_SYSTEM, LOCK_AXIS_WHEEL,
     LOCK_CLS_AXIS, LOCK_CLS_BTN, LOCK_CLS_KEY, LOCK_CLS_MEDIA, LOCK_DIR_AGAINST, LOCK_DIR_BOTH,
     LOCK_DIR_NEG, LOCK_DIR_POS, LOCK_DIR_WITH, LOCK_ID_ALL, LOCK_SCALE_BLOCK, LOCK_SCALE_PASS,
-    OPT_BEARING, OPT_EMIT, OPT_IMPERFECT, OPT_MOVE_RIDE, OPT_NAME, Q_FIRMWARE, RATE_CONFIDENT,
+    OPT_BEARING, OPT_EMIT, OPT_IMPERFECT, OPT_MOVE_RIDE, OPT_NAME, OPT_RENDER, Q_FIRMWARE,
+    RATE_CONFIDENT,
 };
 use crate::protocol::opcode::{
     CLIP_CFG_F_FINALIZED, CLIP_CFG_F_LOOP, CLIP_CFG_F_RETAIN, CLIP_CFG_F_RIDE, CLIP_TRIG_MAX,
@@ -45,7 +46,11 @@ struct State {
     move_ride_ms: u16,
     bearing: Bearing,
     emit_pace: EmitPace,
-    emit_render: RenderMode,
+    render_mode: RenderMode,
+    render_full: bool,
+    /// Whether the box has learned a profile. A real box arms this off the attached device's own
+    /// motion, so a mock starts unarmed and a test that needs the armed path says so.
+    render_ready: bool,
     emit_force_hz: Option<u16>,
     advertised_hz: u16,
     clip: ClipStatus,
@@ -83,7 +88,9 @@ impl Default for State {
             move_ride_ms: 0,
             bearing: Bearing::default(),
             emit_pace: EmitPace::Learned,
-            emit_render: RenderMode::Despiked,
+            render_mode: RenderMode::Despiked,
+            render_full: false,
+            render_ready: false,
             emit_force_hz: None,
             advertised_hz: 0,
             clip: ClipStatus::default(),
@@ -343,22 +350,25 @@ impl State {
             (Some(OPT_MOVE_RIDE), [lo, hi, ..]) => {
                 self.move_ride_ms = u16::from_le_bytes([*lo, *hi])
             }
-            (Some(OPT_EMIT), [mode, lo, hi, flo, fhi, render, ..]) => {
-                // The box discards the whole command on a mode or render it does not know, force_hz
-                // included, and answers nothing. Coercing here would model a box that does not exist.
-                if let (Some(r), Some(p)) = (
-                    RenderMode::from_u8(*render),
-                    match *mode {
-                        0 => Some(EmitPace::Learned),
-                        1 => Some(EmitPace::Interval),
-                        2 => Some(EmitPace::Fixed(u16::from_le_bytes([*lo, *hi]))),
-                        _ => None,
-                    },
-                ) {
+            (Some(OPT_EMIT), [mode, lo, hi, flo, fhi, ..]) => {
+                // The box discards the whole command on a mode it does not know, force_hz included,
+                // and answers nothing. Coercing here would model a box that does not exist.
+                if let Some(p) = match *mode {
+                    0 => Some(EmitPace::Learned),
+                    1 => Some(EmitPace::Interval),
+                    2 => Some(EmitPace::Fixed(u16::from_le_bytes([*lo, *hi]))),
+                    _ => None,
+                } {
                     let force = u16::from_le_bytes([*flo, *fhi]);
-                    self.emit_render = r;
                     self.emit_pace = p;
                     self.emit_force_hz = (force != 0).then_some(force);
+                }
+            }
+            (Some(OPT_RENDER), [mode, full, ..]) => {
+                // Same rule: an unknown mode, or a `full` past 1, discards the whole command.
+                if let (Some(m), true) = (RenderMode::from_u8(*mode), *full <= 1) {
+                    self.render_mode = m;
+                    self.render_full = *full != 0;
                 }
             }
             (Some(OPT_NAME), name) => {
@@ -560,6 +570,8 @@ fn options_emit_payload(
     native_hz: u16,
     allowed: bool,
 ) -> Vec<u8> {
+    // `render` is not echoed here any more (it has its own option), but the rendered gate still
+    // decides the resolved rate, so the pace reply still depends on it.
     // Mirror the firmware: Fixed clamps the echoed rate to 1..=1000 (0 -> 1000) and snaps resolved
     // to the 1 ms frame clock (1000/n); Learned/Interval echo 0 (no real device to resolve).
     let (mode, fixed_hz, mut resolved) = match pace {
@@ -598,8 +610,11 @@ fn options_emit_payload(
     p.extend_from_slice(&force_hz.unwrap_or(0).to_le_bytes());
     p.extend_from_slice(&advertised.to_le_bytes());
     p.push(active as u8);
-    p.push(render.to_wire());
     p
+}
+
+fn options_render_payload(mode: RenderMode, full: bool, ready: bool) -> Vec<u8> {
+    vec![9u8, OPT_RENDER, mode.to_wire(), full as u8, ready as u8]
 }
 
 fn clip_status_payload(c: &ClipStatus, cfg: &ClipSettings) -> Vec<u8> {
@@ -928,10 +943,20 @@ impl MockBox {
                                 seq,
                                 &options_emit_payload(
                                     st.emit_pace,
-                                    st.emit_render,
+                                    st.render_mode,
                                     st.emit_force_hz,
                                     st.advertised_hz,
                                     st.imperfect.allowed,
+                                ),
+                            )
+                            .expect("resp fits"),
+                            Some(OPT_RENDER) => encode(
+                                FrameType::Resp,
+                                seq,
+                                &options_render_payload(
+                                    st.render_mode,
+                                    st.render_full,
+                                    st.render_ready,
                                 ),
                             )
                             .expect("resp fits"),
@@ -1101,6 +1126,23 @@ impl MockBox {
     /// Update the configured [`EmitPace`] answered to `QUERY(OPTIONS, EMIT)` in place.
     pub fn set_emit_pace(&self, pace: EmitPace) {
         self.state.lock().emit_pace = pace;
+    }
+
+    /// Set what `QUERY(OPTIONS, RENDER)` answers (builder style).
+    #[must_use]
+    pub fn with_render(self, mode: RenderMode, full: bool) -> Self {
+        let mut st = self.state.lock();
+        st.render_mode = mode;
+        st.render_full = full;
+        drop(st);
+        self
+    }
+
+    /// Set whether the mock reports a learned profile, which is what gates drawing on a real box.
+    #[must_use]
+    pub fn with_render_ready(self, ready: bool) -> Self {
+        self.state.lock().render_ready = ready;
+        self
     }
 
     /// Set the forced wire rate answered to `QUERY(OPTIONS, EMIT)` (builder style); `Some(0)` is off.

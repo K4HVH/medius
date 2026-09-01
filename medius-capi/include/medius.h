@@ -178,8 +178,8 @@ typedef uint8_t MediusEmitMode;
 #endif // __STDC_VERSION__ >= 202311L
 #endif // __cplusplus
 
-// How injected motion is emitted: off is the paced fill, the rest render the device's texture and
-// differ only in the onboard smoother.
+// The texture the box draws motion with: off is the paced fill, the rest draw the device's learned
+// texture and differ only in the onboard smoother.
 enum MediusRenderMode
 #if defined(__cplusplus) || __STDC_VERSION__ >= 202311L
   : uint8_t
@@ -1023,8 +1023,6 @@ typedef struct MediusBearing {
 // Emit-rate pacing mode plus the rate in effect and the rate the clone advertises.
 typedef struct MediusEmitPaceStatus {
     MediusEmitMode mode;
-    // The render mode composing onto the pace.
-    MediusRenderMode render;
     uint16_t fixed_hz;
     uint16_t resolved_hz;
     // The forced wire rate requested, in Hz; 0 leaves the device's own.
@@ -1034,6 +1032,16 @@ typedef struct MediusEmitPaceStatus {
     // 1 when a forced interval is written into the descriptor being served.
     uint8_t force_active;
 } MediusEmitPaceStatus;
+
+// What the box draws motion with, whether the device's own motion goes through it, and whether a
+// profile has been learned for the attached device.
+typedef struct MediusRenderStatus {
+    MediusRenderMode mode;
+    // 1 when the device's own motion is drawn by the model rather than relayed.
+    uint8_t full;
+    // 1 once the box has learned a profile for the attached device. Nothing is drawn until it has.
+    uint8_t ready;
+} MediusRenderStatus;
 
 // Host-side always-on counters.
 typedef struct MediusCountersSnapshot {
@@ -1605,14 +1613,18 @@ MediusStatus medius_device_set_bearing(struct MediusDevice *dev,
                                        uint8_t mode);
 
 // Set what paces injected motion and what rate the clone runs at; `hz` is the target rate for `Fixed`
-// and ignored otherwise, `render` is the render mode composed onto the pace, `force_hz` is the forced wire
-// rate (0 = the device's own). `mode` takes a `MEDIUS_EMIT_MODE_*` constant and `render` a
-// `MEDIUS_RENDER_MODE_*` one; any other value is `MEDIUS_STATUS_ERR_INVALID_ARG`.
+// and ignored otherwise, `force_hz` is the forced wire rate (0 = the device's own). `mode` takes a
+// `MEDIUS_EMIT_MODE_*` constant; any other value is `MEDIUS_STATUS_ERR_INVALID_ARG`.
 MediusStatus medius_device_set_emit_pace(struct MediusDevice *dev,
                                          uint8_t mode,
                                          uint16_t hz,
-                                         uint8_t render,
                                          uint16_t force_hz);
+
+// Set the texture the box draws motion with, and whether the device's own motion is drawn by the
+// model rather than relayed. `mode` takes a `MEDIUS_RENDER_MODE_*` constant and any other value is
+// `MEDIUS_STATUS_ERR_INVALID_ARG`. `full` costs roughly 3 ms of latency on physical mouse movement
+// and is off by default.
+MediusStatus medius_device_set_render(struct MediusDevice *dev, uint8_t mode, bool full);
 
 // Set the box's persistent name (`name`, NUL-terminated UTF-8); an empty string clears it.
 MediusStatus medius_device_set_name(struct MediusDevice *dev, const char *name);
@@ -1668,6 +1680,8 @@ MediusStatus medius_device_query_movement_riding(struct MediusDevice *dev,
 
 MediusStatus medius_device_query_emit_pace(struct MediusDevice *dev,
                                            struct MediusEmitPaceStatus *out);
+
+MediusStatus medius_device_query_render(struct MediusDevice *dev, struct MediusRenderStatus *out);
 
 MediusStatus medius_device_counters(struct MediusDevice *dev, struct MediusCountersSnapshot *out);
 

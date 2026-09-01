@@ -9,8 +9,8 @@ use medius::{
     ClockEstimate, CountersSnapshot, DeviceInfo, DeviceKind, Direction, EmitPace, EmitPaceStatus,
     FirmwareInfo, Health, ImageState, ImperfectStatus, Input, InputEvent, KbdCaps, Key, LedMode,
     LedTarget, LockEntry, LockScope, LockTarget, Locks, LogLevel, LogLine, MediaKey, Motion,
-    MouseCaps, MoveTiming, PendingMotion, PortInfo, Rate, RebootTarget, RenderMode, Stats, Usage,
-    Version,
+    MouseCaps, MoveTiming, PendingMotion, PortInfo, Rate, RebootTarget, RenderMode, RenderStatus,
+    Stats, Usage, Version,
 };
 
 use crate::ctypes::*;
@@ -733,12 +733,21 @@ impl From<EmitPaceStatus> for MediusEmitPaceStatus {
         };
         MediusEmitPaceStatus {
             mode,
-            render: render_to_c(s.render),
             fixed_hz,
             resolved_hz: s.resolved_hz,
             force_hz: s.force_hz.unwrap_or(0),
             advertised_hz: s.advertised_hz,
             force_active: s.force_active as u8,
+        }
+    }
+}
+
+impl From<RenderStatus> for MediusRenderStatus {
+    fn from(s: RenderStatus) -> Self {
+        MediusRenderStatus {
+            mode: render_to_c(s.mode),
+            full: s.full as u8,
+            ready: s.ready as u8,
         }
     }
 }

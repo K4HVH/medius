@@ -99,8 +99,8 @@ pub enum MediusEmitMode {
     Fixed = 2,
 }
 
-/// How injected motion is emitted: off is the paced fill, the rest render the device's texture and
-/// differ only in the onboard smoother.
+/// The texture the box draws motion with: off is the paced fill, the rest draw the device's learned
+/// texture and differ only in the onboard smoother.
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MediusRenderMode {
@@ -617,8 +617,6 @@ pub struct MediusImperfectStatus {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MediusEmitPaceStatus {
     pub mode: MediusEmitMode,
-    /// The render mode composing onto the pace.
-    pub render: MediusRenderMode,
     pub fixed_hz: u16,
     pub resolved_hz: u16,
     /// The forced wire rate requested, in Hz; 0 leaves the device's own.
@@ -627,6 +625,18 @@ pub struct MediusEmitPaceStatus {
     pub advertised_hz: u16,
     /// 1 when a forced interval is written into the descriptor being served.
     pub force_active: u8,
+}
+
+/// What the box draws motion with, whether the device's own motion goes through it, and whether a
+/// profile has been learned for the attached device.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MediusRenderStatus {
+    pub mode: MediusRenderMode,
+    /// 1 when the device's own motion is drawn by the model rather than relayed.
+    pub full: u8,
+    /// 1 once the box has learned a profile for the attached device. Nothing is drawn until it has.
+    pub ready: u8,
 }
 
 /// The device-side clip lifecycle state (`medius_clip_query_status`).
