@@ -164,7 +164,7 @@ let s = device.query_render()?;  // mode, full, ready
 | `Despiked` | rendered with the smoother's onset ramped rather than stepped (the box's factory default) |
 | `Unsmoothed` | rendered with no smoother; the model receives raw injection |
 
-`full` extends the same model to the device's own motion, so one texture reaches the wire instead of an injected stream beside a relayed one. It adds the smoother's group delay and one frame to physical mouse movement, about 3 ms on `Despiked`, and is off by default.
+`full` extends the same model to the device's own motion, so one texture reaches the wire instead of an injected stream beside a relayed one. Rendering adds a small amount of latency, which reaches the mouse's own motion under `full`, so `full` is off by default.
 
 Nothing is rendered until the box has learned a profile for the attached device. `RenderStatus::ready` is that state: until it is true, motion is relayed and injection takes the paced fill. The profile lives in RAM, so every box passes through it after a power cut and arms once the mouse moves.
 

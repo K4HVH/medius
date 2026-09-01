@@ -603,8 +603,8 @@ pub unsafe extern "C" fn medius_device_set_emit_pace(
 
 /// Set the texture the box renders motion with, and whether the device's own motion is rendered by the
 /// model rather than relayed. `mode` takes a `MEDIUS_RENDER_MODE_*` constant and any other value is
-/// `MEDIUS_STATUS_ERR_INVALID_ARG`. `full` costs the smoother's group delay plus one frame on physical
-/// mouse movement, about 3 ms on de-spiked, 5 on stock and 1 on unsmoothed, and is off by default.
+/// `MEDIUS_STATUS_ERR_INVALID_ARG`. Rendering adds a small amount of latency, which reaches the mouse's
+/// own motion when `full` is on, so `full` is off by default.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_device_set_render(
     dev: *mut MediusDevice,
