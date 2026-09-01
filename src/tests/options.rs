@@ -210,21 +210,13 @@ fn mock_emit_pace_matches_firmware_snap() {
             force_active: false,
         }
     );
-    // The texture is its own command now, but it still governs the resolved rate: onto Learned a
-    // drawn stream self-paces at 1 kHz.
+    // The texture is its own command now, but it still governs the resolved rate. The box gates that
+    // on a profile having ARMED, not on the mode being set: a box told to draw but still waiting for
+    // one runs the paced fill and reports the learnt cap.
     device.set_render(RenderMode::Stock, false).unwrap();
     device.set_emit_pace(EmitPace::Learned, None).unwrap();
-    assert_eq!(
-        device.query_emit_pace().unwrap(),
-        EmitPaceStatus {
-            mode: EmitPace::Learned,
-            resolved_hz: 1000,
-            force_hz: None,
-            advertised_hz: 0,
-            force_active: false,
-        }
-    );
-    // Onto a Fixed rate the snapped value stands rather than jumping to 1 kHz.
+    assert_eq!(device.query_emit_pace().unwrap().resolved_hz, 0);
+    // Onto a Fixed rate the snapped value stands whatever the texture is doing.
     device.set_emit_pace(EmitPace::Fixed(250), None).unwrap();
     assert_eq!(
         device.query_emit_pace().unwrap(),
@@ -248,6 +240,16 @@ fn mock_emit_pace_matches_firmware_snap() {
             force_active: false,
         }
     );
+
+    // Armed, a drawn stream on a learnt pace self-paces every millisecond and says so. This is the
+    // half that discriminates: without it the reply reads the same whether the renderer is emitting
+    // or the box is still on the fill.
+    let armed = Device::with_mock(MockBox::new().with_render_ready(true));
+    armed.set_render(RenderMode::Stock, false).unwrap();
+    armed.set_emit_pace(EmitPace::Learned, None).unwrap();
+    assert_eq!(armed.query_emit_pace().unwrap().resolved_hz, 1000);
+    armed.set_render(RenderMode::Off, false).unwrap();
+    assert_eq!(armed.query_emit_pace().unwrap().resolved_hz, 0);
 }
 
 #[cfg(feature = "mock")]

@@ -2122,6 +2122,17 @@ void medius_mock_set_emit_pace(struct MediusMockBox *mock,
 #endif
 
 #if defined(MEDIUS_FEATURE_MOCK)
+// Set what the mock answers to an OPTION(RENDER) query: the texture, whether the device's own motion
+// goes through it, and whether a profile has armed. `mode` takes a `MEDIUS_RENDER_MODE_*` constant;
+// any other value leaves the texture alone. `ready` is what gates drawing on a real box, so a mock
+// left unarmed is the state every box passes through after a power cut.
+void medius_mock_set_render(struct MediusMockBox *mock,
+                            uint8_t mode,
+                            bool full,
+                            bool ready);
+#endif
+
+#if defined(MEDIUS_FEATURE_MOCK)
 // Set the rate the mock's clone advertises unforced, in Hz; 0 means no clone.
 void medius_mock_set_advertised_hz(struct MediusMockBox *mock, uint16_t hz);
 #endif

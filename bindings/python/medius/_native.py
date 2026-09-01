@@ -620,6 +620,7 @@ if HAS_MOCK:
     _decl("medius_mock_set_movement_riding", None, [HANDLE, c_bool, u32])
     _decl("medius_mock_set_bearing", None, [HANDLE, u16, u8])
     _decl("medius_mock_set_emit_pace", None, [HANDLE, u8, u16, u16])
+    _decl("medius_mock_set_render", None, [HANDLE, u8, c_bool, c_bool])
     _decl("medius_mock_set_clip_status", None, [HANDLE, MediusClipStatus])
     _decl("medius_mock_set_clip_settings", None, [HANDLE, MediusClipSettings])
     _decl("medius_mock_silent", None, [HANDLE])
