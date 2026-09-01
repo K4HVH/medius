@@ -178,7 +178,7 @@ typedef uint8_t MediusEmitMode;
 #endif // __STDC_VERSION__ >= 202311L
 #endif // __cplusplus
 
-// The texture the box draws motion with: off is the paced fill, the rest draw the device's learned
+// The texture the box renders motion with: off is the paced fill, the rest render the device's learned
 // texture and differ only in the onboard smoother.
 enum MediusRenderMode
 #if defined(__cplusplus) || __STDC_VERSION__ >= 202311L
@@ -1033,13 +1033,13 @@ typedef struct MediusEmitPaceStatus {
     uint8_t force_active;
 } MediusEmitPaceStatus;
 
-// What the box draws motion with, whether the device's own motion goes through it, and whether a
+// What the box renders motion with, whether the device's own motion goes through it, and whether a
 // profile has been learned for the attached device.
 typedef struct MediusRenderStatus {
     MediusRenderMode mode;
-    // 1 when the device's own motion is drawn by the model rather than relayed.
+    // 1 when the device's own motion is rendered by the model rather than relayed.
     uint8_t full;
-    // 1 once the box has learned a profile for the attached device. Nothing is drawn until it has.
+    // 1 once the box has learned a profile for the attached device. Nothing is rendered until it has.
     uint8_t ready;
 } MediusRenderStatus;
 
@@ -1620,11 +1620,13 @@ MediusStatus medius_device_set_emit_pace(struct MediusDevice *dev,
                                          uint16_t hz,
                                          uint16_t force_hz);
 
-// Set the texture the box draws motion with, and whether the device's own motion is drawn by the
+// Set the texture the box renders motion with, and whether the device's own motion is rendered by the
 // model rather than relayed. `mode` takes a `MEDIUS_RENDER_MODE_*` constant and any other value is
-// `MEDIUS_STATUS_ERR_INVALID_ARG`. `full` costs roughly 3 ms of latency on physical mouse movement
-// and is off by default.
-MediusStatus medius_device_set_render(struct MediusDevice *dev, uint8_t mode, bool full);
+// `MEDIUS_STATUS_ERR_INVALID_ARG`. `full` costs the smoother's group delay plus one frame on physical
+// mouse movement, about 3 ms on de-spiked, 5 on stock and 1 on unsmoothed, and is off by default.
+MediusStatus medius_device_set_render(struct MediusDevice *dev,
+                                      uint8_t mode,
+                                      bool full);
 
 // Set the box's persistent name (`name`, NUL-terminated UTF-8); an empty string clears it.
 MediusStatus medius_device_set_name(struct MediusDevice *dev, const char *name);
@@ -2124,7 +2126,7 @@ void medius_mock_set_emit_pace(struct MediusMockBox *mock,
 #if defined(MEDIUS_FEATURE_MOCK)
 // Set what the mock answers to an OPTION(RENDER) query: the texture, whether the device's own motion
 // goes through it, and whether a profile has armed. `mode` takes a `MEDIUS_RENDER_MODE_*` constant;
-// any other value leaves the texture alone. `ready` is what gates drawing on a real box, so a mock
+// any other value leaves the texture alone. `ready` is what gates rendering on a real box, so a mock
 // left unarmed is the state every box passes through after a power cut.
 void medius_mock_set_render(struct MediusMockBox *mock,
                             uint8_t mode,

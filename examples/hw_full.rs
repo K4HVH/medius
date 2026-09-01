@@ -520,7 +520,7 @@ mod linux {
         }
 
         {
-            // OPTION(RENDER) is its own command: the texture the box draws motion with, and whether
+            // OPTION(RENDER) is its own command: the texture the box renders motion with, and whether
             // the device's own motion goes through it. Every mode round-trips against both values of
             // `full`, and the box refuses a value it does not know rather than coercing it. Restores
             // the box's boot pair (De-spiked, relayed) afterward.
@@ -545,7 +545,7 @@ mod linux {
                     last = format!("{mode:?}/full={full} -> {read:?}");
                 }
             }
-            // The pace still reports the rendered gate: on LEARNED a drawn stream self-paces at 1 kHz
+            // The pace still reports the rendered gate: on LEARNED a rendered stream self-paces at 1 kHz
             // once a profile has armed, and stays at the learnt cap before that.
             let _ = dev.set_render(RenderMode::Stock, false);
             let _ = dev.set_emit_pace(EmitPace::Learned, None);

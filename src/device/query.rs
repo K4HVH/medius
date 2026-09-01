@@ -122,7 +122,7 @@ impl Device {
         }
     }
 
-    /// Query what motion is drawn with, whether the device's own goes through it, and whether a
+    /// Query what motion is rendered with, whether the device's own goes through it, and whether a
     /// profile has armed (§4.14).
     pub fn query_render(&self) -> Result<RenderStatus> {
         let payload = self.link.query_option(OPT_RENDER)?;

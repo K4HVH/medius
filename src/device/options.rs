@@ -92,12 +92,14 @@ impl Device {
         )
     }
 
-    /// `OPTION(RENDER)`: set the texture motion is drawn with, and whether the device's own motion is
-    /// drawn by the model too rather than relayed; persisted in NVS.
+    /// `OPTION(RENDER)`: set the texture motion is rendered with, and whether the device's own motion is
+    /// rendered by the model too rather than relayed; persisted in NVS.
     ///
-    /// `full` puts the smoother's group delay and one frame on physical mouse movement, roughly 3 ms,
-    /// in exchange for the injected and native streams being one stream on the wire. It is off by
-    /// default. Nothing is drawn until the box has learned a profile for the attached device; until
+    /// `full` puts the smoother's group delay and one frame on physical mouse movement, in exchange
+    /// for the injected and native streams being one stream on the wire. What it costs follows the
+    /// mode: about 3 ms on [`Despiked`](RenderMode::Despiked), about 5 on
+    /// [`Stock`](RenderMode::Stock), and about 1 on [`Unsmoothed`](RenderMode::Unsmoothed). It is off
+    /// by default. Nothing is rendered until the box has learned a profile for the attached device; until
     /// then motion is relayed and injection takes the paced fill
     /// ([`RenderStatus::ready`](crate::RenderStatus)).
     ///

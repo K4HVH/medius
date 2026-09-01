@@ -99,7 +99,7 @@ pub enum MediusEmitMode {
     Fixed = 2,
 }
 
-/// The texture the box draws motion with: off is the paced fill, the rest draw the device's learned
+/// The texture the box renders motion with: off is the paced fill, the rest render the device's learned
 /// texture and differ only in the onboard smoother.
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -627,15 +627,15 @@ pub struct MediusEmitPaceStatus {
     pub force_active: u8,
 }
 
-/// What the box draws motion with, whether the device's own motion goes through it, and whether a
+/// What the box renders motion with, whether the device's own motion goes through it, and whether a
 /// profile has been learned for the attached device.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MediusRenderStatus {
     pub mode: MediusRenderMode,
-    /// 1 when the device's own motion is drawn by the model rather than relayed.
+    /// 1 when the device's own motion is rendered by the model rather than relayed.
     pub full: u8,
-    /// 1 once the box has learned a profile for the attached device. Nothing is drawn until it has.
+    /// 1 once the box has learned a profile for the attached device. Nothing is rendered until it has.
     pub ready: u8,
 }
 

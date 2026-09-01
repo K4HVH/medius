@@ -51,7 +51,7 @@ pub const OPT_EMIT: u8 = 2;
 pub const OPT_NAME: u8 = 3;
 /// `OPTION` id: the bearing. Value `[window u16 LE ms][mode u8]`; what `LOCK_DIR_WITH`/`AGAINST` are measured against (§3.12).
 pub const OPT_BEARING: u8 = 4;
-/// `OPTION` id: what the box draws motion with. Value `[mode u8][full u8]`; mode 0 off / 1 stock / 2 de-spiked / 3 unsmoothed.
+/// `OPTION` id: what the box renders motion with. Value `[mode u8][full u8]`; mode 0 off / 1 stock / 2 de-spiked / 3 unsmoothed.
 pub const OPT_RENDER: u8 = 5;
 /// `OPTION(BEARING)` mode: each axis reads its own sign against its own bearing.
 pub const BEARING_PER_AXIS: u8 = 0;

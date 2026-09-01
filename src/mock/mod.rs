@@ -1143,7 +1143,7 @@ impl MockBox {
         self
     }
 
-    /// Set whether the mock reports a learned profile, which is what gates drawing on a real box.
+    /// Set whether the mock reports a learned profile, which is what gates rendering on a real box.
     #[must_use]
     pub fn with_render_ready(self, ready: bool) -> Self {
         self.state.lock().render_ready = ready;

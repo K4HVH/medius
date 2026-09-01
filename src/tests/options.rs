@@ -211,7 +211,7 @@ fn mock_emit_pace_matches_firmware_snap() {
         }
     );
     // The texture is its own command now, but it still governs the resolved rate. The box gates that
-    // on a profile having ARMED, not on the mode being set: a box told to draw but still waiting for
+    // on a profile having ARMED, not on the mode being set: a box told to render but still waiting for
     // one runs the paced fill and reports the learnt cap.
     device.set_render(RenderMode::Stock, false).unwrap();
     device.set_emit_pace(EmitPace::Learned, None).unwrap();
@@ -241,7 +241,7 @@ fn mock_emit_pace_matches_firmware_snap() {
         }
     );
 
-    // Armed, a drawn stream on a learnt pace self-paces every millisecond and says so. This is the
+    // Armed, a rendered stream on a learnt pace self-paces every millisecond and says so. This is the
     // half that discriminates: without it the reply reads the same whether the renderer is emitting
     // or the box is still on the fill.
     let armed = Device::with_mock(MockBox::new().with_render_ready(true));
@@ -280,7 +280,7 @@ fn render_round_trips_over_the_command_path() {
         }
     }
     // A box that has learned a profile says so, which is what separates one set to a mode from one
-    // drawing with it.
+    // rendering with it.
     let armed = Device::with_mock(MockBox::new().with_render_ready(true));
     assert!(armed.query_render().unwrap().ready);
 }

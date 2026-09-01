@@ -284,12 +284,13 @@ class Device:
         )
 
     def set_render(self, mode: RenderMode, full: bool):
-        """Set the texture the box draws motion with, and whether the device's own motion is drawn by
+        """Set the texture the box renders motion with, and whether the device's own motion is rendered by
         the model rather than relayed.
 
         Both ride one command and both persist, so `full` is required: an omitted one would silently
-        rewrite a setting you did not name. `full` costs roughly 3 ms of latency on physical mouse
-        movement and is off by default. Nothing is drawn until the box has learned a profile for the
+        rewrite a setting you did not name. `full` costs the smoother's group delay plus one
+        frame on physical mouse movement, about 3 ms on DESPIKED, 5 on STOCK and 1 on UNSMOOTHED, and
+        is off by default. Nothing is rendered until the box has learned a profile for the
         attached device (`RenderStatus.ready`)."""
         mode = _enum(mode, RenderMode, "mode")
         check(_native.lib.medius_device_set_render(self._handle, int(mode), bool(full)))

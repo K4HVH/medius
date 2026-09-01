@@ -1,19 +1,19 @@
-//! What the box draws motion with, and whether the device's own motion goes through it (§4.14).
+//! What the box renders motion with, and whether the device's own motion goes through it (§4.14).
 
-/// The texture the box draws motion with (`OPTION(RENDER)`'s `mode`). [`Off`](RenderMode::Off) is the
-/// paced fill; the others draw the device's learned report texture and differ only in the onboard path
+/// The texture the box renders motion with (`OPTION(RENDER)`'s `mode`). [`Off`](RenderMode::Off) is the
+/// paced fill; the others render the device's learned report texture and differ only in the onboard path
 /// smoother. Independent of the [`EmitPace`](crate::EmitPace) beside it, which caps the rendered rate.
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum RenderMode {
     /// Paced fill, renderer off.
     Off = 0,
-    /// Drawn with the bit-exact triangular smoother.
+    /// Rendered with the bit-exact triangular smoother.
     Stock = 1,
-    /// Drawn with the smoother's onset ramped rather than stepped (the box's factory default).
+    /// Rendered with the smoother's onset ramped rather than stepped (the box's factory default).
     #[default]
     Despiked = 2,
-    /// Drawn with no smoother; the model receives raw injection.
+    /// Rendered with no smoother; the model receives raw injection.
     Unsmoothed = 3,
 }
 
@@ -39,12 +39,12 @@ impl RenderMode {
 /// profile has armed (§4.14).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct RenderStatus {
-    /// The texture motion is drawn with.
+    /// The texture motion is rendered with.
     pub mode: RenderMode,
-    /// Whether the device's own motion is drawn by the model rather than relayed.
+    /// Whether the device's own motion is rendered by the model rather than relayed.
     pub full: bool,
-    /// Whether the box has learned a profile for the attached device. Nothing is drawn until it has,
-    /// so this separates a box set to a mode from a box drawing with it.
+    /// Whether the box has learned a profile for the attached device. Nothing is rendered until it has,
+    /// so this separates a box set to a mode from a box rendering with it.
     pub ready: bool,
 }
 
