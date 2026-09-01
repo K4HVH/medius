@@ -532,6 +532,46 @@ fn scale_frames_carry_the_direction_and_the_number() {
 }
 
 #[test]
+fn the_render_option_reads_back_what_was_set_through_the_boundary() {
+    let mock = medius_mock_new();
+    let mut dev: *mut MediusDevice = ptr::null_mut();
+    assert_eq!(
+        unsafe { medius_device_with_mock(mock, &mut dev) },
+        MediusStatus::Ok
+    );
+    let mut st: MediusRenderStatus = unsafe { std::mem::zeroed() };
+    // The mock boots holding what a real box boots holding: de-spiked, relayed, and unarmed.
+    assert_eq!(
+        unsafe { medius_device_query_render(dev, &mut st) },
+        MediusStatus::Ok
+    );
+    assert_eq!(st.mode, MediusRenderMode::Despiked);
+    assert_eq!(st.full, 0);
+    assert_eq!(st.ready, 0);
+    // Both stored fields have to survive the trip, and a mode has to decode as itself.
+    assert_eq!(
+        unsafe { medius_device_set_render(dev, MediusRenderMode::Unsmoothed as u8, true) },
+        MediusStatus::Ok
+    );
+    assert_eq!(
+        unsafe { medius_device_query_render(dev, &mut st) },
+        MediusStatus::Ok
+    );
+    assert_eq!(st.mode, MediusRenderMode::Unsmoothed);
+    assert_eq!(st.full, 1);
+    // `ready` is the box's own state, not something the host sets, so it comes from the mock.
+    unsafe { medius_mock_set_render(mock, MediusRenderMode::Stock as u8, false, true) };
+    assert_eq!(
+        unsafe { medius_device_query_render(dev, &mut st) },
+        MediusStatus::Ok
+    );
+    assert_eq!(st.mode, MediusRenderMode::Stock);
+    assert_eq!(st.full, 0);
+    assert_eq!(st.ready, 1);
+    unsafe { medius_device_free(dev) };
+}
+
+#[test]
 fn the_bearing_reads_back_what_was_set_through_the_boundary() {
     let mock = medius_mock_new();
     let mut dev: *mut MediusDevice = ptr::null_mut();

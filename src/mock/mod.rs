@@ -585,11 +585,13 @@ fn options_emit_payload(
         }
     };
     // The texture rides its own option beside the pace, but only forces resolved to 1 kHz when the
-    // pace has no rate of its own (Learned); a Fixed rate keeps its snapped value. The box gates this
-    // on a profile having ARMED, not on the mode being set: until then it runs the paced fill and
-    // reports 0 (usbdev.c's emit_gate_period). A mock that answered 1000 regardless would green-light
-    // host code that reads resolved_hz as "the renderer is emitting".
-    if render != RenderMode::Off && render_ready && matches!(pace, EmitPace::Learned) {
+    // pace resolved to no period of its own; a Fixed rate keeps its snapped value. That is the
+    // firmware's condition, not "the pace is Learned": usbdev.c's emit_override_period returns 0 for
+    // Interval too while no device is bound, which is the state this mock models. The box also gates
+    // it on a profile having ARMED, not on the mode being set: until then it runs the paced fill and
+    // reports 0. A mock that answered 1000 regardless would green-light host code that reads
+    // resolved_hz as "the renderer is emitting".
+    if render != RenderMode::Off && render_ready && resolved == 0 {
         resolved = 1000;
     }
     // The box resolves a forced rate to a bInterval in whole 1 ms frames and advertises 1000/n, so a
@@ -1136,18 +1138,27 @@ impl MockBox {
     /// Set what `QUERY(OPTIONS, RENDER)` answers (builder style).
     #[must_use]
     pub fn with_render(self, mode: RenderMode, full: bool) -> Self {
-        let mut st = self.state.lock();
-        st.render_mode = mode;
-        st.render_full = full;
-        drop(st);
+        self.set_render(mode, full);
         self
     }
 
     /// Set whether the mock reports a learned profile, which is what gates rendering on a real box.
     #[must_use]
     pub fn with_render_ready(self, ready: bool) -> Self {
-        self.state.lock().render_ready = ready;
+        self.set_render_ready(ready);
         self
+    }
+
+    /// Update what `QUERY(OPTIONS, RENDER)` answers in place, like every other option's setter.
+    pub fn set_render(&self, mode: RenderMode, full: bool) {
+        let mut st = self.state.lock();
+        st.render_mode = mode;
+        st.render_full = full;
+    }
+
+    /// Update the learned-profile flag in place.
+    pub fn set_render_ready(&self, ready: bool) {
+        self.state.lock().render_ready = ready;
     }
 
     /// Set the forced wire rate answered to `QUERY(OPTIONS, EMIT)` (builder style); `Some(0)` is off.

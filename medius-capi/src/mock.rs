@@ -227,9 +227,9 @@ pub unsafe extern "C" fn medius_mock_set_render(
 ) {
     with_mock(mock, |m| {
         if let Some(mode) = medius::RenderMode::from_u8(mode) {
-            let _ = m.clone().with_render(mode, full);
+            m.set_render(mode, full);
         }
-        let _ = m.clone().with_render_ready(ready);
+        m.set_render_ready(ready);
     });
 }
 

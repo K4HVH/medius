@@ -109,6 +109,11 @@ impl Device {
     /// attached device: until then motion is relayed and injection takes the paced fill
     /// ([`RenderStatus::ready`](crate::RenderStatus)).
     ///
+    /// Motion asking for exact timing skips the model: [`move_rel_now`](Self::move_rel_now),
+    /// [`flush_motion`](Self::flush_motion) and [`discard_motion`](Self::discard_motion) take the paced
+    /// path, and with `full` on the rendered stream ignores
+    /// [`set_movement_riding`](Self::set_movement_riding).
+    ///
     /// ```no_run
     /// # use medius::{Device, RenderMode, Result};
     /// # fn main() -> Result<()> {
@@ -120,5 +125,4 @@ impl Device {
         self.link
             .send(FrameType::Option, &render_payload(mode.to_wire(), full))
     }
-
 }

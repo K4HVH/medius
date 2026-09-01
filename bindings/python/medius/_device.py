@@ -298,7 +298,11 @@ class Device:
         Both ride one command and both persist, so `full` is required: an omitted one would silently
         rewrite a setting you did not name. Rendering adds a small amount of latency, which reaches the
         mouse's own motion when `full` is on, so `full` is off by default. Nothing is rendered until the
-        box has learned a profile for the attached device (`RenderStatus.ready`)."""
+        box has learned a profile for the attached device (`RenderStatus.ready`).
+
+        Motion asking for exact timing skips the model: `move_rel_now`, `flush_motion` and
+        `discard_motion` take the paced path, and with `full` on the rendered stream ignores
+        `set_movement_riding`."""
         mode = _enum(mode, RenderMode, "mode")
         check(_native.lib.medius_device_set_render(self._handle, int(mode), bool(full)))
 
