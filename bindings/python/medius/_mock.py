@@ -140,7 +140,7 @@ class MockBox:
 
     def set_render(self, mode: RenderMode, full: bool, ready: bool):
         """What the mock answers to `Device.query_render`. `ready` is whether a profile has armed,
-        which is what gates drawing on a real box: a mock left unarmed is the state every box passes
+        which is what gates rendering on a real box: a mock left unarmed is the state every box passes
         through after a power cut."""
         _native.lib.medius_mock_set_render(
             self._handle, int(_enum(mode, RenderMode, "mode")), bool(full), bool(ready)

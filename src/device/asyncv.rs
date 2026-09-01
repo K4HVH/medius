@@ -234,7 +234,7 @@ impl AsyncDevice {
         self.dev().set_emit_pace(pace, force_hz)
     }
 
-    /// `OPTION(RENDER)`: what motion is drawn with, and whether the device's own goes through it.
+    /// `OPTION(RENDER)`: what motion is rendered with, and whether the device's own goes through it.
     /// Instant; see [`Device::set_render`].
     pub fn set_render(&self, mode: RenderMode, full: bool) -> Result<()> {
         self.dev().set_render(mode, full)
@@ -478,7 +478,7 @@ impl AsyncDevice {
         }
     }
 
-    /// Query what motion is drawn with and whether a profile has armed (§4.14), awaiting the
+    /// Query what motion is rendered with and whether a profile has armed (§4.14), awaiting the
     /// correlated `RESP`.
     pub async fn query_render(&self) -> Result<RenderStatus> {
         let payload = self

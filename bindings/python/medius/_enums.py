@@ -125,7 +125,7 @@ class EmitMode(IntEnum):
 
 
 class RenderMode(IntEnum):
-    """The texture the box draws motion with: OFF is the paced fill, the rest draw the device's learned texture and differ only in the onboard smoother."""
+    """The texture the box renders motion with: OFF is the paced fill, the rest render the device's learned texture and differ only in the onboard smoother."""
 
     OFF = 0
     STOCK = 1

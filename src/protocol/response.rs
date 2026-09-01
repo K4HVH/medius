@@ -27,7 +27,7 @@ pub enum Resp {
     MovementRiding(Option<Duration>),
     /// `RESP(OPTIONS, EMIT)`: the emit-rate pacing mode and the rate in effect.
     EmitPace(EmitPaceStatus),
-    /// `RESP(OPTIONS, RENDER)`: what motion is drawn with, and whether a profile has armed.
+    /// `RESP(OPTIONS, RENDER)`: what motion is rendered with, and whether a profile has armed.
     Render(RenderStatus),
     /// `RESP(OPTIONS, BEARING)`: the bearing window and how it is read.
     Bearing(Bearing),

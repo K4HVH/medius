@@ -598,7 +598,7 @@ def test_movement_riding_roundtrip():
 
 def test_emit_pace_roundtrip():
     with MockBox() as mock:
-        # The box's factory texture is De-spiked, but nothing is drawn until a profile arms, so a
+        # The box's factory texture is De-spiked, but nothing is rendered until a profile arms, so a
         # Learned pace reports the learnt cap rather than the 1 ms tick.
         mock.set_emit_pace(EmitPace.fixed(500))
         with Device.with_mock(mock) as d:
@@ -610,7 +610,7 @@ def test_emit_pace_roundtrip():
             status = d.query_emit_pace()
         assert status.mode == EmitPace.learned()
         assert status.resolved_hz == 0
-        # Armed, the drawn stream self-paces every millisecond and says so.
+        # Armed, the rendered stream self-paces every millisecond and says so.
         mock.set_render(RenderMode.DESPIKED, False, True)
         with Device.with_mock(mock) as d:
             assert d.query_emit_pace().resolved_hz == 1000
@@ -634,7 +634,7 @@ def test_render_roundtrip():
                 status = d.query_render()
                 assert (status.mode, status.full) == (mode, full)
         # The box gates the 1 ms tick on a profile having ARMED, not on the mode being set: a box told
-        # to draw but still waiting for one runs the paced fill and reports the learnt cap.
+        # to render but still waiting for one runs the paced fill and reports the learnt cap.
         d.set_render(RenderMode.STOCK, False)
         d.set_emit_pace(EmitPace.learned())
         assert d.query_emit_pace().resolved_hz == 0
@@ -645,7 +645,7 @@ def test_render_roundtrip():
         d.set_emit_pace(EmitPace.learned())
         assert d.query_emit_pace().resolved_hz == 0
 
-    # Armed, a drawn stream on a learnt pace self-paces every millisecond. This is the half that
+    # Armed, a rendered stream on a learnt pace self-paces every millisecond. This is the half that
     # discriminates: without it the reply reads the same whether the renderer is emitting or the box
     # is still on the fill.
     with MockBox() as mock, Device.with_mock(mock) as d:

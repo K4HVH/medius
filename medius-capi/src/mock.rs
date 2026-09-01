@@ -216,7 +216,7 @@ pub unsafe extern "C" fn medius_mock_set_emit_pace(
 
 /// Set what the mock answers to an OPTION(RENDER) query: the texture, whether the device's own motion
 /// goes through it, and whether a profile has armed. `mode` takes a `MEDIUS_RENDER_MODE_*` constant;
-/// any other value leaves the texture alone. `ready` is what gates drawing on a real box, so a mock
+/// any other value leaves the texture alone. `ready` is what gates rendering on a real box, so a mock
 /// left unarmed is the state every box passes through after a power cut.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_mock_set_render(
