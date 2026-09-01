@@ -614,7 +614,11 @@ def test_emit_pace_roundtrip():
         mock.set_render(RenderMode.DESPIKED, False, True)
         with Device.with_mock(mock) as d:
             assert d.query_emit_pace().resolved_hz == 1000
+        # And disarming puts it back: without reading it again, `ready` could be latched on and the
+        # assertion above would pass on a mock that ignored the flag.
         mock.set_render(RenderMode.DESPIKED, False, False)
+        with Device.with_mock(mock) as d:
+            assert d.query_emit_pace().resolved_hz == 0
         assert status.force_hz is None
         assert status.force_active is False
         assert status.advertised_hz == 0  # 0 = no clone, the documented sentinel

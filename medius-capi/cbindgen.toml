@@ -35,6 +35,7 @@ include = [
     "MediusDeviceKind",
     "MediusDirection",
     "MediusEdge",
+    "MediusEmitMode",
     "MediusLedMode",
     "MediusLedTarget",
     "MediusLockTargetKind",
@@ -42,6 +43,7 @@ include = [
     "MediusMoveTiming",
     "MediusPendingMotion",
     "MediusRebootTarget",
+    "MediusRenderMode",
 ]
 
 [enum]

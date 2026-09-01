@@ -522,8 +522,9 @@ mod linux {
         {
             // OPTION(RENDER) is its own command: the texture the box renders motion with, and whether
             // the device's own motion goes through it. Every mode round-trips against both values of
-            // `full`, and the box refuses a value it does not know rather than coercing it. Restores
-            // the box's boot pair (De-spiked, relayed) afterward.
+            // `full`. The refusal of an unknown value is not checked here and cannot be: the typed
+            // API has no way to express one (tools/validate_render.py drives that over the wire).
+            // Restores the box's boot pair (De-spiked, relayed) afterward.
             let dev = device.as_ref().unwrap();
             let mut all_ok = true;
             let mut last = String::new();
@@ -550,11 +551,17 @@ mod linux {
             let _ = dev.set_render(RenderMode::Stock, false);
             let _ = dev.set_emit_pace(EmitPace::Learned, None);
             std::thread::sleep(Duration::from_millis(60));
+            // `ready` is read on both sides of the pace query: a profile arming between the two would
+            // otherwise fail the gate for no defect, since the pace answers the state at its own instant.
+            let before = dev.query_render().map(|s| s.ready).unwrap_or(false);
             let paced = dev.query_emit_pace();
             let ready = dev.query_render().map(|s| s.ready).unwrap_or(false);
             let gate_ok = paced
                 .as_ref()
-                .map(|s| s.resolved_hz == if ready { 1000 } else { 0 })
+                .map(|s| {
+                    let want = if ready { 1000 } else { 0 };
+                    s.resolved_hz == want || (before != ready && s.resolved_hz == 1000 - want)
+                })
                 .unwrap_or(false);
             check(
                 "render option",
@@ -1793,7 +1800,9 @@ mod linux {
             // exercise the async option-query paths against real hardware (the sync ones run above)
             let aopt_ok = block_on(adev.query_movement_riding()).is_ok()
                 && block_on(adev.query_imperfect()).is_ok()
-                && block_on(adev.query_emit_pace()).is_ok();
+                && block_on(adev.query_emit_pace()).is_ok()
+                && block_on(adev.query_bearing()).is_ok()
+                && block_on(adev.query_render()).is_ok();
             // async name setter parity: set then clear (leaves the box on its synth default)
             let aname_ok = adev.set_name("async box").is_ok() && adev.clear_name().is_ok();
             // async scale + bearing: the same box behaviours the sync checks pin, driven from the

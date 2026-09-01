@@ -17,7 +17,9 @@ pub enum EmitPace {
 pub struct EmitPaceStatus {
     /// The selected mode (for [`EmitPace::Fixed`], the rate the host requested).
     pub mode: EmitPace,
-    /// The ceiling currently in effect (Hz); 0 = learnt/adaptive, or no device yet in [`EmitPace::Interval`].
+    /// The ceiling currently in effect (Hz); 0 = learnt/adaptive, or no device yet in
+    /// [`EmitPace::Interval`]. Reads 1000 once the renderer has a profile, since a rendered stream
+    /// paces itself (see [`set_render`](crate::Device::set_render)).
     pub resolved_hz: u16,
     /// The forced wire rate the host asked for (Hz); `None` leaves the device's own.
     pub force_hz: Option<u16>,
