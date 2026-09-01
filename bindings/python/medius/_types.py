@@ -374,10 +374,9 @@ class EmitPace:
 
 @dataclass
 class EmitPaceStatus:
-    """The configured pace and render mode, plus the emit-rate ceiling and the wire rate in effect."""
+    """The configured pace, plus the emit-rate ceiling and the wire rate in effect."""
 
     mode: EmitPace
-    render: "RenderMode"
     resolved_hz: int
     force_hz: Optional[int] = None
     advertised_hz: int = 0
@@ -1123,12 +1122,25 @@ def emit_pace_status_from_c(c) -> EmitPaceStatus:
     mode = EmitMode(c.mode)
     return EmitPaceStatus(
         EmitPace(mode, c.fixed_hz),
-        RenderMode(c.render),
         c.resolved_hz,
         c.force_hz or None,
         c.advertised_hz,
         bool(c.force_active),
     )
+
+
+def render_status_from_c(c) -> RenderStatus:
+    return RenderStatus(RenderMode(c.mode), bool(c.full), bool(c.ready))
+
+
+@dataclass
+class RenderStatus:
+    """What the box draws motion with, whether the device's own motion goes through it, and whether a
+    profile has been learned for the attached device."""
+
+    mode: "RenderMode"
+    full: bool = False
+    ready: bool = False
 
 
 @dataclass

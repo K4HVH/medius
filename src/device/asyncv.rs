@@ -3,16 +3,16 @@ use std::time::Duration;
 use crate::error::{Error, Result};
 use crate::link::Link;
 use crate::protocol::opcode::{
-    OPT_BEARING, OPT_EMIT, OPT_IMPERFECT, OPT_MOVE_RIDE, Q_CAPS, Q_CATCH, Q_CLIP, Q_DEVICE_INFO,
-    Q_FIRMWARE, Q_HEALTH, Q_LOCKS, Q_RATE, Q_STATS, Q_VERSION,
+    OPT_BEARING, OPT_EMIT, OPT_IMPERFECT, OPT_MOVE_RIDE, OPT_RENDER, Q_CAPS, Q_CATCH, Q_CLIP,
+    Q_DEVICE_INFO, Q_FIRMWARE, Q_HEALTH, Q_LOCKS, Q_RATE, Q_STATS, Q_VERSION,
 };
 use crate::protocol::{Resp, parse_resp};
 use crate::types::{
     Action, Axis, Bearing, BearingMode, Blanket, Caps, CatchFilter, CatchState, ClipBuilder,
     ClipSettings, ClipStatus, ClipTrigger, CountersSnapshot, DeviceInfo, Direction, Edge, EmitPace,
     EmitPaceStatus, FirmwareInfo, Health, ImperfectStatus, LedMode, LedTarget, LockTarget, Locks,
-    Motion, MoveTiming, PendingMotion, Rate, RebootTarget, RenderMode, Stats, UpdateProgress,
-    UpdateTarget, Usage, Version,
+    Motion, MoveTiming, PendingMotion, Rate, RebootTarget, RenderMode, RenderStatus, Stats,
+    UpdateProgress, UpdateTarget, Usage, Version,
 };
 
 use super::Device;
@@ -229,14 +229,15 @@ impl AsyncDevice {
         self.dev().set_bearing(window, mode)
     }
 
-    /// `OPTION(EMIT)`: emit-rate pacing, render mode, and the forced wire rate. Instant; see [`Device::set_emit_pace`].
-    pub fn set_emit_pace(
-        &self,
-        pace: EmitPace,
-        render: RenderMode,
-        force_hz: Option<u16>,
-    ) -> Result<()> {
-        self.dev().set_emit_pace(pace, render, force_hz)
+    /// `OPTION(EMIT)`: emit-rate pacing and the forced wire rate. Instant; see [`Device::set_emit_pace`].
+    pub fn set_emit_pace(&self, pace: EmitPace, force_hz: Option<u16>) -> Result<()> {
+        self.dev().set_emit_pace(pace, force_hz)
+    }
+
+    /// `OPTION(RENDER)`: what motion is drawn with, and whether the device's own goes through it.
+    /// Instant; see [`Device::set_render`].
+    pub fn set_render(&self, mode: RenderMode, full: bool) -> Result<()> {
+        self.dev().set_render(mode, full)
     }
 
     /// `OPTION(NAME)`: set the box's persistent name. Instant; see [`Device::set_name`].
@@ -473,6 +474,19 @@ impl AsyncDevice {
             .await?;
         match parse_resp(&payload) {
             Some(Resp::EmitPace(s)) => Ok(s),
+            _ => Err(Error::NoReply),
+        }
+    }
+
+    /// Query what motion is drawn with and whether a profile has armed (§4.14), awaiting the
+    /// correlated `RESP`.
+    pub async fn query_render(&self) -> Result<RenderStatus> {
+        let payload = self
+            .link
+            .query_option_async(OPT_RENDER, self.link.query_timeout_default())
+            .await?;
+        match parse_resp(&payload) {
+            Some(Resp::Render(s)) => Ok(s),
             _ => Err(Error::NoReply),
         }
     }

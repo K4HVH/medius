@@ -241,12 +241,19 @@ class MediusBearing(ctypes.Structure):
 class MediusEmitPaceStatus(ctypes.Structure):
     _fields_ = [
         ("mode", u8),
-        ("render", u8),
         ("fixed_hz", u16),
         ("resolved_hz", u16),
         ("force_hz", u16),
         ("advertised_hz", u16),
         ("force_active", u8),
+    ]
+
+
+class MediusRenderStatus(ctypes.Structure):
+    _fields_ = [
+        ("mode", u8),
+        ("full", u8),
+        ("ready", u8),
     ]
 
 
@@ -420,7 +427,8 @@ _decl("medius_device_reboot", i32, [HANDLE, u8])
 _decl("medius_device_allow_imperfect_clones", i32, [HANDLE, c_bool])
 _decl("medius_device_set_movement_riding", i32, [HANDLE, c_bool, u32])
 _decl("medius_device_set_bearing", i32, [HANDLE, u16, u8])
-_decl("medius_device_set_emit_pace", i32, [HANDLE, u8, u16, u8, u16])
+_decl("medius_device_set_emit_pace", i32, [HANDLE, u8, u16, u16])
+_decl("medius_device_set_render", i32, [HANDLE, u8, c_bool])
 _decl("medius_device_set_name", i32, [HANDLE, ctypes.c_char_p])
 _decl("medius_device_clear_name", i32, [HANDLE])
 
@@ -440,6 +448,7 @@ _decl(
     [HANDLE, ctypes.POINTER(c_bool), ctypes.POINTER(u32)],
 )
 _decl("medius_device_query_emit_pace", i32, [HANDLE, ctypes.POINTER(MediusEmitPaceStatus)])
+_decl("medius_device_query_render", i32, [HANDLE, ctypes.POINTER(MediusRenderStatus)])
 _decl("medius_device_counters", i32, [HANDLE, ctypes.POINTER(MediusCountersSnapshot)])
 
 _decl("medius_default_query_timeout_ms", u32, [])

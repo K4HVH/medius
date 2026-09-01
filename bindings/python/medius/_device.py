@@ -27,6 +27,7 @@ from ._types import (
     Counters,
     EmitPace,
     EmitPaceStatus,
+    RenderStatus,
     Health,
     ImperfectStatus,
     Usage,
@@ -43,6 +44,7 @@ from ._types import (
     counters_from_c,
     device_info_from_c,
     emit_pace_status_from_c,
+    render_status_from_c,
     health_from_c,
     imperfect_from_c,
     locks_from_c,
@@ -271,19 +273,26 @@ class Device:
             )
         )
 
-    def set_emit_pace(self, pace: EmitPace, render: RenderMode, force_hz: Optional[int] = None):
-        """Set what paces injected motion (`hz` matters only for `EmitPace.fixed`), the `render` mode
-        beside it, and what rate the clone advertises and the box polls the device at (`force_hz`,
-        None = the device's own). All three ride one command and all three persist, so `render` is
-        required: an omitted one would silently rewrite a setting you did not name."""
+    def set_emit_pace(self, pace: EmitPace, force_hz: Optional[int] = None):
+        """Set what paces injected motion (`hz` matters only for `EmitPace.fixed`) and what rate the
+        clone advertises and the box polls the device at (`force_hz`, None = the device's own)."""
         mode = _enum(pace.mode, EmitMode, "mode")
-        render = _enum(render, RenderMode, "render")
         check(
             _native.lib.medius_device_set_emit_pace(
-                self._handle, int(mode), _u16(pace.hz, "hz"), int(render),
-                _u16(force_hz or 0, "force_hz"),
+                self._handle, int(mode), _u16(pace.hz, "hz"), _u16(force_hz or 0, "force_hz"),
             )
         )
+
+    def set_render(self, mode: RenderMode, full: bool):
+        """Set the texture the box draws motion with, and whether the device's own motion is drawn by
+        the model rather than relayed.
+
+        Both ride one command and both persist, so `full` is required: an omitted one would silently
+        rewrite a setting you did not name. `full` costs roughly 3 ms of latency on physical mouse
+        movement and is off by default. Nothing is drawn until the box has learned a profile for the
+        attached device (`RenderStatus.ready`)."""
+        mode = _enum(mode, RenderMode, "mode")
+        check(_native.lib.medius_device_set_render(self._handle, int(mode), bool(full)))
 
     def set_name(self, name: str):
         """Set the box's persistent human-readable name; an empty string clears it."""
@@ -406,6 +415,11 @@ class Device:
         out = _native.MediusEmitPaceStatus()
         check(_native.lib.medius_device_query_emit_pace(self._handle, ctypes.byref(out)))
         return emit_pace_status_from_c(out)
+
+    def query_render(self) -> RenderStatus:
+        out = _native.MediusRenderStatus()
+        check(_native.lib.medius_device_query_render(self._handle, ctypes.byref(out)))
+        return render_status_from_c(out)
 
     def counters(self) -> Counters:
         out = _native.MediusCountersSnapshot()

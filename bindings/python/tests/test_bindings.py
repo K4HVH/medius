@@ -87,7 +87,7 @@ def test_mock_feature_present():
 def test_meta_functions():
     # These are a hand-written mirror of the C structs, so a bumped ABI means they are stale until
     # someone re-reads the header. Pin it rather than accept anything newer.
-    assert medius.abi_version() == 6
+    assert medius.abi_version() == 7
     assert medius.version_string()
     assert medius.default_query_timeout_ms() > 0
     assert medius.default_keepalive_cadence_ms() > 0
@@ -359,10 +359,10 @@ def test_scalars_are_checked_before_ctypes_truncates_them():
             d.lock_all(99, Direction.BOTH)
         with pytest.raises(ValueError):
             d.set_bearing(20, 7)
-        # render crosses the ABI as a byte, so an out-of-range one must be refused here rather
-        # than reaching the Rust enum.
+        # The render mode crosses the ABI as a byte, so an out-of-range one must be refused here
+        # rather than reaching the Rust enum.
         with pytest.raises(ValueError):
-            d.set_emit_pace(EmitPace.learned(), 4)
+            d.set_render(4, False)
         with pytest.raises(ValueError):
             d.set_bearing(-1, BearingMode.PER_AXIS)
         # The window saturates rather than wrapping, as the Rust API does: 70000 ms would arrive as
@@ -597,53 +597,48 @@ def test_movement_riding_roundtrip():
 
 def test_emit_pace_roundtrip():
     with MockBox() as mock:
-        # mock.set_emit_pace touches only the pace, so render stays the box's factory De-spiked.
+        # The box's factory texture is De-spiked, so a Learned pace still reports the 1 ms tick.
         mock.set_emit_pace(EmitPace.fixed(500))
         with Device.with_mock(mock) as d:
             status = d.query_emit_pace()
         assert status.mode == EmitPace.fixed(500)
-        assert status.render == RenderMode.DESPIKED
         assert status.resolved_hz == 500  # Fixed clamps to its hz
         mock.set_emit_pace(EmitPace.learned())
         with Device.with_mock(mock) as d:
             status = d.query_emit_pace()
         assert status.mode == EmitPace.learned()
-        assert status.render == RenderMode.DESPIKED
-        assert status.resolved_hz == 1000  # rendered onto Learned forces the 1 ms tick
+        assert status.resolved_hz == 1000  # a drawn stream onto Learned forces the 1 ms tick
         assert status.force_hz is None
         assert status.force_active is False
         assert status.advertised_hz == 0  # 0 = no clone, the documented sentinel
 
 
-def test_emit_pace_render_mode_roundtrip():
-    # The render mode composes onto the pace, driven through the real set_emit_pace ABI and read back.
+def test_render_roundtrip():
+    # The texture is its own command; the pace still reports the gate it implies.
     with MockBox() as mock, Device.with_mock(mock) as d:
-        d.set_emit_pace(EmitPace.learned(), RenderMode.STOCK)
-        status = d.query_emit_pace()
-        assert status.mode == EmitPace.learned()
-        assert status.render == RenderMode.STOCK
-        assert status.resolved_hz == 1000  # rendered onto Learned forces the 1 ms tick
-        assert status.force_hz is None
-        assert status.force_active is False
-        # Composed onto a Fixed rate the snapped value stands rather than jumping to 1 kHz.
-        d.set_emit_pace(EmitPace.fixed(250), RenderMode.STOCK)
-        status = d.query_emit_pace()
-        assert status.mode == EmitPace.fixed(250)
-        assert status.render == RenderMode.STOCK
-        assert status.resolved_hz == 250
-        # The smoother field round-trips for de-spiked and unsmoothed too.
-        d.set_emit_pace(EmitPace.learned(), RenderMode.DESPIKED)
-        assert d.query_emit_pace().render == RenderMode.DESPIKED
-        d.set_emit_pace(EmitPace.learned(), RenderMode.UNSMOOTHED)
-        assert d.query_emit_pace().render == RenderMode.UNSMOOTHED
-        # render has no default: OPTION(EMIT) persists all three fields, so an omitted one would
-        # silently rewrite a setting the caller never named.
+        # The box's factory setting: de-spiked, the device's own motion relayed, nothing learned yet.
+        status = d.query_render()
+        assert status.mode == RenderMode.DESPIKED
+        assert status.full is False
+        assert status.ready is False
+        for mode in RenderMode:
+            for full in (False, True):
+                d.set_render(mode, full)
+                status = d.query_render()
+                assert (status.mode, status.full) == (mode, full)
+        # A drawn stream onto Learned forces the 1 ms tick; onto a Fixed rate the snapped value stands.
+        d.set_render(RenderMode.STOCK, False)
+        d.set_emit_pace(EmitPace.learned())
+        assert d.query_emit_pace().resolved_hz == 1000
+        d.set_emit_pace(EmitPace.fixed(250))
+        assert d.query_emit_pace().resolved_hz == 250
+        d.set_render(RenderMode.OFF, False)
+        d.set_emit_pace(EmitPace.learned())
+        assert d.query_emit_pace().resolved_hz == 0
+        # full has no default: OPTION(RENDER) persists both fields, so an omitted one would silently
+        # rewrite a setting the caller never named.
         with pytest.raises(TypeError):
-            d.set_emit_pace(EmitPace.learned())
-        d.set_emit_pace(EmitPace.learned(), RenderMode.OFF)
-        status = d.query_emit_pace()
-        assert status.render == RenderMode.OFF
-        assert status.resolved_hz == 0
+            d.set_render(RenderMode.STOCK)
 
 
 def test_rate_force_roundtrip():
@@ -674,7 +669,7 @@ def test_rate_force_needs_the_imperfect_opt_in():
     with MockBox() as mock:
         mock.set_advertised_hz(125)
         with Device.with_mock(mock) as d:
-            d.set_emit_pace(EmitPace.learned(), RenderMode.OFF, force_hz=1000)
+            d.set_emit_pace(EmitPace.learned(), force_hz=1000)
             status = d.query_emit_pace()
             assert status.force_hz == 1000
             assert status.force_active is False
@@ -690,13 +685,13 @@ def test_rate_force_through_the_setter():
     # the force on the wire fails here rather than passing on a mock nobody sent anything to.
     with MockBox() as mock, Device.with_mock(mock) as d:
         d.allow_imperfect_clones(True)
-        d.set_emit_pace(EmitPace.fixed(250), RenderMode.OFF, force_hz=125)
+        d.set_emit_pace(EmitPace.fixed(250), force_hz=125)
         status = d.query_emit_pace()
         assert status.mode == EmitPace.fixed(250)
         assert status.force_hz == 125
         assert status.advertised_hz == 125
         assert status.force_active is True
-        d.set_emit_pace(EmitPace.fixed(250), RenderMode.OFF, force_hz=None)
+        d.set_emit_pace(EmitPace.fixed(250), force_hz=None)
         assert d.query_emit_pace().force_hz is None
 
 
@@ -1267,7 +1262,7 @@ def test_every_enum_parameter_is_checked_before_it_reaches_the_boundary():
         with pytest.raises(ValueError):
             d.inject(Usage.button(Button.LEFT), 200)
         with pytest.raises(ValueError):
-            d.set_emit_pace(EmitPace(9, 1000), RenderMode.OFF)
+            d.set_emit_pace(EmitPace(9, 1000))
         with pytest.raises(ValueError):
             d.move_axis(Motion.cursor(1, 2), 9, PendingMotion.KEEP)
         with pytest.raises(ValueError):

@@ -162,6 +162,59 @@ mod linux {
         }
     }
 
+    /// The clone's own evdev nodes, resolved through /dev/input/by-id rather than named by index.
+    ///
+    /// Every node's index moves when a device is added, removed or replugged, so a hard-coded one
+    /// eventually grabs something that is not the clone and every check that reads the wire reports zero,
+    /// which reads exactly like broken firmware. The by-id names carry the VID:PID the box clones under.
+    fn clone_event_nodes() -> Result<Vec<String>, String> {
+        let dir = std::path::Path::new("/dev/input/by-id");
+        let entries =
+            std::fs::read_dir(dir).map_err(|e| format!("cannot read {}: {e}", dir.display()))?;
+        let mut found = Vec::new();
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            // A composite clone puts its mouse and keyboard collections on separate nodes, and both are
+            // grabbed: injected input on an ungrabbed one would leak to the desktop unverified.
+            if !name.starts_with("usb-")
+                || !(name.ends_with("-event-mouse") || name.ends_with("-event-kbd"))
+            {
+                continue;
+            }
+            let Ok(target) = std::fs::canonicalize(entry.path()) else {
+                continue;
+            };
+            found.push((name, target.to_string_lossy().into_owned()));
+        }
+        // The box clones the attached device's identity, so there is no fixed VID:PID to match on. Pair
+        // the nodes by the by-id prefix they share, and take the group that has both collections; a
+        // single-collection device leaves one group of one.
+        found.sort();
+        if found.is_empty() {
+            return Err("no usb event-mouse or event-kbd node in /dev/input/by-id; is USB1 cabled to this machine?".into());
+        }
+        let stem = |n: &str| {
+            n.rsplit_once("-if").map_or_else(
+                || {
+                    n.trim_end_matches("-event-mouse")
+                        .trim_end_matches("-event-kbd")
+                        .to_string()
+                },
+                |(head, _)| head.to_string(),
+            )
+        };
+        let mouse = found
+            .iter()
+            .find(|(n, _)| n.ends_with("-event-mouse"))
+            .ok_or_else(|| "no usb event-mouse node in /dev/input/by-id".to_string())?;
+        let key = stem(&mouse.0);
+        Ok(found
+            .iter()
+            .filter(|(n, _)| stem(n) == key)
+            .map(|(_, path)| path.clone())
+            .collect())
+    }
+
     pub fn run() -> ExitCode {
         let args: Vec<String> = std::env::args().collect();
         // args[1]: one or more comma-separated evdev nodes. A cloned mouse is composite (mouse and keyboard
@@ -173,10 +226,13 @@ mod linux {
                 .map(|p| p.trim().to_string())
                 .filter(|p| !p.is_empty())
                 .collect(),
-            None => vec![
-                "/dev/input/event11".to_string(),
-                "/dev/input/event12".to_string(),
-            ],
+            None => match clone_event_nodes() {
+                Ok(v) => v,
+                Err(e) => {
+                    eprintln!("{e}");
+                    return ExitCode::FAILURE;
+                }
+            },
         };
         let soak_secs: u64 = args.get(3).and_then(|s| s.parse().ok()).unwrap_or(20);
 
@@ -442,18 +498,14 @@ mod linux {
             // Wire round-trip + NVS-persistence check for the EMIT option; the pacing behaviour itself
             // needs the rig. Restores LEARNED (the default) afterward.
             let dev = device.as_ref().unwrap();
-            let set_ok = dev
-                .set_emit_pace(EmitPace::Fixed(500), RenderMode::Off, None)
-                .is_ok();
+            let set_ok = dev.set_emit_pace(EmitPace::Fixed(500), None).is_ok();
             std::thread::sleep(Duration::from_millis(60));
             let read = dev.query_emit_pace();
             let matched = read
                 .as_ref()
                 .map(|s| s.mode == EmitPace::Fixed(500) && s.resolved_hz == 500)
                 .unwrap_or(false);
-            let off_ok = dev
-                .set_emit_pace(EmitPace::Learned, RenderMode::Off, None)
-                .is_ok();
+            let off_ok = dev.set_emit_pace(EmitPace::Learned, None).is_ok();
             std::thread::sleep(Duration::from_millis(60));
             let read_off = dev.query_emit_pace();
             let off_matched = read_off
@@ -468,83 +520,49 @@ mod linux {
         }
 
         {
-            // Render is its own EMIT field beside the pace. Onto LEARNED it forces resolved to 1 kHz (the
-            // renderer gates every 1 ms tick); onto a Fixed rate the snapped value stands. Restores the
-            // box's boot pair (LEARNED, De-spiked) afterward.
+            // OPTION(RENDER) is its own command: the texture the box draws motion with, and whether
+            // the device's own motion goes through it. Every mode round-trips against both values of
+            // `full`, and the box refuses a value it does not know rather than coercing it. Restores
+            // the box's boot pair (De-spiked, relayed) afterward.
             let dev = device.as_ref().unwrap();
-            let set_ok = dev
-                .set_emit_pace(EmitPace::Learned, RenderMode::Stock, None)
-                .is_ok();
+            let mut all_ok = true;
+            let mut last = String::new();
+            for mode in [
+                RenderMode::Off,
+                RenderMode::Stock,
+                RenderMode::Despiked,
+                RenderMode::Unsmoothed,
+            ] {
+                for full in [false, true] {
+                    let set_ok = dev.set_render(mode, full).is_ok();
+                    std::thread::sleep(Duration::from_millis(60));
+                    let read = dev.query_render();
+                    let matched = read
+                        .as_ref()
+                        .map(|s| s.mode == mode && s.full == full)
+                        .unwrap_or(false);
+                    all_ok &= set_ok && matched;
+                    last = format!("{mode:?}/full={full} -> {read:?}");
+                }
+            }
+            // The pace still reports the rendered gate: on LEARNED a drawn stream self-paces at 1 kHz
+            // once a profile has armed, and stays at the learnt cap before that.
+            let _ = dev.set_render(RenderMode::Stock, false);
+            let _ = dev.set_emit_pace(EmitPace::Learned, None);
             std::thread::sleep(Duration::from_millis(60));
-            let read = dev.query_emit_pace();
-            let matched = read
+            let paced = dev.query_emit_pace();
+            let ready = dev.query_render().map(|s| s.ready).unwrap_or(false);
+            let gate_ok = paced
                 .as_ref()
-                .map(|s| {
-                    s.render == RenderMode::Stock
-                        && s.resolved_hz == 1000
-                        && s.mode == EmitPace::Learned
-                })
-                .unwrap_or(false);
-            let comp_ok = dev
-                .set_emit_pace(EmitPace::Fixed(250), RenderMode::Stock, None)
-                .is_ok();
-            std::thread::sleep(Duration::from_millis(60));
-            let read_comp = dev.query_emit_pace();
-            let comp_matched = read_comp
-                .as_ref()
-                .map(|s| {
-                    s.render == RenderMode::Stock
-                        && s.mode == EmitPace::Fixed(250)
-                        && s.resolved_hz == 250
-                })
-                .unwrap_or(false);
-            // Stock, De-spiked and Unsmoothed all render; they differ only in the path smoother the
-            // model is fed. Each round-trips.
-            let despiked_ok = dev
-                .set_emit_pace(EmitPace::Learned, RenderMode::Despiked, None)
-                .is_ok();
-            std::thread::sleep(Duration::from_millis(60));
-            let read_desp = dev.query_emit_pace();
-            let desp_matched = read_desp
-                .as_ref()
-                .map(|s| s.render == RenderMode::Despiked)
-                .unwrap_or(false);
-            let unsmoothed_ok = dev
-                .set_emit_pace(EmitPace::Learned, RenderMode::Unsmoothed, None)
-                .is_ok();
-            std::thread::sleep(Duration::from_millis(60));
-            let read_uns = dev.query_emit_pace();
-            let uns_matched = read_uns
-                .as_ref()
-                .map(|s| s.render == RenderMode::Unsmoothed)
-                .unwrap_or(false);
-            let off_ok = dev
-                .set_emit_pace(EmitPace::Learned, RenderMode::Off, None)
-                .is_ok();
-            std::thread::sleep(Duration::from_millis(60));
-            let read_off = dev.query_emit_pace();
-            let off_matched = read_off
-                .as_ref()
-                .map(|s| s.mode == EmitPace::Learned && s.render == RenderMode::Off)
+                .map(|s| s.resolved_hz == if ready { 1000 } else { 0 })
                 .unwrap_or(false);
             check(
-                "emit rendered",
-                set_ok
-                    && matched
-                    && comp_ok
-                    && comp_matched
-                    && despiked_ok
-                    && desp_matched
-                    && unsmoothed_ok
-                    && uns_matched
-                    && off_ok
-                    && off_matched,
-                format!(
-                    "Learned+stock -> {read:?}, Fixed(250)+stock -> {read_comp:?}, de-spiked -> {read_desp:?}, unsmoothed -> {read_uns:?}, off -> {read_off:?}"
-                ),
+                "render option",
+                all_ok && gate_ok,
+                format!("{last}, ready={ready} pace -> {paced:?}"),
             );
-            // The checks above leave the renderer off, which is not where the box boots.
-            let _ = dev.set_emit_pace(EmitPace::Learned, RenderMode::Despiked, None);
+            // The checks above leave the box on Stock, which is not where it boots.
+            let _ = dev.set_render(RenderMode::Despiked, false);
         }
 
         {
@@ -565,9 +583,7 @@ mod linux {
             } else {
                 let native = dev.query_emit_pace().map(|s| s.advertised_hz).unwrap_or(0);
                 let asked = if native == 1000 { 125 } else { 1000 };
-                let set_ok = dev
-                    .set_emit_pace(EmitPace::Learned, RenderMode::Off, Some(asked))
-                    .is_ok();
+                let set_ok = dev.set_emit_pace(EmitPace::Learned, Some(asked)).is_ok();
                 std::thread::sleep(Duration::from_millis(60));
                 let read = dev.query_emit_pace();
                 let matched = read
@@ -576,9 +592,7 @@ mod linux {
                         s.force_hz == Some(asked) && !s.force_active && s.advertised_hz == native
                     })
                     .unwrap_or(false);
-                let off_ok = dev
-                    .set_emit_pace(EmitPace::Learned, RenderMode::Off, None)
-                    .is_ok();
+                let off_ok = dev.set_emit_pace(EmitPace::Learned, None).is_ok();
                 std::thread::sleep(Duration::from_millis(60));
                 let read_off = dev.query_emit_pace();
                 let off_matched = read_off

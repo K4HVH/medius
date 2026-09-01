@@ -4,6 +4,7 @@ use crate::error::Result;
 use crate::protocol::FrameType;
 use crate::protocol::command::{
     bearing_payload, emit_pace_payload, imperfect_payload, move_ride_payload, name_payload,
+    render_payload,
 };
 use crate::types::{BearingMode, EmitPace, RenderMode};
 
@@ -26,7 +27,7 @@ pub(crate) fn ride_window_ms(window: Option<Duration>) -> u16 {
 /// The bearing window a box boots with, before any host sets one.
 pub const BEARING_WINDOW_DEFAULT: Duration = Duration::from_millis(20);
 
-/// Encode an [`EmitPace`] to the wire `(mode, rate_hz)`: `Fixed(hz)` carries its rate, the other paces send 0. The render mode is its own wire field, not part of this byte.
+/// Encode an [`EmitPace`] to the wire `(mode, rate_hz)`: `Fixed(hz)` carries its rate, the other paces send 0.
 pub(crate) fn emit_pace_wire(pace: EmitPace) -> (u8, u16) {
     match pace {
         EmitPace::Learned => (0, 0),
@@ -79,21 +80,37 @@ impl Device {
         )
     }
 
-    /// `OPTION(EMIT)`: set the pace ([`EmitPace`], the rate ceiling), the [`RenderMode`] composing onto it, and the forced wire rate (`force_hz`); persisted in NVS.
+    /// `OPTION(EMIT)`: set the pace ([`EmitPace`], the rate ceiling) and the forced wire rate (`force_hz`); persisted in NVS.
     ///
     /// A non-zero `force_hz` re-clones the box to advertise a `bInterval` the device did not (needs
     /// [`allow_imperfect_clones`](Self::allow_imperfect_clones)), snapping to `1000/n` Hz; `Some(0)`/`None` is off.
-    pub fn set_emit_pace(
-        &self,
-        pace: EmitPace,
-        render: RenderMode,
-        force_hz: Option<u16>,
-    ) -> Result<()> {
+    pub fn set_emit_pace(&self, pace: EmitPace, force_hz: Option<u16>) -> Result<()> {
         let (mode, hz) = emit_pace_wire(pace);
         self.link.send(
             FrameType::Option,
-            &emit_pace_payload(mode, hz, force_hz.unwrap_or(0), render.to_wire()),
+            &emit_pace_payload(mode, hz, force_hz.unwrap_or(0)),
         )
+    }
+
+    /// `OPTION(RENDER)`: set the texture motion is drawn with, and whether the device's own motion is
+    /// drawn by the model too rather than relayed; persisted in NVS.
+    ///
+    /// `full` puts the smoother's group delay and one frame on physical mouse movement, roughly 3 ms,
+    /// in exchange for the injected and native streams being one stream on the wire. It is off by
+    /// default. Nothing is drawn until the box has learned a profile for the attached device; until
+    /// then motion is relayed and injection takes the paced fill
+    /// ([`RenderStatus::ready`](crate::RenderStatus)).
+    ///
+    /// ```no_run
+    /// # use medius::{Device, RenderMode, Result};
+    /// # fn main() -> Result<()> {
+    /// let device = Device::find()?;
+    /// device.set_render(RenderMode::Despiked, true)?;
+    /// # Ok(()) }
+    /// ```
+    pub fn set_render(&self, mode: RenderMode, full: bool) -> Result<()> {
+        self.link
+            .send(FrameType::Option, &render_payload(mode.to_wire(), full))
     }
 
     /// `OPTION(NAME)`: set the box's persistent name (leading printable-ASCII run, capped at [`NAME_MAX`] bytes); read it back off [`query_version`](Device::query_version). Persisted in NVS.

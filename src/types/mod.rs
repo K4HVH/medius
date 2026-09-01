@@ -23,6 +23,7 @@ mod mouse_caps;
 mod port;
 mod rate;
 mod reboot;
+mod render;
 mod stats;
 mod update;
 mod usage;
@@ -41,7 +42,7 @@ pub use clock::{ClockDomain, ClockEstimate, Stamped, Timeline, Timestamped};
 pub use counters::CountersSnapshot;
 pub use device_info::{DeviceInfo, DeviceKind};
 pub use direction::Direction;
-pub use emit_pace::{EmitPace, EmitPaceStatus, RenderMode};
+pub use emit_pace::{EmitPace, EmitPaceStatus};
 pub use event::{BusEvent, CatchEvent, ControlStatus, MotionEvent, TrafficEvent, UsageSnapshot};
 pub use health::Health;
 pub use imperfect::ImperfectStatus;
@@ -57,6 +58,7 @@ pub use mouse_caps::MouseCaps;
 pub use port::PortInfo;
 pub use rate::Rate;
 pub use reboot::RebootTarget;
+pub use render::{RenderMode, RenderStatus};
 pub use stats::Stats;
 pub use update::{
     ChipFirmware, FirmwareInfo, ImageState, UpdateProgress, UpdateStatus, UpdateTarget,
