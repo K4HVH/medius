@@ -860,7 +860,7 @@ pub extern "C" fn medius_default_keepalive_cadence_ms() -> u32 {
 /// The C ABI version, bumped on any breaking change to this header.
 #[unsafe(no_mangle)]
 pub extern "C" fn medius_abi_version() -> u32 {
-    7
+    6
 }
 
 /// The medius-capi crate version as a static NUL-terminated string.
