@@ -224,20 +224,9 @@ impl AsyncDevice {
         self.dev().set_movement_riding(window)
     }
 
-    /// `OPTION(BEARING)`: what `With`/`Against` are measured against. Instant; see [`Device::set_bearing`].
-    pub fn set_bearing(&self, window: Option<Duration>, mode: BearingMode) -> Result<()> {
-        self.dev().set_bearing(window, mode)
-    }
-
     /// `OPTION(EMIT)`: emit-rate pacing and the forced wire rate. Instant; see [`Device::set_emit_pace`].
     pub fn set_emit_pace(&self, pace: EmitPace, force_hz: Option<u16>) -> Result<()> {
         self.dev().set_emit_pace(pace, force_hz)
-    }
-
-    /// `OPTION(RENDER)`: what motion is rendered with, and whether the device's own goes through it.
-    /// Instant; see [`Device::set_render`].
-    pub fn set_render(&self, mode: RenderMode, full: bool) -> Result<()> {
-        self.dev().set_render(mode, full)
     }
 
     /// `OPTION(NAME)`: set the box's persistent name. Instant; see [`Device::set_name`].
@@ -248,6 +237,17 @@ impl AsyncDevice {
     /// `OPTION(NAME)` clear: revert to the synthesised default. Instant; see [`Device::clear_name`].
     pub fn clear_name(&self) -> Result<()> {
         self.dev().clear_name()
+    }
+
+    /// `OPTION(BEARING)`: what `With`/`Against` are measured against. Instant; see [`Device::set_bearing`].
+    pub fn set_bearing(&self, window: Option<Duration>, mode: BearingMode) -> Result<()> {
+        self.dev().set_bearing(window, mode)
+    }
+
+    /// `OPTION(RENDER)`: what motion is rendered with, and whether the device's own goes through it.
+    /// Instant; see [`Device::set_render`].
+    pub fn set_render(&self, mode: RenderMode, full: bool) -> Result<()> {
+        self.dev().set_render(mode, full)
     }
 
     /// Query the box version, awaiting the correlated `RESP` with the default timeout.
@@ -454,18 +454,6 @@ impl AsyncDevice {
         }
     }
 
-    /// Query the bearing (§4.14), awaiting the correlated `RESP`.
-    pub async fn query_bearing(&self) -> Result<Bearing> {
-        let payload = self
-            .link
-            .query_option_async(OPT_BEARING, self.link.query_timeout_default())
-            .await?;
-        match parse_resp(&payload) {
-            Some(Resp::Bearing(b)) => Ok(b),
-            _ => Err(Error::NoReply),
-        }
-    }
-
     /// Query the emit-rate pacing mode + the rate in effect (§4.14), awaiting the correlated `RESP`.
     pub async fn query_emit_pace(&self) -> Result<EmitPaceStatus> {
         let payload = self
@@ -474,6 +462,18 @@ impl AsyncDevice {
             .await?;
         match parse_resp(&payload) {
             Some(Resp::EmitPace(s)) => Ok(s),
+            _ => Err(Error::NoReply),
+        }
+    }
+
+    /// Query the bearing (§4.14), awaiting the correlated `RESP`.
+    pub async fn query_bearing(&self) -> Result<Bearing> {
+        let payload = self
+            .link
+            .query_option_async(OPT_BEARING, self.link.query_timeout_default())
+            .await?;
+        match parse_resp(&payload) {
+            Some(Resp::Bearing(b)) => Ok(b),
             _ => Err(Error::NoReply),
         }
     }

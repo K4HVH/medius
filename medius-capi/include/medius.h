@@ -138,6 +138,24 @@ typedef int32_t MediusStatus;
 #endif // __STDC_VERSION__ >= 202311L
 #endif // __cplusplus
 
+// What paces injected motion.
+enum MediusEmitMode
+#if defined(__cplusplus) || __STDC_VERSION__ >= 202311L
+  : uint8_t
+#endif // defined(__cplusplus) || __STDC_VERSION__ >= 202311L
+ {
+    MEDIUS_EMIT_MODE_LEARNED = 0,
+    MEDIUS_EMIT_MODE_INTERVAL = 1,
+    MEDIUS_EMIT_MODE_FIXED = 2,
+};
+#ifndef __cplusplus
+#if __STDC_VERSION__ >= 202311L
+typedef enum MediusEmitMode MediusEmitMode;
+#else
+typedef uint8_t MediusEmitMode;
+#endif // __STDC_VERSION__ >= 202311L
+#endif // __cplusplus
+
 // How the box reads whether physical motion runs with or against its own injection.
 enum MediusBearingMode
 #if defined(__cplusplus) || __STDC_VERSION__ >= 202311L
@@ -157,24 +175,6 @@ enum MediusBearingMode
 typedef enum MediusBearingMode MediusBearingMode;
 #else
 typedef uint8_t MediusBearingMode;
-#endif // __STDC_VERSION__ >= 202311L
-#endif // __cplusplus
-
-// What paces injected motion.
-enum MediusEmitMode
-#if defined(__cplusplus) || __STDC_VERSION__ >= 202311L
-  : uint8_t
-#endif // defined(__cplusplus) || __STDC_VERSION__ >= 202311L
- {
-    MEDIUS_EMIT_MODE_LEARNED = 0,
-    MEDIUS_EMIT_MODE_INTERVAL = 1,
-    MEDIUS_EMIT_MODE_FIXED = 2,
-};
-#ifndef __cplusplus
-#if __STDC_VERSION__ >= 202311L
-typedef enum MediusEmitMode MediusEmitMode;
-#else
-typedef uint8_t MediusEmitMode;
 #endif // __STDC_VERSION__ >= 202311L
 #endif // __cplusplus
 
@@ -1012,14 +1012,6 @@ typedef struct MediusImperfectStatus {
     uint8_t clone_imperfect;
 } MediusImperfectStatus;
 
-// The configured bearing: what `MEDIUS_DIRECTION_WITH` / `_AGAINST` are measured against.
-typedef struct MediusBearing {
-    // How long the last injected delta's direction stays the bearing, in ms. 0 = never, which
-    // leaves the relative directions inert whatever their scale.
-    uint16_t window_ms;
-    MediusBearingMode mode;
-} MediusBearing;
-
 // Emit-rate pacing mode plus the rate in effect and the rate the clone advertises.
 typedef struct MediusEmitPaceStatus {
     MediusEmitMode mode;
@@ -1032,6 +1024,14 @@ typedef struct MediusEmitPaceStatus {
     // 1 when a forced interval is written into the descriptor being served.
     uint8_t force_active;
 } MediusEmitPaceStatus;
+
+// The configured bearing: what `MEDIUS_DIRECTION_WITH` / `_AGAINST` are measured against.
+typedef struct MediusBearing {
+    // How long the last injected delta's direction stays the bearing, in ms. 0 = never, which
+    // leaves the relative directions inert whatever their scale.
+    uint16_t window_ms;
+    MediusBearingMode mode;
+} MediusBearing;
 
 // What the box renders motion with, whether the device's own motion goes through it, and whether a
 // profile has been learned for the attached device.
@@ -1601,6 +1601,20 @@ MediusStatus medius_device_set_movement_riding(struct MediusDevice *dev,
                                                bool enabled,
                                                uint32_t window_ms);
 
+// Set what paces injected motion and what rate the clone runs at; `hz` is the target rate for `Fixed`
+// and ignored otherwise, `force_hz` is the forced wire rate (0 = the device's own). `mode` takes a
+// `MEDIUS_EMIT_MODE_*` constant; any other value is `MEDIUS_STATUS_ERR_INVALID_ARG`.
+MediusStatus medius_device_set_emit_pace(struct MediusDevice *dev,
+                                         uint8_t mode,
+                                         uint16_t hz,
+                                         uint16_t force_hz);
+
+// Set the box's persistent name (`name`, NUL-terminated UTF-8); an empty string clears it.
+MediusStatus medius_device_set_name(struct MediusDevice *dev, const char *name);
+
+// Clear the box's custom name, reverting it to its synthesised `Medius-XXXX` default.
+MediusStatus medius_device_clear_name(struct MediusDevice *dev);
+
 // Set the bearing: what `MEDIUS_DIRECTION_WITH` / `_AGAINST` are measured against. `window_ms` is how
 // long the last injected delta's direction stays the bearing; 0 turns it off, leaving the relative
 // directions inert whatever their scale. The box boots at `MEDIUS_BEARING_WINDOW_DEFAULT_MS`.
@@ -1612,14 +1626,6 @@ MediusStatus medius_device_set_bearing(struct MediusDevice *dev,
                                        uint16_t window_ms,
                                        uint8_t mode);
 
-// Set what paces injected motion and what rate the clone runs at; `hz` is the target rate for `Fixed`
-// and ignored otherwise, `force_hz` is the forced wire rate (0 = the device's own). `mode` takes a
-// `MEDIUS_EMIT_MODE_*` constant; any other value is `MEDIUS_STATUS_ERR_INVALID_ARG`.
-MediusStatus medius_device_set_emit_pace(struct MediusDevice *dev,
-                                         uint8_t mode,
-                                         uint16_t hz,
-                                         uint16_t force_hz);
-
 // Set the texture the box renders motion with, and whether the device's own motion is rendered by the
 // model rather than relayed. `mode` takes a `MEDIUS_RENDER_MODE_*` constant and any other value is
 // `MEDIUS_STATUS_ERR_INVALID_ARG`. Rendering adds a small amount of latency, which reaches the mouse's
@@ -1627,12 +1633,6 @@ MediusStatus medius_device_set_emit_pace(struct MediusDevice *dev,
 MediusStatus medius_device_set_render(struct MediusDevice *dev,
                                       uint8_t mode,
                                       bool full);
-
-// Set the box's persistent name (`name`, NUL-terminated UTF-8); an empty string clears it.
-MediusStatus medius_device_set_name(struct MediusDevice *dev, const char *name);
-
-// Clear the box's custom name, reverting it to its synthesised `Medius-XXXX` default.
-MediusStatus medius_device_clear_name(struct MediusDevice *dev);
 
 MediusStatus medius_device_query_version(struct MediusDevice *dev, struct MediusVersion *out);
 
@@ -1672,9 +1672,6 @@ MediusStatus medius_device_query_catch(struct MediusDevice *dev, struct MediusCa
 MediusStatus medius_device_query_imperfect(struct MediusDevice *dev,
                                            struct MediusImperfectStatus *out);
 
-// Query the bearing into `*out`.
-MediusStatus medius_device_query_bearing(struct MediusDevice *dev, struct MediusBearing *out);
-
 // Query the movement-riding window into `*out_enabled` and `*out_window_ms` (0 when off).
 MediusStatus medius_device_query_movement_riding(struct MediusDevice *dev,
                                                  bool *out_enabled,
@@ -1682,6 +1679,9 @@ MediusStatus medius_device_query_movement_riding(struct MediusDevice *dev,
 
 MediusStatus medius_device_query_emit_pace(struct MediusDevice *dev,
                                            struct MediusEmitPaceStatus *out);
+
+// Query the bearing into `*out`.
+MediusStatus medius_device_query_bearing(struct MediusDevice *dev, struct MediusBearing *out);
 
 MediusStatus medius_device_query_render(struct MediusDevice *dev, struct MediusRenderStatus *out);
 

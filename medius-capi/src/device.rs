@@ -558,6 +558,48 @@ pub unsafe extern "C" fn medius_device_set_movement_riding(
     with_device(dev, |d| d.set_movement_riding(window))
 }
 
+/// Set what paces injected motion and what rate the clone runs at; `hz` is the target rate for `Fixed`
+/// and ignored otherwise, `force_hz` is the forced wire rate (0 = the device's own). `mode` takes a
+/// `MEDIUS_EMIT_MODE_*` constant; any other value is `MEDIUS_STATUS_ERR_INVALID_ARG`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn medius_device_set_emit_pace(
+    dev: *mut MediusDevice,
+    mode: u8,
+    hz: u16,
+    force_hz: u16,
+) -> MediusStatus {
+    let Some(pace) = emit_pace_from_c(mode, hz) else {
+        return fail(MediusStatus::ErrInvalidArg, "invalid emit pacing mode");
+    };
+    with_device(dev, |d| {
+        d.set_emit_pace(pace, (force_hz != 0).then_some(force_hz))
+    })
+}
+
+/// Set the box's persistent name (`name`, NUL-terminated UTF-8); an empty string clears it.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn medius_device_set_name(
+    dev: *mut MediusDevice,
+    name: *const c_char,
+) -> MediusStatus {
+    guard_status(|| {
+        if dev.is_null() || name.is_null() {
+            return fail(MediusStatus::ErrInvalidArg, "null pointer");
+        }
+        let Ok(s) = (unsafe { CStr::from_ptr(name) }).to_str() else {
+            return fail(MediusStatus::ErrInvalidArg, "name is not valid UTF-8");
+        };
+        let d = unsafe { &(*dev).inner };
+        status_of(d.set_name(s))
+    })
+}
+
+/// Clear the box's custom name, reverting it to its synthesised `Medius-XXXX` default.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn medius_device_clear_name(dev: *mut MediusDevice) -> MediusStatus {
+    with_device(dev, |d| d.clear_name())
+}
+
 /// Set the bearing: what `MEDIUS_DIRECTION_WITH` / `_AGAINST` are measured against. `window_ms` is how
 /// long the last injected delta's direction stays the bearing; 0 turns it off, leaving the relative
 /// directions inert whatever their scale. The box boots at `MEDIUS_BEARING_WINDOW_DEFAULT_MS`.
@@ -583,24 +625,6 @@ pub unsafe extern "C" fn medius_device_set_bearing(
     })
 }
 
-/// Set what paces injected motion and what rate the clone runs at; `hz` is the target rate for `Fixed`
-/// and ignored otherwise, `force_hz` is the forced wire rate (0 = the device's own). `mode` takes a
-/// `MEDIUS_EMIT_MODE_*` constant; any other value is `MEDIUS_STATUS_ERR_INVALID_ARG`.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn medius_device_set_emit_pace(
-    dev: *mut MediusDevice,
-    mode: u8,
-    hz: u16,
-    force_hz: u16,
-) -> MediusStatus {
-    let Some(pace) = emit_pace_from_c(mode, hz) else {
-        return fail(MediusStatus::ErrInvalidArg, "invalid emit pacing mode");
-    };
-    with_device(dev, |d| {
-        d.set_emit_pace(pace, (force_hz != 0).then_some(force_hz))
-    })
-}
-
 /// Set the texture the box renders motion with, and whether the device's own motion is rendered by the
 /// model rather than relayed. `mode` takes a `MEDIUS_RENDER_MODE_*` constant and any other value is
 /// `MEDIUS_STATUS_ERR_INVALID_ARG`. Rendering adds a small amount of latency, which reaches the mouse's
@@ -615,30 +639,6 @@ pub unsafe extern "C" fn medius_device_set_render(
         return fail(MediusStatus::ErrInvalidArg, "invalid render mode");
     };
     with_device(dev, |d| d.set_render(mode, full))
-}
-
-/// Set the box's persistent name (`name`, NUL-terminated UTF-8); an empty string clears it.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn medius_device_set_name(
-    dev: *mut MediusDevice,
-    name: *const c_char,
-) -> MediusStatus {
-    guard_status(|| {
-        if dev.is_null() || name.is_null() {
-            return fail(MediusStatus::ErrInvalidArg, "null pointer");
-        }
-        let Ok(s) = (unsafe { CStr::from_ptr(name) }).to_str() else {
-            return fail(MediusStatus::ErrInvalidArg, "name is not valid UTF-8");
-        };
-        let d = unsafe { &(*dev).inner };
-        status_of(d.set_name(s))
-    })
-}
-
-/// Clear the box's custom name, reverting it to its synthesised `Medius-XXXX` default.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn medius_device_clear_name(dev: *mut MediusDevice) -> MediusStatus {
-    with_device(dev, |d| d.clear_name())
 }
 
 #[unsafe(no_mangle)]
@@ -770,15 +770,6 @@ pub unsafe extern "C" fn medius_device_query_imperfect(
     query(dev, out, |d| d.query_imperfect())
 }
 
-/// Query the bearing into `*out`.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn medius_device_query_bearing(
-    dev: *mut MediusDevice,
-    out: *mut MediusBearing,
-) -> MediusStatus {
-    query(dev, out, |d| d.query_bearing())
-}
-
 /// Query the movement-riding window into `*out_enabled` and `*out_window_ms` (0 when off).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_device_query_movement_riding(
@@ -815,6 +806,15 @@ pub unsafe extern "C" fn medius_device_query_emit_pace(
     out: *mut MediusEmitPaceStatus,
 ) -> MediusStatus {
     query(dev, out, |d| d.query_emit_pace())
+}
+
+/// Query the bearing into `*out`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn medius_device_query_bearing(
+    dev: *mut MediusDevice,
+    out: *mut MediusBearing,
+) -> MediusStatus {
+    query(dev, out, |d| d.query_bearing())
 }
 
 #[unsafe(no_mangle)]

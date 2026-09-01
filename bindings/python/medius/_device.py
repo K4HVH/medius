@@ -256,6 +256,24 @@ class Device:
             )
         )
 
+    def set_emit_pace(self, pace: EmitPace, force_hz: Optional[int] = None):
+        """Set what paces injected motion (`hz` matters only for `EmitPace.fixed`) and what rate the
+        clone advertises and the box polls the device at (`force_hz`, None = the device's own)."""
+        mode = _enum(pace.mode, EmitMode, "mode")
+        check(
+            _native.lib.medius_device_set_emit_pace(
+                self._handle, int(mode), _u16(pace.hz, "hz"), _u16(force_hz or 0, "force_hz"),
+            )
+        )
+
+    def set_name(self, name: str):
+        """Set the box's persistent human-readable name; an empty string clears it."""
+        check(_native.lib.medius_device_set_name(self._handle, name.encode("utf-8")))
+
+    def clear_name(self):
+        """Clear the custom name, reverting the box to its synthesised `Medius-XXXX` default."""
+        check(_native.lib.medius_device_clear_name(self._handle))
+
     def set_bearing(self, window_ms: Optional[int], mode: BearingMode):
         """Set what `Direction.WITH` and `Direction.AGAINST` are measured against.
 
@@ -273,16 +291,6 @@ class Device:
             )
         )
 
-    def set_emit_pace(self, pace: EmitPace, force_hz: Optional[int] = None):
-        """Set what paces injected motion (`hz` matters only for `EmitPace.fixed`) and what rate the
-        clone advertises and the box polls the device at (`force_hz`, None = the device's own)."""
-        mode = _enum(pace.mode, EmitMode, "mode")
-        check(
-            _native.lib.medius_device_set_emit_pace(
-                self._handle, int(mode), _u16(pace.hz, "hz"), _u16(force_hz or 0, "force_hz"),
-            )
-        )
-
     def set_render(self, mode: RenderMode, full: bool):
         """Set the texture the box renders motion with, and whether the device's own motion is rendered by
         the model rather than relayed.
@@ -293,14 +301,6 @@ class Device:
         box has learned a profile for the attached device (`RenderStatus.ready`)."""
         mode = _enum(mode, RenderMode, "mode")
         check(_native.lib.medius_device_set_render(self._handle, int(mode), bool(full)))
-
-    def set_name(self, name: str):
-        """Set the box's persistent human-readable name; an empty string clears it."""
-        check(_native.lib.medius_device_set_name(self._handle, name.encode("utf-8")))
-
-    def clear_name(self):
-        """Clear the custom name, reverting the box to its synthesised `Medius-XXXX` default."""
-        check(_native.lib.medius_device_clear_name(self._handle))
 
     def query_version(self) -> Version:
         out = _native.MediusVersion()
@@ -384,12 +384,6 @@ class Device:
         check(_native.lib.medius_device_query_locks(self._handle, ctypes.byref(out)))
         return locks_from_c(out)
 
-    def query_bearing(self) -> Bearing:
-        """The configured bearing: its window and how it is read."""
-        out = _native.MediusBearing()
-        check(_native.lib.medius_device_query_bearing(self._handle, ctypes.byref(out)))
-        return bearing_from_c(out)
-
     def query_catch(self) -> CatchState:
         out = _native.MediusCatchState()
         check(_native.lib.medius_device_query_catch(self._handle, ctypes.byref(out)))
@@ -415,6 +409,12 @@ class Device:
         out = _native.MediusEmitPaceStatus()
         check(_native.lib.medius_device_query_emit_pace(self._handle, ctypes.byref(out)))
         return emit_pace_status_from_c(out)
+
+    def query_bearing(self) -> Bearing:
+        """The configured bearing: its window and how it is read."""
+        out = _native.MediusBearing()
+        check(_native.lib.medius_device_query_bearing(self._handle, ctypes.byref(out)))
+        return bearing_from_c(out)
 
     def query_render(self) -> RenderStatus:
         out = _native.MediusRenderStatus()

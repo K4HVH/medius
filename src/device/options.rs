@@ -53,6 +53,27 @@ impl Device {
         )
     }
 
+    /// `OPTION(EMIT)`: set the pace ([`EmitPace`], the rate ceiling) and the forced wire rate (`force_hz`); persisted in NVS.
+    ///
+    /// A non-zero `force_hz` re-clones the box to advertise a `bInterval` the device did not (needs
+    /// [`allow_imperfect_clones`](Self::allow_imperfect_clones)), snapping to `1000/n` Hz; `Some(0)`/`None` is off.
+    pub fn set_emit_pace(&self, pace: EmitPace, force_hz: Option<u16>) -> Result<()> {
+        let (mode, hz) = emit_pace_wire(pace);
+        self.link.send(
+            FrameType::Option,
+            &emit_pace_payload(mode, hz, force_hz.unwrap_or(0)),
+        )
+    }
+
+    /// `OPTION(NAME)`: set the box's persistent name (leading printable-ASCII run, capped at [`NAME_MAX`] bytes); read it back off [`query_version`](Device::query_version). Persisted in NVS.
+    pub fn set_name(&self, name: &str) -> Result<()> {
+        self.link.send(FrameType::Option, &name_payload(name))
+    }
+
+    /// `OPTION(NAME)` with an empty value: clear the custom name, reverting the box to its synthesised `Medius-XXXX` default.
+    pub fn clear_name(&self) -> Result<()> {
+        self.set_name("")
+    }
     /// `OPTION(BEARING)`: how long the direction of the last injected delta stays the thing
     /// [`Direction::With`](crate::Direction) and [`Direction::Against`](crate::Direction) are measured
     /// against, and whether it is read per axis or as one vector; persisted in NVS.
@@ -80,18 +101,6 @@ impl Device {
         )
     }
 
-    /// `OPTION(EMIT)`: set the pace ([`EmitPace`], the rate ceiling) and the forced wire rate (`force_hz`); persisted in NVS.
-    ///
-    /// A non-zero `force_hz` re-clones the box to advertise a `bInterval` the device did not (needs
-    /// [`allow_imperfect_clones`](Self::allow_imperfect_clones)), snapping to `1000/n` Hz; `Some(0)`/`None` is off.
-    pub fn set_emit_pace(&self, pace: EmitPace, force_hz: Option<u16>) -> Result<()> {
-        let (mode, hz) = emit_pace_wire(pace);
-        self.link.send(
-            FrameType::Option,
-            &emit_pace_payload(mode, hz, force_hz.unwrap_or(0)),
-        )
-    }
-
     /// `OPTION(RENDER)`: set the texture motion is rendered with, and whether the device's own motion is
     /// rendered by the model too rather than relayed; persisted in NVS.
     ///
@@ -112,13 +121,4 @@ impl Device {
             .send(FrameType::Option, &render_payload(mode.to_wire(), full))
     }
 
-    /// `OPTION(NAME)`: set the box's persistent name (leading printable-ASCII run, capped at [`NAME_MAX`] bytes); read it back off [`query_version`](Device::query_version). Persisted in NVS.
-    pub fn set_name(&self, name: &str) -> Result<()> {
-        self.link.send(FrameType::Option, &name_payload(name))
-    }
-
-    /// `OPTION(NAME)` with an empty value: clear the custom name, reverting the box to its synthesised `Medius-XXXX` default.
-    pub fn clear_name(&self) -> Result<()> {
-        self.set_name("")
-    }
 }
