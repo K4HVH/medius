@@ -288,10 +288,9 @@ class Device:
         the model rather than relayed.
 
         Both ride one command and both persist, so `full` is required: an omitted one would silently
-        rewrite a setting you did not name. `full` costs the smoother's group delay plus one
-        frame on physical mouse movement, about 3 ms on DESPIKED, 5 on STOCK and 1 on UNSMOOTHED, and
-        is off by default. Nothing is rendered until the box has learned a profile for the
-        attached device (`RenderStatus.ready`)."""
+        rewrite a setting you did not name. Rendering adds a small amount of latency, which reaches the
+        mouse's own motion when `full` is on, so `full` is off by default. Nothing is rendered until the
+        box has learned a profile for the attached device (`RenderStatus.ready`)."""
         mode = _enum(mode, RenderMode, "mode")
         check(_native.lib.medius_device_set_render(self._handle, int(mode), bool(full)))
 
