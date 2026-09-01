@@ -3,6 +3,8 @@
 /// The texture the box renders motion with (`OPTION(RENDER)`'s `mode`). [`Off`](RenderMode::Off) is the
 /// paced fill; the others render the device's learned report texture and differ only in the onboard path
 /// smoother. Independent of the [`EmitPace`](crate::EmitPace) beside it, which caps the rendered rate.
+///
+/// The model on the box is [ABCurves](https://github.com/optima-manent/ABCurves) (MIT).
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum RenderMode {
