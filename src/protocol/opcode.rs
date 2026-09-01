@@ -45,7 +45,7 @@ pub const Q_OPTIONS: u8 = 9;
 pub const OPT_IMPERFECT: u8 = 0;
 /// `OPTION` id: movement riding. Value `[timeout u16 LE ms]`; 0 = off, N = ride window in ms.
 pub const OPT_MOVE_RIDE: u8 = 1;
-/// `OPTION` id: emit-rate pacing. Value `[mode u8][rate_hz u16 LE][force_hz u16 LE][render u8]`; mode 0 learnt / 1 bInterval / 2 fixed.
+/// `OPTION` id: emit-rate pacing. Value `[mode u8][rate_hz u16 LE][force_hz u16 LE]`; mode 0 learnt / 1 bInterval / 2 fixed.
 pub const OPT_EMIT: u8 = 2;
 /// `OPTION` id: box name. Value `[name ascii]` 1..32 printable ASCII (0 bytes clears to default); set-only, read off `RESP(VERSION)`.
 pub const OPT_NAME: u8 = 3;

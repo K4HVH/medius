@@ -69,7 +69,7 @@ pub fn emit_pace_payload(mode: u8, hz: u16, force_hz: u16) -> [u8; 6] {
     [OPT_EMIT, mode, h[0], h[1], f[0], f[1]]
 }
 
-/// `OPTION(RENDER)` (§3.14): `[id=5][mode u8][full u8]`; mode 0 off / 1 stock / 2 de-spiked / 3 unsmoothed.
+/// `OPTION(RENDER)` (§3.10): `[id=5][mode u8][full u8]`; mode 0 off / 1 stock / 2 de-spiked / 3 unsmoothed.
 pub fn render_payload(mode: u8, full: bool) -> [u8; 3] {
     [OPT_RENDER, mode, full as u8]
 }

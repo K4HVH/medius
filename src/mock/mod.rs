@@ -566,6 +566,7 @@ fn options_bearing_payload(b: Bearing) -> Vec<u8> {
 fn options_emit_payload(
     pace: EmitPace,
     render: RenderMode,
+    render_ready: bool,
     force_hz: Option<u16>,
     native_hz: u16,
     allowed: bool,
@@ -583,9 +584,12 @@ fn options_emit_payload(
             (2, hz, (1000 / n) as u16)
         }
     };
-    // Rendered rides its own field beside the pace, but only forces resolved to 1 kHz when the pace
-    // has no rate of its own (Learned); a Fixed rate keeps its snapped value.
-    if render != RenderMode::Off && matches!(pace, EmitPace::Learned) {
+    // The texture rides its own option beside the pace, but only forces resolved to 1 kHz when the
+    // pace has no rate of its own (Learned); a Fixed rate keeps its snapped value. The box gates this
+    // on a profile having ARMED, not on the mode being set: until then it runs the paced fill and
+    // reports 0 (usbdev.c's emit_gate_period). A mock that answered 1000 regardless would green-light
+    // host code that reads resolved_hz as "the renderer is emitting".
+    if render != RenderMode::Off && render_ready && matches!(pace, EmitPace::Learned) {
         resolved = 1000;
     }
     // The box resolves a forced rate to a bInterval in whole 1 ms frames and advertises 1000/n, so a
@@ -944,6 +948,7 @@ impl MockBox {
                                 &options_emit_payload(
                                     st.emit_pace,
                                     st.render_mode,
+                                    st.render_ready,
                                     st.emit_force_hz,
                                     st.advertised_hz,
                                     st.imperfect.allowed,

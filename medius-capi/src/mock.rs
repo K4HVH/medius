@@ -214,6 +214,25 @@ pub unsafe extern "C" fn medius_mock_set_emit_pace(
     });
 }
 
+/// Set what the mock answers to an OPTION(RENDER) query: the texture, whether the device's own motion
+/// goes through it, and whether a profile has armed. `mode` takes a `MEDIUS_RENDER_MODE_*` constant;
+/// any other value leaves the texture alone. `ready` is what gates drawing on a real box, so a mock
+/// left unarmed is the state every box passes through after a power cut.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn medius_mock_set_render(
+    mock: *mut MediusMockBox,
+    mode: u8,
+    full: bool,
+    ready: bool,
+) {
+    with_mock(mock, |m| {
+        if let Some(mode) = medius::RenderMode::from_u8(mode) {
+            let _ = m.clone().with_render(mode, full);
+        }
+        let _ = m.clone().with_render_ready(ready);
+    });
+}
+
 /// Set the rate the mock's clone advertises unforced, in Hz; 0 means no clone.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_mock_set_advertised_hz(mock: *mut MediusMockBox, hz: u16) {

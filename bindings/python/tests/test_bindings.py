@@ -11,6 +11,7 @@ import pytest
 import medius
 from medius import (
     RenderMode,
+    RenderStatus,
     Axis,
     BadProtoVerError,
     BEARING_WINDOW_DEFAULT_MS,
@@ -597,7 +598,8 @@ def test_movement_riding_roundtrip():
 
 def test_emit_pace_roundtrip():
     with MockBox() as mock:
-        # The box's factory texture is De-spiked, so a Learned pace still reports the 1 ms tick.
+        # The box's factory texture is De-spiked, but nothing is drawn until a profile arms, so a
+        # Learned pace reports the learnt cap rather than the 1 ms tick.
         mock.set_emit_pace(EmitPace.fixed(500))
         with Device.with_mock(mock) as d:
             status = d.query_emit_pace()
@@ -607,7 +609,12 @@ def test_emit_pace_roundtrip():
         with Device.with_mock(mock) as d:
             status = d.query_emit_pace()
         assert status.mode == EmitPace.learned()
-        assert status.resolved_hz == 1000  # a drawn stream onto Learned forces the 1 ms tick
+        assert status.resolved_hz == 0
+        # Armed, the drawn stream self-paces every millisecond and says so.
+        mock.set_render(RenderMode.DESPIKED, False, True)
+        with Device.with_mock(mock) as d:
+            assert d.query_emit_pace().resolved_hz == 1000
+        mock.set_render(RenderMode.DESPIKED, False, False)
         assert status.force_hz is None
         assert status.force_active is False
         assert status.advertised_hz == 0  # 0 = no clone, the documented sentinel
@@ -626,15 +633,26 @@ def test_render_roundtrip():
                 d.set_render(mode, full)
                 status = d.query_render()
                 assert (status.mode, status.full) == (mode, full)
-        # A drawn stream onto Learned forces the 1 ms tick; onto a Fixed rate the snapped value stands.
+        # The box gates the 1 ms tick on a profile having ARMED, not on the mode being set: a box told
+        # to draw but still waiting for one runs the paced fill and reports the learnt cap.
         d.set_render(RenderMode.STOCK, False)
         d.set_emit_pace(EmitPace.learned())
-        assert d.query_emit_pace().resolved_hz == 1000
+        assert d.query_emit_pace().resolved_hz == 0
+        # Onto a Fixed rate the snapped value stands whatever the texture is doing.
         d.set_emit_pace(EmitPace.fixed(250))
         assert d.query_emit_pace().resolved_hz == 250
         d.set_render(RenderMode.OFF, False)
         d.set_emit_pace(EmitPace.learned())
         assert d.query_emit_pace().resolved_hz == 0
+
+    # Armed, a drawn stream on a learnt pace self-paces every millisecond. This is the half that
+    # discriminates: without it the reply reads the same whether the renderer is emitting or the box
+    # is still on the fill.
+    with MockBox() as mock, Device.with_mock(mock) as d:
+        mock.set_render(RenderMode.STOCK, True, True)
+        assert d.query_render() == RenderStatus(RenderMode.STOCK, True, True)
+        d.set_emit_pace(EmitPace.learned())
+        assert d.query_emit_pace().resolved_hz == 1000
         # full has no default: OPTION(RENDER) persists both fields, so an omitted one would silently
         # rewrite a setting the caller never named.
         with pytest.raises(TypeError):
