@@ -2153,6 +2153,13 @@ void medius_mock_set_render(struct MediusMockBox *mock,
 #endif
 
 #if defined(MEDIUS_FEATURE_MOCK)
+// Set the command period the mock has learned, in microseconds. A real box learns it off `MOVE`
+// arrivals and releases nothing across an interval until it has, so a mock left at 0 answers a span
+// of 0 whatever percent is set, which is the state every box starts in.
+void medius_mock_set_spread_learned(struct MediusMockBox *mock, uint32_t period_us);
+#endif
+
+#if defined(MEDIUS_FEATURE_MOCK)
 // Set the rate the mock's clone advertises unforced, in Hz; 0 means no clone.
 void medius_mock_set_advertised_hz(struct MediusMockBox *mock, uint16_t hz);
 #endif

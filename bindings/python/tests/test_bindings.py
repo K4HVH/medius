@@ -634,9 +634,10 @@ def test_spread_roundtrip():
         assert d.query_spread() == SpreadStatus(100, 8000)
         d.set_spread(50)
         assert d.query_spread() == SpreadStatus(50, 4000)
-        # Above 100 overlaps rather than being clamped.
-        d.set_spread(250)
-        assert d.query_spread() == SpreadStatus(250, 20000)
+        # Above 100 overlaps rather than being clamped, and past a byte, so a u8 anywhere in the
+        # ctypes chain fails here rather than round-tripping.
+        d.set_spread(1000)
+        assert d.query_spread() == SpreadStatus(1000, 80000)
         # Off answers no interval even with a period learned.
         d.set_spread(0)
         assert d.query_spread() == SpreadStatus(0, 0)

@@ -73,7 +73,7 @@ pub fn emit_pace_payload(mode: u8, hz: u16, force_hz: u16) -> [u8; 6] {
 pub fn render_payload(mode: u8, full: bool) -> [u8; 3] {
     [OPT_RENDER, mode, full as u8]
 }
-/// `OPTION(SPREAD)` (§3.13): `[id=6][percent u16 LE]`; percent of the learnt command interval.
+/// `OPTION(SPREAD)` (§3.10): `[id=6][percent u16 LE]`; percent of the learnt command interval.
 pub fn spread_payload(percent: u16) -> [u8; 3] {
     let p = percent.to_le_bytes();
     [OPT_SPREAD, p[0], p[1]]
