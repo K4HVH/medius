@@ -641,6 +641,18 @@ pub unsafe extern "C" fn medius_device_set_render(
     with_device(dev, |d| d.set_render(mode, full))
 }
 
+/// Set the percent of the host's command interval an injected delta is released across. 0 puts the
+/// whole delta on the next report the box emits, 100 releases it across one command interval, and
+/// above 100 overlaps. The box releases nothing across an interval until it has learned the host's
+/// command period from `MOVE` arrivals.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn medius_device_set_spread(
+    dev: *mut MediusDevice,
+    percent: u16,
+) -> MediusStatus {
+    with_device(dev, |d| d.set_spread(percent))
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_device_query_version(
     dev: *mut MediusDevice,
@@ -823,6 +835,14 @@ pub unsafe extern "C" fn medius_device_query_render(
     out: *mut MediusRenderStatus,
 ) -> MediusStatus {
     query(dev, out, |d| d.query_render())
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn medius_device_query_spread(
+    dev: *mut MediusDevice,
+    out: *mut MediusSpreadStatus,
+) -> MediusStatus {
+    query(dev, out, |d| d.query_spread())
 }
 
 #[unsafe(no_mangle)]

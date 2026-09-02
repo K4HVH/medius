@@ -572,6 +572,43 @@ fn the_render_option_reads_back_what_was_set_through_the_boundary() {
 }
 
 #[test]
+fn the_spread_option_reads_back_what_was_set_through_the_boundary() {
+    let mock = medius_mock_new();
+    let mut dev: *mut MediusDevice = ptr::null_mut();
+    assert_eq!(
+        unsafe { medius_device_with_mock(mock, &mut dev) },
+        MediusStatus::Ok
+    );
+    let mut st: MediusSpreadStatus = unsafe { std::mem::zeroed() };
+    // A fresh box boots at the full percent with no command period learned, so it spreads nothing.
+    assert_eq!(
+        unsafe { medius_device_query_spread(dev, &mut st) },
+        MediusStatus::Ok
+    );
+    assert_eq!(st.percent, 100);
+    assert_eq!(st.span_us, 0);
+    // The period is the box's own state, not something the host sets.
+    unsafe { medius_mock_set_spread_learned(mock, 8000) };
+    assert_eq!(
+        unsafe { medius_device_query_spread(dev, &mut st) },
+        MediusStatus::Ok
+    );
+    assert_eq!(st.span_us, 8000);
+    // A percent past 100 overlaps rather than being clamped, and both fields survive the trip.
+    assert_eq!(
+        unsafe { medius_device_set_spread(dev, 250) },
+        MediusStatus::Ok
+    );
+    assert_eq!(
+        unsafe { medius_device_query_spread(dev, &mut st) },
+        MediusStatus::Ok
+    );
+    assert_eq!(st.percent, 250);
+    assert_eq!(st.span_us, 20000);
+    unsafe { medius_device_free(dev) };
+}
+
+#[test]
 fn the_bearing_reads_back_what_was_set_through_the_boundary() {
     let mock = medius_mock_new();
     let mut dev: *mut MediusDevice = ptr::null_mut();

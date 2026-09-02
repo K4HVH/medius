@@ -233,6 +233,14 @@ pub unsafe extern "C" fn medius_mock_set_render(
     });
 }
 
+/// Set the command period the mock has learned, in microseconds. A real box learns it off `MOVE`
+/// arrivals and releases nothing across an interval until it has, so a mock left at 0 answers a span
+/// of 0 whatever percent is set, which is the state every box starts in.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn medius_mock_set_spread_learned(mock: *mut MediusMockBox, period_us: u32) {
+    with_mock(mock, |m| m.set_spread_learned(period_us));
+}
+
 /// Set the rate the mock's clone advertises unforced, in Hz; 0 means no clone.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_mock_set_advertised_hz(mock: *mut MediusMockBox, hz: u16) {

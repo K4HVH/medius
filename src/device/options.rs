@@ -4,7 +4,7 @@ use crate::error::Result;
 use crate::protocol::FrameType;
 use crate::protocol::command::{
     bearing_payload, emit_pace_payload, imperfect_payload, move_ride_payload, name_payload,
-    render_payload,
+    render_payload, spread_payload,
 };
 use crate::types::{BearingMode, EmitPace, RenderMode};
 
@@ -124,5 +124,28 @@ impl Device {
     pub fn set_render(&self, mode: RenderMode, full: bool) -> Result<()> {
         self.link
             .send(FrameType::Option, &render_payload(mode.to_wire(), full))
+    }
+
+    /// `OPTION(SPREAD)`: percent of the host's command interval an injected delta is released
+    /// across; persisted in NVS.
+    ///
+    /// 0 puts the whole delta on the next report the box emits. 100 releases it evenly across one
+    /// command interval. Above 100 overlaps, and is allowed. At a loop matched to the device's
+    /// report rate the interval is one report period, so the emitted stream is what it was.
+    ///
+    /// The box learns the interval from `MOVE` arrivals and releases nothing across one until it
+    /// has ([`SpreadStatus::span_us`](crate::SpreadStatus)). Motion asking for exact timing is
+    /// released at once: [`move_rel_now`](Self::move_rel_now), [`flush_motion`](Self::flush_motion)
+    /// and [`discard_motion`](Self::discard_motion).
+    ///
+    /// ```no_run
+    /// # use medius::{Device, Result};
+    /// # fn main() -> Result<()> {
+    /// let device = Device::find()?;
+    /// device.set_spread(100)?;
+    /// # Ok(()) }
+    /// ```
+    pub fn set_spread(&self, percent: u16) -> Result<()> {
+        self.link.send(FrameType::Option, &spread_payload(percent))
     }
 }

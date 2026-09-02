@@ -3,16 +3,16 @@ use std::time::Duration;
 use crate::error::{Error, Result};
 use crate::link::Link;
 use crate::protocol::opcode::{
-    OPT_BEARING, OPT_EMIT, OPT_IMPERFECT, OPT_MOVE_RIDE, OPT_RENDER, Q_CAPS, Q_CATCH, Q_CLIP,
-    Q_DEVICE_INFO, Q_FIRMWARE, Q_HEALTH, Q_LOCKS, Q_RATE, Q_STATS, Q_VERSION,
+    OPT_BEARING, OPT_EMIT, OPT_IMPERFECT, OPT_MOVE_RIDE, OPT_RENDER, OPT_SPREAD, Q_CAPS, Q_CATCH,
+    Q_CLIP, Q_DEVICE_INFO, Q_FIRMWARE, Q_HEALTH, Q_LOCKS, Q_RATE, Q_STATS, Q_VERSION,
 };
 use crate::protocol::{Resp, parse_resp};
 use crate::types::{
     Action, Axis, Bearing, BearingMode, Blanket, Caps, CatchFilter, CatchState, ClipBuilder,
     ClipSettings, ClipStatus, ClipTrigger, CountersSnapshot, DeviceInfo, Direction, Edge, EmitPace,
     EmitPaceStatus, FirmwareInfo, Health, ImperfectStatus, LedMode, LedTarget, LockTarget, Locks,
-    Motion, MoveTiming, PendingMotion, Rate, RebootTarget, RenderMode, RenderStatus, Stats,
-    UpdateProgress, UpdateTarget, Usage, Version,
+    Motion, MoveTiming, PendingMotion, Rate, RebootTarget, RenderMode, RenderStatus, SpreadStatus,
+    Stats, UpdateProgress, UpdateTarget, Usage, Version,
 };
 
 use super::Device;
@@ -248,6 +248,12 @@ impl AsyncDevice {
     /// Instant; see [`Device::set_render`].
     pub fn set_render(&self, mode: RenderMode, full: bool) -> Result<()> {
         self.dev().set_render(mode, full)
+    }
+
+    /// `OPTION(SPREAD)`: percent of the host's command interval an injected delta is released
+    /// across. Instant; see [`Device::set_spread`].
+    pub fn set_spread(&self, percent: u16) -> Result<()> {
+        self.dev().set_spread(percent)
     }
 
     /// Query the box version, awaiting the correlated `RESP` with the default timeout.
@@ -487,6 +493,19 @@ impl AsyncDevice {
             .await?;
         match parse_resp(&payload) {
             Some(Resp::Render(s)) => Ok(s),
+            _ => Err(Error::NoReply),
+        }
+    }
+
+    /// Query how far an injected delta is spread and the interval in effect (§4.14), awaiting the
+    /// correlated `RESP`.
+    pub async fn query_spread(&self) -> Result<SpreadStatus> {
+        let payload = self
+            .link
+            .query_option_async(OPT_SPREAD, self.link.query_timeout_default())
+            .await?;
+        match parse_resp(&payload) {
+            Some(Resp::Spread(s)) => Ok(s),
             _ => Err(Error::NoReply),
         }
     }

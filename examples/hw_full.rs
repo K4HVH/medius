@@ -573,6 +573,41 @@ mod linux {
         }
 
         {
+            // OPTION(SPREAD): the percent round-trips, and the interval the box reports tracks the
+            // rate this loop actually commands at. Reading the percent back alone would pass a box
+            // that stores the number and spreads nothing, so the discriminating half is span_us
+            // against a loop whose period is known here: 40 MOVEs 4 ms apart is a 250 Hz host.
+            let dev = device.as_ref().unwrap();
+            let mut all_ok = true;
+            let mut last = String::new();
+            for pct in [0u16, 50, 250, 100] {
+                let set_ok = dev.set_spread(pct).is_ok();
+                std::thread::sleep(Duration::from_millis(60));
+                let read = dev.query_spread();
+                let matched = read.as_ref().map(|s| s.percent == pct).unwrap_or(false);
+                all_ok &= set_ok && matched;
+                last = format!("{pct} -> {read:?}");
+            }
+            for _ in 0..40 {
+                let _ = dev.move_rel(1, 0);
+                std::thread::sleep(Duration::from_millis(4));
+            }
+            let learnt = dev.query_spread();
+            // The estimator buckets to 250 us and takes the centre of the fastest cluster, and this
+            // loop's sleep only sets a floor, so the window is generous on the slow side.
+            let span_ok = learnt
+                .as_ref()
+                .map(|s| s.percent == 100 && (3500..=6000).contains(&s.span_us))
+                .unwrap_or(false);
+            check(
+                "spread option",
+                all_ok && span_ok,
+                format!("{last}, 250 Hz loop -> {learnt:?}"),
+            );
+            let _ = dev.discard_motion();
+        }
+
+        {
             // Any force re-clones the box when the imperfect opt-in is on, which would drop the control
             // port mid-suite, so this only runs faithful-only, where the box stores the request and
             // leaves it inert. That is the discriminating half anyway: force_active must stay 0 and

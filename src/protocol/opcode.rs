@@ -53,6 +53,8 @@ pub const OPT_NAME: u8 = 3;
 pub const OPT_BEARING: u8 = 4;
 /// `OPTION` id: what the box renders motion with. Value `[mode u8][full u8]`; mode 0 off / 1 stock / 2 de-spiked / 3 unsmoothed.
 pub const OPT_RENDER: u8 = 5;
+/// `OPTION` id: how far an injected delta is spread across the host's command interval. Value `[percent u16 LE]`.
+pub const OPT_SPREAD: u8 = 6;
 /// `OPTION(BEARING)` mode: each axis reads its own sign against its own bearing.
 pub const BEARING_PER_AXIS: u8 = 0;
 /// `OPTION(BEARING)` mode: the physical delta is projected onto the injected XY vector; motion across it is untouched.
