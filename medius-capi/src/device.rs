@@ -559,7 +559,7 @@ pub unsafe extern "C" fn medius_device_set_movement_riding(
 }
 
 /// Set what paces injected motion and what rate the clone runs at; `hz` is the target rate for `Fixed`
-/// and ignored otherwise, `force_hz` is the forced wire rate (0 = the device's own). `mode` takes a
+/// and ignored otherwise, `force_hz` is the forced wire rate (0 = the native interval). `mode` takes a
 /// `MEDIUS_EMIT_MODE_*` constant; any other value is `MEDIUS_STATUS_ERR_INVALID_ARG`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_device_set_emit_pace(
@@ -625,7 +625,7 @@ pub unsafe extern "C" fn medius_device_set_bearing(
     })
 }
 
-/// Set the texture the box renders motion with, and whether the device's own motion is rendered by the
+/// Set the texture the box renders motion with, and whether native motion is rendered by the
 /// model rather than relayed. `mode` takes a `MEDIUS_RENDER_MODE_*` constant and any other value is
 /// `MEDIUS_STATUS_ERR_INVALID_ARG`. Rendering adds a small amount of latency, which reaches the mouse's
 /// own motion when `full` is on, so `full` is off by default.

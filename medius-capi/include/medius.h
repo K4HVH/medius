@@ -1017,7 +1017,7 @@ typedef struct MediusEmitPaceStatus {
     MediusEmitMode mode;
     uint16_t fixed_hz;
     uint16_t resolved_hz;
-    // The forced wire rate requested, in Hz; 0 leaves the device's own.
+    // The forced wire rate requested, in Hz; 0 leaves the native interval.
     uint16_t force_hz;
     // What the clone's input endpoints advertise now, in Hz; 0 = no clone.
     uint16_t advertised_hz;
@@ -1033,11 +1033,11 @@ typedef struct MediusBearing {
     MediusBearingMode mode;
 } MediusBearing;
 
-// What the box renders motion with, whether the device's own motion goes through it, and whether a
+// What the box renders motion with, whether native motion goes through it, and whether a
 // profile has been learned for the attached device.
 typedef struct MediusRenderStatus {
     MediusRenderMode mode;
-    // 1 when the device's own motion is rendered by the model rather than relayed.
+    // 1 when native motion is rendered by the model rather than relayed.
     uint8_t full;
     // 1 once the box has learned a profile for the attached device. Nothing is rendered until it has.
     uint8_t ready;
@@ -1602,7 +1602,7 @@ MediusStatus medius_device_set_movement_riding(struct MediusDevice *dev,
                                                uint32_t window_ms);
 
 // Set what paces injected motion and what rate the clone runs at; `hz` is the target rate for `Fixed`
-// and ignored otherwise, `force_hz` is the forced wire rate (0 = the device's own). `mode` takes a
+// and ignored otherwise, `force_hz` is the forced wire rate (0 = the native interval). `mode` takes a
 // `MEDIUS_EMIT_MODE_*` constant; any other value is `MEDIUS_STATUS_ERR_INVALID_ARG`.
 MediusStatus medius_device_set_emit_pace(struct MediusDevice *dev,
                                          uint8_t mode,
@@ -1626,7 +1626,7 @@ MediusStatus medius_device_set_bearing(struct MediusDevice *dev,
                                        uint16_t window_ms,
                                        uint8_t mode);
 
-// Set the texture the box renders motion with, and whether the device's own motion is rendered by the
+// Set the texture the box renders motion with, and whether native motion is rendered by the
 // model rather than relayed. `mode` takes a `MEDIUS_RENDER_MODE_*` constant and any other value is
 // `MEDIUS_STATUS_ERR_INVALID_ARG`. Rendering adds a small amount of latency, which reaches the mouse's
 // own motion when `full` is on, so `full` is off by default.
@@ -2124,7 +2124,7 @@ void medius_mock_set_emit_pace(struct MediusMockBox *mock,
 #endif
 
 #if defined(MEDIUS_FEATURE_MOCK)
-// Set what the mock answers to an OPTION(RENDER) query: the texture, whether the device's own motion
+// Set what the mock answers to an OPTION(RENDER) query: the texture, whether native motion
 // goes through it, and whether a profile has armed. `mode` takes a `MEDIUS_RENDER_MODE_*` constant;
 // any other value leaves the texture alone. `ready` is what gates rendering on a real box, so a mock
 // left unarmed is the state every box passes through after a power cut.

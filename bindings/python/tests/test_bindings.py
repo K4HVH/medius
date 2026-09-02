@@ -627,7 +627,7 @@ def test_emit_pace_roundtrip():
 def test_render_roundtrip():
     # The texture is its own command; the pace still reports the gate it implies.
     with MockBox() as mock, Device.with_mock(mock) as d:
-        # The box's factory setting: de-spiked, the device's own motion relayed, nothing learned yet.
+        # The box's factory setting: de-spiked, native motion relayed, nothing learned yet.
         status = d.query_render()
         assert status.mode == RenderMode.DESPIKED
         assert status.full is False

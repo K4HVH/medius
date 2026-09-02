@@ -101,10 +101,10 @@ impl Device {
         )
     }
 
-    /// `OPTION(RENDER)`: set the texture motion is rendered with, and whether the device's own motion is
+    /// `OPTION(RENDER)`: set the texture motion is rendered with, and whether native motion is
     /// rendered by the model too rather than relayed; persisted in NVS.
     ///
-    /// Rendering adds a small amount of latency, which reaches the mouse's own motion when `full` is
+    /// Rendering adds a small amount of latency, which reaches native motion when `full` is
     /// on, so `full` is off by default. Nothing is rendered until the box has learned a profile for the
     /// attached device: until then motion is relayed and injection takes the paced fill
     /// ([`RenderStatus::ready`](crate::RenderStatus)).

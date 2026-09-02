@@ -48,8 +48,8 @@ struct State {
     emit_pace: EmitPace,
     render_mode: RenderMode,
     render_full: bool,
-    /// Whether the box has learned a profile. A real box arms this off the attached device's own
-    /// motion, so a mock starts unarmed and a test that needs the armed path says so.
+    /// Whether the box has learned a profile. A real box arms this off native motion, so a mock
+    /// starts unarmed and a test that needs the armed path says so.
     render_ready: bool,
     emit_force_hz: Option<u16>,
     advertised_hz: u16,

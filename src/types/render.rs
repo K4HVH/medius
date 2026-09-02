@@ -1,4 +1,4 @@
-//! What the box renders motion with, and whether the device's own motion goes through it (§4.14).
+//! What the box renders motion with, and whether native motion goes through it (§4.14).
 
 /// The texture the box renders motion with (`OPTION(RENDER)`'s `mode`). [`Off`](RenderMode::Off) is the
 /// paced fill; the others render the device's learned report texture and differ only in the onboard path
@@ -37,13 +37,13 @@ impl RenderMode {
     }
 }
 
-/// The configured [`RenderMode`], whether the device's own motion goes through it, and whether a
+/// The configured [`RenderMode`], whether native motion goes through it, and whether a
 /// profile has armed (§4.14).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct RenderStatus {
     /// The texture motion is rendered with.
     pub mode: RenderMode,
-    /// Whether the device's own motion is rendered by the model rather than relayed.
+    /// Whether native motion is rendered by the model rather than relayed.
     pub full: bool,
     /// Whether the box has learned a profile for the attached device. Nothing is rendered until it has,
     /// so this separates a box set to a mode from a box rendering with it.

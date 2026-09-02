@@ -244,7 +244,7 @@ impl AsyncDevice {
         self.dev().set_bearing(window, mode)
     }
 
-    /// `OPTION(RENDER)`: what motion is rendered with, and whether the device's own goes through it.
+    /// `OPTION(RENDER)`: what motion is rendered with, and whether native motion goes through it.
     /// Instant; see [`Device::set_render`].
     pub fn set_render(&self, mode: RenderMode, full: bool) -> Result<()> {
         self.dev().set_render(mode, full)

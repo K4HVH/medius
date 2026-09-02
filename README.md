@@ -142,11 +142,11 @@ let s = device.query_emit_pace()?;  // mode, resolved_hz, force_hz, advertised_h
 
 `EmitPace::Learned` (the default) paces to the mouse's learnt native report rate, `EmitPace::Interval` to the clone's `bInterval` poll rate, and `EmitPace::Fixed(hz)` to a rate you name, which the 1 ms frame clock snaps to `1000/n` Hz and caps at `EMIT_MAX_HZ`.
 
-A non-zero `force_hz` re-clones the box to advertise a `bInterval` the device did not, snapping to `1000/n` Hz; it needs `allow_imperfect_clones`, and `None` leaves the device's own.
+A non-zero `force_hz` re-clones the box to advertise a `bInterval` the device did not, snapping to `1000/n` Hz; it needs `allow_imperfect_clones`, and `None` leaves the native interval.
 
 ### The texture motion is rendered with
 
-`set_render` carries the texture and whether the device's own motion goes through it in one
+`set_render` carries the texture and whether native motion goes through it in one
 `OPTION(RENDER)` frame, both persisted in NVS. The model on the box is
 [ABCurves](https://github.com/optima-manent/ABCurves) (MIT).
 
@@ -164,7 +164,7 @@ let s = device.query_render()?;  // mode, full, ready
 | `Despiked` | rendered with the smoother's onset ramped rather than stepped (the box's factory default) |
 | `Unsmoothed` | rendered with no smoother; the model receives raw injection |
 
-`full` extends the same model to the device's own motion, so one texture reaches the wire instead of an injected stream beside a relayed one. Rendering adds a small amount of latency, which reaches the mouse's own motion under `full`, so `full` is off by default.
+`full` extends the same model to native motion, so one texture reaches the wire instead of an injected stream beside a relayed one. Rendering adds a small amount of latency, which reaches native motion under `full`, so `full` is off by default.
 
 Nothing is rendered until the box has learned a profile for the attached device. `RenderStatus::ready` is that state: until it is true, motion is relayed and injection takes the paced fill. The profile lives in RAM, so every box passes through it after a power cut and arms once the mouse moves.
 
