@@ -28,6 +28,7 @@ from ._types import (
     EmitPace,
     EmitPaceStatus,
     RenderStatus,
+    SpreadStatus,
     Health,
     ImperfectStatus,
     Usage,
@@ -45,6 +46,7 @@ from ._types import (
     device_info_from_c,
     emit_pace_status_from_c,
     render_status_from_c,
+    spread_status_from_c,
     health_from_c,
     imperfect_from_c,
     locks_from_c,
@@ -306,6 +308,13 @@ class Device:
         mode = _enum(mode, RenderMode, "mode")
         check(_native.lib.medius_device_set_render(self._handle, int(mode), bool(full)))
 
+    def set_spread(self, percent: int):
+        """Set the percent of the host's command interval an injected delta is released across. 0
+        puts the whole delta on the next report the box emits, 100 releases it across one command
+        interval, and above 100 overlaps. The box releases nothing across an interval until it has
+        learned the host's command period from MOVE arrivals (`SpreadStatus.span_us`)."""
+        check(_native.lib.medius_device_set_spread(self._handle, int(percent)))
+
     def query_version(self) -> Version:
         out = _native.MediusVersion()
         check(_native.lib.medius_device_query_version(self._handle, ctypes.byref(out)))
@@ -424,6 +433,12 @@ class Device:
         out = _native.MediusRenderStatus()
         check(_native.lib.medius_device_query_render(self._handle, ctypes.byref(out)))
         return render_status_from_c(out)
+
+    def query_spread(self) -> SpreadStatus:
+        """How far an injected delta is spread, and the interval the box is releasing across."""
+        out = _native.MediusSpreadStatus()
+        check(_native.lib.medius_device_query_spread(self._handle, ctypes.byref(out)))
+        return spread_status_from_c(out)
 
     def counters(self) -> Counters:
         out = _native.MediusCountersSnapshot()

@@ -138,6 +138,11 @@ class MockBox:
             self._handle, int(mode), _u16(pace.hz, "hz"), _u16(force_hz or 0, "force_hz")
         )
 
+    def set_spread_learned(self, period_us: int):
+        """The command period the mock has learned, in microseconds. A real box learns it off MOVE
+        arrivals, so a mock left at 0 answers a span of 0 whatever percent is set."""
+        _native.lib.medius_mock_set_spread_learned(self._handle, int(period_us))
+
     def set_render(self, mode: RenderMode, full: bool, ready: bool):
         """What the mock answers to `Device.query_render`. `ready` is whether a profile has armed,
         which is what gates rendering on a real box: a mock left unarmed is the state every box passes

@@ -12,6 +12,7 @@ import medius
 from medius import (
     RenderMode,
     RenderStatus,
+    SpreadStatus,
     Axis,
     BadProtoVerError,
     BEARING_WINDOW_DEFAULT_MS,
@@ -622,6 +623,23 @@ def test_emit_pace_roundtrip():
         assert status.force_hz is None
         assert status.force_active is False
         assert status.advertised_hz == 0  # 0 = no clone, the documented sentinel
+
+
+def test_spread_roundtrip():
+    with MockBox() as mock, Device.with_mock(mock) as d:
+        # A fresh box boots at the full percent with no command period learned, so it spreads nothing.
+        assert d.query_spread() == SpreadStatus(100, 0)
+        # The period is the box's own state, learned off MOVE arrivals, not something the host sets.
+        mock.set_spread_learned(8000)
+        assert d.query_spread() == SpreadStatus(100, 8000)
+        d.set_spread(50)
+        assert d.query_spread() == SpreadStatus(50, 4000)
+        # Above 100 overlaps rather than being clamped.
+        d.set_spread(250)
+        assert d.query_spread() == SpreadStatus(250, 20000)
+        # Off answers no interval even with a period learned.
+        d.set_spread(0)
+        assert d.query_spread() == SpreadStatus(0, 0)
 
 
 def test_render_roundtrip():

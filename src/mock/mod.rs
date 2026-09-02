@@ -9,8 +9,8 @@ use crate::protocol::opcode::{
     DI_HAS_SERIAL, KBC_CONSUMER, KBC_NKRO, KBC_REPORT_ID, KBC_SYSTEM, LOCK_AXIS_WHEEL,
     LOCK_CLS_AXIS, LOCK_CLS_BTN, LOCK_CLS_KEY, LOCK_CLS_MEDIA, LOCK_DIR_AGAINST, LOCK_DIR_BOTH,
     LOCK_DIR_NEG, LOCK_DIR_POS, LOCK_DIR_WITH, LOCK_ID_ALL, LOCK_SCALE_BLOCK, LOCK_SCALE_PASS,
-    OPT_BEARING, OPT_EMIT, OPT_IMPERFECT, OPT_MOVE_RIDE, OPT_NAME, OPT_RENDER, Q_FIRMWARE,
-    RATE_CONFIDENT,
+    OPT_BEARING, OPT_EMIT, OPT_IMPERFECT, OPT_MOVE_RIDE, OPT_NAME, OPT_RENDER, OPT_SPREAD,
+    Q_FIRMWARE, RATE_CONFIDENT,
 };
 use crate::protocol::opcode::{
     CLIP_CFG_F_FINALIZED, CLIP_CFG_F_LOOP, CLIP_CFG_F_RETAIN, CLIP_CFG_F_RIDE, CLIP_TRIG_MAX,
@@ -51,6 +51,10 @@ struct State {
     /// Whether the box has learned a profile. A real box arms this off native motion, so a mock
     /// starts unarmed and a test that needs the armed path says so.
     render_ready: bool,
+    spread_percent: u16,
+    /// The command period the box has learned off MOVE arrivals, in microseconds. 0 is a box that has
+    /// not seen enough of them, which is where every session starts.
+    spread_learned_us: u32,
     emit_force_hz: Option<u16>,
     advertised_hz: u16,
     clip: ClipStatus,
@@ -91,6 +95,8 @@ impl Default for State {
             render_mode: RenderMode::Despiked,
             render_full: false,
             render_ready: false,
+            spread_percent: 100,
+            spread_learned_us: 0,
             emit_force_hz: None,
             advertised_hz: 0,
             clip: ClipStatus::default(),
@@ -371,6 +377,9 @@ impl State {
                     self.render_full = *full != 0;
                 }
             }
+            (Some(OPT_SPREAD), [lo, hi, ..]) => {
+                self.spread_percent = u16::from_le_bytes([*lo, *hi]);
+            }
             (Some(OPT_NAME), name) => {
                 self.version.name = String::from_utf8_lossy(name).into_owned()
             }
@@ -621,6 +630,21 @@ fn options_emit_payload(
 
 fn options_render_payload(mode: RenderMode, full: bool, ready: bool) -> Vec<u8> {
     vec![9u8, OPT_RENDER, mode.to_wire(), full as u8, ready as u8]
+}
+
+// The box resolves the interval from a command period it has learned off MOVE arrivals, and answers 0
+// while it has none or the option is off. A mock that answered a span from the percent alone would
+// model a friendlier box than the hardware and green-light host code reading it as "spreading".
+fn options_spread_payload(percent: u16, learned_us: u32) -> Vec<u8> {
+    let span = if percent == 0 || learned_us == 0 {
+        0
+    } else {
+        ((learned_us as u64 * percent as u64) / 100) as u32
+    };
+    let mut p = vec![9u8, OPT_SPREAD];
+    p.extend_from_slice(&percent.to_le_bytes());
+    p.extend_from_slice(&span.to_le_bytes());
+    p
 }
 
 fn clip_status_payload(c: &ClipStatus, cfg: &ClipSettings) -> Vec<u8> {
@@ -967,6 +991,12 @@ impl MockBox {
                                 ),
                             )
                             .expect("resp fits"),
+                            Some(OPT_SPREAD) => encode(
+                                FrameType::Resp,
+                                seq,
+                                &options_spread_payload(st.spread_percent, st.spread_learned_us),
+                            )
+                            .expect("resp fits"),
                             _ => Vec::new(),
                         },
                         Some(11) => encode(
@@ -1159,6 +1189,19 @@ impl MockBox {
     /// Update the learned-profile flag in place.
     pub fn set_render_ready(&self, ready: bool) {
         self.state.lock().render_ready = ready;
+    }
+
+    /// Set the command period the mock has learned, in microseconds (builder style). 0 is a box that
+    /// has not seen enough `MOVE`s yet, which answers a span of 0 whatever the percent is.
+    #[must_use]
+    pub fn with_spread_learned(self, period_us: u32) -> Self {
+        self.set_spread_learned(period_us);
+        self
+    }
+
+    /// Update the learned command period in place.
+    pub fn set_spread_learned(&self, period_us: u32) {
+        self.state.lock().spread_learned_us = period_us;
     }
 
     /// Set the forced wire rate answered to `QUERY(OPTIONS, EMIT)` (builder style); `Some(0)` is off.

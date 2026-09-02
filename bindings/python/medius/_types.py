@@ -1143,6 +1143,19 @@ class RenderStatus:
     ready: bool = False
 
 
+def spread_status_from_c(c) -> "SpreadStatus":
+    return SpreadStatus(c.percent, c.span_us)
+
+
+@dataclass
+class SpreadStatus:
+    """How far an injected delta is spread across the host's command interval, and the interval the
+    box is releasing across."""
+
+    percent: int
+    span_us: int = 0
+
+
 @dataclass
 class ClipStatus:
     """The device-side clip ring and playback status (the runtime view of RESP(CLIP))."""

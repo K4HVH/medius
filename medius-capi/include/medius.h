@@ -1043,6 +1043,16 @@ typedef struct MediusRenderStatus {
     uint8_t ready;
 } MediusRenderStatus;
 
+// How far an injected delta is spread across the host's command interval, and the interval the box
+// is releasing across.
+typedef struct MediusSpreadStatus {
+    // Percent of the learned command interval. 0 is off; above 100 overlaps.
+    uint16_t percent;
+    // The interval being released across, in microseconds. 0 until the box has learned the host's
+    // command period, and 0 whenever `percent` is 0.
+    uint32_t span_us;
+} MediusSpreadStatus;
+
 // Host-side always-on counters.
 typedef struct MediusCountersSnapshot {
     uint64_t frames_tx;
@@ -1634,6 +1644,12 @@ MediusStatus medius_device_set_render(struct MediusDevice *dev,
                                       uint8_t mode,
                                       bool full);
 
+// Set the percent of the host's command interval an injected delta is released across. 0 puts the
+// whole delta on the next report the box emits, 100 releases it across one command interval, and
+// above 100 overlaps. The box releases nothing across an interval until it has learned the host's
+// command period from `MOVE` arrivals.
+MediusStatus medius_device_set_spread(struct MediusDevice *dev, uint16_t percent);
+
 MediusStatus medius_device_query_version(struct MediusDevice *dev, struct MediusVersion *out);
 
 // Both chips' firmware versions and slot state.
@@ -1684,6 +1700,8 @@ MediusStatus medius_device_query_emit_pace(struct MediusDevice *dev,
 MediusStatus medius_device_query_bearing(struct MediusDevice *dev, struct MediusBearing *out);
 
 MediusStatus medius_device_query_render(struct MediusDevice *dev, struct MediusRenderStatus *out);
+
+MediusStatus medius_device_query_spread(struct MediusDevice *dev, struct MediusSpreadStatus *out);
 
 MediusStatus medius_device_counters(struct MediusDevice *dev, struct MediusCountersSnapshot *out);
 

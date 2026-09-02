@@ -6,9 +6,12 @@ use std::time::Duration;
 use crate::protocol::FrameType;
 use crate::protocol::command::{
     emit_pace_payload, imperfect_payload, move_ride_payload, name_payload, render_payload,
+    spread_payload,
 };
 use crate::protocol::{Resp, parse_resp};
-use crate::types::{EmitPace, EmitPaceStatus, ImperfectStatus, RenderMode, RenderStatus};
+use crate::types::{
+    EmitPace, EmitPaceStatus, ImperfectStatus, RenderMode, RenderStatus, SpreadStatus,
+};
 
 #[test]
 fn option_payload_bytes() {
@@ -29,6 +32,10 @@ fn option_payload_bytes() {
     assert_eq!(render_payload(0, false), [5, 0, 0]);
     assert_eq!(render_payload(2, true), [5, 2, 1]);
     assert_eq!(render_payload(3, false), [5, 3, 0]);
+    assert_eq!(spread_payload(0), [6, 0, 0]);
+    assert_eq!(spread_payload(100), [6, 100, 0]);
+    assert_eq!(spread_payload(250), [6, 250, 0]);
+    assert_eq!(spread_payload(1000), [6, 0xE8, 0x03]);
     assert_eq!(name_payload("AB"), vec![3, b'A', b'B']);
     assert_eq!(name_payload(""), vec![3]);
 }
@@ -143,6 +150,78 @@ fn decode_emit_pace_through_parse_resp() {
     // The bit-packed encodings an older box used are now just unknown paces.
     assert!(parse_resp(&[9, 2, 0x80, 0, 0, 0, 0, 0, 0, 0, 0, 0]).is_none());
     assert!(parse_resp(&[9, 2, 0x82, 0, 0, 0, 0, 0, 0, 0, 0, 0]).is_none());
+}
+
+#[test]
+fn decode_spread_through_parse_resp() {
+    // Two distinct values, so swapping the fields fails. 8125 us is 0x1FBD.
+    let Some(Resp::Spread(s)) = parse_resp(&[9, 6, 250, 0, 0xBD, 0x1F, 0, 0]) else {
+        panic!("expected Spread");
+    };
+    assert_eq!(
+        s,
+        SpreadStatus {
+            percent: 250,
+            span_us: 8125,
+        }
+    );
+    // Off, with nothing learnt.
+    let Some(Resp::Spread(s)) = parse_resp(&[9, 6, 0, 0, 0, 0, 0, 0]) else {
+        panic!("expected Spread");
+    };
+    assert_eq!(s, SpreadStatus::default());
+    // A span past the top of an i32 is still read as the unsigned microseconds it is.
+    let Some(Resp::Spread(s)) = parse_resp(&[9, 6, 1, 0, 0xFF, 0xFF, 0xFF, 0xFF]) else {
+        panic!("expected Spread");
+    };
+    assert_eq!(s.span_us, u32::MAX);
+    // A short value is not padded.
+    assert!(parse_resp(&[9, 6, 100, 0, 0, 0, 0]).is_none());
+}
+
+#[cfg(feature = "mock")]
+#[test]
+fn mock_spread_answers_zero_until_a_period_is_learned() {
+    use crate::{Device, MockBox, SpreadStatus};
+    // A fresh box boots at 100 percent and has learned nothing, so it is spreading across nothing.
+    let mock = MockBox::new();
+    let device = Device::with_mock(mock.clone());
+    assert_eq!(
+        device.query_spread().unwrap(),
+        SpreadStatus {
+            percent: 100,
+            span_us: 0
+        }
+    );
+    // Once a 125 Hz loop is learned, the full percent is that whole interval.
+    mock.set_spread_learned(8000);
+    assert_eq!(
+        device.query_spread().unwrap(),
+        SpreadStatus {
+            percent: 100,
+            span_us: 8000
+        }
+    );
+    device.set_spread(50).unwrap();
+    assert_eq!(
+        device.query_spread().unwrap(),
+        SpreadStatus {
+            percent: 50,
+            span_us: 4000
+        }
+    );
+    // Above 100 overlaps rather than being clamped.
+    device.set_spread(200).unwrap();
+    assert_eq!(device.query_spread().unwrap().span_us, 16000);
+    // Off answers no interval even with a period learned.
+    device.set_spread(0).unwrap();
+    assert_eq!(
+        device.query_spread().unwrap(),
+        SpreadStatus {
+            percent: 0,
+            span_us: 0
+        }
+    );
 }
 
 #[test]

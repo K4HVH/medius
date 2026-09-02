@@ -257,6 +257,13 @@ class MediusRenderStatus(ctypes.Structure):
     ]
 
 
+class MediusSpreadStatus(ctypes.Structure):
+    _fields_ = [
+        ("percent", u16),
+        ("span_us", u32),
+    ]
+
+
 class MediusClipStatus(ctypes.Structure):
     _fields_ = [
         ("state", u8),
@@ -429,6 +436,7 @@ _decl("medius_device_set_movement_riding", i32, [HANDLE, c_bool, u32])
 _decl("medius_device_set_bearing", i32, [HANDLE, u16, u8])
 _decl("medius_device_set_emit_pace", i32, [HANDLE, u8, u16, u16])
 _decl("medius_device_set_render", i32, [HANDLE, u8, c_bool])
+_decl("medius_device_set_spread", i32, [HANDLE, u16])
 _decl("medius_device_set_name", i32, [HANDLE, ctypes.c_char_p])
 _decl("medius_device_clear_name", i32, [HANDLE])
 
@@ -449,6 +457,7 @@ _decl(
 )
 _decl("medius_device_query_emit_pace", i32, [HANDLE, ctypes.POINTER(MediusEmitPaceStatus)])
 _decl("medius_device_query_render", i32, [HANDLE, ctypes.POINTER(MediusRenderStatus)])
+_decl("medius_device_query_spread", i32, [HANDLE, ctypes.POINTER(MediusSpreadStatus)])
 _decl("medius_device_counters", i32, [HANDLE, ctypes.POINTER(MediusCountersSnapshot)])
 
 _decl("medius_default_query_timeout_ms", u32, [])
@@ -621,6 +630,7 @@ if HAS_MOCK:
     _decl("medius_mock_set_bearing", None, [HANDLE, u16, u8])
     _decl("medius_mock_set_emit_pace", None, [HANDLE, u8, u16, u16])
     _decl("medius_mock_set_render", None, [HANDLE, u8, c_bool, c_bool])
+    _decl("medius_mock_set_spread_learned", None, [HANDLE, u32])
     _decl("medius_mock_set_clip_status", None, [HANDLE, MediusClipStatus])
     _decl("medius_mock_set_clip_settings", None, [HANDLE, MediusClipSettings])
     _decl("medius_mock_silent", None, [HANDLE])

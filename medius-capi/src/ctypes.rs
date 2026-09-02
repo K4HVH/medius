@@ -639,6 +639,18 @@ pub struct MediusRenderStatus {
     pub ready: u8,
 }
 
+/// How far an injected delta is spread across the host's command interval, and the interval the box
+/// is releasing across.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MediusSpreadStatus {
+    /// Percent of the learned command interval. 0 is off; above 100 overlaps.
+    pub percent: u16,
+    /// The interval being released across, in microseconds. 0 until the box has learned the host's
+    /// command period, and 0 whenever `percent` is 0.
+    pub span_us: u32,
+}
+
 /// The device-side clip lifecycle state (`medius_clip_query_status`).
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
