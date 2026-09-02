@@ -162,7 +162,7 @@ mod linux {
         }
     }
 
-    /// The clone's own evdev nodes, resolved through /dev/input/by-id rather than named by index.
+    /// Native evdev nodes, resolved through /dev/input/by-id rather than named by index.
     ///
     /// Every node's index moves when a device is added, removed or replugged, so a hard-coded one
     /// eventually grabs something that is not the clone and every check that reads the wire reports zero,
@@ -521,7 +521,7 @@ mod linux {
 
         {
             // OPTION(RENDER) is its own command: the texture the box renders motion with, and whether
-            // the device's own motion goes through it. Every mode round-trips against both values of
+            // native motion goes through it. Every mode round-trips against both values of
             // `full`. The refusal of an unknown value is not checked here and cannot be: the typed
             // API has no way to express one (tools/validate_render.py drives that over the wire).
             // Restores the box's boot pair (De-spiked, relayed) afterward.
@@ -576,7 +576,7 @@ mod linux {
             // Any force re-clones the box when the imperfect opt-in is on, which would drop the control
             // port mid-suite, so this only runs faithful-only, where the box stores the request and
             // leaves it inert. That is the discriminating half anyway: force_active must stay 0 and
-            // advertised_hz must stay the device's own, which an echo of the request cannot fake.
+            // advertised_hz must stay native, which an echo of the request cannot fake.
             // The descriptor half belongs to tools/validate_rate_force.py, which can afford the reboot.
             let dev = device.as_ref().unwrap();
             let allowed = dev.query_imperfect().map(|i| i.allowed).unwrap_or(true);

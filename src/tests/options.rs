@@ -108,7 +108,7 @@ fn decode_emit_pace_through_parse_resp() {
             force_active: true,
         }
     );
-    // Unforced still reports what the clone advertises, so a host can see the device's own rate.
+    // Unforced still reports what the clone advertises, so a host can see native rate.
     let Some(Resp::EmitPace(native)) = parse_resp(&[9, 2, 0, 0, 0, 0, 0, 0, 0, 0xE8, 0x03, 0])
     else {
         panic!("expected EmitPace");
@@ -258,7 +258,7 @@ fn render_round_trips_over_the_command_path() {
     use crate::{Device, MockBox, RenderStatus};
     let mock = MockBox::new();
     let device = Device::with_mock(mock.clone());
-    // The factory setting: de-spiked, the device's own motion relayed, nothing learned yet.
+    // The factory setting: de-spiked, native motion relayed, nothing learned yet.
     assert_eq!(
         device.query_render().unwrap(),
         RenderStatus {

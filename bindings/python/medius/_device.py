@@ -258,7 +258,7 @@ class Device:
 
     def set_emit_pace(self, pace: EmitPace, force_hz: Optional[int] = None):
         """Set what paces injected motion (`hz` matters only for `EmitPace.fixed`) and what rate the
-        clone advertises and the box polls the device at (`force_hz`, None = the device's own)."""
+        clone advertises and the box polls the device at (`force_hz`, None = native)."""
         mode = _enum(pace.mode, EmitMode, "mode")
         check(
             _native.lib.medius_device_set_emit_pace(
@@ -292,12 +292,12 @@ class Device:
         )
 
     def set_render(self, mode: RenderMode, full: bool):
-        """Set the texture the box renders motion with, and whether the device's own motion is rendered by
+        """Set the texture the box renders motion with, and whether native motion is rendered by
         the model rather than relayed.
 
         Both ride one command and both persist, so `full` is required: an omitted one would silently
-        rewrite a setting you did not name. Rendering adds a small amount of latency, which reaches the
-        mouse's own motion when `full` is on, so `full` is off by default. Nothing is rendered until the
+        rewrite a setting you did not name. Rendering adds a small amount of latency, which reaches
+        native motion when `full` is on, so `full` is off by default. Nothing is rendered until the
         box has learned a profile for the attached device (`RenderStatus.ready`).
 
         Motion asking for exact timing skips the model: `move_rel_now`, `flush_motion` and

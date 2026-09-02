@@ -619,7 +619,7 @@ pub struct MediusEmitPaceStatus {
     pub mode: MediusEmitMode,
     pub fixed_hz: u16,
     pub resolved_hz: u16,
-    /// The forced wire rate requested, in Hz; 0 leaves the device's own.
+    /// The forced wire rate requested, in Hz; 0 leaves the native interval.
     pub force_hz: u16,
     /// What the clone's input endpoints advertise now, in Hz; 0 = no clone.
     pub advertised_hz: u16,
@@ -627,13 +627,13 @@ pub struct MediusEmitPaceStatus {
     pub force_active: u8,
 }
 
-/// What the box renders motion with, whether the device's own motion goes through it, and whether a
+/// What the box renders motion with, whether native motion goes through it, and whether a
 /// profile has been learned for the attached device.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MediusRenderStatus {
     pub mode: MediusRenderMode,
-    /// 1 when the device's own motion is rendered by the model rather than relayed.
+    /// 1 when native motion is rendered by the model rather than relayed.
     pub full: u8,
     /// 1 once the box has learned a profile for the attached device. Nothing is rendered until it has.
     pub ready: u8,

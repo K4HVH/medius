@@ -21,7 +21,7 @@ pub struct EmitPaceStatus {
     /// [`EmitPace::Interval`]. Reads 1000 once the renderer has a profile, since a rendered stream
     /// paces itself (see [`set_render`](crate::Device::set_render)).
     pub resolved_hz: u16,
-    /// The forced wire rate the host asked for (Hz); `None` leaves the device's own.
+    /// The forced wire rate the host asked for (Hz); `None` leaves the native interval.
     pub force_hz: Option<u16>,
     /// What the clone's input endpoints advertise now (Hz), forced or native; 0 = no clone.
     pub advertised_hz: u16,

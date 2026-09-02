@@ -1135,7 +1135,7 @@ def render_status_from_c(c) -> RenderStatus:
 
 @dataclass
 class RenderStatus:
-    """What the box renders motion with, whether the device's own motion goes through it, and whether a
+    """What the box renders motion with, whether native motion goes through it, and whether a
     profile has been learned for the attached device."""
 
     mode: "RenderMode"
