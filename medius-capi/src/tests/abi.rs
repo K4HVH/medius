@@ -594,17 +594,18 @@ fn the_spread_option_reads_back_what_was_set_through_the_boundary() {
         MediusStatus::Ok
     );
     assert_eq!(st.span_us, 8000);
-    // A percent past 100 overlaps rather than being clamped, and both fields survive the trip.
+    // A percent past 100 overlaps rather than being clamped, and both fields survive the trip. Past
+    // a byte too: 250 would round-trip through a u8 boundary and prove nothing about the width.
     assert_eq!(
-        unsafe { medius_device_set_spread(dev, 250) },
+        unsafe { medius_device_set_spread(dev, 1000) },
         MediusStatus::Ok
     );
     assert_eq!(
         unsafe { medius_device_query_spread(dev, &mut st) },
         MediusStatus::Ok
     );
-    assert_eq!(st.percent, 250);
-    assert_eq!(st.span_us, 20000);
+    assert_eq!(st.percent, 1000);
+    assert_eq!(st.span_us, 80000);
     unsafe { medius_device_free(dev) };
 }
 
