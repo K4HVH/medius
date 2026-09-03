@@ -5,10 +5,13 @@ use std::time::Duration;
 #[cfg(feature = "mock")]
 use crate::protocol::FrameType;
 use crate::protocol::command::{
-    emit_pace_payload, imperfect_payload, move_ride_payload, name_payload,
+    emit_pace_payload, imperfect_payload, move_ride_payload, name_payload, render_payload,
+    spread_payload,
 };
 use crate::protocol::{Resp, parse_resp};
-use crate::types::{EmitPace, EmitPaceStatus, ImperfectStatus};
+use crate::types::{
+    EmitPace, EmitPaceStatus, ImperfectStatus, RenderMode, RenderStatus, SpreadStatus,
+};
 
 #[test]
 fn option_payload_bytes() {
@@ -25,8 +28,40 @@ fn option_payload_bytes() {
         emit_pace_payload(2, 500, 1000),
         [2, 2, 0xF4, 0x01, 0xE8, 0x03]
     );
+    // The texture is its own command, so nothing about it can disturb the pace.
+    assert_eq!(render_payload(0, false), [5, 0, 0]);
+    assert_eq!(render_payload(2, true), [5, 2, 1]);
+    assert_eq!(render_payload(3, false), [5, 3, 0]);
+    assert_eq!(spread_payload(0), [6, 0, 0]);
+    assert_eq!(spread_payload(100), [6, 100, 0]);
+    assert_eq!(spread_payload(250), [6, 250, 0]);
+    assert_eq!(spread_payload(1000), [6, 0xE8, 0x03]);
     assert_eq!(name_payload("AB"), vec![3, b'A', b'B']);
     assert_eq!(name_payload(""), vec![3]);
+}
+
+#[test]
+fn emit_pace_wire_is_the_pace_alone() {
+    use crate::device::options::emit_pace_wire;
+    assert_eq!(emit_pace_wire(EmitPace::Learned), (0, 0));
+    assert_eq!(emit_pace_wire(EmitPace::Interval), (1, 0));
+    assert_eq!(emit_pace_wire(EmitPace::Fixed(500)), (2, 500));
+}
+
+#[test]
+fn render_mode_round_trips_its_own_wire_byte() {
+    for (m, w) in [
+        (RenderMode::Off, 0u8),
+        (RenderMode::Stock, 1),
+        (RenderMode::Despiked, 2),
+        (RenderMode::Unsmoothed, 3),
+    ] {
+        assert_eq!(m.to_wire(), w);
+        assert_eq!(RenderMode::from_u8(w), Some(m));
+    }
+    // A value this crate does not know is refused rather than silently read as Off.
+    assert_eq!(RenderMode::from_u8(4), None);
+    assert_eq!(RenderMode::from_u8(0x80), None);
 }
 
 #[test]
@@ -80,7 +115,7 @@ fn decode_emit_pace_through_parse_resp() {
             force_active: true,
         }
     );
-    // Unforced still reports what the clone advertises, so a host can see the device's own rate.
+    // Unforced still reports what the clone advertises, so a host can see native rate.
     let Some(Resp::EmitPace(native)) = parse_resp(&[9, 2, 0, 0, 0, 0, 0, 0, 0, 0xE8, 0x03, 0])
     else {
         panic!("expected EmitPace");
@@ -98,17 +133,139 @@ fn decode_emit_pace_through_parse_resp() {
     let Some(Resp::EmitPace(nothing)) = parse_resp(&[9, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]) else {
         panic!("expected EmitPace");
     };
-    assert_eq!(nothing, EmitPaceStatus::default());
+    assert_eq!(
+        nothing,
+        EmitPaceStatus {
+            mode: EmitPace::Learned,
+            resolved_hz: 0,
+            force_hz: None,
+            advertised_hz: 0,
+            force_active: false,
+        }
+    );
+    // An 11-byte value is short of the shape and is refused rather than read with a defaulted field.
     assert!(parse_resp(&[9, 2, 2, 0xE8, 0x03, 0xFA, 0x00, 0x7D, 0x00, 0x64, 0x00]).is_none());
+    // An unknown pace is refused rather than silently read as a default.
     assert!(parse_resp(&[9, 2, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0]).is_none());
+    // The bit-packed encodings an older box used are now just unknown paces.
+    assert!(parse_resp(&[9, 2, 0x80, 0, 0, 0, 0, 0, 0, 0, 0, 0]).is_none());
+    assert!(parse_resp(&[9, 2, 0x82, 0, 0, 0, 0, 0, 0, 0, 0, 0]).is_none());
+}
+
+#[test]
+fn decode_spread_through_parse_resp() {
+    // Two distinct values, so swapping the fields fails. 8125 us is 0x1FBD.
+    let Some(Resp::Spread(s)) = parse_resp(&[9, 6, 250, 0, 0xBD, 0x1F, 0, 0]) else {
+        panic!("expected Spread");
+    };
+    assert_eq!(
+        s,
+        SpreadStatus {
+            percent: 250,
+            span_us: 8125,
+        }
+    );
+    // Off, with nothing learnt.
+    let Some(Resp::Spread(s)) = parse_resp(&[9, 6, 0, 0, 0, 0, 0, 0]) else {
+        panic!("expected Spread");
+    };
+    assert_eq!(s, SpreadStatus::default());
+    // A span past the top of an i32 is still read as the unsigned microseconds it is.
+    let Some(Resp::Spread(s)) = parse_resp(&[9, 6, 1, 0, 0xFF, 0xFF, 0xFF, 0xFF]) else {
+        panic!("expected Spread");
+    };
+    assert_eq!(s.span_us, u32::MAX);
+    // A short value is not padded.
+    assert!(parse_resp(&[9, 6, 100, 0, 0, 0, 0]).is_none());
+}
+
+#[cfg(feature = "mock")]
+#[test]
+fn mock_spread_answers_zero_until_a_period_is_learned() {
+    use crate::{Device, MockBox, SpreadStatus};
+    // A fresh box boots at 100 percent and has learned nothing, so it is spreading across nothing.
+    let mock = MockBox::new();
+    let device = Device::with_mock(mock.clone());
+    assert_eq!(
+        device.query_spread().unwrap(),
+        SpreadStatus {
+            percent: 100,
+            span_us: 0
+        }
+    );
+    // Once a 125 Hz loop is learned, the full percent is that whole interval.
+    mock.set_spread_learned(8000);
+    assert_eq!(
+        device.query_spread().unwrap(),
+        SpreadStatus {
+            percent: 100,
+            span_us: 8000
+        }
+    );
+    device.set_spread(50).unwrap();
+    assert_eq!(
+        device.query_spread().unwrap(),
+        SpreadStatus {
+            percent: 50,
+            span_us: 4000
+        }
+    );
+    // Above 100 overlaps rather than being clamped.
+    device.set_spread(200).unwrap();
+    assert_eq!(device.query_spread().unwrap().span_us, 16000);
+    // Off answers no interval even with a period learned.
+    device.set_spread(0).unwrap();
+    assert_eq!(
+        device.query_spread().unwrap(),
+        SpreadStatus {
+            percent: 0,
+            span_us: 0
+        }
+    );
+}
+
+#[test]
+fn decode_render_through_parse_resp() {
+    // Three distinct values, so swapping any two fields fails.
+    let Some(Resp::Render(s)) = parse_resp(&[9, 5, 1, 1, 0]) else {
+        panic!("expected Render");
+    };
+    assert_eq!(
+        s,
+        RenderStatus {
+            mode: RenderMode::Stock,
+            full: true,
+            ready: false,
+        }
+    );
+    for (byte, mode) in [
+        (0u8, RenderMode::Off),
+        (1, RenderMode::Stock),
+        (2, RenderMode::Despiked),
+        (3, RenderMode::Unsmoothed),
+    ] {
+        let Some(Resp::Render(s)) = parse_resp(&[9, 5, byte, 0, 1]) else {
+            panic!("expected Render");
+        };
+        assert_eq!((s.mode, s.full, s.ready), (mode, false, true));
+    }
+    // An unknown mode is refused rather than read as a default, and a short value is not padded.
+    assert!(parse_resp(&[9, 5, 4, 0, 0]).is_none());
+    assert!(parse_resp(&[9, 5, 0, 0]).is_none());
+    // Any non-zero reads as set, the way the firmware writes a bool byte.
+    let Some(Resp::Render(nz)) = parse_resp(&[9, 5, 2, 7, 9]) else {
+        panic!("expected Render");
+    };
+    assert!(nz.full && nz.ready);
 }
 
 #[cfg(feature = "mock")]
 #[test]
 fn mock_emit_pace_matches_firmware_snap() {
-    use crate::{Device, EmitPace, EmitPaceStatus, MockBox};
+    use crate::{Device, EmitPace, EmitPaceStatus, MockBox, RenderMode};
     // The mock models firmware pacing: Fixed(400) snaps to 1000/3 = 333 Hz on the 1 ms frame clock
     // (not raw 400) and Fixed(2000) clamps to 1 kHz; a naive echo would diverge from hardware.
+    // An untouched mock models a fresh box, which boots rendering De-spiked.
     let mock = MockBox::new().with_emit_pace(EmitPace::Fixed(400));
     let device = Device::with_mock(mock.clone());
     assert_eq!(
@@ -132,7 +289,26 @@ fn mock_emit_pace_matches_firmware_snap() {
             force_active: false,
         }
     );
-    mock.set_emit_pace(EmitPace::Learned);
+    // The texture is its own command now, but it still governs the resolved rate. The box gates that
+    // on a profile having ARMED, not on the mode being set: a box told to render but still waiting for
+    // one runs the paced fill and reports the learnt cap.
+    device.set_render(RenderMode::Stock, false).unwrap();
+    device.set_emit_pace(EmitPace::Learned, None).unwrap();
+    assert_eq!(device.query_emit_pace().unwrap().resolved_hz, 0);
+    // Onto a Fixed rate the snapped value stands whatever the texture is doing.
+    device.set_emit_pace(EmitPace::Fixed(250), None).unwrap();
+    assert_eq!(
+        device.query_emit_pace().unwrap(),
+        EmitPaceStatus {
+            mode: EmitPace::Fixed(250),
+            resolved_hz: 250,
+            force_hz: None,
+            advertised_hz: 0,
+            force_active: false,
+        }
+    );
+    device.set_render(RenderMode::Off, false).unwrap();
+    device.set_emit_pace(EmitPace::Learned, None).unwrap();
     assert_eq!(
         device.query_emit_pace().unwrap(),
         EmitPaceStatus {
@@ -143,6 +319,67 @@ fn mock_emit_pace_matches_firmware_snap() {
             force_active: false,
         }
     );
+
+    // Armed, a rendered stream on a learnt pace self-paces every millisecond and says so. This is the
+    // half that discriminates: without it the reply reads the same whether the renderer is emitting
+    // or the box is still on the fill.
+    let armed = Device::with_mock(MockBox::new().with_render_ready(true));
+    armed.set_render(RenderMode::Stock, false).unwrap();
+    armed.set_emit_pace(EmitPace::Learned, None).unwrap();
+    assert_eq!(armed.query_emit_pace().unwrap().resolved_hz, 1000);
+    armed.set_render(RenderMode::Off, false).unwrap();
+    assert_eq!(armed.query_emit_pace().unwrap().resolved_hz, 0);
+}
+
+#[cfg(feature = "mock")]
+#[test]
+fn render_round_trips_over_the_command_path() {
+    use crate::{Device, MockBox, RenderStatus};
+    let mock = MockBox::new();
+    let device = Device::with_mock(mock.clone());
+    // The factory setting: de-spiked, native motion relayed, nothing learned yet.
+    assert_eq!(
+        device.query_render().unwrap(),
+        RenderStatus {
+            mode: RenderMode::Despiked,
+            full: false,
+            ready: false,
+        }
+    );
+    for mode in [
+        RenderMode::Off,
+        RenderMode::Stock,
+        RenderMode::Despiked,
+        RenderMode::Unsmoothed,
+    ] {
+        for full in [false, true] {
+            device.set_render(mode, full).unwrap();
+            let s = device.query_render().unwrap();
+            assert_eq!((s.mode, s.full), (mode, full));
+        }
+    }
+    // A box that has learned a profile says so, which is what separates one set to a mode from one
+    // rendering with it.
+    let armed = Device::with_mock(MockBox::new().with_render_ready(true));
+    assert!(armed.query_render().unwrap().ready);
+}
+
+#[cfg(feature = "mock")]
+#[test]
+fn an_unknown_render_value_discards_the_whole_command() {
+    use crate::protocol::FrameType;
+    use crate::protocol::opcode::OPT_RENDER;
+    use crate::{Device, MockBox};
+    let mock = MockBox::new();
+    let device = Device::with_mock(mock.clone());
+    device.set_render(RenderMode::Stock, true).unwrap();
+    let before = device.query_render().unwrap();
+    // Straight down the command path, past the typed API: the box refuses a mode past the last and a
+    // `full` past 1 rather than coercing either, so the standing setting must survive both.
+    for bad in [[OPT_RENDER, 4, 0], [OPT_RENDER, 2, 2]] {
+        device.link.send(FrameType::Option, &bad).unwrap();
+        assert_eq!(device.query_render().unwrap(), before);
+    }
 }
 
 #[cfg(feature = "mock")]
@@ -270,7 +507,7 @@ fn set_name_sends_option_frame_and_clear_is_empty() {
 #[test]
 fn set_name_sends_the_value_raw_for_the_box_to_sanitize() {
     use crate::{Device, MockBox};
-    // set_name does no host-side validation: it sends the string as-is and the box sanitizes, so a
+    // set_name does no host-side validation: it sends the string as-is and the box sanitises, so a
     // control byte rides through on the wire (the box drops it) rather than raising a host error.
     let mock = MockBox::new();
     let device = Device::with_mock(mock.clone());

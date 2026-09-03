@@ -23,6 +23,8 @@ mod mouse_caps;
 mod port;
 mod rate;
 mod reboot;
+mod render;
+mod spread;
 mod stats;
 mod update;
 mod usage;
@@ -57,6 +59,8 @@ pub use mouse_caps::MouseCaps;
 pub use port::PortInfo;
 pub use rate::Rate;
 pub use reboot::RebootTarget;
+pub use render::{RenderMode, RenderStatus};
+pub use spread::SpreadStatus;
 pub use stats::Stats;
 pub use update::{
     ChipFirmware, FirmwareInfo, ImageState, UpdateProgress, UpdateStatus, UpdateTarget,

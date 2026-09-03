@@ -4,7 +4,7 @@ resolver = "3"
 
 [package]
 name = "medius"
-version = "3.2.0"
+version = "3.3.1"
 edition = "2024"
 rust-version = "1.85"
 description = "Host control library for the medius transparent mouse passthrough box"
@@ -32,20 +32,20 @@ tracing = { version = "0.1", optional = true }
 sha2 = { version = "0.11.0", default-features = false }
 
 # Windows I/O goes over serial2's overlapped COM handle. serialport's handle is synchronous, so the
-# kernel serializes reads against writes and injection stalls behind the reader thread; serialport
+# kernel serialises reads against writes and injection stalls behind the reader thread; serialport
 # stays for port discovery, which it is the only one of the two to carry USB VID/PID for.
 [target.'cfg(windows)'.dependencies]
 serial2 = { version = "0.2", features = ["windows"] }
 
 [dev-dependencies]
-# Async tests use futures' executor::block_on — NO tokio (the wrapper is runtime-agnostic).
+# Async tests use futures' executor::block_on, NOT tokio (the wrapper is runtime-agnostic).
 futures = { version = "0.3", default-features = false, features = ["executor"] }
 
 # libc is only used by the Linux `hw_full` example (evdev EVIOCGRAB), not the library itself.
 [target.'cfg(target_os = "linux")'.dev-dependencies]
 libc = "0.2"
 
-# basic opens a real device — it compiles everywhere, but needs a connected box to RUN.
+# basic opens a real device: it compiles everywhere, but needs a connected box to RUN.
 [[example]]
 name = "basic"
 

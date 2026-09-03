@@ -99,6 +99,17 @@ pub enum MediusEmitMode {
     Fixed = 2,
 }
 
+/// The texture the box renders motion with: off is the paced fill, the rest render the device's learned
+/// texture and differ only in the onboard smoother.
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MediusRenderMode {
+    Off = 0,
+    Stock = 1,
+    Despiked = 2,
+    Unsmoothed = 3,
+}
+
 /// Which status LED a command addresses.
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -134,7 +145,7 @@ pub enum MediusDirection {
     Against = 4,
 }
 
-/// How the box decides whether physical motion runs with or against its own injection.
+/// How the box reads whether physical motion runs with or against its own injection.
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MediusBearingMode {
@@ -504,11 +515,11 @@ pub struct MediusLockEntry {
     /// there needs a cast.
     pub direction: u8,
     /// Percent of the physical value kept: 0 blocks, 100 passes, above 100 amplifies. A momentary
-    /// usage carries one bit, so the box stores the block or pass it renders and one never reports a
+    /// usage carries one bit, so the box stores the block or pass it amounts to and one never reports a
     /// value in between.
     ///
     /// This is the figure the box applies, not the byte it was sent: in `MEDIUS_BEARING_MODE_VECTOR`
-    /// one relative scale governs the whole aim, the lower of X's and Y's, and both relative entries
+    /// one relative scale governs both axes, the lower of X's and Y's, and both relative entries
     /// carry that number.
     pub scale: u8,
 }
@@ -524,8 +535,8 @@ pub struct MediusLocks {
 /// One CATCH subscription entry: what to observe, in which direction, and how much of each packet to
 /// keep. Build one with a `medius_catch_filter_*` helper.
 ///
-/// The box resolves each event to its most specific matching entry -- an exact `(class, id)` beats a
-/// class blanket, which beats the everything filter, and a named direction beats `Both` -- and that
+/// The box resolves each event to its most specific matching entry: an exact `(class, id)` outranks
+/// a class blanket, which outranks the everything filter, and a named direction outranks `Both`. That
 /// entry supplies `capture`. The wildcards are sentinels rather than a separate flag:
 /// `class = MEDIUS_CATCH_CLASS_ANY` matches every class and `id = MEDIUS_CATCH_ID_ANY` every id
 /// within one. The wildcard class with a real id addresses nothing and is refused.
@@ -543,7 +554,7 @@ pub struct MediusCatchFilter {
     /// as one; C++ renders the enum as `enum : uint8_t`, so assigning this to a `MediusDirection`
     /// there needs a cast.
     pub direction: u8,
-    /// Bytes kept per event; 0 keeps the whole packet. Traffic classes only -- an input class carries
+    /// Bytes kept per event; 0 keeps the whole packet. Traffic classes only: an input class carries
     /// no packet, and naming one with a non-zero capture is refused at subscribe time.
     pub capture: u8,
 }
@@ -608,12 +619,36 @@ pub struct MediusEmitPaceStatus {
     pub mode: MediusEmitMode,
     pub fixed_hz: u16,
     pub resolved_hz: u16,
-    /// The forced wire rate requested, in Hz; 0 leaves the device's own.
+    /// The forced wire rate requested, in Hz; 0 leaves the native interval.
     pub force_hz: u16,
     /// What the clone's input endpoints advertise now, in Hz; 0 = no clone.
     pub advertised_hz: u16,
     /// 1 when a forced interval is written into the descriptor being served.
     pub force_active: u8,
+}
+
+/// What the box renders motion with, whether native motion goes through it, and whether a
+/// profile has been learned for the attached device.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MediusRenderStatus {
+    pub mode: MediusRenderMode,
+    /// 1 when native motion is rendered by the model rather than relayed.
+    pub full: u8,
+    /// 1 once the box has learned a profile for the attached device. Nothing is rendered until it has.
+    pub ready: u8,
+}
+
+/// How far an injected delta is spread across the host's command interval, and the interval the box
+/// is releasing across.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MediusSpreadStatus {
+    /// Percent of the learned command interval. 0 is off; above 100 overlaps.
+    pub percent: u16,
+    /// The interval being released across, in microseconds. 0 until the box has learned the host's
+    /// command period, and 0 whenever `percent` is 0.
+    pub span_us: u32,
 }
 
 /// The device-side clip lifecycle state (`medius_clip_query_status`).

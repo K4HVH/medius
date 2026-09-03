@@ -78,8 +78,8 @@ pub struct UsageSnapshot {
 }
 
 impl UsageSnapshot {
-    /// Decode a `USAGE_EVENT` payload (§4.10): `[ts u32][clk u8][cls u8][dir u8][n u8]` then
-    /// `n × [class][id u16]`.
+    // Decode a `USAGE_EVENT` payload (§4.10): `[ts u32][clk u8][cls u8][dir u8][n u8]` then
+    // `n × [class][id u16]`.
     pub(crate) fn from_payload(p: &[u8]) -> Option<UsageSnapshot> {
         if p.len() < EVENT_HDR + 2 {
             return None;

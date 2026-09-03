@@ -4,8 +4,9 @@ use crate::error::Result;
 use crate::protocol::FrameType;
 use crate::protocol::command::{
     bearing_payload, emit_pace_payload, imperfect_payload, move_ride_payload, name_payload,
+    render_payload, spread_payload,
 };
-use crate::types::{BearingMode, EmitPace};
+use crate::types::{BearingMode, EmitPace, RenderMode};
 
 use super::Device;
 
@@ -23,10 +24,10 @@ pub(crate) fn ride_window_ms(window: Option<Duration>) -> u16 {
     }
 }
 
-/// The bearing window the box holds out of the box, before any host sets one.
+/// The bearing window a box boots with, before any host sets one.
 pub const BEARING_WINDOW_DEFAULT: Duration = Duration::from_millis(20);
 
-/// Encode an [`EmitPace`] to the wire `(mode, rate_hz)`: `Fixed(hz)` carries its rate, the other modes send 0.
+/// Encode an [`EmitPace`] to the wire `(mode, rate_hz)`: `Fixed(hz)` carries its rate, the other paces send 0.
 pub(crate) fn emit_pace_wire(pace: EmitPace) -> (u8, u16) {
     match pace {
         EmitPace::Learned => (0, 0),
@@ -52,6 +53,27 @@ impl Device {
         )
     }
 
+    /// `OPTION(EMIT)`: set the pace ([`EmitPace`], the rate ceiling) and the forced wire rate (`force_hz`); persisted in NVS.
+    ///
+    /// A non-zero `force_hz` re-clones the box to advertise a `bInterval` the device did not (needs
+    /// [`allow_imperfect_clones`](Self::allow_imperfect_clones)), snapping to `1000/n` Hz; `Some(0)`/`None` is off.
+    pub fn set_emit_pace(&self, pace: EmitPace, force_hz: Option<u16>) -> Result<()> {
+        let (mode, hz) = emit_pace_wire(pace);
+        self.link.send(
+            FrameType::Option,
+            &emit_pace_payload(mode, hz, force_hz.unwrap_or(0)),
+        )
+    }
+
+    /// `OPTION(NAME)`: set the box's persistent name (leading printable-ASCII run, capped at [`NAME_MAX`] bytes); read it back off [`query_version`](Device::query_version). Persisted in NVS.
+    pub fn set_name(&self, name: &str) -> Result<()> {
+        self.link.send(FrameType::Option, &name_payload(name))
+    }
+
+    /// `OPTION(NAME)` with an empty value: clear the custom name, reverting the box to its synthesised `Medius-XXXX` default.
+    pub fn clear_name(&self) -> Result<()> {
+        self.set_name("")
+    }
     /// `OPTION(BEARING)`: how long the direction of the last injected delta stays the thing
     /// [`Direction::With`](crate::Direction) and [`Direction::Against`](crate::Direction) are measured
     /// against, and whether it is read per axis or as one vector; persisted in NVS.
@@ -79,31 +101,51 @@ impl Device {
         )
     }
 
-    /// `OPTION(EMIT)`: pick what paces injected motion ([`EmitPace::Learned`], [`EmitPace::Interval`], or [`EmitPace::Fixed`] Hz capped at [`EMIT_MAX_HZ`]), and what rate the clone runs at; persisted in NVS.
+    /// `OPTION(RENDER)`: set the texture motion is rendered with, and whether native motion is
+    /// rendered by the model too rather than relayed; persisted in NVS.
     ///
-    /// `force_hz` writes a chosen `bInterval` onto every HID interrupt-IN endpoint of the served
-    /// descriptor and polls the real device at the same interval, snapping to `1000/n` Hz; `None` leaves
-    /// the device's own. It applies only with [`allow_imperfect_clones`](Self::allow_imperfect_clones)
-    /// on, since the descriptor stops matching the real device, and changing the resolved interval
-    /// re-clones the box, which drops the control port briefly.
+    /// Rendering adds a small amount of latency, which reaches native motion when `full` is
+    /// on, so `full` is off by default. Nothing is rendered until the box has learned a profile for the
+    /// attached device: until then motion is relayed and injection takes the paced fill
+    /// ([`RenderStatus::ready`](crate::RenderStatus)).
     ///
-    /// Both fields ride one command, so every call writes both. `Some(0)` is the wire's "off" and reads
-    /// back as `None`.
-    pub fn set_emit_pace(&self, pace: EmitPace, force_hz: Option<u16>) -> Result<()> {
-        let (mode, hz) = emit_pace_wire(pace);
-        self.link.send(
-            FrameType::Option,
-            &emit_pace_payload(mode, hz, force_hz.unwrap_or(0)),
-        )
+    /// Motion asking for exact timing skips the model: [`move_rel_now`](Self::move_rel_now),
+    /// [`flush_motion`](Self::flush_motion) and [`discard_motion`](Self::discard_motion) take the paced
+    /// path, and with `full` on the rendered stream ignores
+    /// [`set_movement_riding`](Self::set_movement_riding).
+    ///
+    /// ```no_run
+    /// # use medius::{Device, RenderMode, Result};
+    /// # fn main() -> Result<()> {
+    /// let device = Device::find()?;
+    /// device.set_render(RenderMode::Despiked, true)?;
+    /// # Ok(()) }
+    /// ```
+    pub fn set_render(&self, mode: RenderMode, full: bool) -> Result<()> {
+        self.link
+            .send(FrameType::Option, &render_payload(mode.to_wire(), full))
     }
 
-    /// `OPTION(NAME)`: set the box's persistent name (leading printable-ASCII run, capped at [`NAME_MAX`] bytes); read it back off [`query_version`](Device::query_version). Persisted in NVS.
-    pub fn set_name(&self, name: &str) -> Result<()> {
-        self.link.send(FrameType::Option, &name_payload(name))
-    }
-
-    /// `OPTION(NAME)` with an empty value: clear the custom name, reverting the box to its synthesized `Medius-XXXX` default.
-    pub fn clear_name(&self) -> Result<()> {
-        self.set_name("")
+    /// `OPTION(SPREAD)`: percent of the host's command interval an injected delta is released
+    /// across; persisted in NVS.
+    ///
+    /// 0 puts the whole delta on the next report the box emits. 100 releases that delta evenly
+    /// across one command interval. Above 100 overlaps, and is allowed. At a loop matched to the native report
+    /// rate the interval is one report period, so the emitted stream is what it was.
+    ///
+    /// The box learns the interval from `MOVE` arrivals and releases nothing across one until it
+    /// has ([`SpreadStatus::span_us`](crate::SpreadStatus)). Motion asking for exact timing is
+    /// released at once: [`move_rel_now`](Self::move_rel_now), [`flush_motion`](Self::flush_motion)
+    /// and [`discard_motion`](Self::discard_motion).
+    ///
+    /// ```no_run
+    /// # use medius::{Device, Result};
+    /// # fn main() -> Result<()> {
+    /// let device = Device::find()?;
+    /// device.set_spread(100)?;
+    /// # Ok(()) }
+    /// ```
+    pub fn set_spread(&self, percent: u16) -> Result<()> {
+        self.link.send(FrameType::Option, &spread_payload(percent))
     }
 }

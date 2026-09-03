@@ -7,7 +7,7 @@ import time
 from typing import Optional, Sequence, Union
 
 from . import _native
-from ._enums import (Action, BearingMode, Blanket, EmitMode, LedMode, LedTarget, Direction,
+from ._enums import (Action, BearingMode, Blanket, EmitMode, RenderMode, LedMode, LedTarget, Direction,
                      MoveTiming, PendingMotion, RebootTarget, Status, UpdateTarget)
 from ._errors import InvalidArgError, MediusError, check
 from ._clip import ClipHandle
@@ -27,6 +27,8 @@ from ._types import (
     Counters,
     EmitPace,
     EmitPaceStatus,
+    RenderStatus,
+    SpreadStatus,
     Health,
     ImperfectStatus,
     Usage,
@@ -43,6 +45,8 @@ from ._types import (
     counters_from_c,
     device_info_from_c,
     emit_pace_status_from_c,
+    render_status_from_c,
+    spread_status_from_c,
     health_from_c,
     imperfect_from_c,
     locks_from_c,
@@ -254,6 +258,24 @@ class Device:
             )
         )
 
+    def set_emit_pace(self, pace: EmitPace, force_hz: Optional[int] = None):
+        """Set what paces injected motion (`hz` matters only for `EmitPace.fixed`) and what rate the
+        clone advertises and the box polls the device at (`force_hz`, None = native)."""
+        mode = _enum(pace.mode, EmitMode, "mode")
+        check(
+            _native.lib.medius_device_set_emit_pace(
+                self._handle, int(mode), _u16(pace.hz, "hz"), _u16(force_hz or 0, "force_hz"),
+            )
+        )
+
+    def set_name(self, name: str):
+        """Set the box's persistent human-readable name; an empty string clears it."""
+        check(_native.lib.medius_device_set_name(self._handle, name.encode("utf-8")))
+
+    def clear_name(self):
+        """Clear the custom name, reverting the box to its synthesised `Medius-XXXX` default."""
+        check(_native.lib.medius_device_clear_name(self._handle))
+
     def set_bearing(self, window_ms: Optional[int], mode: BearingMode):
         """Set what `Direction.WITH` and `Direction.AGAINST` are measured against.
 
@@ -271,25 +293,27 @@ class Device:
             )
         )
 
-    def set_emit_pace(self, pace: EmitPace, force_hz: Optional[int] = None):
-        """Set what paces injected motion (`hz` matters only for `EmitPace.fixed`) and what rate the
-        clone advertises and the box polls the device at (`force_hz`, None = the device's own).
-        Both ride one command, so every call writes both."""
-        mode = _enum(pace.mode, EmitMode, "mode")
-        check(
-            _native.lib.medius_device_set_emit_pace(
-                self._handle, int(mode), _u16(pace.hz, "hz"),
-                _u16(force_hz or 0, "force_hz"),
-            )
-        )
+    def set_render(self, mode: RenderMode, full: bool):
+        """Set the texture the box renders motion with, and whether native motion is rendered by
+        the model rather than relayed.
 
-    def set_name(self, name: str):
-        """Set the box's persistent human-readable name; an empty string clears it."""
-        check(_native.lib.medius_device_set_name(self._handle, name.encode("utf-8")))
+        Both ride one command and both persist, so `full` is required: an omitted one would silently
+        rewrite a setting you did not name. Rendering adds a small amount of latency, which reaches
+        native motion when `full` is on, so `full` is off by default. Nothing is rendered until the
+        box has learned a profile for the attached device (`RenderStatus.ready`).
 
-    def clear_name(self):
-        """Clear the custom name, reverting the box to its synthesized `Medius-XXXX` default."""
-        check(_native.lib.medius_device_clear_name(self._handle))
+        Motion asking for exact timing skips the model: `move_rel_now`, `flush_motion` and
+        `discard_motion` take the paced path, and with `full` on the rendered stream ignores
+        `set_movement_riding`."""
+        mode = _enum(mode, RenderMode, "mode")
+        check(_native.lib.medius_device_set_render(self._handle, int(mode), bool(full)))
+
+    def set_spread(self, percent: int):
+        """Set the percent of the host's command interval an injected delta is released across. 0
+        puts the whole delta on the next report the box emits, 100 releases that delta across one
+        command interval, and above 100 overlaps. The box releases nothing across an interval until it has
+        learned the host's command period from MOVE arrivals (`SpreadStatus.span_us`)."""
+        check(_native.lib.medius_device_set_spread(self._handle, int(percent)))
 
     def query_version(self) -> Version:
         out = _native.MediusVersion()
@@ -373,12 +397,6 @@ class Device:
         check(_native.lib.medius_device_query_locks(self._handle, ctypes.byref(out)))
         return locks_from_c(out)
 
-    def query_bearing(self) -> Bearing:
-        """The configured bearing: its window and how it is read."""
-        out = _native.MediusBearing()
-        check(_native.lib.medius_device_query_bearing(self._handle, ctypes.byref(out)))
-        return bearing_from_c(out)
-
     def query_catch(self) -> CatchState:
         out = _native.MediusCatchState()
         check(_native.lib.medius_device_query_catch(self._handle, ctypes.byref(out)))
@@ -404,6 +422,23 @@ class Device:
         out = _native.MediusEmitPaceStatus()
         check(_native.lib.medius_device_query_emit_pace(self._handle, ctypes.byref(out)))
         return emit_pace_status_from_c(out)
+
+    def query_bearing(self) -> Bearing:
+        """The configured bearing: its window and how it is read."""
+        out = _native.MediusBearing()
+        check(_native.lib.medius_device_query_bearing(self._handle, ctypes.byref(out)))
+        return bearing_from_c(out)
+
+    def query_render(self) -> RenderStatus:
+        out = _native.MediusRenderStatus()
+        check(_native.lib.medius_device_query_render(self._handle, ctypes.byref(out)))
+        return render_status_from_c(out)
+
+    def query_spread(self) -> SpreadStatus:
+        """How far an injected delta is spread, and the interval the box is releasing across."""
+        out = _native.MediusSpreadStatus()
+        check(_native.lib.medius_device_query_spread(self._handle, ctypes.byref(out)))
+        return spread_status_from_c(out)
 
     def counters(self) -> Counters:
         out = _native.MediusCountersSnapshot()
@@ -437,7 +472,7 @@ class Device:
     def input_events(self, filters: Union[CatchFilter, Sequence[CatchFilter]]) -> InputStream:
         """Subscribe to decoded input: press and release edges, and motion.
 
-        Every filter must name an input class and cover both edges -- build them with
+        Every filter must name an input class and cover both edges; build them with
         `CatchFilter.watch*` or `CatchFilter.all_input()`. A traffic class, `everything()`, or a
         filter narrowed to one edge is refused rather than silently yielding nothing.
         """

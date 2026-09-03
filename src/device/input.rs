@@ -40,7 +40,7 @@ impl InputStream {
     }
 
     // A snapshot is the CLASS's state, so the box sends every held usage of that class once ANY
-    // subscriber in the process has widened the table -- routing has to be class-only or the release
+    // subscriber in the process has widened the table: routing has to be class-only or the release
     // edge is lost. That is right for delivery and wrong for decoding: a stream that asked for one
     // key would otherwise report edges for every key someone else subscribed to. Filter here instead,
     // where the subscriber's own address is still known.
@@ -131,7 +131,7 @@ impl InputStream {
     /// once, so a poll loop that ignores [`Self::is_connected`] spins.
     pub fn recv_timeout(&mut self, timeout: Duration) -> Option<InputEvent> {
         // A timeout too large to add to `now` is a caller asking to wait indefinitely, not one asking
-        // to give up immediately -- which is what `?` on the overflow would have done.
+        // to give up immediately, which is what `?` on the overflow would have done.
         let Some(deadline) = Instant::now().checked_add(timeout) else {
             return self.recv().ok();
         };
@@ -139,8 +139,8 @@ impl InputStream {
             if let Some(e) = self.pending.pop_front() {
                 return Some(e);
             }
-            // A report can decode to nothing at all -- an empty snapshot for a class that was already
-            // empty -- so the deadline has to survive a pump that yields no event.
+            // A report can decode to nothing at all (an empty snapshot for a class that was already
+            // empty), so the deadline has to survive a pump that yields no event.
             let left = deadline.checked_duration_since(Instant::now())?;
             let event = self.events.recv_timeout(left)?;
             self.pump(event);

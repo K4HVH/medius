@@ -23,8 +23,8 @@ const HELD_POLL: Duration = Duration::from_millis(50);
 /// A chip confirms the image it booted after about ten seconds of running.
 pub(crate) const CONFIRM_TIMEOUT: Duration = Duration::from_secs(45);
 
-/// The chunking and credit accounting for one staged image, with no transport in it. The sync and
-/// async transfers both drive this, so the wire logic exists once and cannot drift between them.
+// The chunking and credit accounting for one staged image, with no transport in it. The sync and
+// async transfers both drive this, so the wire logic exists once and cannot drift between them.
 pub(crate) struct ChunkPlan<'a> {
     image: &'a [u8],
     target: UpdateTarget,
@@ -184,7 +184,7 @@ impl Device {
         // attempt has arg == credit, which is exactly what the first window expects, so it passes the
         // offset check and runs the loop a window ahead of the box for the rest of the transfer. But
         // before the BEGIN it is still sitting in the channel, where dropping held replies cannot
-        // reach it -- and awaiting the BEGIN is itself what moves it across. The box answers in
+        // reach it, and awaiting the BEGIN is itself what moves it across. The box replies in
         // order, so everything from the old attempt is behind that reply on the wire.
         self.drop_held(OTA_OP_DATA);
 
@@ -280,12 +280,12 @@ impl Device {
         self.recv_update(op, timeout)
     }
 
-    /// The next `UPDATE_RESP` for `op`. Matched on the op byte, not `SEQ`: one acknowledgement answers
-    /// a whole window of `DATA` frames, so it carries a rolling `SEQ` of its own.
-    ///
-    /// A reply for another op is put BACK, not dropped. The channel is one shared MPMC receiver and
-    /// `AsyncDevice::offload` runs transfers on threads of their own, so discarding here would eat
-    /// another caller's answer and leave it timing out against a box that replied correctly.
+    // The next `UPDATE_RESP` for `op`. Matched on the op byte, not `SEQ`: one acknowledgement answers
+    // a whole window of `DATA` frames, so it carries a rolling `SEQ` of its own.
+    //
+    // A reply for another op is put BACK, not dropped. The channel is one shared MPMC receiver and
+    // `AsyncDevice::offload` runs transfers on threads of their own, so discarding here would eat
+    // another caller's answer and leave it timing out against a box that replied correctly.
     pub(crate) fn recv_update(&self, op: u8, timeout: Duration) -> Result<(UpdateStatus, u32)> {
         let deadline = Instant::now() + timeout;
         loop {

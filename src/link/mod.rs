@@ -51,7 +51,7 @@ pub(crate) struct LinkInner {
     desired: Arc<Mutex<DesiredState>>,
     events: Arc<Mutex<CatchReg>>,
     catch_gen: Arc<AtomicU64>,
-    // Serializes a whole subscribe/unsubscribe sequence so concurrent callers can't commit masks
+    // Serialises a whole subscribe/unsubscribe sequence so concurrent callers can't commit masks
     // out of order and leave the box streaming a mask that disagrees with the registry.
     catch_lock: Arc<Mutex<()>>,
     counters: Arc<Counters>,
@@ -225,8 +225,8 @@ impl Link {
         &self.inner.held_updates
     }
 
-    /// Puts a reply on the channel as if the box had sent it, for tests about what happens to a
-    /// reply that outlived the caller who asked for it.
+    // Puts a reply on the channel as if the box had sent it, for tests about what happens to a
+    // reply that outlived the caller who asked for it.
     #[cfg(all(test, feature = "mock"))]
     pub(crate) fn inject_update(&self, payload: Vec<u8>) {
         let _ = self.inner.updates_tx.send(payload);

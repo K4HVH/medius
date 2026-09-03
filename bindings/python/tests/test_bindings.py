@@ -10,6 +10,9 @@ import pytest
 
 import medius
 from medius import (
+    RenderMode,
+    RenderStatus,
+    SpreadStatus,
     Axis,
     BadProtoVerError,
     BEARING_WINDOW_DEFAULT_MS,
@@ -86,7 +89,7 @@ def test_mock_feature_present():
 def test_meta_functions():
     # These are a hand-written mirror of the C structs, so a bumped ABI means they are stale until
     # someone re-reads the header. Pin it rather than accept anything newer.
-    assert medius.abi_version() == 5
+    assert medius.abi_version() == 6
     assert medius.version_string()
     assert medius.default_query_timeout_ms() > 0
     assert medius.default_keepalive_cadence_ms() > 0
@@ -111,7 +114,7 @@ def test_configure_version_then_open_mock_matches():
 def test_set_name_and_clear_name():
     mock = MockBox()
     with mock.open() as d:
-        # No host-side validation (like the other setters): the box sanitizes. These all just send.
+        # No host-side validation (like the other setters): the box sanitises. These all just send.
         d.set_name("Left PC")
         d.set_name("x" * 40)  # over-length: the firmware caps it, the host does not error
         d.clear_name()
@@ -275,7 +278,7 @@ def test_the_box_lock_table_answers_query_locks():
         assert locks.scale_of(x, Direction.WITH) == LOCK_SCALE_PASS
         assert locks.scale_of(x, Direction.AGAINST) == LOCK_SCALE_PASS
 
-        # In vector mode one relative scale governs the whole aim, the lower of the two, and the box
+        # In vector mode one relative scale governs both axes, the lower of the two, and the box
         # reports that number on both axes rather than each axis's stored byte.
         d.unlock(x, Direction.BOTH)
         d.scale(x, Direction.WITH, 130)
@@ -303,7 +306,7 @@ def test_a_key_blanket_reports_the_edges_it_blocks():
         ]
 
 
-def test_a_one_bit_class_stores_the_block_or_pass_it_renders():
+def test_a_one_bit_class_stores_the_block_or_pass_it_amounts_to():
     left = LockTarget.usage(Usage.button(Button.LEFT))
     with MockBox() as mock, Device.with_mock(mock) as d:
         d.scale(left, Direction.POSITIVE, 50)
@@ -358,6 +361,10 @@ def test_scalars_are_checked_before_ctypes_truncates_them():
             d.lock_all(99, Direction.BOTH)
         with pytest.raises(ValueError):
             d.set_bearing(20, 7)
+        # The render mode crosses the ABI as a byte, so an out-of-range one must be refused here
+        # rather than reaching the Rust enum.
+        with pytest.raises(ValueError):
+            d.set_render(4, False)
         with pytest.raises(ValueError):
             d.set_bearing(-1, BearingMode.PER_AXIS)
         # The window saturates rather than wrapping, as the Rust API does: 70000 ms would arrive as
@@ -393,7 +400,7 @@ def test_mock_set_locks_checks_each_entry_before_ctypes_truncates_it():
 def test_catch_filter_scalars_are_checked_before_ctypes_truncates_them():
     f = CatchFilter.watch(Usage.button(Button.LEFT))
     # A direction byte no constant names would ride the filter to the box, where the subscription is
-    # refused -- a stream that never yields, reported nowhere near the mistake.
+    # refused: a stream that never yields, reported nowhere near the mistake.
     with pytest.raises(ValueError):
         f.with_direction(40)
     with pytest.raises(ValueError):
@@ -592,6 +599,8 @@ def test_movement_riding_roundtrip():
 
 def test_emit_pace_roundtrip():
     with MockBox() as mock:
+        # The box's factory texture is De-spiked, but nothing is rendered until a profile arms, so a
+        # Learned pace reports the learnt cap rather than the 1 ms tick.
         mock.set_emit_pace(EmitPace.fixed(500))
         with Device.with_mock(mock) as d:
             status = d.query_emit_pace()
@@ -601,10 +610,76 @@ def test_emit_pace_roundtrip():
         with Device.with_mock(mock) as d:
             status = d.query_emit_pace()
         assert status.mode == EmitPace.learned()
-        assert status.resolved_hz == 0  # learnt/adaptive
+        assert status.resolved_hz == 0
+        # Armed, the rendered stream self-paces every millisecond and says so.
+        mock.set_render(RenderMode.DESPIKED, False, True)
+        with Device.with_mock(mock) as d:
+            assert d.query_emit_pace().resolved_hz == 1000
+        # And disarming puts it back: without reading it again, `ready` could be latched on and the
+        # assertion above would pass on a mock that ignored the flag.
+        mock.set_render(RenderMode.DESPIKED, False, False)
+        with Device.with_mock(mock) as d:
+            assert d.query_emit_pace().resolved_hz == 0
         assert status.force_hz is None
         assert status.force_active is False
         assert status.advertised_hz == 0  # 0 = no clone, the documented sentinel
+
+
+def test_spread_roundtrip():
+    with MockBox() as mock, Device.with_mock(mock) as d:
+        # A fresh box boots at the full percent with no command period learned, so it spreads nothing.
+        assert d.query_spread() == SpreadStatus(100, 0)
+        # The period is the box's own state, learned off MOVE arrivals, not something the host sets.
+        mock.set_spread_learned(8000)
+        assert d.query_spread() == SpreadStatus(100, 8000)
+        d.set_spread(50)
+        assert d.query_spread() == SpreadStatus(50, 4000)
+        # Above 100 overlaps rather than being clamped, and past a byte, so a u8 anywhere in the
+        # ctypes chain fails here rather than round-tripping.
+        d.set_spread(1000)
+        assert d.query_spread() == SpreadStatus(1000, 80000)
+        # Off answers no interval even with a period learned.
+        d.set_spread(0)
+        assert d.query_spread() == SpreadStatus(0, 0)
+
+
+def test_render_roundtrip():
+    # The texture is its own command; the pace still reports the gate it implies.
+    with MockBox() as mock, Device.with_mock(mock) as d:
+        # The box's factory setting: de-spiked, native motion relayed, nothing learned yet.
+        status = d.query_render()
+        assert status.mode == RenderMode.DESPIKED
+        assert status.full is False
+        assert status.ready is False
+        for mode in RenderMode:
+            for full in (False, True):
+                d.set_render(mode, full)
+                status = d.query_render()
+                assert (status.mode, status.full) == (mode, full)
+        # The box gates the 1 ms tick on a profile having ARMED, not on the mode being set: a box told
+        # to render but still waiting for one runs the paced fill and reports the learnt cap.
+        d.set_render(RenderMode.STOCK, False)
+        d.set_emit_pace(EmitPace.learned())
+        assert d.query_emit_pace().resolved_hz == 0
+        # Onto a Fixed rate the snapped value stands whatever the texture is doing.
+        d.set_emit_pace(EmitPace.fixed(250))
+        assert d.query_emit_pace().resolved_hz == 250
+        d.set_render(RenderMode.OFF, False)
+        d.set_emit_pace(EmitPace.learned())
+        assert d.query_emit_pace().resolved_hz == 0
+
+    # Armed, a rendered stream on a learnt pace self-paces every millisecond. This is the half that
+    # discriminates: without it the reply reads the same whether the renderer is emitting or the box
+    # is still on the fill.
+    with MockBox() as mock, Device.with_mock(mock) as d:
+        mock.set_render(RenderMode.STOCK, True, True)
+        assert d.query_render() == RenderStatus(RenderMode.STOCK, True, True)
+        d.set_emit_pace(EmitPace.learned())
+        assert d.query_emit_pace().resolved_hz == 1000
+        # full has no default: OPTION(RENDER) persists both fields, so an omitted one would silently
+        # rewrite a setting the caller never named.
+        with pytest.raises(TypeError):
+            d.set_render(RenderMode.STOCK)
 
 
 def test_rate_force_roundtrip():
@@ -635,7 +710,7 @@ def test_rate_force_needs_the_imperfect_opt_in():
     with MockBox() as mock:
         mock.set_advertised_hz(125)
         with Device.with_mock(mock) as d:
-            d.set_emit_pace(EmitPace.learned(), 1000)
+            d.set_emit_pace(EmitPace.learned(), force_hz=1000)
             status = d.query_emit_pace()
             assert status.force_hz == 1000
             assert status.force_active is False
@@ -651,13 +726,13 @@ def test_rate_force_through_the_setter():
     # the force on the wire fails here rather than passing on a mock nobody sent anything to.
     with MockBox() as mock, Device.with_mock(mock) as d:
         d.allow_imperfect_clones(True)
-        d.set_emit_pace(EmitPace.fixed(250), 125)
+        d.set_emit_pace(EmitPace.fixed(250), force_hz=125)
         status = d.query_emit_pace()
         assert status.mode == EmitPace.fixed(250)
         assert status.force_hz == 125
         assert status.advertised_hz == 125
         assert status.force_active is True
-        d.set_emit_pace(EmitPace.fixed(250), None)
+        d.set_emit_pace(EmitPace.fixed(250), force_hz=None)
         assert d.query_emit_pace().force_hz is None
 
 
@@ -1013,7 +1088,7 @@ def test_ctypes_structs_match_the_c_header():
     This is not a decode concern, it is memory safety: `medius_event_stream_recv` writes
     `sizeof(MediusCatchEvent)` bytes into a buffer this module allocates, so a mirror short by one
     field lets the library write past the end of it on every event. A field added to the header and
-    missed here is silent until it corrupts the heap -- which is exactly how it happened.
+    missed here is silent until it corrupts the heap, which is exactly how it happened.
     """
     import ctypes
     import re
@@ -1132,7 +1207,7 @@ def test_input_events_refuse_what_they_cannot_decode():
         with pytest.raises(medius.CaptureNotApplicableError):
             d.catch_events(CatchFilter.watch_class(Class.KEY).with_capture(8))
         # 0xFFFF is the every-id sentinel, and a MediusCatchFilter carries nothing that could tell an
-        # exact id apart from the blanket -- so across this ABI a media usage of 0xFFFF IS the class
+        # exact id apart from the blanket, so across this ABI a media usage of 0xFFFF IS the class
         # blanket. The native API refuses it outright; here it is a documented wire limitation, and
         # what matters is that it is the blanket rather than something narrower.
         assert CatchFilter.watch(Usage.media(0xFFFF)).id is None
@@ -1176,7 +1251,7 @@ def test_the_filter_constructors_address_inputs_like_lock_does():
 
 def test_an_unknown_control_status_does_not_raise():
     # The C ABI reports a status this build does not know as OTHER, and the byte itself stays on
-    # `flags`. Without the member, decoding one raised ValueError -- the exact failure the distinct
+    # `flags`. Without the member, decoding one raised ValueError: the exact failure the distinct
     # variant was added to prevent, reintroduced one binding down.
     unknown = TrafficEvent(
         catch_class=CatchClass.CONTROL,
@@ -1213,7 +1288,7 @@ def test_timeline_unwraps_the_rollover_and_maps_onto_the_callers_clock():
 
 
 def test_every_enum_parameter_is_checked_before_it_reaches_the_boundary():
-    # Each of these used to hand the C ABI a byte it materialized as a `#[repr(u8)]` enum before any
+    # Each of these used to hand the C ABI a byte it materialised as a `#[repr(u8)]` enum before any
     # check could run: SIGSEGV where the value fell outside the jump table, and the wrong command on
     # the wire where it did not. There is no status to read back from a crashed interpreter.
     with MockBox() as mock, Device.with_mock(mock) as d:

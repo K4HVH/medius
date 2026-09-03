@@ -9,7 +9,8 @@ use crate::protocol::opcode::{
     DI_HAS_SERIAL, KBC_CONSUMER, KBC_NKRO, KBC_REPORT_ID, KBC_SYSTEM, LOCK_AXIS_WHEEL,
     LOCK_CLS_AXIS, LOCK_CLS_BTN, LOCK_CLS_KEY, LOCK_CLS_MEDIA, LOCK_DIR_AGAINST, LOCK_DIR_BOTH,
     LOCK_DIR_NEG, LOCK_DIR_POS, LOCK_DIR_WITH, LOCK_ID_ALL, LOCK_SCALE_BLOCK, LOCK_SCALE_PASS,
-    OPT_BEARING, OPT_EMIT, OPT_IMPERFECT, OPT_MOVE_RIDE, OPT_NAME, Q_FIRMWARE, RATE_CONFIDENT,
+    OPT_BEARING, OPT_EMIT, OPT_IMPERFECT, OPT_MOVE_RIDE, OPT_NAME, OPT_RENDER, OPT_SPREAD,
+    Q_FIRMWARE, RATE_CONFIDENT,
 };
 use crate::protocol::opcode::{
     CLIP_CFG_F_FINALIZED, CLIP_CFG_F_LOOP, CLIP_CFG_F_RETAIN, CLIP_CFG_F_RIDE, CLIP_TRIG_MAX,
@@ -23,8 +24,8 @@ use crate::types::lock::blanket_scope;
 use crate::types::{
     Axis, Bearing, BearingMode, Caps, CatchClass, CatchState, Class, ClipSettings, ClipState,
     ClipStatus, ClockDomain, DeviceInfo, DeviceKind, Direction, EmitPace, Health, ImperfectStatus,
-    KbdCaps, LockEntry, LockScope, LockTarget, Locks, LogLevel, MouseCaps, Rate, Stats, Usage,
-    Version,
+    KbdCaps, LockEntry, LockScope, LockTarget, Locks, LogLevel, MouseCaps, Rate, RenderMode, Stats,
+    Usage, Version,
 };
 
 #[derive(Debug)]
@@ -45,6 +46,15 @@ struct State {
     move_ride_ms: u16,
     bearing: Bearing,
     emit_pace: EmitPace,
+    render_mode: RenderMode,
+    render_full: bool,
+    /// Whether the box has learned a profile. A real box arms this off native motion, so a mock
+    /// starts unarmed and a test that needs the armed path says so.
+    render_ready: bool,
+    spread_percent: u16,
+    /// The command period the box has learned off MOVE arrivals, in microseconds. 0 is a box that has
+    /// not seen enough of them, which is where every session starts.
+    spread_learned_us: u32,
     emit_force_hz: Option<u16>,
     advertised_hz: u16,
     clip: ClipStatus,
@@ -82,6 +92,11 @@ impl Default for State {
             move_ride_ms: 0,
             bearing: Bearing::default(),
             emit_pace: EmitPace::Learned,
+            render_mode: RenderMode::Despiked,
+            render_full: false,
+            render_ready: false,
+            spread_percent: 100,
+            spread_learned_us: 0,
             emit_force_hz: None,
             advertised_hz: 0,
             clip: ClipStatus::default(),
@@ -105,7 +120,7 @@ const MEDIA_LOCK_MAX: usize = 8;
 // The rest of ctrl_proto.h's reply bounds. Every one of these sits behind a public builder that
 // takes a caller-supplied length, and the box truncates at each rather than refusing: it appends
 // what fits and answers. Encoding past them writes a count byte that wrapped past 255, or a payload
-// longer than a frame carries -- and since the responder runs inside `write_all`, that `encode`
+// longer than a frame carries, and since the responder runs inside `write_all`, that `encode`
 // failure unwinds back out of the caller's own query rather than answering it.
 const NAME_MAX: usize = 32; // CTRL_NAME_MAX
 const DEVICE_INFO_PRODUCT_MAX: usize = 127; // CTRL_DEVICE_INFO_PRODUCT_MAX
@@ -155,7 +170,7 @@ impl LockTable {
             if slots & (1 << i) == 0 {
                 continue;
             }
-            // One bit is all a button carries, so the box stores the block or pass it will render.
+            // One bit is all a button carries, so the box stores the block or pass it amounts to.
             let mut v = scale;
             if target >= LOCK_TGT_BTN_BASE {
                 v = if v < LOCK_SCALE_PASS {
@@ -246,7 +261,7 @@ impl LockTable {
         }
     }
 
-    // In vector mode one relative scale governs the whole aim, the lower of X's and Y's, so the
+    // In vector mode one relative scale governs both axes, the lower of X's and Y's, so the
     // readback names that number on both axes instead of each axis's stored byte.
     fn reported(&self, t: usize, slot: usize, vector: bool) -> u8 {
         let sc = self.mouse[t][slot];
@@ -292,7 +307,7 @@ impl LockTable {
             }
         }
         // Media before granular keys: media is bounded at MEDIA_LOCK_MAX and granular keys are not,
-        // so enumerating keys last is what keeps the unbounded class from starving the bounded one at
+        // so enumerating keys last is what keeps the unbounded class from crowding the bounded one out at
         // the entry cap. A media usage is suppressed whole, so the direction it reports is Both.
         if self.media_blanket {
             push(
@@ -308,8 +323,8 @@ impl LockTable {
                 LOCK_SCALE_BLOCK,
             );
         }
-        // Granular keys last, on whatever is left of the cap. Past it they truncate silently -- the
-        // reply has nowhere to say so -- which is why nothing bounded is enumerated after them.
+        // Granular keys last, on whatever is left of the cap. Past it they truncate silently (the
+        // reply has nowhere to say so), which is why nothing bounded is enumerated after them.
         for u in 0..256u16 {
             let usage = LockScope::Target(LockTarget::Usage(Usage::new(Class::Key, u)));
             if self.key_press[u as usize] {
@@ -342,14 +357,28 @@ impl State {
                 self.move_ride_ms = u16::from_le_bytes([*lo, *hi])
             }
             (Some(OPT_EMIT), [mode, lo, hi, flo, fhi, ..]) => {
-                let hz = u16::from_le_bytes([*lo, *hi]);
-                let force = u16::from_le_bytes([*flo, *fhi]);
-                self.emit_pace = match mode {
-                    1 => EmitPace::Interval,
-                    2 => EmitPace::Fixed(hz),
-                    _ => EmitPace::Learned,
-                };
-                self.emit_force_hz = (force != 0).then_some(force);
+                // The box discards the whole command on a mode it does not know, force_hz included,
+                // and answers nothing. Coercing here would model a box that does not exist.
+                if let Some(p) = match *mode {
+                    0 => Some(EmitPace::Learned),
+                    1 => Some(EmitPace::Interval),
+                    2 => Some(EmitPace::Fixed(u16::from_le_bytes([*lo, *hi]))),
+                    _ => None,
+                } {
+                    let force = u16::from_le_bytes([*flo, *fhi]);
+                    self.emit_pace = p;
+                    self.emit_force_hz = (force != 0).then_some(force);
+                }
+            }
+            (Some(OPT_RENDER), [mode, full, ..]) => {
+                // Same rule: an unknown mode, or a `full` past 1, discards the whole command.
+                if let (Some(m), true) = (RenderMode::from_u8(*mode), *full <= 1) {
+                    self.render_mode = m;
+                    self.render_full = *full != 0;
+                }
+            }
+            (Some(OPT_SPREAD), [lo, hi, ..]) => {
+                self.spread_percent = u16::from_le_bytes([*lo, *hi]);
             }
             (Some(OPT_NAME), name) => {
                 self.version.name = String::from_utf8_lossy(name).into_owned()
@@ -545,13 +574,17 @@ fn options_bearing_payload(b: Bearing) -> Vec<u8> {
 
 fn options_emit_payload(
     pace: EmitPace,
+    render: RenderMode,
+    render_ready: bool,
     force_hz: Option<u16>,
     native_hz: u16,
     allowed: bool,
 ) -> Vec<u8> {
+    // `render` is not echoed here any more (it has its own option), but the rendered gate still
+    // decides the resolved rate, so the pace reply still depends on it.
     // Mirror the firmware: Fixed clamps the echoed rate to 1..=1000 (0 -> 1000) and snaps resolved
     // to the 1 ms frame clock (1000/n); Learned/Interval echo 0 (no real device to resolve).
-    let (mode, fixed_hz, resolved) = match pace {
+    let (mode, fixed_hz, mut resolved) = match pace {
         EmitPace::Learned => (0u8, 0u16, 0u16),
         EmitPace::Interval => (1, 0, 0),
         EmitPace::Fixed(h) => {
@@ -560,6 +593,16 @@ fn options_emit_payload(
             (2, hz, (1000 / n) as u16)
         }
     };
+    // The texture rides its own option beside the pace, but only forces resolved to 1 kHz when the
+    // pace resolved to no period of its own; a Fixed rate keeps its snapped value. That is the
+    // firmware's condition, not "the pace is Learned": usbdev.c's emit_override_period returns 0 for
+    // Interval too while no device is bound, which is the state this mock models. The box also gates
+    // it on a profile having ARMED, not on the mode being set: until then it runs the paced fill and
+    // reports 0. A mock that answered 1000 regardless would green-light host code that reads
+    // resolved_hz as "the renderer is emitting".
+    if render != RenderMode::Off && render_ready && resolved == 0 {
+        resolved = 1000;
+    }
     // The box resolves a forced rate to a bInterval in whole 1 ms frames and advertises 1000/n, so a
     // request that is not a divisor of 1000 comes back as something else. A naive echo would diverge.
     // A force only applies with the imperfect opt-in on; without it the clone still advertises its own.
@@ -582,6 +625,25 @@ fn options_emit_payload(
     p.extend_from_slice(&force_hz.unwrap_or(0).to_le_bytes());
     p.extend_from_slice(&advertised.to_le_bytes());
     p.push(active as u8);
+    p
+}
+
+fn options_render_payload(mode: RenderMode, full: bool, ready: bool) -> Vec<u8> {
+    vec![9u8, OPT_RENDER, mode.to_wire(), full as u8, ready as u8]
+}
+
+// The box resolves the interval from a command period it has learned off MOVE arrivals, and answers 0
+// while it has none or the option is off. A mock that answered a span from the percent alone would
+// model a friendlier box than the hardware and green-light host code reading it as "spreading".
+fn options_spread_payload(percent: u16, learned_us: u32) -> Vec<u8> {
+    let span = if percent == 0 || learned_us == 0 {
+        0
+    } else {
+        ((learned_us as u64 * percent as u64) / 100) as u32
+    };
+    let mut p = vec![9u8, OPT_SPREAD];
+    p.extend_from_slice(&percent.to_le_bytes());
+    p.extend_from_slice(&span.to_le_bytes());
     p
 }
 
@@ -667,8 +729,8 @@ pub struct MockBox {
     transport: Arc<MockTransport>,
 }
 
-/// The box's side of an update session, so a transfer against the mock exercises the same sequencing
-/// the firmware does. A handler that just answered OK would let every deliberate break pass.
+// The box's side of an update session, so a transfer against the mock exercises the same sequencing
+// the firmware does. A handler that just answered OK would let every deliberate break pass.
 #[derive(Debug, Clone, Default)]
 pub(crate) struct MockUpdate {
     pub(crate) active: bool,
@@ -715,8 +777,8 @@ impl MockUpdate {
         (0x01, 16)
     }
 
-    /// Returns `Some((status, arg))` only when the box owes an answer, exactly like the firmware:
-    /// a chunk inside an open window is written and not acknowledged.
+    // Returns `Some((status, arg))` only when the box owes an answer, exactly like the firmware:
+    // a chunk inside an open window is written and not acknowledged.
     fn data(&mut self, body: &[u8]) -> Option<(u8, u32)> {
         // Length before state, and BAD_STATE names the op it wanted, exactly as the firmware does.
         if body.len() < 3 {
@@ -911,10 +973,28 @@ impl MockBox {
                                 seq,
                                 &options_emit_payload(
                                     st.emit_pace,
+                                    st.render_mode,
+                                    st.render_ready,
                                     st.emit_force_hz,
                                     st.advertised_hz,
                                     st.imperfect.allowed,
                                 ),
+                            )
+                            .expect("resp fits"),
+                            Some(OPT_RENDER) => encode(
+                                FrameType::Resp,
+                                seq,
+                                &options_render_payload(
+                                    st.render_mode,
+                                    st.render_full,
+                                    st.render_ready,
+                                ),
+                            )
+                            .expect("resp fits"),
+                            Some(OPT_SPREAD) => encode(
+                                FrameType::Resp,
+                                seq,
+                                &options_spread_payload(st.spread_percent, st.spread_learned_us),
                             )
                             .expect("resp fits"),
                             _ => Vec::new(),
@@ -1085,6 +1165,45 @@ impl MockBox {
         self.state.lock().emit_pace = pace;
     }
 
+    /// Set what `QUERY(OPTIONS, RENDER)` answers (builder style).
+    #[must_use]
+    pub fn with_render(self, mode: RenderMode, full: bool) -> Self {
+        self.set_render(mode, full);
+        self
+    }
+
+    /// Set whether the mock reports a learned profile, which is what gates rendering on a real box.
+    #[must_use]
+    pub fn with_render_ready(self, ready: bool) -> Self {
+        self.set_render_ready(ready);
+        self
+    }
+
+    /// Update what `QUERY(OPTIONS, RENDER)` answers in place, like every other option's setter.
+    pub fn set_render(&self, mode: RenderMode, full: bool) {
+        let mut st = self.state.lock();
+        st.render_mode = mode;
+        st.render_full = full;
+    }
+
+    /// Update the learned-profile flag in place.
+    pub fn set_render_ready(&self, ready: bool) {
+        self.state.lock().render_ready = ready;
+    }
+
+    /// Set the command period the mock has learned, in microseconds (builder style). 0 is a box that
+    /// has not seen enough `MOVE`s yet, which answers a span of 0 whatever the percent is.
+    #[must_use]
+    pub fn with_spread_learned(self, period_us: u32) -> Self {
+        self.set_spread_learned(period_us);
+        self
+    }
+
+    /// Update the learned command period in place.
+    pub fn set_spread_learned(&self, period_us: u32) {
+        self.state.lock().spread_learned_us = period_us;
+    }
+
     /// Set the forced wire rate answered to `QUERY(OPTIONS, EMIT)` (builder style); `Some(0)` is off.
     #[must_use]
     pub fn with_rate_force(self, force_hz: Option<u16>) -> Self {
@@ -1142,8 +1261,8 @@ impl MockBox {
 
     /// Push a `LOG` line as if the box emitted it; it surfaces on the device's `logs()` channel.
     pub fn push_log(&self, level: LogLevel, text: &str) {
-        // The protocol names no bound on LOG text -- emit_log_frame's 160-byte line buffer is one
-        // emitter's, not the wire's -- so the only bound to hold is the frame's own, less the level
+        // The protocol names no bound on LOG text (emit_log_frame's 160-byte line buffer is one
+        // emitter's, not the wire's), so the only bound to hold is the frame's own, less the level
         // byte. Bytes, as the box copies them; a split char decodes lossily.
         let n = text.len().min(crate::protocol::opcode::MAX_PAYLOAD - 1);
         let mut payload = Vec::with_capacity(1 + n);
@@ -1197,7 +1316,7 @@ impl MockBox {
 
     /// `ts_us` is the raw wire timestamp, as for [`push_motion`](Self::push_motion).
     /// A held-usage snapshot. `class` is carried in the frame rather than inferred, so a test can
-    /// push the EMPTY snapshot -- the release of the last held usage -- and still say which class
+    /// push the EMPTY snapshot (the release of the last held usage) and still say which class
     /// went quiet.
     /// `direction` is the edge that produced the snapshot: the subscribed set grew or shrank.
     pub fn push_usages(

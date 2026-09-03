@@ -142,7 +142,7 @@ pub(crate) fn prepare(filters: impl IntoIterator<Item = CatchFilter>) -> Result<
         });
     }
     // 0xFFFF is the every-id sentinel, so an exact subscription to it becomes the class blanket the
-    // moment it reaches the wire -- a much wider stream than the caller asked for, and silent. Only a
+    // moment it reaches the wire: a much wider stream than the caller asked for, and silent. Only a
     // media usage is wide enough to express it.
     if let Some((class, id)) = wanted.iter().find_map(|f| {
         let (_, id) = f.wire();

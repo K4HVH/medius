@@ -26,6 +26,7 @@ from ._enums import (
     Direction,
     Edge,
     EmitMode,
+    RenderMode,
     InputKind,
     LockTargetKind,
     LogLevel,
@@ -239,11 +240,11 @@ class LockEntry:
     """One weighed direction: what it addresses, which way, and how much of it survives.
 
     `scale` is a percent of the physical value: 0 blocks, 100 passes untouched, above 100 amplifies.
-    A momentary usage carries one bit, so the box stores the block or pass it renders and one never
+    A momentary usage carries one bit, so the box stores the block or pass it amounts to and one never
     reports a value in between.
 
     It is the figure the box applies, not the byte it was sent: in `BearingMode.VECTOR` one relative
-    scale governs the whole aim, the lower of X's and Y's, and both relative entries carry it.
+    scale governs both axes, the lower of X's and Y's, and both relative entries carry it.
     """
 
     target: "LockTarget"
@@ -373,6 +374,8 @@ class EmitPace:
 
 @dataclass
 class EmitPaceStatus:
+    """The configured pace, plus the emit-rate ceiling and the wire rate in effect."""
+
     mode: EmitPace
     resolved_hz: int
     force_hz: Optional[int] = None
@@ -409,7 +412,7 @@ class BoxInfo:
 
     @property
     def name(self) -> str:
-        """The box's human-readable name (its readable partner to `id`); a synthesized default when unset."""
+        """The box's human-readable name (its readable partner to `id`); a synthesised default when unset."""
         return self.version.name
 
     @property
@@ -431,7 +434,7 @@ class UsageSnapshot:
     """A held-usage snapshot for one class: every held usage (button, key, or media).
 
     `cls` and `direction` come from the frame header, not from the entries. The snapshot that most
-    needs them is the EMPTY one -- releasing the last held usage is the edge a caller waits for, and
+    needs them is the EMPTY one: releasing the last held usage is the edge a caller waits for, and
     it lists nothing to read a class or an edge from.
     """
 
@@ -698,8 +701,8 @@ class CatchFilter:
         CatchFilter.traffic(TrafficClass.VENDOR_BULK, 0x83).with_capture(16)
         CatchFilter.everything().with_capture(16)
 
-    The box resolves each event to its most specific matching entry -- an exact `(class, id)` beats a
-    class blanket, which beats `everything()`, and a named direction beats `BOTH` -- and that entry
+    The box resolves each event to its most specific matching entry: an exact `(class, id)` outranks
+    a class blanket, which outranks `everything()`, and a named direction outranks `BOTH`. That entry
     supplies the capture.
     """
 
@@ -1124,6 +1127,33 @@ def emit_pace_status_from_c(c) -> EmitPaceStatus:
         c.advertised_hz,
         bool(c.force_active),
     )
+
+
+def render_status_from_c(c) -> RenderStatus:
+    return RenderStatus(RenderMode(c.mode), bool(c.full), bool(c.ready))
+
+
+@dataclass
+class RenderStatus:
+    """What the box renders motion with, whether native motion goes through it, and whether a
+    profile has been learned for the attached device."""
+
+    mode: "RenderMode"
+    full: bool = False
+    ready: bool = False
+
+
+def spread_status_from_c(c) -> "SpreadStatus":
+    return SpreadStatus(c.percent, c.span_us)
+
+
+@dataclass
+class SpreadStatus:
+    """How far an injected delta is spread across the host's command interval, and the interval the
+    box is releasing across."""
+
+    percent: int
+    span_us: int = 0
 
 
 @dataclass

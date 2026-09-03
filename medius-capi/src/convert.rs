@@ -9,7 +9,8 @@ use medius::{
     ClockEstimate, CountersSnapshot, DeviceInfo, DeviceKind, Direction, EmitPace, EmitPaceStatus,
     FirmwareInfo, Health, ImageState, ImperfectStatus, Input, InputEvent, KbdCaps, Key, LedMode,
     LedTarget, LockEntry, LockScope, LockTarget, Locks, LogLevel, LogLine, MediaKey, Motion,
-    MouseCaps, MoveTiming, PendingMotion, PortInfo, Rate, RebootTarget, Stats, Usage, Version,
+    MouseCaps, MoveTiming, PendingMotion, PortInfo, Rate, RebootTarget, RenderMode, RenderStatus,
+    SpreadStatus, Stats, Usage, Version,
 };
 
 use crate::ctypes::*;
@@ -37,7 +38,7 @@ fn read_cstr(src: &[c_char]) -> String {
     String::from_utf8_lossy(&bytes).into_owned()
 }
 
-// Every enum crosses this boundary as a byte, because materializing a `#[repr(u8)]` enum from one a
+// Every enum crosses this boundary as a byte, because materialising a `#[repr(u8)]` enum from one a
 // caller chose is undefined behaviour before any check can run. These are the total maps back, keyed
 // on the C ABI's own discriminants; each answers `None` for a byte no constant names.
 
@@ -164,6 +165,16 @@ pub(crate) fn clock_domain_from_c(v: u8) -> Option<ClockDomain> {
     })
 }
 
+/// A crate [`RenderMode`] to its `MediusRenderMode`.
+pub(crate) fn render_to_c(r: RenderMode) -> MediusRenderMode {
+    match r {
+        RenderMode::Off => MediusRenderMode::Off,
+        RenderMode::Stock => MediusRenderMode::Stock,
+        RenderMode::Despiked => MediusRenderMode::Despiked,
+        RenderMode::Unsmoothed => MediusRenderMode::Unsmoothed,
+    }
+}
+
 /// `(mode, hz)` to an [`EmitPace`]; `hz` matters only for `Fixed`.
 pub(crate) fn emit_pace_from_c(mode: u8, hz: u16) -> Option<EmitPace> {
     Some(match mode {
@@ -220,8 +231,8 @@ impl From<MediusLogLevel> for LogLevel {
     }
 }
 
-/// `MediusLockTarget` to [`LockTarget`]; `None` for a `kind` no constant names or a `Usage` target
-/// with an out-of-range button id.
+// `MediusLockTarget` to [`LockTarget`]; `None` for a `kind` no constant names or a `Usage` target
+// with an out-of-range button id.
 pub(crate) fn lock_target_to_medius(v: MediusLockTarget) -> Option<LockTarget> {
     Some(match v.kind {
         0 => LockTarget::Axis(Axis::X),
@@ -232,8 +243,8 @@ pub(crate) fn lock_target_to_medius(v: MediusLockTarget) -> Option<LockTarget> {
     })
 }
 
-/// `MediusUsage` to a [`Usage`]; `None` for a `kind` no constant names, or a button/key id out of
-/// range for its class.
+// `MediusUsage` to a [`Usage`]; `None` for a `kind` no constant names, or a button/key id out of
+// range for its class.
 pub(crate) fn input_to_medius(v: MediusUsage) -> Option<Usage> {
     Some(match Class::from_u8(v.kind)? {
         Class::Button => Usage::from(Button::from_id(u8::try_from(v.id).ok()?)?),
@@ -484,14 +495,14 @@ pub(crate) fn catch_filter_to_c(f: CatchFilter) -> MediusCatchFilter {
     }
 }
 
-/// The C struct back to a [`CatchFilter`]; `None` when the four values address nothing the box would
-/// accept -- an unknown class, an unknown direction, or the wildcard class carrying a real id.
+// The C struct back to a [`CatchFilter`]; `None` when the four values address nothing the box would
+// accept: an unknown class, an unknown direction, or the wildcard class carrying a real id.
 pub(crate) fn catch_filter_from_c(f: MediusCatchFilter) -> Option<CatchFilter> {
     CatchFilter::from_wire(f.class, f.id, f.direction, f.capture)
 }
 
-/// A decoded [`InputEvent`] to the C struct. The unused arms are zeroed rather than left undefined:
-/// a C caller reading `dx` on a press must see 0, not whatever was on the stack.
+// A decoded [`InputEvent`] to the C struct. The unused arms are zeroed rather than left undefined:
+// a C caller reading `dx` on a press must see 0, not whatever was on the stack.
 pub(crate) fn input_event_to_c(e: InputEvent) -> MediusInputEvent {
     let blank = blank_usage();
     let (kind, usage, dx, dy, dz) = match e.input {
@@ -597,7 +608,7 @@ impl From<ClipStatus> for MediusClipStatus {
     }
 }
 
-/// Serialize clip settings to the C struct (autolock as a `CLIP_LOCK_*` bitmask, triggers into the fixed array).
+// Serialise clip settings to the C struct (autolock as a `CLIP_LOCK_*` bitmask, triggers into the fixed array).
 pub(crate) fn clip_settings_to_c(s: &medius::ClipSettings) -> MediusClipSettings {
     let mut triggers = [MediusClipTrigger {
         on: blank_usage(),
@@ -657,7 +668,7 @@ fn blanket_bit(b: Blanket) -> u8 {
     }
 }
 
-/// Deserialize clip settings from the C struct (the inverse of [`clip_settings_to_c`]).
+// Deserialise clip settings from the C struct (the inverse of [`clip_settings_to_c`]).
 #[cfg(feature = "mock")]
 pub(crate) fn clip_settings_from_c(c: &MediusClipSettings) -> medius::ClipSettings {
     let n = (c.n as usize).min(MEDIUS_CLIP_TRIG_MAX);
@@ -727,6 +738,25 @@ impl From<EmitPaceStatus> for MediusEmitPaceStatus {
             force_hz: s.force_hz.unwrap_or(0),
             advertised_hz: s.advertised_hz,
             force_active: s.force_active as u8,
+        }
+    }
+}
+
+impl From<RenderStatus> for MediusRenderStatus {
+    fn from(s: RenderStatus) -> Self {
+        MediusRenderStatus {
+            mode: render_to_c(s.mode),
+            full: s.full as u8,
+            ready: s.ready as u8,
+        }
+    }
+}
+
+impl From<SpreadStatus> for MediusSpreadStatus {
+    fn from(s: SpreadStatus) -> Self {
+        MediusSpreadStatus {
+            percent: s.percent,
+            span_us: s.span_us,
         }
     }
 }
