@@ -129,8 +129,8 @@ impl Device {
     /// `OPTION(SPREAD)`: percent of the host's command interval an injected delta is released
     /// across; persisted in NVS.
     ///
-    /// 0 puts the whole delta on the next report the box emits. 100 releases it evenly across one
-    /// command interval. Above 100 overlaps, and is allowed. At a loop matched to the native report
+    /// 0 puts the whole delta on the next report the box emits. 100 releases that delta evenly
+    /// across one command interval. Above 100 overlaps, and is allowed. At a loop matched to the native report
     /// rate the interval is one report period, so the emitted stream is what it was.
     ///
     /// The box learns the interval from `MOVE` arrivals and releases nothing across one until it
