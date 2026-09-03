@@ -39,7 +39,7 @@ impl Override {
 const SLOT_DIRS: [u8; 4] = [LOCK_DIR_POS, LOCK_DIR_NEG, LOCK_DIR_WITH, LOCK_DIR_AGAINST];
 
 // One row of the box's lock table: the scale each of the four slots holds. Tracking the row rather
-// than the direction byte that was sent is what makes a release exact -- Both writes the absolute
+// than the direction byte that was sent is what makes a release exact: Both writes the absolute
 // pair and passes the relative one, so a later single-direction unlock has to clear one slot out of a
 // group write, which a key per direction cannot express.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -117,12 +117,12 @@ impl DesiredState {
         }
     }
 
-    /// Track a scale (any class) so a reconnect re-asserts it, as the box's own table would hold it.
-    ///
-    /// A momentary usage carries one bit, so the box stores the block or pass it will render and the
-    /// number sent is truncated to that; recording the raw byte would leave a scale above a full pass
-    /// held here as a lock the box released. A button blanket expands the way the box expands it,
-    /// onto the five button rows, so releasing one button afterwards is not undone by the replay.
+    // Track a scale (any class) so a reconnect re-asserts it, as the box's own table would hold it.
+    //
+    // A momentary usage carries one bit, so the box stores the block or pass it amounts to and the
+    // number sent is truncated to that; recording the raw byte would leave a scale above a full pass
+    // held here as a lock the box released. A button blanket expands the way the box expands it,
+    // onto the five button rows, so releasing one button afterwards is not undone by the replay.
     pub(crate) fn apply_lock(&mut self, key: LockKey, scale: u8) -> LockUndo {
         let (class, id, dir) = key;
         let scale = if class == LOCK_CLS_AXIS {
@@ -195,9 +195,9 @@ impl DesiredState {
         })
     }
 
-    /// The `(key, scale)` commands that rebuild every held row, for the reconnect reapply. Media rows
-    /// come out in the order they were taken, so the replay fills the box's slot array the way the
-    /// live box filled it.
+    // The `(key, scale)` commands that rebuild every held row, for the reconnect reapply. Media rows
+    // come out in the order they were taken, so the replay fills the box's slot array the way the
+    // live box filled it.
     pub(crate) fn held_locks(&self) -> Vec<(LockKey, u8)> {
         let mut rows: Vec<(&(u8, u16), &Slots)> = self.locks.iter().collect();
         rows.sort_by_key(|((class, id), _)| (*class, self.media_rank(*class, *id), *id));

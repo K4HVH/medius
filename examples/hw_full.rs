@@ -21,7 +21,7 @@ mod linux {
     use medius::{
         Action, Axis, BearingMode, Blanket, Button, CatchClass, CatchFilter, Class, ClipAction,
         ClipBuilder, ClipState, ClipTrigger, Device, Direction, Edge, EmitPace, Input, Key,
-        LedMode, LedTarget, MediaKey, RebootTarget, Timeline, TrafficClass,
+        LedMode, LedTarget, MediaKey, RebootTarget, RenderMode, Timeline, TrafficClass,
     };
     use medius::{BEARING_WINDOW_DEFAULT, PROTO_VER};
 
@@ -162,6 +162,59 @@ mod linux {
         }
     }
 
+    /// Native evdev nodes, resolved through /dev/input/by-id rather than named by index.
+    ///
+    /// Every node's index moves when a device is added, removed or replugged, so a hard-coded one
+    /// eventually grabs something that is not the clone and every check that reads the wire reports zero,
+    /// which reads exactly like broken firmware. The by-id names carry the VID:PID the box clones under.
+    fn clone_event_nodes() -> Result<Vec<String>, String> {
+        let dir = std::path::Path::new("/dev/input/by-id");
+        let entries =
+            std::fs::read_dir(dir).map_err(|e| format!("cannot read {}: {e}", dir.display()))?;
+        let mut found = Vec::new();
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            // A composite clone puts its mouse and keyboard collections on separate nodes, and both are
+            // grabbed: injected input on an ungrabbed one would leak to the desktop unverified.
+            if !name.starts_with("usb-")
+                || !(name.ends_with("-event-mouse") || name.ends_with("-event-kbd"))
+            {
+                continue;
+            }
+            let Ok(target) = std::fs::canonicalize(entry.path()) else {
+                continue;
+            };
+            found.push((name, target.to_string_lossy().into_owned()));
+        }
+        // The box clones the attached device's identity, so there is no fixed VID:PID to match on. Pair
+        // the nodes by the by-id prefix they share, and take the group that has both collections; a
+        // single-collection device leaves one group of one.
+        found.sort();
+        if found.is_empty() {
+            return Err("no usb event-mouse or event-kbd node in /dev/input/by-id; is USB1 cabled to this machine?".into());
+        }
+        let stem = |n: &str| {
+            n.rsplit_once("-if").map_or_else(
+                || {
+                    n.trim_end_matches("-event-mouse")
+                        .trim_end_matches("-event-kbd")
+                        .to_string()
+                },
+                |(head, _)| head.to_string(),
+            )
+        };
+        let mouse = found
+            .iter()
+            .find(|(n, _)| n.ends_with("-event-mouse"))
+            .ok_or_else(|| "no usb event-mouse node in /dev/input/by-id".to_string())?;
+        let key = stem(&mouse.0);
+        Ok(found
+            .iter()
+            .filter(|(n, _)| stem(n) == key)
+            .map(|(_, path)| path.clone())
+            .collect())
+    }
+
     pub fn run() -> ExitCode {
         let args: Vec<String> = std::env::args().collect();
         // args[1]: one or more comma-separated evdev nodes. A cloned mouse is composite (mouse and keyboard
@@ -173,10 +226,13 @@ mod linux {
                 .map(|p| p.trim().to_string())
                 .filter(|p| !p.is_empty())
                 .collect(),
-            None => vec![
-                "/dev/input/event11".to_string(),
-                "/dev/input/event12".to_string(),
-            ],
+            None => match clone_event_nodes() {
+                Ok(v) => v,
+                Err(e) => {
+                    eprintln!("{e}");
+                    return ExitCode::FAILURE;
+                }
+            },
         };
         let soak_secs: u64 = args.get(3).and_then(|s| s.parse().ok()).unwrap_or(20);
 
@@ -464,10 +520,98 @@ mod linux {
         }
 
         {
+            // OPTION(RENDER) is its own command: the texture the box renders motion with, and whether
+            // native motion goes through it. Every mode round-trips against both values of
+            // `full`. The refusal of an unknown value is not checked here and cannot be: the typed
+            // API has no way to express one (tools/validate_render.py drives that over the wire).
+            // Restores the box's boot pair (De-spiked, relayed) afterward.
+            let dev = device.as_ref().unwrap();
+            let mut all_ok = true;
+            let mut last = String::new();
+            for mode in [
+                RenderMode::Off,
+                RenderMode::Stock,
+                RenderMode::Despiked,
+                RenderMode::Unsmoothed,
+            ] {
+                for full in [false, true] {
+                    let set_ok = dev.set_render(mode, full).is_ok();
+                    std::thread::sleep(Duration::from_millis(60));
+                    let read = dev.query_render();
+                    let matched = read
+                        .as_ref()
+                        .map(|s| s.mode == mode && s.full == full)
+                        .unwrap_or(false);
+                    all_ok &= set_ok && matched;
+                    last = format!("{mode:?}/full={full} -> {read:?}");
+                }
+            }
+            // The pace still reports the rendered gate: on LEARNED a rendered stream self-paces at 1 kHz
+            // once a profile has armed, and stays at the learnt cap before that.
+            let _ = dev.set_render(RenderMode::Stock, false);
+            let _ = dev.set_emit_pace(EmitPace::Learned, None);
+            std::thread::sleep(Duration::from_millis(60));
+            // `ready` is read on both sides of the pace query: a profile arming between the two would
+            // otherwise fail the gate for no defect, since the pace answers the state at its own instant.
+            let before = dev.query_render().map(|s| s.ready).unwrap_or(false);
+            let paced = dev.query_emit_pace();
+            let ready = dev.query_render().map(|s| s.ready).unwrap_or(false);
+            let gate_ok = paced
+                .as_ref()
+                .map(|s| {
+                    let want = if ready { 1000 } else { 0 };
+                    s.resolved_hz == want || (before != ready && s.resolved_hz == 1000 - want)
+                })
+                .unwrap_or(false);
+            check(
+                "render option",
+                all_ok && gate_ok,
+                format!("{last}, ready={ready} pace -> {paced:?}"),
+            );
+            // The checks above leave the box on Stock, which is not where it boots.
+            let _ = dev.set_render(RenderMode::Despiked, false);
+        }
+
+        {
+            // OPTION(SPREAD): the percent round-trips, and the interval the box reports tracks the
+            // rate this loop actually commands at. Reading the percent back alone would pass a box
+            // that stores the number and spreads nothing, so the discriminating half is span_us
+            // against a loop whose period is known here: 40 MOVEs 4 ms apart is a 250 Hz host.
+            let dev = device.as_ref().unwrap();
+            let mut all_ok = true;
+            let mut last = String::new();
+            for pct in [0u16, 50, 250, 100] {
+                let set_ok = dev.set_spread(pct).is_ok();
+                std::thread::sleep(Duration::from_millis(60));
+                let read = dev.query_spread();
+                let matched = read.as_ref().map(|s| s.percent == pct).unwrap_or(false);
+                all_ok &= set_ok && matched;
+                last = format!("{pct} -> {read:?}");
+            }
+            for _ in 0..40 {
+                let _ = dev.move_rel(1, 0);
+                std::thread::sleep(Duration::from_millis(4));
+            }
+            let learnt = dev.query_spread();
+            // The estimator buckets to 250 us and takes the centre of the fastest cluster, and this
+            // loop's sleep only sets a floor, so the window is generous on the slow side.
+            let span_ok = learnt
+                .as_ref()
+                .map(|s| s.percent == 100 && (3500..=6000).contains(&s.span_us))
+                .unwrap_or(false);
+            check(
+                "spread option",
+                all_ok && span_ok,
+                format!("{last}, 250 Hz loop -> {learnt:?}"),
+            );
+            let _ = dev.discard_motion();
+        }
+
+        {
             // Any force re-clones the box when the imperfect opt-in is on, which would drop the control
             // port mid-suite, so this only runs faithful-only, where the box stores the request and
             // leaves it inert. That is the discriminating half anyway: force_active must stay 0 and
-            // advertised_hz must stay the device's own, which an echo of the request cannot fake.
+            // advertised_hz must stay native, which an echo of the request cannot fake.
             // The descriptor half belongs to tools/validate_rate_force.py, which can afford the reboot.
             let dev = device.as_ref().unwrap();
             let allowed = dev.query_imperfect().map(|i| i.allowed).unwrap_or(true);
@@ -508,7 +652,7 @@ mod linux {
         }
 
         {
-            // The name rides RESP(VERSION) like the MAC; clearing reverts to the synthesized
+            // The name rides RESP(VERSION) like the MAC; clearing reverts to the synthesised
             // "Medius-XXXX" default.
             let dev = device.as_ref().unwrap();
             let set_ok = dev.set_name("hw-full box").is_ok();
@@ -661,7 +805,7 @@ mod linux {
 
         {
             // BEARING: the mode changes what the box reports for the relative pair. In VECTOR one
-            // scale governs the whole aim -- the lower of X's and Y's -- so the readback names that
+            // scale governs both axes (the lower of X's and Y's), so the readback names that
             // number on both axes, and switching back to PER_AXIS names each axis's own again. A host
             // echoing its own writes would report 130/60 in both modes.
             let dev = device.as_ref().unwrap();
@@ -849,7 +993,7 @@ mod linux {
             // AND disconnects the host stream.
             //
             // Subscribed to the INPUT classes, not everything. An idle mouse produces no input event,
-            // which is what makes "quiet while idle" a real assertion -- but the everything filter
+            // which is what makes "quiet while idle" a real assertion, but the everything filter
             // covers HID_IN and EMIT, which fire on every report a streaming device sends, so against
             // one of those the same check asserted that a working box was broken.
             let dev = device.as_ref().unwrap();
@@ -933,8 +1077,8 @@ mod linux {
             // yields plausible wrong deltas rather than an error, so the domain is asserted rather
             // than eyeballed.
             //
-            // EMIT is DRIVEN here, by injecting. A change-driven mouse NAKs at rest -- the Mamba
-            // Elite sends nothing at all when nobody touches it -- so a window that only waits sees
+            // EMIT is DRIVEN here, by injecting. A change-driven mouse NAKs at rest (the Mamba
+            // Elite sends nothing at all when nobody touches it), so a window that only waits sees
             // zero of both classes, and a check that demanded traffic failed the firmware for the
             // device being still. Injection always produces EMIT, so half of this is real on any
             // device; HID_IN needs the physical device to actually report, and says so when it does
@@ -1495,7 +1639,7 @@ mod linux {
 
         {
             // Halving is a SUSTAINED rate fault, so this measures the sustained rate. Injecting into
-            // an idle change-driven device -- one that NAKs at rest, which most real mice do -- takes
+            // an idle change-driven device (one that NAKs at rest, which most real mice do) takes
             // about 150 ms to reach full pace, and counting from cold charged that ramp against a
             // steady-state threshold: measured 83, 92, then a flat 100 reports per 100 ms for three
             // solid seconds. Every unit still arrives either way, merged rather than dropped, which is
@@ -1691,7 +1835,9 @@ mod linux {
             // exercise the async option-query paths against real hardware (the sync ones run above)
             let aopt_ok = block_on(adev.query_movement_riding()).is_ok()
                 && block_on(adev.query_imperfect()).is_ok()
-                && block_on(adev.query_emit_pace()).is_ok();
+                && block_on(adev.query_emit_pace()).is_ok()
+                && block_on(adev.query_bearing()).is_ok()
+                && block_on(adev.query_render()).is_ok();
             // async name setter parity: set then clear (leaves the box on its synth default)
             let aname_ok = adev.set_name("async box").is_ok() && adev.clear_name().is_ok();
             // async scale + bearing: the same box behaviours the sync checks pin, driven from the

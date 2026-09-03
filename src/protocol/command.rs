@@ -1,6 +1,6 @@
 use super::opcode::{
     INJ_MOTION_CURSOR, INJ_MOTION_WHEEL, OPT_BEARING, OPT_EMIT, OPT_IMPERFECT, OPT_MOVE_RIDE,
-    OPT_NAME,
+    OPT_NAME, OPT_RENDER, OPT_SPREAD,
 };
 
 /// `MOVE` cursor (§3.1): `[motion=0][dx i16 LE][dy i16 LE][flags u8]`, no clamp (firmware clamps with carry).
@@ -67,6 +67,16 @@ pub fn emit_pace_payload(mode: u8, hz: u16, force_hz: u16) -> [u8; 6] {
     let h = hz.to_le_bytes();
     let f = force_hz.to_le_bytes();
     [OPT_EMIT, mode, h[0], h[1], f[0], f[1]]
+}
+
+/// `OPTION(RENDER)` (§3.10): `[id=5][mode u8][full u8]`; mode 0 off / 1 stock / 2 de-spiked / 3 unsmoothed.
+pub fn render_payload(mode: u8, full: bool) -> [u8; 3] {
+    [OPT_RENDER, mode, full as u8]
+}
+/// `OPTION(SPREAD)` (§3.10): `[id=6][percent u16 LE]`; percent of the learnt command interval.
+pub fn spread_payload(percent: u16) -> [u8; 3] {
+    let p = percent.to_le_bytes();
+    [OPT_SPREAD, p[0], p[1]]
 }
 /// `CLIP_CTRL` engine verb (§3.11): `[op]` (`CLIP_OP_*`).
 pub fn clip_op_payload(op: u8) -> [u8; 1] {

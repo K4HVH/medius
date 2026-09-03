@@ -1,6 +1,6 @@
 //! Serial transport over an overlapped Win32 COM handle.
 //!
-//! Windows serializes every request queued against a synchronous file object, and duplicating its
+//! Windows serialises every request queued against a synchronous file object, and duplicating its
 //! handle does not escape that: a reader parked in `ReadFile` owns the port for the whole read
 //! timeout and any concurrent `WriteFile` waits behind it, so injection only lands in the gaps
 //! between reads. `serial2` opens the port with `FILE_FLAG_OVERLAPPED` and completes each request

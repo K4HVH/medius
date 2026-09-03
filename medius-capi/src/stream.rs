@@ -165,14 +165,14 @@ fn fail_bool(message: &str) -> bool {
     false
 }
 
-/// The caller's clock and ours share no origin, so the arrival is fed in on OUR scale and the answer
-/// shifted back onto theirs. Only differences survive the round trip, which is all either scale
-/// carries -- so any consistent nanosecond source works, as long as every call uses the same one.
-/// `checked_add` is belt and braces: nothing a caller can pass overflows on a 64-bit `Instant`, but
-/// panicking across the FFI boundary is not an option if some target's is narrower.
-///
-/// # Safety
-/// `t` and `out` must be non-null and valid.
+// The caller's clock and ours share no origin, so the arrival is fed in on OUR scale and the answer
+// shifted back onto theirs. Only differences survive the round trip, which is all either scale
+// carries, so any consistent nanosecond source works, as long as every call uses the same one.
+// `checked_add` covers a narrower `Instant`: nothing a caller can pass overflows on a 64-bit one, but
+// panicking across the FFI boundary is not an option if some target's is narrower.
+//
+// # Safety
+// `t` and `out` must be non-null and valid.
 unsafe fn timeline_observe(
     t: *mut MediusTimeline,
     ts_us: u32,
@@ -441,7 +441,7 @@ pub unsafe extern "C" fn medius_timeline_observe(
             return false;
         }
         // `clock` is read as the byte it is: the field is typed `MediusClockDomain` for a caller
-        // reading it, and materializing one out of memory a caller filled would be undefined before
+        // reading it, and materialising one out of memory a caller filled would be undefined before
         // the check below could run.
         let ts_us = unsafe { (*ev).ts_us };
         let clock = unsafe { *(&raw const (*ev).clock).cast::<u8>() };

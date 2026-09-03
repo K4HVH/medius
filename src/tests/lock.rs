@@ -339,7 +339,7 @@ fn vector_mode_reports_the_scale_the_box_applies_to_the_aim() {
     let l = dev.query_locks().unwrap();
     assert_eq!(l.scale_of(Axis::X, Direction::With), 130);
     assert_eq!(l.scale_of(Axis::Y, Direction::With), 60);
-    // In vector mode one relative scale governs the whole aim, the lower of the two, so the readback
+    // In vector mode one relative scale governs both axes, the lower of the two, so the readback
     // names 60 on both axes rather than each axis's stored byte.
     dev.set_bearing(Some(Duration::from_millis(20)), BearingMode::Vector)
         .unwrap();
@@ -463,7 +463,7 @@ fn the_reply_truncates_granular_keys_and_never_the_bounded_classes() {
     let l = dev.query_locks().unwrap();
     // The reply holds 96 entries. 60 keys on both edges offer 120, so what comes back is the one
     // media entry plus the 95 key edges that fit: media first, because granular keys are enumerated
-    // last precisely so the unbounded class cannot starve the bounded one off the frame.
+    // last precisely so the unbounded class cannot crowd the bounded one off the frame.
     assert_eq!(l.entries().len(), 96);
     assert_eq!(
         l.entries()[0],

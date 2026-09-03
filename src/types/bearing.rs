@@ -4,17 +4,17 @@ use std::time::Duration;
 
 use crate::protocol::opcode::{BEARING_PER_AXIS, BEARING_VECTOR};
 
-/// How the box decides whether physical motion runs with or against its own injection.
+/// How the box reads whether physical motion runs with or against its own injection.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum BearingMode {
     /// Each axis compares its own sign against its own bearing, independently (the default).
     #[default]
     PerAxis,
-    /// The aim is projected onto the injected XY vector: only the part of the physical delta lying
+    /// The physical delta is projected onto the injected XY vector: only the part of it lying
     /// along the injection is weighed, and the part across it passes untouched. Smoother on
     /// diagonals; X and Y stop being independent.
     ///
-    /// One relative scale governs the whole aim, the lower of X's and Y's, so setting only X's
+    /// One relative scale governs both axes, the lower of X's and Y's, so setting only X's
     /// weighs Y's motion too. `RESP(LOCKS)` reports that effective number on both relative entries.
     ///
     /// The projection moves motion between the axes, and each axis's absolute scale then applies to
@@ -44,7 +44,7 @@ impl BearingMode {
 
 /// The configured bearing (`RESP(OPTIONS, BEARING)`, §4.14).
 ///
-/// [`Default`] is what a box holds out of the box, so a [`MockBox`](crate::MockBox) answers what real
+/// [`Default`] is what a box boots with, so a [`MockBox`](crate::MockBox) replies as real
 /// hardware would: [`BEARING_WINDOW_DEFAULT`](crate::BEARING_WINDOW_DEFAULT) in
 /// [`BearingMode::PerAxis`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

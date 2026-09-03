@@ -94,7 +94,7 @@ impl ClipHandle {
     /// `CLIP_SET(RIDE)`: make the clip's motion wait to ride a native report like live injection does,
     /// instead of emitting on the box's own clock (`false`, the default). It picks which accumulator the
     /// next entry's motion lands in, so it takes effect mid-playback, and what that means for delivery
-    /// is decided by [`set_movement_riding`](crate::Device::set_movement_riding). Fire-and-forget.
+    /// is set by [`set_movement_riding`](crate::Device::set_movement_riding). Fire-and-forget.
     pub fn set_ride(&self, on: bool) -> Result<()> {
         self.set(CLIP_SET_RIDE, on as u8)
     }

@@ -412,7 +412,7 @@ pub unsafe extern "C" fn medius_traffic_event_data(
         let n = (e.len as usize).min(MEDIUS_MAX_TRAFFIC_BYTES);
         // A control event whose own setup packet was cut short has no data stage at all.
         // Falling through to "the whole buffer is the data" handed a decoder the surviving setup
-        // bytes -- a GET_DESCRIPTOR request labelled as the descriptor it asked for.
+        // bytes: a GET_DESCRIPTOR request labelled as the descriptor it asked for.
         let (skip, n) = if e.class != MEDIUS_CATCH_CLASS_CONTROL {
             (0usize, n)
         } else if e.len >= SETUP_LEN {

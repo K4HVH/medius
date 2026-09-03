@@ -156,3 +156,54 @@ fn async_bearing_round_trips_through_the_mock() {
         }
     );
 }
+
+#[test]
+fn async_render_round_trips_through_the_mock() {
+    use crate::protocol::FrameType;
+    use crate::types::{RenderMode, RenderStatus};
+
+    let mock = MockBox::new().with_render(RenderMode::Unsmoothed, true);
+    let device = Device::with_mock(mock.clone()).into_async();
+    device.set_render(RenderMode::Unsmoothed, true).unwrap();
+    let sent: Vec<Vec<u8>> = mock
+        .recorded_frames()
+        .into_iter()
+        .filter(|f| f.ty == FrameType::Option)
+        .map(|f| f.payload)
+        .collect();
+    // id 5, mode 3, full 1: a swapped `full` or a wrong option id both fail here.
+    assert_eq!(sent, vec![vec![5, 3, 1]]);
+    assert_eq!(
+        block_on(device.query_render()).unwrap(),
+        RenderStatus {
+            mode: RenderMode::Unsmoothed,
+            full: true,
+            ready: false,
+        }
+    );
+}
+
+#[test]
+fn async_spread_round_trips_through_the_mock() {
+    use crate::protocol::FrameType;
+    use crate::types::SpreadStatus;
+
+    let mock = MockBox::new().with_spread_learned(4000);
+    let device = Device::with_mock(mock.clone()).into_async();
+    device.set_spread(250).unwrap();
+    let sent: Vec<Vec<u8>> = mock
+        .recorded_frames()
+        .into_iter()
+        .filter(|f| f.ty == FrameType::Option)
+        .map(|f| f.payload)
+        .collect();
+    // id 6, percent 250 little-endian: a wrong option id or a byte-swapped percent both fail here.
+    assert_eq!(sent, vec![vec![6, 250, 0]]);
+    assert_eq!(
+        block_on(device.query_spread()).unwrap(),
+        SpreadStatus {
+            percent: 250,
+            span_us: 10000,
+        }
+    );
+}

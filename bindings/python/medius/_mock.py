@@ -1,4 +1,4 @@
-"""The scriptable mock box (feature = mock); errors clearly if the library lacks it."""
+"""The scriptable mock box (feature = mock); raises if the library was built without it."""
 
 from __future__ import annotations
 
@@ -7,7 +7,8 @@ from typing import Optional
 
 from . import _native
 from ._device import Device
-from ._enums import BearingMode, ClipState, ClockDomain, DeviceKind, EmitMode, FrameType, LogLevel
+from ._enums import (BearingMode, ClipState, ClockDomain, DeviceKind, EmitMode, FrameType, LogLevel,
+                     RenderMode)
 from ._types import (
     Bearing,
     Caps,
@@ -135,6 +136,19 @@ class MockBox:
         mode = _enum(pace.mode, EmitMode, "mode")
         _native.lib.medius_mock_set_emit_pace(
             self._handle, int(mode), _u16(pace.hz, "hz"), _u16(force_hz or 0, "force_hz")
+        )
+
+    def set_spread_learned(self, period_us: int):
+        """The command period the mock has learned, in microseconds. A real box learns it off MOVE
+        arrivals, so a mock left at 0 answers a span of 0 whatever percent is set."""
+        _native.lib.medius_mock_set_spread_learned(self._handle, int(period_us))
+
+    def set_render(self, mode: RenderMode, full: bool, ready: bool):
+        """What the mock answers to `Device.query_render`. `ready` is whether a profile has armed,
+        which is what gates rendering on a real box: a mock left unarmed is the state every box passes
+        through after a power cut."""
+        _native.lib.medius_mock_set_render(
+            self._handle, int(_enum(mode, RenderMode, "mode")), bool(full), bool(ready)
         )
 
     def set_clip_status(self, status: ClipStatus):

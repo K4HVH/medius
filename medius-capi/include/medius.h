@@ -138,7 +138,25 @@ typedef int32_t MediusStatus;
 #endif // __STDC_VERSION__ >= 202311L
 #endif // __cplusplus
 
-// How the box decides whether physical motion runs with or against its own injection.
+// What paces injected motion.
+enum MediusEmitMode
+#if defined(__cplusplus) || __STDC_VERSION__ >= 202311L
+  : uint8_t
+#endif // defined(__cplusplus) || __STDC_VERSION__ >= 202311L
+ {
+    MEDIUS_EMIT_MODE_LEARNED = 0,
+    MEDIUS_EMIT_MODE_INTERVAL = 1,
+    MEDIUS_EMIT_MODE_FIXED = 2,
+};
+#ifndef __cplusplus
+#if __STDC_VERSION__ >= 202311L
+typedef enum MediusEmitMode MediusEmitMode;
+#else
+typedef uint8_t MediusEmitMode;
+#endif // __STDC_VERSION__ >= 202311L
+#endif // __cplusplus
+
+// How the box reads whether physical motion runs with or against its own injection.
 enum MediusBearingMode
 #if defined(__cplusplus) || __STDC_VERSION__ >= 202311L
   : uint8_t
@@ -160,21 +178,23 @@ typedef uint8_t MediusBearingMode;
 #endif // __STDC_VERSION__ >= 202311L
 #endif // __cplusplus
 
-// What paces injected motion.
-enum MediusEmitMode
+// The texture the box renders motion with: off is the paced fill, the rest render the device's learned
+// texture and differ only in the onboard smoother.
+enum MediusRenderMode
 #if defined(__cplusplus) || __STDC_VERSION__ >= 202311L
   : uint8_t
 #endif // defined(__cplusplus) || __STDC_VERSION__ >= 202311L
  {
-    MEDIUS_EMIT_MODE_LEARNED = 0,
-    MEDIUS_EMIT_MODE_INTERVAL = 1,
-    MEDIUS_EMIT_MODE_FIXED = 2,
+    MEDIUS_RENDER_MODE_OFF = 0,
+    MEDIUS_RENDER_MODE_STOCK = 1,
+    MEDIUS_RENDER_MODE_DESPIKED = 2,
+    MEDIUS_RENDER_MODE_UNSMOOTHED = 3,
 };
 #ifndef __cplusplus
 #if __STDC_VERSION__ >= 202311L
-typedef enum MediusEmitMode MediusEmitMode;
+typedef enum MediusRenderMode MediusRenderMode;
 #else
-typedef uint8_t MediusEmitMode;
+typedef uint8_t MediusRenderMode;
 #endif // __STDC_VERSION__ >= 202311L
 #endif // __cplusplus
 
@@ -904,11 +924,11 @@ typedef struct MediusLockEntry {
     // there needs a cast.
     uint8_t direction;
     // Percent of the physical value kept: 0 blocks, 100 passes, above 100 amplifies. A momentary
-    // usage carries one bit, so the box stores the block or pass it renders and one never reports a
+    // usage carries one bit, so the box stores the block or pass it amounts to and one never reports a
     // value in between.
     //
     // This is the figure the box applies, not the byte it was sent: in `MEDIUS_BEARING_MODE_VECTOR`
-    // one relative scale governs the whole aim, the lower of X's and Y's, and both relative entries
+    // one relative scale governs both axes, the lower of X's and Y's, and both relative entries
     // carry that number.
     uint8_t scale;
 } MediusLockEntry;
@@ -942,8 +962,8 @@ typedef uint8_t MediusCatchClass;
 // One CATCH subscription entry: what to observe, in which direction, and how much of each packet to
 // keep. Build one with a `medius_catch_filter_*` helper.
 //
-// The box resolves each event to its most specific matching entry -- an exact `(class, id)` beats a
-// class blanket, which beats the everything filter, and a named direction beats `Both` -- and that
+// The box resolves each event to its most specific matching entry: an exact `(class, id)` outranks
+// a class blanket, which outranks the everything filter, and a named direction outranks `Both`. That
 // entry supplies `capture`. The wildcards are sentinels rather than a separate flag:
 // `class = MEDIUS_CATCH_CLASS_ANY` matches every class and `id = MEDIUS_CATCH_ID_ANY` every id
 // within one. The wildcard class with a real id addresses nothing and is refused.
@@ -959,7 +979,7 @@ typedef struct MediusCatchFilter {
     // as one; C++ renders the enum as `enum : uint8_t`, so assigning this to a `MediusDirection`
     // there needs a cast.
     uint8_t direction;
-    // Bytes kept per event; 0 keeps the whole packet. Traffic classes only -- an input class carries
+    // Bytes kept per event; 0 keeps the whole packet. Traffic classes only: an input class carries
     // no packet, and naming one with a non-zero capture is refused at subscribe time.
     uint8_t capture;
 } MediusCatchFilter;
@@ -992,6 +1012,19 @@ typedef struct MediusImperfectStatus {
     uint8_t clone_imperfect;
 } MediusImperfectStatus;
 
+// Emit-rate pacing mode plus the rate in effect and the rate the clone advertises.
+typedef struct MediusEmitPaceStatus {
+    MediusEmitMode mode;
+    uint16_t fixed_hz;
+    uint16_t resolved_hz;
+    // The forced wire rate requested, in Hz; 0 leaves the native interval.
+    uint16_t force_hz;
+    // What the clone's input endpoints advertise now, in Hz; 0 = no clone.
+    uint16_t advertised_hz;
+    // 1 when a forced interval is written into the descriptor being served.
+    uint8_t force_active;
+} MediusEmitPaceStatus;
+
 // The configured bearing: what `MEDIUS_DIRECTION_WITH` / `_AGAINST` are measured against.
 typedef struct MediusBearing {
     // How long the last injected delta's direction stays the bearing, in ms. 0 = never, which
@@ -1000,18 +1033,25 @@ typedef struct MediusBearing {
     MediusBearingMode mode;
 } MediusBearing;
 
-// Emit-rate pacing mode plus the rate in effect and the rate the clone advertises.
-typedef struct MediusEmitPaceStatus {
-    MediusEmitMode mode;
-    uint16_t fixed_hz;
-    uint16_t resolved_hz;
-    // The forced wire rate requested, in Hz; 0 leaves the device's own.
-    uint16_t force_hz;
-    // What the clone's input endpoints advertise now, in Hz; 0 = no clone.
-    uint16_t advertised_hz;
-    // 1 when a forced interval is written into the descriptor being served.
-    uint8_t force_active;
-} MediusEmitPaceStatus;
+// What the box renders motion with, whether native motion goes through it, and whether a
+// profile has been learned for the attached device.
+typedef struct MediusRenderStatus {
+    MediusRenderMode mode;
+    // 1 when native motion is rendered by the model rather than relayed.
+    uint8_t full;
+    // 1 once the box has learned a profile for the attached device. Nothing is rendered until it has.
+    uint8_t ready;
+} MediusRenderStatus;
+
+// How far an injected delta is spread across the host's command interval, and the interval the box
+// is releasing across.
+typedef struct MediusSpreadStatus {
+    // Percent of the learned command interval. 0 is off; above 100 overlaps.
+    uint16_t percent;
+    // The interval being released across, in microseconds. 0 until the box has learned the host's
+    // command period, and 0 whenever `percent` is 0.
+    uint32_t span_us;
+} MediusSpreadStatus;
 
 // Host-side always-on counters.
 typedef struct MediusCountersSnapshot {
@@ -1571,6 +1611,20 @@ MediusStatus medius_device_set_movement_riding(struct MediusDevice *dev,
                                                bool enabled,
                                                uint32_t window_ms);
 
+// Set what paces injected motion and what rate the clone runs at; `hz` is the target rate for `Fixed`
+// and ignored otherwise, `force_hz` is the forced wire rate (0 = the native interval). `mode` takes a
+// `MEDIUS_EMIT_MODE_*` constant; any other value is `MEDIUS_STATUS_ERR_INVALID_ARG`.
+MediusStatus medius_device_set_emit_pace(struct MediusDevice *dev,
+                                         uint8_t mode,
+                                         uint16_t hz,
+                                         uint16_t force_hz);
+
+// Set the box's persistent name (`name`, NUL-terminated UTF-8); an empty string clears it.
+MediusStatus medius_device_set_name(struct MediusDevice *dev, const char *name);
+
+// Clear the box's custom name, reverting it to its synthesised `Medius-XXXX` default.
+MediusStatus medius_device_clear_name(struct MediusDevice *dev);
+
 // Set the bearing: what `MEDIUS_DIRECTION_WITH` / `_AGAINST` are measured against. `window_ms` is how
 // long the last injected delta's direction stays the bearing; 0 turns it off, leaving the relative
 // directions inert whatever their scale. The box boots at `MEDIUS_BEARING_WINDOW_DEFAULT_MS`.
@@ -1582,19 +1636,20 @@ MediusStatus medius_device_set_bearing(struct MediusDevice *dev,
                                        uint16_t window_ms,
                                        uint8_t mode);
 
-// Set what paces injected motion and what rate the clone runs at; `hz` is the target rate for `Fixed`
-// and ignored otherwise, `force_hz` is the forced wire rate (0 = the device's own). `mode` takes a
-// `MEDIUS_EMIT_MODE_*` constant; any other value is `MEDIUS_STATUS_ERR_INVALID_ARG`.
-MediusStatus medius_device_set_emit_pace(struct MediusDevice *dev,
-                                         uint8_t mode,
-                                         uint16_t hz,
-                                         uint16_t force_hz);
+// Set the texture the box renders motion with, and whether native motion is rendered by the
+// model rather than relayed. `mode` takes a `MEDIUS_RENDER_MODE_*` constant and any other value is
+// `MEDIUS_STATUS_ERR_INVALID_ARG`. Rendering adds a small amount of latency, which reaches the mouse's
+// own motion when `full` is on, so `full` is off by default.
+MediusStatus medius_device_set_render(struct MediusDevice *dev,
+                                      uint8_t mode,
+                                      bool full);
 
-// Set the box's persistent name (`name`, NUL-terminated UTF-8); an empty string clears it.
-MediusStatus medius_device_set_name(struct MediusDevice *dev, const char *name);
-
-// Clear the box's custom name, reverting it to its synthesized `Medius-XXXX` default.
-MediusStatus medius_device_clear_name(struct MediusDevice *dev);
+// Set the percent of the host's command interval an injected delta is released across. 0 puts the
+// whole delta on the next report the box emits, 100 releases that delta across one command
+// interval, and above 100 overlaps. The box releases nothing across an interval until it has learned the host's
+// command period from `MOVE` arrivals.
+MediusStatus medius_device_set_spread(struct MediusDevice *dev,
+                                      uint16_t percent);
 
 MediusStatus medius_device_query_version(struct MediusDevice *dev, struct MediusVersion *out);
 
@@ -1634,9 +1689,6 @@ MediusStatus medius_device_query_catch(struct MediusDevice *dev, struct MediusCa
 MediusStatus medius_device_query_imperfect(struct MediusDevice *dev,
                                            struct MediusImperfectStatus *out);
 
-// Query the bearing into `*out`.
-MediusStatus medius_device_query_bearing(struct MediusDevice *dev, struct MediusBearing *out);
-
 // Query the movement-riding window into `*out_enabled` and `*out_window_ms` (0 when off).
 MediusStatus medius_device_query_movement_riding(struct MediusDevice *dev,
                                                  bool *out_enabled,
@@ -1644,6 +1696,13 @@ MediusStatus medius_device_query_movement_riding(struct MediusDevice *dev,
 
 MediusStatus medius_device_query_emit_pace(struct MediusDevice *dev,
                                            struct MediusEmitPaceStatus *out);
+
+// Query the bearing into `*out`.
+MediusStatus medius_device_query_bearing(struct MediusDevice *dev, struct MediusBearing *out);
+
+MediusStatus medius_device_query_render(struct MediusDevice *dev, struct MediusRenderStatus *out);
+
+MediusStatus medius_device_query_spread(struct MediusDevice *dev, struct MediusSpreadStatus *out);
 
 MediusStatus medius_device_counters(struct MediusDevice *dev, struct MediusCountersSnapshot *out);
 
@@ -2081,6 +2140,24 @@ void medius_mock_set_emit_pace(struct MediusMockBox *mock,
                                uint8_t mode,
                                uint16_t hz,
                                uint16_t force_hz);
+#endif
+
+#if defined(MEDIUS_FEATURE_MOCK)
+// Set what the mock answers to an OPTION(RENDER) query: the texture, whether native motion
+// goes through it, and whether a profile has armed. `mode` takes a `MEDIUS_RENDER_MODE_*` constant;
+// any other value leaves the texture alone. `ready` is what gates rendering on a real box, so a mock
+// left unarmed is the state every box passes through after a power cut.
+void medius_mock_set_render(struct MediusMockBox *mock,
+                            uint8_t mode,
+                            bool full,
+                            bool ready);
+#endif
+
+#if defined(MEDIUS_FEATURE_MOCK)
+// Set the command period the mock has learned, in microseconds. A real box learns it off `MOVE`
+// arrivals and releases nothing across an interval until it has, so a mock left at 0 answers a span
+// of 0 whatever percent is set, which is the state every box starts in.
+void medius_mock_set_spread_learned(struct MediusMockBox *mock, uint32_t period_us);
 #endif
 
 #if defined(MEDIUS_FEATURE_MOCK)

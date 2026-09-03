@@ -3,16 +3,16 @@ use std::time::Duration;
 use crate::error::{Error, Result};
 use crate::link::Link;
 use crate::protocol::opcode::{
-    OPT_BEARING, OPT_EMIT, OPT_IMPERFECT, OPT_MOVE_RIDE, Q_CAPS, Q_CATCH, Q_CLIP, Q_DEVICE_INFO,
-    Q_FIRMWARE, Q_HEALTH, Q_LOCKS, Q_RATE, Q_STATS, Q_VERSION,
+    OPT_BEARING, OPT_EMIT, OPT_IMPERFECT, OPT_MOVE_RIDE, OPT_RENDER, OPT_SPREAD, Q_CAPS, Q_CATCH,
+    Q_CLIP, Q_DEVICE_INFO, Q_FIRMWARE, Q_HEALTH, Q_LOCKS, Q_RATE, Q_STATS, Q_VERSION,
 };
 use crate::protocol::{Resp, parse_resp};
 use crate::types::{
     Action, Axis, Bearing, BearingMode, Blanket, Caps, CatchFilter, CatchState, ClipBuilder,
     ClipSettings, ClipStatus, ClipTrigger, CountersSnapshot, DeviceInfo, Direction, Edge, EmitPace,
     EmitPaceStatus, FirmwareInfo, Health, ImperfectStatus, LedMode, LedTarget, LockTarget, Locks,
-    Motion, MoveTiming, PendingMotion, Rate, RebootTarget, Stats, UpdateProgress, UpdateTarget,
-    Usage, Version,
+    Motion, MoveTiming, PendingMotion, Rate, RebootTarget, RenderMode, RenderStatus, SpreadStatus,
+    Stats, UpdateProgress, UpdateTarget, Usage, Version,
 };
 
 use super::Device;
@@ -224,11 +224,6 @@ impl AsyncDevice {
         self.dev().set_movement_riding(window)
     }
 
-    /// `OPTION(BEARING)`: what `With`/`Against` are measured against. Instant; see [`Device::set_bearing`].
-    pub fn set_bearing(&self, window: Option<Duration>, mode: BearingMode) -> Result<()> {
-        self.dev().set_bearing(window, mode)
-    }
-
     /// `OPTION(EMIT)`: emit-rate pacing and the forced wire rate. Instant; see [`Device::set_emit_pace`].
     pub fn set_emit_pace(&self, pace: EmitPace, force_hz: Option<u16>) -> Result<()> {
         self.dev().set_emit_pace(pace, force_hz)
@@ -239,9 +234,26 @@ impl AsyncDevice {
         self.dev().set_name(name)
     }
 
-    /// `OPTION(NAME)` clear: revert to the synthesized default. Instant; see [`Device::clear_name`].
+    /// `OPTION(NAME)` clear: revert to the synthesised default. Instant; see [`Device::clear_name`].
     pub fn clear_name(&self) -> Result<()> {
         self.dev().clear_name()
+    }
+
+    /// `OPTION(BEARING)`: what `With`/`Against` are measured against. Instant; see [`Device::set_bearing`].
+    pub fn set_bearing(&self, window: Option<Duration>, mode: BearingMode) -> Result<()> {
+        self.dev().set_bearing(window, mode)
+    }
+
+    /// `OPTION(RENDER)`: what motion is rendered with, and whether native motion goes through it.
+    /// Instant; see [`Device::set_render`].
+    pub fn set_render(&self, mode: RenderMode, full: bool) -> Result<()> {
+        self.dev().set_render(mode, full)
+    }
+
+    /// `OPTION(SPREAD)`: percent of the host's command interval an injected delta is released
+    /// across. Instant; see [`Device::set_spread`].
+    pub fn set_spread(&self, percent: u16) -> Result<()> {
+        self.dev().set_spread(percent)
     }
 
     /// Query the box version, awaiting the correlated `RESP` with the default timeout.
@@ -312,16 +324,16 @@ impl AsyncDevice {
         self.offload(|d| d.wait_firmware_confirmed()).await
     }
 
-    /// Run one blocking update call on a thread of its own and await the result.
-    ///
-    /// NOT cancellable. Dropping the returned future stops the waiting, not the transfer: the thread
-    /// runs to completion and `update_firmware` will still reboot the box. Wrap it in a timeout only
-    /// if that is acceptable.
-    ///
-    /// The transfer is a credit-windowed conversation with its own timeouts, and this crate carries
-    /// no runtime and no timer, so an `async` reimplementation would have nothing to bound its waits
-    /// with. Driving the sync path instead keeps one implementation of the wire, which is the whole
-    /// point: a duplicated loop is where sync and async quietly stop agreeing.
+    // Run one blocking update call on a thread of its own and await the result.
+    //
+    // NOT cancellable. Dropping the returned future stops the waiting, not the transfer: the thread
+    // runs to completion and `update_firmware` will still reboot the box. Wrap it in a timeout only
+    // if that is acceptable.
+    //
+    // The transfer is a credit-windowed conversation with its own timeouts, and this crate carries
+    // no runtime and no timer, so an `async` reimplementation would have nothing to bound its waits
+    // with. Driving the sync path instead keeps one implementation of the wire, which is the whole
+    // point: a duplicated loop is where sync and async quietly stop agreeing.
     async fn offload<T, F>(&self, f: F) -> Result<T>
     where
         T: Send + 'static,
@@ -448,6 +460,18 @@ impl AsyncDevice {
         }
     }
 
+    /// Query the emit-rate pacing mode + the rate in effect (§4.14), awaiting the correlated `RESP`.
+    pub async fn query_emit_pace(&self) -> Result<EmitPaceStatus> {
+        let payload = self
+            .link
+            .query_option_async(OPT_EMIT, self.link.query_timeout_default())
+            .await?;
+        match parse_resp(&payload) {
+            Some(Resp::EmitPace(s)) => Ok(s),
+            _ => Err(Error::NoReply),
+        }
+    }
+
     /// Query the bearing (§4.14), awaiting the correlated `RESP`.
     pub async fn query_bearing(&self) -> Result<Bearing> {
         let payload = self
@@ -460,14 +484,28 @@ impl AsyncDevice {
         }
     }
 
-    /// Query the emit-rate pacing mode + the rate in effect (§4.14), awaiting the correlated `RESP`.
-    pub async fn query_emit_pace(&self) -> Result<EmitPaceStatus> {
+    /// Query what motion is rendered with and whether a profile has armed (§4.14), awaiting the
+    /// correlated `RESP`.
+    pub async fn query_render(&self) -> Result<RenderStatus> {
         let payload = self
             .link
-            .query_option_async(OPT_EMIT, self.link.query_timeout_default())
+            .query_option_async(OPT_RENDER, self.link.query_timeout_default())
             .await?;
         match parse_resp(&payload) {
-            Some(Resp::EmitPace(s)) => Ok(s),
+            Some(Resp::Render(s)) => Ok(s),
+            _ => Err(Error::NoReply),
+        }
+    }
+
+    /// Query how far an injected delta is spread and the interval in effect (§4.14), awaiting the
+    /// correlated `RESP`.
+    pub async fn query_spread(&self) -> Result<SpreadStatus> {
+        let payload = self
+            .link
+            .query_option_async(OPT_SPREAD, self.link.query_timeout_default())
+            .await?;
+        match parse_resp(&payload) {
+            Some(Resp::Spread(s)) => Ok(s),
             _ => Err(Error::NoReply),
         }
     }

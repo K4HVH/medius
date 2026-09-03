@@ -265,7 +265,7 @@ dependencies = [
 
 [[package]]
 name = "medius"
-version = "3.2.0"
+version = "3.3.1"
 dependencies = [
  "flume",
  "futures",
@@ -281,7 +281,7 @@ dependencies = [
 
 [[package]]
 name = "medius-capi"
-version = "3.2.0"
+version = "3.3.1"
 dependencies = [
  "medius",
 ]

@@ -2,13 +2,13 @@ use std::time::Duration;
 
 use crate::error::{Error, Result};
 use crate::protocol::opcode::{
-    OPT_BEARING, OPT_EMIT, OPT_IMPERFECT, OPT_MOVE_RIDE, Q_CAPS, Q_CATCH, Q_DEVICE_INFO, Q_HEALTH,
-    Q_LOCKS, Q_RATE, Q_STATS, Q_VERSION,
+    OPT_BEARING, OPT_EMIT, OPT_IMPERFECT, OPT_MOVE_RIDE, OPT_RENDER, OPT_SPREAD, Q_CAPS, Q_CATCH,
+    Q_DEVICE_INFO, Q_HEALTH, Q_LOCKS, Q_RATE, Q_STATS, Q_VERSION,
 };
 use crate::protocol::{Resp, parse_resp};
 use crate::types::{
     Bearing, Caps, CatchState, DeviceInfo, EmitPaceStatus, Health, ImperfectStatus, Locks, Rate,
-    Stats, Version,
+    RenderStatus, SpreadStatus, Stats, Version,
 };
 
 use super::Device;
@@ -104,6 +104,15 @@ impl Device {
         }
     }
 
+    /// Query the emit-rate pacing mode and the rate in effect (§4.14).
+    pub fn query_emit_pace(&self) -> Result<EmitPaceStatus> {
+        let payload = self.link.query_option(OPT_EMIT)?;
+        match parse_resp(&payload) {
+            Some(Resp::EmitPace(s)) => Ok(s),
+            _ => Err(Error::NoReply),
+        }
+    }
+
     /// Query the bearing (§4.14): the window `Direction::With`/`Against` are held over, and how it is read.
     pub fn query_bearing(&self) -> Result<Bearing> {
         let payload = self.link.query_option(OPT_BEARING)?;
@@ -113,11 +122,21 @@ impl Device {
         }
     }
 
-    /// Query the emit-rate pacing mode and the rate in effect (§4.14).
-    pub fn query_emit_pace(&self) -> Result<EmitPaceStatus> {
-        let payload = self.link.query_option(OPT_EMIT)?;
+    /// Query what motion is rendered with, whether native motion goes through it, and whether a
+    /// profile has armed (§4.14).
+    pub fn query_render(&self) -> Result<RenderStatus> {
+        let payload = self.link.query_option(OPT_RENDER)?;
         match parse_resp(&payload) {
-            Some(Resp::EmitPace(s)) => Ok(s),
+            Some(Resp::Render(s)) => Ok(s),
+            _ => Err(Error::NoReply),
+        }
+    }
+
+    /// Query how far an injected delta is spread, and the interval the box is releasing across (§4.14).
+    pub fn query_spread(&self) -> Result<SpreadStatus> {
+        let payload = self.link.query_option(OPT_SPREAD)?;
+        match parse_resp(&payload) {
+            Some(Resp::Spread(s)) => Ok(s),
             _ => Err(Error::NoReply),
         }
     }

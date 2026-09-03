@@ -532,6 +532,84 @@ fn scale_frames_carry_the_direction_and_the_number() {
 }
 
 #[test]
+fn the_render_option_reads_back_what_was_set_through_the_boundary() {
+    let mock = medius_mock_new();
+    let mut dev: *mut MediusDevice = ptr::null_mut();
+    assert_eq!(
+        unsafe { medius_device_with_mock(mock, &mut dev) },
+        MediusStatus::Ok
+    );
+    let mut st: MediusRenderStatus = unsafe { std::mem::zeroed() };
+    // The mock boots holding what a real box boots holding: de-spiked, relayed, and unarmed.
+    assert_eq!(
+        unsafe { medius_device_query_render(dev, &mut st) },
+        MediusStatus::Ok
+    );
+    assert_eq!(st.mode, MediusRenderMode::Despiked);
+    assert_eq!(st.full, 0);
+    assert_eq!(st.ready, 0);
+    // Both stored fields have to survive the trip, and a mode has to decode as itself.
+    assert_eq!(
+        unsafe { medius_device_set_render(dev, MediusRenderMode::Unsmoothed as u8, true) },
+        MediusStatus::Ok
+    );
+    assert_eq!(
+        unsafe { medius_device_query_render(dev, &mut st) },
+        MediusStatus::Ok
+    );
+    assert_eq!(st.mode, MediusRenderMode::Unsmoothed);
+    assert_eq!(st.full, 1);
+    // `ready` is the box's own state, not something the host sets, so it comes from the mock.
+    unsafe { medius_mock_set_render(mock, MediusRenderMode::Stock as u8, false, true) };
+    assert_eq!(
+        unsafe { medius_device_query_render(dev, &mut st) },
+        MediusStatus::Ok
+    );
+    assert_eq!(st.mode, MediusRenderMode::Stock);
+    assert_eq!(st.full, 0);
+    assert_eq!(st.ready, 1);
+    unsafe { medius_device_free(dev) };
+}
+
+#[test]
+fn the_spread_option_reads_back_what_was_set_through_the_boundary() {
+    let mock = medius_mock_new();
+    let mut dev: *mut MediusDevice = ptr::null_mut();
+    assert_eq!(
+        unsafe { medius_device_with_mock(mock, &mut dev) },
+        MediusStatus::Ok
+    );
+    let mut st: MediusSpreadStatus = unsafe { std::mem::zeroed() };
+    // A fresh box boots at the full percent with no command period learned, so it spreads nothing.
+    assert_eq!(
+        unsafe { medius_device_query_spread(dev, &mut st) },
+        MediusStatus::Ok
+    );
+    assert_eq!(st.percent, 100);
+    assert_eq!(st.span_us, 0);
+    // The period is the box's own state, not something the host sets.
+    unsafe { medius_mock_set_spread_learned(mock, 8000) };
+    assert_eq!(
+        unsafe { medius_device_query_spread(dev, &mut st) },
+        MediusStatus::Ok
+    );
+    assert_eq!(st.span_us, 8000);
+    // A percent past 100 overlaps rather than being clamped, and both fields survive the trip. Past
+    // a byte too: 250 would round-trip through a u8 boundary and prove nothing about the width.
+    assert_eq!(
+        unsafe { medius_device_set_spread(dev, 1000) },
+        MediusStatus::Ok
+    );
+    assert_eq!(
+        unsafe { medius_device_query_spread(dev, &mut st) },
+        MediusStatus::Ok
+    );
+    assert_eq!(st.percent, 1000);
+    assert_eq!(st.span_us, 80000);
+    unsafe { medius_device_free(dev) };
+}
+
+#[test]
 fn the_bearing_reads_back_what_was_set_through_the_boundary() {
     let mock = medius_mock_new();
     let mut dev: *mut MediusDevice = ptr::null_mut();
@@ -612,7 +690,7 @@ fn a_scale_reaches_the_box_lock_table_through_the_boundary() {
         unsafe { medius_locks_scale_of(&locks, x, MediusDirection::With as u8) },
         130
     );
-    // In vector mode one relative scale governs the aim, the lower of the two, and the box reports
+    // In vector mode one relative scale governs both axes, the lower of the two, and the box reports
     // that number on both axes rather than each axis's stored byte.
     assert_eq!(
         unsafe { medius_device_set_bearing(dev, 20, MediusBearingMode::Vector as u8) },
@@ -665,7 +743,7 @@ fn a_relative_direction_with_no_bearing_to_read_has_its_own_status() {
 fn an_unnamed_direction_byte_in_a_caller_built_lock_entry_is_dropped() {
     // `MediusLockEntry.direction` is a `uint8_t` the caller fills in through `medius_mock_set_locks`,
     // and Python has always handed it a raw byte. The setter has no status to return, so the entry is
-    // dropped rather than read as whichever direction the byte resembles -- a lock the host believes
+    // dropped rather than read as whichever direction the byte resembles: a lock the host believes
     // in and the box never took is the failure this prevents.
     const BAD: u8 = 40;
     let mock = medius_mock_new();
@@ -695,7 +773,7 @@ fn an_unnamed_direction_byte_in_a_caller_built_lock_entry_is_dropped() {
         unsafe { medius_device_query_locks(dev, &mut locks) },
         MediusStatus::Ok
     );
-    // The named entry survives and the unnamed one is gone, count included -- a caller reading `n`
+    // The named entry survives and the unnamed one is gone, count included: a caller reading `n`
     // must not walk an entry that was never decoded.
     assert_eq!(locks.n, 1);
     assert_eq!(locks.entries[0].direction, MediusDirection::Positive as u8);
@@ -711,8 +789,8 @@ fn an_unnamed_direction_byte_in_a_caller_built_lock_entry_is_dropped() {
 fn an_unnamed_direction_byte_in_a_catch_filter_is_refused() {
     // `MediusCatchFilter.direction` is a `uint8_t` the caller fills in, and Python has always handed
     // it a raw byte. A filter helper has no status to return, so the byte rides the struct and the
-    // subscription refuses it -- rather than the box being handed whichever direction its low bits
-    // resemble, or a stream that silently never yields.
+    // subscription refuses it, rather than the box being handed whichever direction its low bits
+    // resemble, or a stream that never yields.
     const BAD: u8 = 40;
     let mock = medius_mock_new();
     let mut dev: *mut MediusDevice = ptr::null_mut();
@@ -1048,7 +1126,7 @@ fn catch_events_rejects_an_empty_or_unknown_filter_list() {
         unsafe { medius_device_catch_events(dev, ptr::null(), 1, &mut stream) },
         MediusStatus::ErrInvalidArg
     );
-    // A class the box does not define must fail the whole call: a silently narrower subscription is
+    // A class the box does not define must fail the whole call: a narrower subscription is
     // indistinguishable from a box producing no events.
     let bogus = [medius_catch_filter_traffic_class(200)];
     assert_eq!(
@@ -1854,6 +1932,9 @@ fn every_enum_byte_on_the_boundary_is_refused_rather_than_materialized() {
         ("reboot target", unsafe { medius_device_reboot(dev, BAD) }),
         ("emit mode", unsafe {
             medius_device_set_emit_pace(dev, BAD, 1000, 0)
+        }),
+        ("render mode", unsafe {
+            medius_device_set_render(dev, BAD, false)
         }),
         ("inject action", unsafe {
             medius_device_inject(dev, left, BAD)

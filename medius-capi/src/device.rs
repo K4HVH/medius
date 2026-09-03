@@ -558,33 +558,8 @@ pub unsafe extern "C" fn medius_device_set_movement_riding(
     with_device(dev, |d| d.set_movement_riding(window))
 }
 
-/// Set the bearing: what `MEDIUS_DIRECTION_WITH` / `_AGAINST` are measured against. `window_ms` is how
-/// long the last injected delta's direction stays the bearing; 0 turns it off, leaving the relative
-/// directions inert whatever their scale. The box boots at `MEDIUS_BEARING_WINDOW_DEFAULT_MS`.
-///
-/// `mode` takes a `MEDIUS_BEARING_MODE_*` constant; any other value is
-/// `MEDIUS_STATUS_ERR_INVALID_ARG`. Both fields ride one frame and the box persists them together,
-/// so a window change carries the mode with it.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn medius_device_set_bearing(
-    dev: *mut MediusDevice,
-    window_ms: u16,
-    mode: u8,
-) -> MediusStatus {
-    guard_status(|| {
-        if dev.is_null() {
-            return fail(MediusStatus::ErrInvalidArg, "null device handle");
-        }
-        let Some(mode) = medius::BearingMode::from_u8(mode) else {
-            return fail(MediusStatus::ErrInvalidArg, "invalid bearing mode");
-        };
-        let window = (window_ms != 0).then(|| Duration::from_millis(window_ms as u64));
-        status_of(unsafe { &(*dev).inner }.set_bearing(window, mode))
-    })
-}
-
 /// Set what paces injected motion and what rate the clone runs at; `hz` is the target rate for `Fixed`
-/// and ignored otherwise, `force_hz` is the forced wire rate (0 = the device's own). `mode` takes a
+/// and ignored otherwise, `force_hz` is the forced wire rate (0 = the native interval). `mode` takes a
 /// `MEDIUS_EMIT_MODE_*` constant; any other value is `MEDIUS_STATUS_ERR_INVALID_ARG`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_device_set_emit_pace(
@@ -619,10 +594,63 @@ pub unsafe extern "C" fn medius_device_set_name(
     })
 }
 
-/// Clear the box's custom name, reverting it to its synthesized `Medius-XXXX` default.
+/// Clear the box's custom name, reverting it to its synthesised `Medius-XXXX` default.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_device_clear_name(dev: *mut MediusDevice) -> MediusStatus {
     with_device(dev, |d| d.clear_name())
+}
+
+/// Set the bearing: what `MEDIUS_DIRECTION_WITH` / `_AGAINST` are measured against. `window_ms` is how
+/// long the last injected delta's direction stays the bearing; 0 turns it off, leaving the relative
+/// directions inert whatever their scale. The box boots at `MEDIUS_BEARING_WINDOW_DEFAULT_MS`.
+///
+/// `mode` takes a `MEDIUS_BEARING_MODE_*` constant; any other value is
+/// `MEDIUS_STATUS_ERR_INVALID_ARG`. Both fields ride one frame and the box persists them together,
+/// so a window change carries the mode with it.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn medius_device_set_bearing(
+    dev: *mut MediusDevice,
+    window_ms: u16,
+    mode: u8,
+) -> MediusStatus {
+    guard_status(|| {
+        if dev.is_null() {
+            return fail(MediusStatus::ErrInvalidArg, "null device handle");
+        }
+        let Some(mode) = medius::BearingMode::from_u8(mode) else {
+            return fail(MediusStatus::ErrInvalidArg, "invalid bearing mode");
+        };
+        let window = (window_ms != 0).then(|| Duration::from_millis(window_ms as u64));
+        status_of(unsafe { &(*dev).inner }.set_bearing(window, mode))
+    })
+}
+
+/// Set the texture the box renders motion with, and whether native motion is rendered by the
+/// model rather than relayed. `mode` takes a `MEDIUS_RENDER_MODE_*` constant and any other value is
+/// `MEDIUS_STATUS_ERR_INVALID_ARG`. Rendering adds a small amount of latency, which reaches the mouse's
+/// own motion when `full` is on, so `full` is off by default.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn medius_device_set_render(
+    dev: *mut MediusDevice,
+    mode: u8,
+    full: bool,
+) -> MediusStatus {
+    let Some(mode) = medius::RenderMode::from_u8(mode) else {
+        return fail(MediusStatus::ErrInvalidArg, "invalid render mode");
+    };
+    with_device(dev, |d| d.set_render(mode, full))
+}
+
+/// Set the percent of the host's command interval an injected delta is released across. 0 puts the
+/// whole delta on the next report the box emits, 100 releases that delta across one command
+/// interval, and above 100 overlaps. The box releases nothing across an interval until it has learned the host's
+/// command period from `MOVE` arrivals.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn medius_device_set_spread(
+    dev: *mut MediusDevice,
+    percent: u16,
+) -> MediusStatus {
+    with_device(dev, |d| d.set_spread(percent))
 }
 
 #[unsafe(no_mangle)]
@@ -754,15 +782,6 @@ pub unsafe extern "C" fn medius_device_query_imperfect(
     query(dev, out, |d| d.query_imperfect())
 }
 
-/// Query the bearing into `*out`.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn medius_device_query_bearing(
-    dev: *mut MediusDevice,
-    out: *mut MediusBearing,
-) -> MediusStatus {
-    query(dev, out, |d| d.query_bearing())
-}
-
 /// Query the movement-riding window into `*out_enabled` and `*out_window_ms` (0 when off).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_device_query_movement_riding(
@@ -801,6 +820,31 @@ pub unsafe extern "C" fn medius_device_query_emit_pace(
     query(dev, out, |d| d.query_emit_pace())
 }
 
+/// Query the bearing into `*out`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn medius_device_query_bearing(
+    dev: *mut MediusDevice,
+    out: *mut MediusBearing,
+) -> MediusStatus {
+    query(dev, out, |d| d.query_bearing())
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn medius_device_query_render(
+    dev: *mut MediusDevice,
+    out: *mut MediusRenderStatus,
+) -> MediusStatus {
+    query(dev, out, |d| d.query_render())
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn medius_device_query_spread(
+    dev: *mut MediusDevice,
+    out: *mut MediusSpreadStatus,
+) -> MediusStatus {
+    query(dev, out, |d| d.query_spread())
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_device_counters(
     dev: *mut MediusDevice,
@@ -836,7 +880,7 @@ pub extern "C" fn medius_default_keepalive_cadence_ms() -> u32 {
 /// The C ABI version, bumped on any breaking change to this header.
 #[unsafe(no_mangle)]
 pub extern "C" fn medius_abi_version() -> u32 {
-    5
+    6
 }
 
 /// The medius-capi crate version as a static NUL-terminated string.

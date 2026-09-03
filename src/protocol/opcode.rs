@@ -9,7 +9,7 @@ pub const SOF: u8 = 0xA5;
 pub const MAX_PAYLOAD: usize = 512;
 
 /// Protocol version in `RESP(VERSION)` (§4.1); the handshake requires this exact value.
-pub const PROTO_VER: u8 = 5;
+pub const PROTO_VER: u8 = 6;
 
 /// `INJECT` class byte: the momentary-usage field kind.
 pub const INJ_BTN: u8 = 0;
@@ -45,15 +45,19 @@ pub const Q_OPTIONS: u8 = 9;
 pub const OPT_IMPERFECT: u8 = 0;
 /// `OPTION` id: movement riding. Value `[timeout u16 LE ms]`; 0 = off, N = ride window in ms.
 pub const OPT_MOVE_RIDE: u8 = 1;
-/// `OPTION` id: emit-rate pacing. Value `[mode u8][rate_hz u16 LE]`; 0 learnt / 1 bInterval / 2 fixed.
+/// `OPTION` id: emit-rate pacing. Value `[mode u8][rate_hz u16 LE][force_hz u16 LE]`; mode 0 learnt / 1 bInterval / 2 fixed.
 pub const OPT_EMIT: u8 = 2;
 /// `OPTION` id: box name. Value `[name ascii]` 1..32 printable ASCII (0 bytes clears to default); set-only, read off `RESP(VERSION)`.
 pub const OPT_NAME: u8 = 3;
 /// `OPTION` id: the bearing. Value `[window u16 LE ms][mode u8]`; what `LOCK_DIR_WITH`/`AGAINST` are measured against (§3.12).
 pub const OPT_BEARING: u8 = 4;
+/// `OPTION` id: what the box renders motion with. Value `[mode u8][full u8]`; mode 0 off / 1 stock / 2 de-spiked / 3 unsmoothed.
+pub const OPT_RENDER: u8 = 5;
+/// `OPTION` id: how far an injected delta is spread across the host's command interval. Value `[percent u16 LE]`.
+pub const OPT_SPREAD: u8 = 6;
 /// `OPTION(BEARING)` mode: each axis reads its own sign against its own bearing.
 pub const BEARING_PER_AXIS: u8 = 0;
-/// `OPTION(BEARING)` mode: the aim is projected onto the injected XY vector; motion across it is untouched.
+/// `OPTION(BEARING)` mode: the physical delta is projected onto the injected XY vector; motion across it is untouched.
 pub const BEARING_VECTOR: u8 = 1;
 
 /// Buffered-clip status selector: `QUERY [Q_CLIP]` → `RESP(CLIP)` (§4.15).
