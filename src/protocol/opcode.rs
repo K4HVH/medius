@@ -8,8 +8,9 @@ pub const SOF: u8 = 0xA5;
 /// Maximum payload length (§2); a larger `LEN` is rejected as bogus.
 pub const MAX_PAYLOAD: usize = 512;
 
-/// Protocol version in `RESP(VERSION)` (§4.1); the handshake requires this exact value.
-pub const PROTO_VER: u8 = 6;
+/// Protocol version in `RESP(VERSION)` (§4.1); the handshake requires this exact value. Bumped to 7
+/// for the v3.4.0 developer layer (`RAW`/`TRANSFER`/`REWRITE`/`PATCH`) and the `u16` `HEALTH` flags.
+pub const PROTO_VER: u8 = 7;
 
 /// `INJECT` class byte: the momentary-usage field kind.
 pub const INJ_BTN: u8 = 0;
@@ -64,6 +65,14 @@ pub const BEARING_VECTOR: u8 = 1;
 pub const Q_CLIP: u8 = 10;
 /// Both chips' firmware versions and slot state: `QUERY [Q_FIRMWARE]` → `RESP(FIRMWARE)` (§4.16).
 pub const Q_FIRMWARE: u8 = 11;
+/// Rewrite-rule table summary: `QUERY [Q_REWRITE]` → `RESP(REWRITE)` (flags + gen + list) (§3.14, §4.17).
+pub const Q_REWRITE: u8 = 12;
+/// One rewrite rule in full, in the `REWRITE` command's own shape: `QUERY [Q_REWRITE_ENTRY][index]` (§4.17).
+pub const Q_REWRITE_ENTRY: u8 = 13;
+/// Descriptor-patch set summary: `QUERY [Q_PATCHES]` → `RESP(PATCHES)` (flags + list) (§3.14, §4.17).
+pub const Q_PATCHES: u8 = 14;
+/// One descriptor patch in full, in the `PATCH` command's own shape: `QUERY [Q_PATCH_ENTRY][index]` (§4.17).
+pub const Q_PATCH_ENTRY: u8 = 15;
 
 /// `UPDATE` sub-ops (§3.13).
 pub const OTA_OP_BEGIN: u8 = 0;
@@ -147,6 +156,16 @@ pub const H_CATCH_ON: u8 = 0x40;
 /// A keyboard is attached on the host chip, cloned and injectable (§4.2, v2.0.0).
 pub const H_KBD_ATT: u8 = 0x80;
 
+// `HEALTH` became a `u16` LE in `CTRL_PROTO_VER 7` (§4.2). Bits 0-7 kept their meaning; the v3.4.0
+// developer layer opened the high byte, so these three are `u16`. [`Health`](crate::Health) decodes
+// the whole word.
+/// The rewrite-rule table (§3.14) is non-empty (v3.4.0).
+pub const H_REWRITE_ON: u16 = 0x0100;
+/// A descriptor-patch set (§3.14) is applied to the clone (v3.4.0).
+pub const H_PATCH_ON: u16 = 0x0200;
+/// A field transform is active (reserved; the transforms feature owns this bit) (v3.4.0).
+pub const H_TRANSFORM_ON: u16 = 0x0400;
+
 /// `CATCH` class: a mouse button (§3.9). Classes 0..3 are `LOCK`'s classes unchanged.
 pub const CATCH_CLS_BTN: u8 = 0;
 /// `CATCH` class: a keyboard key or modifier (§3.9).
@@ -189,6 +208,52 @@ pub const CATCH_CTRL_NAK: u8 = 0xFE;
 /// `RESP(CATCH).clk_rate_ppb` sentinel: the box has fitted no drift rate. Distinct from a fitted 0,
 /// which says the two crystals are matched.
 pub const CLK_RATE_NONE: i32 = i32::MIN;
+
+// `REWRITE` action byte (§3.14): what the winning rule does to a matched packet. A report class can
+// `DROP`; only the control class may `ANSWER`/`STALL`/`NAK` or rewrite the device's reply. Shared
+// wire values with the firmware `rewrite_tab.h` and the dashboard.
+/// The rule matched but leaves the packet untouched (a shadow over a broader rule).
+pub const RW_PASS: u8 = 0;
+/// Report class: the packet is not delivered.
+pub const RW_DROP: u8 = 1;
+/// Overwrite `plen` payload bytes at `off`, length preserved.
+pub const RW_PATCH: u8 = 2;
+/// The packet becomes the payload.
+pub const RW_REPLACE: u8 = 3;
+/// Control: answer from the payload without asking the device.
+pub const RW_ANSWER: u8 = 4;
+/// Control: protocol STALL.
+pub const RW_STALL: u8 = 5;
+/// Control: NAK to a timeout.
+pub const RW_NAK: u8 = 6;
+/// Control IN: overwrite the device's reply at `off`.
+pub const RW_REPLY_PATCH: u8 = 7;
+/// Control IN: replace the device's reply with the payload.
+pub const RW_REPLY_REPLACE: u8 = 8;
+
+// `PATCH` section byte (§3.14): which descriptor a patch overwrites. `APPLY`/`CLEAR` are engine verbs
+// carried in the same byte, handled before the store rather than kept as section keys.
+/// The 18-byte device descriptor (`cfg`/`index` ignored).
+pub const PATCH_SEC_DEVICE: u8 = 0;
+/// A configuration's descriptor (`cfg` = configuration index).
+pub const PATCH_SEC_CONFIG: u8 = 1;
+/// An interface's report descriptor (`cfg` + `index` = interface number).
+pub const PATCH_SEC_REPORT: u8 = 2;
+/// A string descriptor (`index` = string index), the whole string.
+pub const PATCH_SEC_STRING: u8 = 3;
+/// The BOS descriptor (`cfg`/`index` ignored).
+pub const PATCH_SEC_BOS: u8 = 4;
+/// `PATCH` engine verb: re-present the clone with the stored set (one replug to the game PC).
+pub const PATCH_APPLY: u8 = 0xFE;
+/// `PATCH` engine verb: drop every patch for this device and re-present unpatched.
+pub const PATCH_CLEAR: u8 = 0xFF;
+
+/// Entries the box's rewrite table holds (`REWRITE_TAB_MAX`); past it a rule is refused and `RESP(REWRITE).table_full` says so.
+pub const REWRITE_MAX_ENTRIES: usize = 16;
+/// Entries the box's descriptor-patch store holds (`PATCH_MAX`); past it a patch is refused and `RESP(PATCHES).table_full` says so.
+pub const PATCH_MAX_ENTRIES: usize = 16;
+/// The most `match`/`mask` bytes one rewrite rule compares (`REWRITE_MATCH_MAX`).
+pub const REWRITE_MATCH_MAX: usize = 16;
 
 /// `LOCK` class byte (§3.8): momentary usages share `INJECT`'s space, plus a relative-axis class.
 pub const LOCK_CLS_BTN: u8 = 0;
@@ -297,6 +362,16 @@ pub enum FrameType {
     Update = 0x17,
     /// `UPDATE_RESP`: the answer to one `UPDATE` op (box→PC) (§4.16).
     UpdateResp = 0x18,
+    /// `RAW`: put raw bytes on a cloned endpoint, fire-and-forget (PC→box, §3.14, `OPTION(IMPERFECT)`).
+    Raw = 0x19,
+    /// `TRANSFER`: run one control transfer against the real device, answered by `TransferResp` (PC→box, §3.14).
+    Transfer = 0x1A,
+    /// `TRANSFER_RESP`: the device's answer to a `TRANSFER`, `SEQ` echoes the request (box→PC, §3.14).
+    TransferResp = 0x1B,
+    /// `REWRITE`: add/overwrite/remove one on-box rewrite rule, fire-and-forget (PC→box, §3.14).
+    Rewrite = 0x1C,
+    /// `PATCH`: store/apply/clear a descriptor patch, fire-and-forget (PC→box, §3.14).
+    Patch = 0x1D,
 }
 
 /// Error returned when a byte does not name a known [`FrameType`].
@@ -336,6 +411,11 @@ impl TryFrom<u8> for FrameType {
             0x15 => FrameType::ClipTrigger,
             0x17 => FrameType::Update,
             0x18 => FrameType::UpdateResp,
+            0x19 => FrameType::Raw,
+            0x1A => FrameType::Transfer,
+            0x1B => FrameType::TransferResp,
+            0x1C => FrameType::Rewrite,
+            0x1D => FrameType::Patch,
             other => return Err(UnknownFrameType(other)),
         })
     }

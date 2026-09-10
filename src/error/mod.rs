@@ -34,6 +34,23 @@ pub enum Error {
     #[error("a catch subscription needs at least one filter")]
     EmptySubscription,
 
+    #[error(
+        "the developer layer (§3.14) is gated on the imperfect-clone opt-in, which the box reports \
+         off; call allow_imperfect_clones(true) first"
+    )]
+    ImperfectRequired,
+
+    #[error(
+        "a rewrite rule's match and mask must be the same length (match {match_len}, mask {mask_len})"
+    )]
+    RewriteMaskLength { match_len: usize, mask_len: usize },
+
+    #[error("{action:?} is not a valid action for a {class:?} rewrite rule")]
+    RewriteActionClass {
+        action: crate::types::RewriteAction,
+        class: crate::types::RewriteClass,
+    },
+
     #[error("{class:?} arrives decoded and carries no packet, so a capture on it does nothing")]
     CaptureNotApplicable { class: CatchClass },
 

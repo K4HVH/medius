@@ -884,6 +884,12 @@ impl From<MediusHealth> for Health {
             lock_on: nz(h.lock_on),
             catch_on: nz(h.catch_on),
             kbd_attached: nz(h.kbd_attached),
+            // The developer-layer HEALTH bits (§4.2) have no C ABI field yet: exposing them on
+            // MediusHealth is part of the C-binding work, so a round-trip through the C struct reads
+            // them clear. The native crate decodes them from the wire.
+            rewrite_on: false,
+            patch_on: false,
+            transform_on: false,
         }
     }
 }
@@ -1053,6 +1059,11 @@ impl From<medius::FrameType> for MediusFrameType {
             F::ClipTrigger => MediusFrameType::ClipTrigger,
             F::Update => MediusFrameType::Update,
             F::UpdateResp => MediusFrameType::UpdateResp,
+            F::Raw => MediusFrameType::Raw,
+            F::Transfer => MediusFrameType::Transfer,
+            F::TransferResp => MediusFrameType::TransferResp,
+            F::Rewrite => MediusFrameType::Rewrite,
+            F::Patch => MediusFrameType::Patch,
         }
     }
 }

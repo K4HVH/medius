@@ -12,7 +12,10 @@ pub(crate) mod lock;
 pub(crate) mod logs;
 pub(crate) mod movement;
 pub(crate) mod options;
+pub(crate) mod patch;
 pub(crate) mod query;
+pub(crate) mod raw;
+pub(crate) mod rewrite;
 pub(crate) mod update;
 
 use std::sync::Arc;

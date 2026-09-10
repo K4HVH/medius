@@ -14,9 +14,11 @@ use crate::protocol::opcode::{
 };
 use crate::protocol::opcode::{
     CLIP_CFG_F_FINALIZED, CLIP_CFG_F_LOOP, CLIP_CFG_F_RETAIN, CLIP_CFG_F_RIDE, CLIP_TRIG_MAX,
-    CLK_RATE_NONE,
+    CLK_RATE_NONE, PATCH_APPLY, PATCH_CLEAR, PATCH_MAX_ENTRIES, Q_PATCH_ENTRY, Q_PATCHES,
+    Q_REWRITE, Q_REWRITE_ENTRY, REWRITE_MATCH_MAX, REWRITE_MAX_ENTRIES,
 };
 use crate::protocol::{DecodedFrame, FrameType, encode};
+use crate::types::PatchSection;
 use sha2::{Digest, Sha256};
 
 use crate::transport::mock::MockTransport;
@@ -59,8 +61,64 @@ struct State {
     advertised_hz: u16,
     clip: ClipStatus,
     clip_settings: ClipSettings,
+    // The rewrite table the REWRITE frames build, modelled the way the box holds it (keyed rows, a
+    // monotonic gen, a full flag) so the mock answers RESP(REWRITE)/RESP(REWRITE_ENTRY) like a box.
+    rewrites: Vec<MockRewrite>,
+    rewrite_gen: u8,
+    rewrite_full: bool,
+    // The patch store the PATCH frames build, plus its apply state.
+    patches: Vec<MockPatch>,
+    patch_applied: bool,
+    patch_pending: bool,
+    patch_refused: bool,
+    patch_full: bool,
+    // The canned answer to a TRANSFER (status, IN data). The box answers 0xFC when the opt-in is off.
+    transfer_reply: (u8, Vec<u8>),
     recorded: Vec<DecodedFrame>,
     respond: bool,
+}
+
+// One rewrite-table row the mock holds, in wire fields plus a live hit counter.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct MockRewrite {
+    class: u8,
+    id: u16,
+    dir: u8,
+    action: u8,
+    offset: u16,
+    match_bytes: Vec<u8>,
+    mask: Vec<u8>,
+    payload: Vec<u8>,
+    hits: u16,
+}
+
+impl MockRewrite {
+    // The (class, id, dir, match, mask) key two rows collide on.
+    fn key(&self) -> (u8, u16, u8, Vec<u8>, Vec<u8>) {
+        (
+            self.class,
+            self.id,
+            self.dir,
+            self.match_bytes.clone(),
+            self.mask.clone(),
+        )
+    }
+}
+
+// One stored descriptor patch the mock holds.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct MockPatch {
+    section: u8,
+    cfg: u8,
+    index: u8,
+    offset: u16,
+    bytes: Vec<u8>,
+}
+
+impl MockPatch {
+    fn key(&self) -> (u8, u8, u8, u16) {
+        (self.section, self.cfg, self.index, self.offset)
+    }
 }
 
 impl Default for State {
@@ -101,6 +159,15 @@ impl Default for State {
             advertised_hz: 0,
             clip: ClipStatus::default(),
             clip_settings: ClipSettings::default(),
+            rewrites: Vec::new(),
+            rewrite_gen: 0,
+            rewrite_full: false,
+            patches: Vec::new(),
+            patch_applied: false,
+            patch_pending: false,
+            patch_refused: false,
+            patch_full: false,
+            transfer_reply: (0x00, Vec::new()),
             recorded: Vec::new(),
             respond: true,
         }
@@ -345,6 +412,158 @@ impl State {
         }
         self.table
             .apply(p[0], u16::from_le_bytes([p[1], p[2]]), p[3], p[4]);
+    }
+
+    // Apply a REWRITE frame the way the box would: keyed add/overwrite/remove, a monotonic gen, a
+    // whole-table clear, and the caps that raise `full`. Dropped whole while the opt-in is off.
+    fn apply_rewrite_frame(&mut self, p: &[u8]) {
+        if !self.imperfect.allowed {
+            return; // the box drops a REWRITE frame with the opt-in off
+        }
+        if p.len() < 9 {
+            return;
+        }
+        let cls = p[0];
+        let id = u16::from_le_bytes([p[1], p[2]]);
+        let dir = p[3];
+        let state = p[4];
+        let action = p[5];
+        let offset = u16::from_le_bytes([p[6], p[7]]);
+        let mlen = p[8] as usize;
+        // The ANY/ANY state-0 blanket clears the table, keeping gen monotonic across the clear.
+        if state == 0 && cls == 0xFF && id == 0xFFFF {
+            if !self.rewrites.is_empty() {
+                self.rewrites.clear();
+                self.rewrite_gen = self.rewrite_gen.wrapping_add(1);
+            }
+            self.rewrite_full = false;
+            return;
+        }
+        if mlen > REWRITE_MATCH_MAX || p.len() < 9 + 2 * mlen {
+            return; // the box refuses an over-long or truncated match
+        }
+        let match_bytes = p[9..9 + mlen].to_vec();
+        let mask = p[9 + mlen..9 + 2 * mlen].to_vec();
+        let payload = p[9 + 2 * mlen..].to_vec();
+        let key = (cls, id, dir, match_bytes.clone(), mask.clone());
+        let pos = self.rewrites.iter().position(|r| r.key() == key);
+        if state == 0 {
+            if let Some(i) = pos {
+                self.rewrites.remove(i);
+                self.rewrite_gen = self.rewrite_gen.wrapping_add(1);
+            }
+            return;
+        }
+        match pos {
+            Some(i) => {
+                // An identical re-set does not bump gen (§3.14); the box's keepalive relies on it.
+                let same = self.rewrites[i].action == action
+                    && self.rewrites[i].offset == offset
+                    && self.rewrites[i].payload == payload;
+                if same {
+                    return;
+                }
+                let hits = self.rewrites[i].hits;
+                self.rewrites[i] = MockRewrite {
+                    class: cls,
+                    id,
+                    dir,
+                    action,
+                    offset,
+                    match_bytes,
+                    mask,
+                    payload,
+                    hits,
+                };
+                self.rewrite_gen = self.rewrite_gen.wrapping_add(1);
+            }
+            None => {
+                if self.rewrites.len() >= REWRITE_MAX_ENTRIES {
+                    self.rewrite_full = true;
+                    return;
+                }
+                self.rewrites.push(MockRewrite {
+                    class: cls,
+                    id,
+                    dir,
+                    action,
+                    offset,
+                    match_bytes,
+                    mask,
+                    payload,
+                    hits: 0,
+                });
+                self.rewrite_gen = self.rewrite_gen.wrapping_add(1);
+            }
+        }
+    }
+
+    // Apply a PATCH frame: APPLY (only under the opt-in), CLEAR, or a keyed store (kept whatever the
+    // opt-in, as the box does; empty bytes removes the patch at that key).
+    fn apply_patch_frame(&mut self, p: &[u8]) {
+        let Some(&section) = p.first() else {
+            return;
+        };
+        match section {
+            PATCH_APPLY => {
+                if self.imperfect.allowed {
+                    self.patch_applied = true;
+                    self.patch_pending = false;
+                    self.patch_refused = false;
+                }
+                return;
+            }
+            PATCH_CLEAR => {
+                self.patches.clear();
+                self.patch_applied = false;
+                self.patch_pending = false;
+                self.patch_refused = false;
+                self.patch_full = false;
+                return;
+            }
+            _ => {}
+        }
+        if p.len() < 5 || PatchSection::from_u8(section).is_none() {
+            return;
+        }
+        let cfg = p[1];
+        let index = p[2];
+        let offset = u16::from_le_bytes([p[3], p[4]]);
+        let bytes = p[5..].to_vec();
+        let key = (section, cfg, index, offset);
+        let pos = self.patches.iter().position(|q| q.key() == key);
+        if bytes.is_empty() {
+            if let Some(i) = pos {
+                self.patches.remove(i);
+                self.patch_pending = true;
+            }
+            return;
+        }
+        match pos {
+            Some(i) => {
+                self.patches[i] = MockPatch {
+                    section,
+                    cfg,
+                    index,
+                    offset,
+                    bytes,
+                }
+            }
+            None => {
+                if self.patches.len() >= PATCH_MAX_ENTRIES {
+                    self.patch_full = true;
+                    return;
+                }
+                self.patches.push(MockPatch {
+                    section,
+                    cfg,
+                    index,
+                    offset,
+                    bytes,
+                });
+            }
+        }
+        self.patch_pending = true;
     }
 
     fn apply_option_frame(&mut self, p: &[u8]) {
@@ -691,6 +910,84 @@ fn clip_status_payload(c: &ClipStatus, cfg: &ClipSettings) -> Vec<u8> {
     p
 }
 
+// RESP(REWRITE): [12][flags][gen][n] then n × [cls][id u16][dir][action][mlen][off u16][plen u16][hits u16].
+fn rewrite_resp_payload(st: &State) -> Vec<u8> {
+    let mut p = vec![
+        Q_REWRITE,
+        if st.rewrite_full { 0x01 } else { 0x00 },
+        st.rewrite_gen,
+        st.rewrites.len() as u8,
+    ];
+    for r in &st.rewrites {
+        p.push(r.class);
+        p.extend_from_slice(&r.id.to_le_bytes());
+        p.push(r.dir);
+        p.push(r.action);
+        p.push(r.match_bytes.len() as u8);
+        p.extend_from_slice(&r.offset.to_le_bytes());
+        p.extend_from_slice(&(r.payload.len() as u16).to_le_bytes());
+        p.extend_from_slice(&r.hits.to_le_bytes());
+    }
+    p
+}
+
+// RESP(REWRITE_ENTRY): [13][index] then the rule in the REWRITE command's shape with state = 1.
+fn rewrite_entry_resp_payload(st: &State, index: u8) -> Vec<u8> {
+    let mut p = vec![Q_REWRITE_ENTRY, index];
+    if let Some(r) = st.rewrites.get(index as usize) {
+        p.push(r.class);
+        p.extend_from_slice(&r.id.to_le_bytes());
+        p.push(r.dir);
+        p.push(1); // state
+        p.push(r.action);
+        p.extend_from_slice(&r.offset.to_le_bytes());
+        p.push(r.match_bytes.len() as u8);
+        p.extend_from_slice(&r.match_bytes);
+        p.extend_from_slice(&r.mask);
+        p.extend_from_slice(&r.payload);
+    }
+    p
+}
+
+// RESP(PATCHES): [14][flags][n] then n × [section][cfg][index][offset u16][len u16].
+fn patches_resp_payload(st: &State) -> Vec<u8> {
+    let mut flags = 0u8;
+    if st.patch_applied {
+        flags |= 0x01;
+    }
+    if st.patch_pending {
+        flags |= 0x02;
+    }
+    if st.patch_refused {
+        flags |= 0x04;
+    }
+    if st.patch_full {
+        flags |= 0x08;
+    }
+    let mut p = vec![Q_PATCHES, flags, st.patches.len() as u8];
+    for q in &st.patches {
+        p.push(q.section);
+        p.push(q.cfg);
+        p.push(q.index);
+        p.extend_from_slice(&q.offset.to_le_bytes());
+        p.extend_from_slice(&(q.bytes.len() as u16).to_le_bytes());
+    }
+    p
+}
+
+// RESP(PATCH_ENTRY): [15][index] then [section][cfg][index][offset u16][bytes].
+fn patch_entry_resp_payload(st: &State, index: u8) -> Vec<u8> {
+    let mut p = vec![Q_PATCH_ENTRY, index];
+    if let Some(q) = st.patches.get(index as usize) {
+        p.push(q.section);
+        p.push(q.cfg);
+        p.push(q.index);
+        p.extend_from_slice(&q.offset.to_le_bytes());
+        p.extend_from_slice(&q.bytes);
+    }
+    p
+}
+
 fn motion_event_payload(ts_us: u32, dx: i16, dy: i16, dz: i16) -> Vec<u8> {
     let mut p = Vec::with_capacity(11);
     p.extend_from_slice(&ts_us.to_le_bytes());
@@ -868,9 +1165,18 @@ impl MockBox {
             match ty {
                 FrameType::Lock => st.apply_lock_frame(payload),
                 FrameType::Option => st.apply_option_frame(payload),
+                FrameType::Rewrite => st.apply_rewrite_frame(payload),
+                FrameType::Patch => st.apply_patch_frame(payload),
                 // RESET clears every lock along with the injection, as input_reset does. The bearing
-                // option is NVS-backed and survives it.
-                FrameType::Reset => st.table = LockTable::default(),
+                // option is NVS-backed and survives it. The rewrite table clears too (§3.14).
+                FrameType::Reset => {
+                    st.table = LockTable::default();
+                    if !st.rewrites.is_empty() {
+                        st.rewrites.clear();
+                        st.rewrite_gen = st.rewrite_gen.wrapping_add(1);
+                    }
+                    st.rewrite_full = false;
+                }
                 _ => {}
             }
             let out: Vec<u8> = 'reply: {
@@ -924,12 +1230,31 @@ impl MockBox {
                         None => Vec::new(),
                     };
                 }
+                if ty == FrameType::Transfer && st.respond {
+                    // TRANSFER_RESP [ep][status][IN data], SEQ echoes. The box answers 0xFC (refused)
+                    // while the opt-in is off; otherwise the canned reply the test scripted.
+                    let ep = payload.first().copied().unwrap_or(0);
+                    let (status, data) = if st.imperfect.allowed {
+                        st.transfer_reply.clone()
+                    } else {
+                        (0xFC, Vec::new())
+                    };
+                    let mut p = vec![ep, status];
+                    p.extend_from_slice(&data);
+                    break 'reply encode(FrameType::TransferResp, seq, &p).expect("resp fits");
+                }
                 if ty == FrameType::Query && st.respond {
                     match payload.first().copied() {
                         Some(0) => encode(FrameType::Resp, seq, &version_payload(&st.version))
                             .expect("resp fits"),
-                        Some(1) => encode(FrameType::Resp, seq, &[1, st.health.to_flags()])
-                            .expect("resp fits"),
+                        Some(1) => {
+                            // HEALTH is a u16 LE (proto 7); rewrite_on/patch_on also reflect live state.
+                            let mut h = st.health;
+                            h.rewrite_on |= !st.rewrites.is_empty();
+                            h.patch_on |= st.patch_applied;
+                            let f = h.to_flags().to_le_bytes();
+                            encode(FrameType::Resp, seq, &[1, f[0], f[1]]).expect("resp fits")
+                        }
                         Some(2) => {
                             encode(FrameType::Resp, seq, &device_info_payload(&st.device_info))
                                 .expect("resp fits")
@@ -1009,6 +1334,22 @@ impl MockBox {
                             FrameType::Resp,
                             seq,
                             &clip_status_payload(&st.clip, &st.clip_settings),
+                        )
+                        .expect("resp fits"),
+                        Some(12) => encode(FrameType::Resp, seq, &rewrite_resp_payload(&st))
+                            .expect("resp fits"),
+                        Some(13) => encode(
+                            FrameType::Resp,
+                            seq,
+                            &rewrite_entry_resp_payload(&st, payload.get(1).copied().unwrap_or(0)),
+                        )
+                        .expect("resp fits"),
+                        Some(14) => encode(FrameType::Resp, seq, &patches_resp_payload(&st))
+                            .expect("resp fits"),
+                        Some(15) => encode(
+                            FrameType::Resp,
+                            seq,
+                            &patch_entry_resp_payload(&st, payload.get(1).copied().unwrap_or(0)),
                         )
                         .expect("resp fits"),
                         _ => Vec::new(),
@@ -1134,6 +1475,31 @@ impl MockBox {
     /// Update the configured [`ImperfectStatus`] in place (e.g. to simulate an over-capacity device).
     pub fn set_imperfect_status(&self, imperfect: ImperfectStatus) {
         self.state.lock().imperfect = imperfect;
+    }
+
+    /// Enable or disable the imperfect-clone opt-in the developer layer (§3.14) is gated on (builder
+    /// style). A shorthand for scripting [`ImperfectStatus::allowed`] before a `raw`/`transfer`/`rewrite`.
+    pub fn with_imperfect(self, allow: bool) -> Self {
+        {
+            let mut st = self.state.lock();
+            st.imperfect.allowed = allow;
+        }
+        self
+    }
+
+    /// Set the canned `(status, IN data)` a `TRANSFER` is answered with while the opt-in is on
+    /// (builder style). With the opt-in off the mock answers `0xFC` (refused) regardless.
+    pub fn with_transfer_reply(self, status: u8, data: &[u8]) -> Self {
+        {
+            let mut st = self.state.lock();
+            st.transfer_reply = (status, data.to_vec());
+        }
+        self
+    }
+
+    /// Set the canned `TRANSFER` reply after construction.
+    pub fn set_transfer_reply(&self, status: u8, data: &[u8]) {
+        self.state.lock().transfer_reply = (status, data.to_vec());
     }
 
     /// Update the configured movement-riding window in place; `None` = off.

@@ -555,9 +555,9 @@ fn decode_catch_through_parse_resp() {
 
 #[test]
 fn health_catch_on_bit_roundtrips() {
-    let h = Health::from_flags(H_CATCH_ON);
+    let h = Health::from_flags(u16::from(H_CATCH_ON));
     assert!(h.catch_on);
-    assert_eq!(h.to_flags(), H_CATCH_ON);
+    assert_eq!(h.to_flags(), u16::from(H_CATCH_ON));
 }
 
 #[cfg(feature = "mock")]

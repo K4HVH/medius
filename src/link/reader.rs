@@ -114,7 +114,11 @@ fn route_frame(
         len = frame.payload.len(),
     );
     match frame.ty {
-        FrameType::Resp => correlation::deliver(pending, frame.seq, frame.payload),
+        // `TransferResp` is correlated by `SEQ` in the same pending map as a `RESP`, its own opcode
+        // and echoed endpoint together telling it apart from a same-`SEQ` query reply.
+        FrameType::Resp | FrameType::TransferResp => {
+            correlation::deliver(pending, frame.ty, frame.seq, frame.payload)
+        }
         FrameType::Log => {
             let line = parse_log(&frame.payload);
             #[cfg(feature = "tracing")]

@@ -4,11 +4,13 @@ use std::time::Duration;
 
 use super::opcode::{
     OPT_BEARING, OPT_EMIT, OPT_IMPERFECT, OPT_MOVE_RIDE, OPT_RENDER, OPT_SPREAD, Q_CAPS, Q_CATCH,
-    Q_CLIP, Q_DEVICE_INFO, Q_FIRMWARE, Q_HEALTH, Q_LOCKS, Q_OPTIONS, Q_RATE, Q_STATS, Q_VERSION,
+    Q_CLIP, Q_DEVICE_INFO, Q_FIRMWARE, Q_HEALTH, Q_LOCKS, Q_OPTIONS, Q_PATCHES, Q_RATE, Q_REWRITE,
+    Q_STATS, Q_VERSION,
 };
 use crate::types::{
     Bearing, Caps, CatchState, ClipStatus, DeviceInfo, EmitPaceStatus, FirmwareInfo, Health,
-    ImperfectStatus, Locks, LogLevel, LogLine, Rate, RenderStatus, SpreadStatus, Stats, Version,
+    ImperfectStatus, Locks, LogLevel, LogLine, PatchSet, Rate, RenderStatus, RewriteTable,
+    SpreadStatus, Stats, Version,
 };
 
 /// A decoded `RESP` (§4.1), keyed by the `what` selector at `payload[0]`.
@@ -37,6 +39,10 @@ pub enum Resp {
     Clip(ClipStatus),
     /// `RESP(FIRMWARE)`: both chips' versions and slot state (§4.16).
     Firmware(FirmwareInfo),
+    /// `RESP(REWRITE)`: the rewrite-rule table summary (§4.17).
+    Rewrite(RewriteTable),
+    /// `RESP(PATCHES)`: the descriptor-patch set summary (§4.17).
+    Patches(PatchSet),
 }
 
 /// Parse a `RESP` payload (§4.1): `[what u8][data..]`.
@@ -61,10 +67,13 @@ pub fn parse_resp(payload: &[u8]) -> Option<Resp> {
             }))
         }
         Q_HEALTH => {
-            if payload.len() < 2 {
-                return None;
-            }
-            Some(Resp::Health(Health::from_flags(payload[1])))
+            // `u16` LE since proto 7 (§4.2). The frame `LEN` delimits it; a one-byte payload from an
+            // older box still decodes its low byte with the high byte read clear.
+            let flags = match payload.get(1..3) {
+                Some(w) => u16::from_le_bytes([w[0], w[1]]),
+                None => u16::from(*payload.get(1)?),
+            };
+            Some(Resp::Health(Health::from_flags(flags)))
         }
         Q_DEVICE_INFO => DeviceInfo::from_payload(payload).map(Resp::DeviceInfo),
         Q_CAPS => Caps::from_payload(payload).map(Resp::Caps),
@@ -74,6 +83,8 @@ pub fn parse_resp(payload: &[u8]) -> Option<Resp> {
         Q_CATCH => CatchState::from_payload(payload).map(Resp::Catch),
         Q_CLIP => ClipStatus::from_payload(payload).map(Resp::Clip),
         Q_FIRMWARE => FirmwareInfo::from_payload(payload).map(Resp::Firmware),
+        Q_REWRITE => RewriteTable::from_payload(payload).map(Resp::Rewrite),
+        Q_PATCHES => PatchSet::from_payload(payload).map(Resp::Patches),
         Q_OPTIONS => {
             let id = *payload.get(1)?;
             match id {

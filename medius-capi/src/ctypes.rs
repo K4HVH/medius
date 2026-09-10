@@ -222,6 +222,13 @@ pub enum MediusFrameType {
     ClipTrigger = 0x15,
     Update = 0x17,
     UpdateResp = 0x18,
+    // v3.4.0 developer layer (§3.14). The raw/rewrite/patch C entry points are a follow-up; these
+    // frame-type values exist so the mock's recorded-frame introspection stays exhaustive.
+    Raw = 0x19,
+    Transfer = 0x1A,
+    TransferResp = 0x1B,
+    Rewrite = 0x1C,
+    Patch = 0x1D,
 }
 
 /// Which arm of a [`MediusCatchEvent`] is populated.
