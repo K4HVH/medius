@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::collections::btree_map::Entry;
 
 use crate::link::catch::FilterSet;
 use crate::protocol::opcode::{
@@ -143,11 +144,12 @@ pub(crate) struct DesiredState {
     // The rewrite-rule table the box should be holding, keyed by wire key so a re-set is exact and
     // idempotent. Re-asserted on reconnect and by the keepalive, exactly like `catch`.
     rewrites: BTreeMap<RewriteWireKey, StoredRewrite>,
-    // The clone's declared button count, cached from the last `RESP(CAPS)`. A button blanket expands
-    // onto this many rows, so a lock on a button past the five named ones survives a reconnect. `None`
-    // before any CAPS read: the box has no button-blanket state, so the host expands the blanket at
-    // apply time, and until CAPS is read the only count it knows is the named one. A device fact, not
-    // PC-owned injection state, so `clear()`/`is_idle()` leave it alone.
+    // The clone's declared button count, cached from `RESP(CAPS)`: the handshake reads it, and a
+    // reconnect re-reads it. A button blanket is held UNEXPANDED and expanded onto this many rows at
+    // reassert time, so a wide-button lock set before the caller's own `caps()` still re-asserts every
+    // declared button across a reconnect, and a device swapped in during the blip re-asserts onto its
+    // count. `None` before any CAPS read: the blanket then expands onto the five named buttons. A
+    // device fact, not PC-owned injection state, so `clear()`/`is_idle()` leave it alone.
     declared_buttons: Option<u8>,
 }
 
@@ -169,8 +171,10 @@ impl DesiredState {
     //
     // A momentary usage carries one bit, so the box stores the block or pass it amounts to and the
     // number sent is truncated to that; recording the raw byte would leave a scale above a full pass
-    // held here as a lock the box released. A button blanket expands the way the box expands it,
-    // onto the five button rows, so releasing one button afterwards is not undone by the replay.
+    // held here as a lock the box released. A button blanket is held as one unexpanded row and
+    // expanded at reassert time onto the declared count (see `held_locks`); a single button touched
+    // while it is held materialises it first, so releasing one button afterwards is not undone by the
+    // replay.
     pub(crate) fn apply_lock(&mut self, key: LockKey, scale: u8) -> LockUndo {
         let (class, id, dir) = key;
         let scale = if class == LOCK_CLS_AXIS {
@@ -184,50 +188,90 @@ impl DesiredState {
             rows: Vec::new(),
             media_order: self.media_order.clone(),
         };
-        for id in self.expand_blanket(class, id) {
-            let key = (class, id);
-            undo.rows.push((key, self.locks.get(&key).copied()));
-            let row = self.locks.entry(key).or_default();
-            row.write(dir, scale);
-            if row.is_clear() {
-                self.locks.remove(&key);
-                if is_media_slot(class, id) {
-                    self.media_order.retain(|&m| m != id);
-                }
-            } else if is_media_slot(class, id) && !self.media_order.contains(&id) {
-                self.media_order.push(id);
-            }
+        if class == LOCK_CLS_BTN && id == LOCK_ID_ALL {
+            // The blanket subsumes every individual button row, the way a box-side re-expansion of
+            // `LOCK[BTN][ID_ALL]` rewrites each one, and is then held unexpanded so a reconnect widens
+            // it onto the count CAPS reports then.
+            self.clear_button_rows(&mut undo);
+            self.write_lock_row(class, id, dir, scale, &mut undo);
+        } else if class == LOCK_CLS_BTN && self.locks.contains_key(&(LOCK_CLS_BTN, LOCK_ID_ALL)) {
+            self.burst_button_blanket(&mut undo);
+            self.write_lock_row(class, id, dir, scale, &mut undo);
+        } else {
+            self.write_lock_row(class, id, dir, scale, &mut undo);
         }
         undo
     }
 
+    // Write one lock-table row, dropping it when every slot passes and tracking the media slot order.
+    fn write_lock_row(&mut self, class: u8, id: u16, dir: u8, scale: u8, undo: &mut LockUndo) {
+        let key = (class, id);
+        undo.rows.push((key, self.locks.get(&key).copied()));
+        let row = self.locks.entry(key).or_default();
+        row.write(dir, scale);
+        if row.is_clear() {
+            self.locks.remove(&key);
+            if is_media_slot(class, id) {
+                self.media_order.retain(|&m| m != id);
+            }
+        } else if is_media_slot(class, id) && !self.media_order.contains(&id) {
+            self.media_order.push(id);
+        }
+    }
+
+    // Drop every individual button row: a fresh button blanket covers them all, exactly as the box
+    // rewrites each button row when it re-expands `LOCK[BTN][ID_ALL]`.
+    fn clear_button_rows(&mut self, undo: &mut LockUndo) {
+        let ids: Vec<u16> = self
+            .locks
+            .keys()
+            .filter(|(class, id)| *class == LOCK_CLS_BTN && *id != LOCK_ID_ALL)
+            .map(|&(_, id)| id)
+            .collect();
+        for id in ids {
+            let key = (LOCK_CLS_BTN, id);
+            undo.rows.push((key, self.locks.get(&key).copied()));
+            self.locks.remove(&key);
+        }
+    }
+
+    // Materialise the held button blanket onto the declared buttons, then drop the blanket row, so a
+    // single button written next (a release, most often) leaves the rest of the group held.
+    fn burst_button_blanket(&mut self, undo: &mut LockUndo) {
+        let key = (LOCK_CLS_BTN, LOCK_ID_ALL);
+        let Some(blanket) = self.locks.get(&key).copied() else {
+            return;
+        };
+        for b in 0..self.button_count() {
+            let row = (LOCK_CLS_BTN, b);
+            if let Entry::Vacant(slot) = self.locks.entry(row) {
+                undo.rows.push((row, None));
+                slot.insert(blanket);
+            }
+        }
+        undo.rows.push((key, Some(blanket)));
+        self.locks.remove(&key);
+    }
+
     /// Cache the clone's declared button count from a `RESP(CAPS)`, capped at the box's ceiling. A
-    /// later button blanket expands onto this many rows, so a reconnect re-asserts a lock on a button
-    /// past the five named ones.
+    /// button blanket expands onto this many rows at reassert time, so a reconnect re-asserts a lock
+    /// on a button past the five named ones.
     pub(crate) fn note_declared_buttons(&mut self, n_buttons: u8) {
         self.declared_buttons = Some(n_buttons.min(MAX_BUTTONS));
     }
 
     // How many button rows a button blanket expands onto: the declared count once CAPS is read, else
-    // the five named buttons (the box holds no button-blanket state, so the host expands at apply
-    // time). Always within the box's ceiling.
+    // the five named buttons. The box holds no button-blanket flag, so the host does the expansion, at
+    // reassert time off the current count. Always within the box's ceiling.
     fn button_count(&self) -> u16 {
         self.declared_buttons.unwrap_or(BTN_COUNT) as u16
     }
 
-    // The box has no button-blanket state: it writes the button rows and forgets it was ever one
-    // command. A key or media blanket is its own flag on the box, so it stays its own row here.
-    fn expand_blanket(&self, class: u8, id: u16) -> Vec<u16> {
-        if class == LOCK_CLS_BTN && id == LOCK_ID_ALL {
-            (0..self.button_count()).collect()
-        } else {
-            vec![id]
-        }
-    }
-
-    /// Put back what an `apply_lock` wrote, for a frame that never reached the transport.
+    /// Put back what an `apply_lock` wrote, for a frame that never reached the transport. Undone
+    /// newest-change-first, so a step that touched a row more than once (a blanket burst then the
+    /// single-button write over it) rewinds to exactly the row it started from.
     pub(crate) fn restore_lock(&mut self, undo: LockUndo) {
-        for (key, row) in undo.rows {
+        for (key, row) in undo.rows.into_iter().rev() {
             match row {
                 Some(row) => self.locks.insert(key, row),
                 None => self.locks.remove(&key),
@@ -309,17 +353,28 @@ impl DesiredState {
         })
     }
 
-    // The `(key, scale)` commands that rebuild every held row, for the reconnect reapply. Media rows
-    // come out in the order they were taken, so the replay fills the box's slot array the way the
-    // live box filled it.
+    // The `(key, scale)` commands that rebuild every held row, for the reconnect reapply. The button
+    // blanket is expanded here onto the count CAPS last reported, not at apply time, so a reconnect
+    // that re-read CAPS re-asserts every declared button. Media rows come out in the order they were
+    // taken, so the replay fills the box's slot array the way the live box filled it.
     pub(crate) fn held_locks(&self) -> Vec<(LockKey, u8)> {
+        let button_count = self.button_count();
         let mut rows: Vec<(&(u8, u16), &Slots)> = self.locks.iter().collect();
         rows.sort_by_key(|((class, id), _)| (*class, self.media_rank(*class, *id), *id));
         rows.into_iter()
             .flat_map(|(&(class, id), row)| {
-                row.commands()
-                    .into_iter()
-                    .map(move |(dir, scale)| ((class, id, dir), scale))
+                let commands = row.commands();
+                let ids: Vec<u16> = if class == LOCK_CLS_BTN && id == LOCK_ID_ALL {
+                    (0..button_count).collect()
+                } else {
+                    vec![id]
+                };
+                ids.into_iter().flat_map(move |id| {
+                    commands
+                        .clone()
+                        .into_iter()
+                        .map(move |(dir, scale)| ((class, id, dir), scale))
+                })
             })
             .collect()
     }

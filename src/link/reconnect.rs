@@ -6,7 +6,7 @@ use parking_lot::Mutex;
 
 use crate::error::{Error, Result};
 use crate::protocol::command::{catch_payload, inject_payload, lock_payload, rewrite_payload};
-use crate::protocol::opcode::Q_VERSION;
+use crate::protocol::opcode::{Q_CAPS, Q_VERSION};
 use crate::protocol::{FrameDecoder, FrameType, Resp, encode, parse_resp};
 use crate::transport::Transport;
 use crate::types::Version;
@@ -81,6 +81,39 @@ fn probe_version(transport: &dyn Transport) -> Option<Version> {
     found
 }
 
+// Reads the reopened clone's declared button count off the local handle before it is swapped in, so
+// the read never races the reader thread (which is on the disconnected slot here, exactly as it is
+// during `probe_version`). `None` for a box that does not answer or reports no buttons; a wide-button
+// blanket then keeps whatever count the handshake or a prior reconnect cached.
+fn probe_caps(transport: &dyn Transport) -> Option<u8> {
+    let frame = encode(FrameType::Query, 0, &[Q_CAPS]).ok()?;
+    let mut decoder = FrameDecoder::new();
+    let start = Instant::now();
+    let mut last_query: Option<Instant> = None;
+    let mut found = None;
+    let mut rx = [0u8; 256];
+    while found.is_none() && start.elapsed() < PROBE_DEADLINE {
+        if last_query.is_none_or(|t| t.elapsed() >= PROBE_QUERY_GAP) {
+            if transport.write_all(&frame).is_err() {
+                return None;
+            }
+            last_query = Some(Instant::now());
+        }
+        match transport.read(&mut rx) {
+            Ok(0) => {}
+            Ok(n) => decoder.feed(&rx[..n], |f| {
+                if f.ty == FrameType::Resp
+                    && let Some(Resp::Caps(c)) = parse_resp(&f.payload)
+                {
+                    found = Some(c.mouse.n_buttons);
+                }
+            }),
+            Err(_) => return None,
+        }
+    }
+    found.filter(|&n| n > 0)
+}
+
 fn reconnect(ctx: &ReconnectCtx) -> Result<()> {
     let _guard = ctx.reconnect_lock.lock();
     let identity = ctx.identity.lock().clone();
@@ -120,6 +153,12 @@ fn reconnect(ctx: &ReconnectCtx) -> Result<()> {
                 Some(v) if v.mac == id.mac => {}
                 _ => continue,
             }
+        }
+        // Refresh the declared button count off the reopened clone before the replay, so a wide-button
+        // blanket re-asserts onto the count the box reports now and a device swapped in during the blip
+        // re-asserts onto the new device's count.
+        if let Some(n) = probe_caps(&serial) {
+            ctx.desired.lock().note_declared_buttons(n);
         }
         ctx.transport.swap(Arc::new(serial));
         ctx.held_updates.lock().clear();

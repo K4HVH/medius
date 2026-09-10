@@ -207,16 +207,50 @@ fn a_one_bit_class_holds_what_the_box_will_hold() {
 }
 
 #[test]
-fn a_button_blanket_expands_the_way_the_box_expands_it() {
+fn a_button_blanket_widens_to_the_declared_count_when_caps_arrives() {
     let mut d = DesiredState::default();
     d.apply_lock((LOCK_CLS_BTN, LOCK_ID_ALL, LOCK_DIR_BOTH), LOCK_SCALE_BLOCK);
-    // Before any CAPS read the only count known is the five named buttons.
+    // Before any CAPS read the blanket expands onto the five named buttons.
     assert_eq!(d.held_locks().len(), 5);
+    // The blanket is held unexpanded, so once CAPS reports a wider device the SAME blanket re-expands
+    // onto every declared button: a reconnect that re-read CAPS re-asserts the wide buttons instead of
+    // the frozen five. Materialising at apply time (the old behaviour) could not do this.
+    d.note_declared_buttons(8);
+    let ids: Vec<u16> = d.held_locks().iter().map(|&((_, id, _), _)| id).collect();
+    assert_eq!(ids, (0..8).collect::<Vec<u16>>());
     // Releasing one button afterwards must not be undone by a replay of the blanket.
     d.apply_lock((LOCK_CLS_BTN, 0, LOCK_DIR_BOTH), LOCK_SCALE_PASS);
     let held = d.held_locks();
-    assert_eq!(held.len(), 4);
+    assert_eq!(held.len(), 7);
     assert!(!held.iter().any(|&((_, id, _), _)| id == 0));
+}
+
+#[test]
+fn a_button_blanket_re_expands_when_the_declared_count_changes() {
+    // A device swapped in during a reconnect blip re-reads CAPS, and the held blanket then re-asserts
+    // onto the new count, wider or narrower, because it was never materialised at the old one.
+    let mut d = DesiredState::default();
+    d.note_declared_buttons(8);
+    d.apply_lock((LOCK_CLS_BTN, LOCK_ID_ALL, LOCK_DIR_BOTH), LOCK_SCALE_BLOCK);
+    assert_eq!(d.held_locks().len(), 8);
+    d.note_declared_buttons(12);
+    assert_eq!(d.held_locks().len(), 12);
+    d.note_declared_buttons(4);
+    assert_eq!(d.held_locks().len(), 4);
+}
+
+#[test]
+fn an_undone_button_release_restores_the_blanket() {
+    // The single-button write that bursts the blanket rolls back cleanly when its frame never went out,
+    // leaving the blanket as it was rather than the materialised rows the burst created.
+    let mut d = DesiredState::default();
+    d.note_declared_buttons(8);
+    d.apply_lock((LOCK_CLS_BTN, LOCK_ID_ALL, LOCK_DIR_BOTH), LOCK_SCALE_BLOCK);
+    let before = d.held_locks();
+    let undo = d.apply_lock((LOCK_CLS_BTN, 0, LOCK_DIR_BOTH), LOCK_SCALE_PASS);
+    assert_eq!(d.held_locks().len(), 7); // burst to eight, minus the released button
+    d.restore_lock(undo);
+    assert_eq!(d.held_locks(), before);
 }
 
 #[test]
