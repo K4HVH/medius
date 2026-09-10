@@ -3,7 +3,7 @@ use std::time::Duration;
 use crate::error::{Error, Result};
 use crate::protocol::FrameType;
 use crate::protocol::command::raw_payload;
-use crate::types::{Setup, TransferOutcome, TransferStatus};
+use crate::types::{Direction, Setup, TransferOutcome, TransferStatus};
 
 use super::Device;
 
@@ -24,33 +24,38 @@ impl Device {
         }
     }
 
-    /// `RAW` (§3.14): put `bytes` verbatim on cloned endpoint `ep`, fire-and-forget.
+    /// `RAW` (§3.14): put `bytes` verbatim on cloned endpoint number `ep` in `direction`, fire-and-forget.
     ///
-    /// An IN endpoint (`ep & 0x80`) emits toward the game PC; an OUT endpoint relays to the real
-    /// device. The write is stateless and one-shot: the next native report on that endpoint carries
-    /// the device's own state, not the raw one, and `RAW` bypasses the [rewrite
-    /// rules](Device::set_rewrite). An interrupt payload past the endpoint's `wMaxPacketSize` is
-    /// dropped box-side; a bulk transfer splits at the packet size and terminates with a short packet.
+    /// `ep` is the bare endpoint number (0 to 15); `direction` names the flow. [`Direction::IN`] emits
+    /// toward the game PC; [`Direction::OUT`] relays to the real device. Only those two are addressable:
+    /// [`Direction::Both`] returns [`Error::RawDirection`] and the bearing-relative pair returns
+    /// [`Error::RelativeDirection`], both before any frame goes out. The write is stateless and one-shot:
+    /// the next native report on that endpoint carries the device's own state, not the raw one, and
+    /// `RAW` bypasses the [rewrite rules](Device::set_rewrite). An interrupt payload past the endpoint's
+    /// `wMaxPacketSize` is dropped box-side; a bulk transfer splits at the packet size and terminates
+    /// with a short packet.
     ///
     /// Gated on [`allow_imperfect_clones`](Device::allow_imperfect_clones): with the opt-in off this
     /// returns [`Error::ImperfectRequired`] rather than sending a frame the box would silently drop.
     ///
     /// ```no_run
-    /// # use medius::{Device, Result};
+    /// # use medius::{Device, Direction, Result};
     /// # fn main() -> Result<()> {
     /// let device = Device::find()?;
     /// device.allow_imperfect_clones(true)?;
-    /// device.raw(0x81, &[0x00, 0x01, 0x00, 0x00])?;   // one report on interrupt-IN endpoint 1
+    /// device.raw(1, Direction::IN, &[0x00, 0x01, 0x00, 0x00])?;   // one report on interrupt-IN endpoint 1
     /// # Ok(()) }
     /// ```
-    pub fn raw(&self, ep: u8, bytes: &[u8]) -> Result<()> {
+    pub fn raw(&self, ep: u8, direction: Direction, bytes: &[u8]) -> Result<()> {
+        validate_raw_direction(direction)?;
         self.require_imperfect()?;
-        self.raw_frame(ep, bytes)
+        self.raw_frame(ep, direction, bytes)
     }
 
     /// The `RAW` send with no opt-in pre-check, so the async wrapper can gate on the async query path.
-    pub(crate) fn raw_frame(&self, ep: u8, bytes: &[u8]) -> Result<()> {
-        self.link.send(FrameType::Raw, &raw_payload(ep, bytes))
+    pub(crate) fn raw_frame(&self, ep: u8, direction: Direction, bytes: &[u8]) -> Result<()> {
+        self.link
+            .send(FrameType::Raw, &raw_payload(ep, direction, bytes))
     }
 
     /// `TRANSFER` (§3.14): run one control transfer against the real device and return its answer.
@@ -100,5 +105,20 @@ impl Device {
             status: TransferStatus::from_u8(status),
             data,
         })
+    }
+}
+
+/// A raw injection goes on one endpoint flow, so only [`Direction::IN`] and [`Direction::OUT`] address
+/// one. The bearing-relative pair is measured at emit time, which a raw write has none of, and
+/// [`Direction::Both`] names two flows at once; both are refused before the wire rather than sent as a
+/// frame the box would resolve to OUT.
+pub(crate) fn validate_raw_direction(direction: Direction) -> Result<()> {
+    match direction {
+        Direction::Positive | Direction::Negative => Ok(()),
+        d if d.is_relative() => Err(Error::RelativeDirection {
+            direction: d,
+            what: "raw endpoint",
+        }),
+        d => Err(Error::RawDirection { direction: d }),
     }
 }

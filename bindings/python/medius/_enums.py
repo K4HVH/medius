@@ -50,6 +50,7 @@ class Status(IntEnum):
     ERR_REWRITE_PAYLOAD_TOO_LARGE = 23
     ERR_TRANSFORM_OP_FIELDS = 24
     ERR_TRANSFORM_INVERT_ZERO_SCALE = 25
+    ERR_RAW_DIRECTION = 26
 
 
 class DeviceKind(IntEnum):

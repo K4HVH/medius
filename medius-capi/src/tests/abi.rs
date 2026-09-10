@@ -1035,7 +1035,7 @@ fn catch_delivers_a_traffic_event() {
             dev,
             &[medius_catch_filter_traffic(
                 MEDIUS_CATCH_CLASS_VENDOR_BULK,
-                0x83,
+                3,
             )],
         )
     };
@@ -1045,7 +1045,7 @@ fn catch_delivers_a_traffic_event() {
             9_000,
             medius::ClockDomain::DeviceChip,
             medius::CatchClass::VendorBulk,
-            0x83,
+            3,
             medius::Direction::Positive,
             0x01,
             64,
@@ -1059,7 +1059,7 @@ fn catch_delivers_a_traffic_event() {
     assert_eq!(event.clock, MediusClockDomain::DeviceChip);
     let t = unsafe { event.data.traffic };
     assert_eq!(t.class, MEDIUS_CATCH_CLASS_VENDOR_BULK);
-    assert_eq!(t.id, 0x83);
+    assert_eq!(t.id, 3);
     assert_eq!(t.direction, MediusDirection::Positive as u8);
     assert_eq!(t.flags, 0x01);
     assert_eq!(t.true_len, 64);
@@ -2219,15 +2219,10 @@ fn dev_layer_commands_reach_the_wire_like_the_crate() {
     let cbig = big.clone();
     assert_parity_imperfect(
         move |d| {
-            d.raw(0x81, &[0x00, 0x01, 0x02, 0x03]).unwrap();
+            d.raw(1, Direction::IN, &[0x00, 0x01, 0x02, 0x03]).unwrap();
             d.set_rewrite(
-                &RewriteRule::new(
-                    RewriteClass::Emit,
-                    0x81,
-                    Direction::Both,
-                    RewriteAction::Drop,
-                )
-                .matching(vec![0x01], vec![0xFF]),
+                &RewriteRule::new(RewriteClass::Emit, 1, Direction::IN, RewriteAction::Drop)
+                    .matching(vec![0x01], vec![0xFF]),
             )
             .unwrap();
             d.set_rewrite(
@@ -2243,13 +2238,8 @@ fn dev_layer_commands_reach_the_wire_like_the_crate() {
             )
             .unwrap();
             d.remove_rewrite(
-                &RewriteRule::new(
-                    RewriteClass::Emit,
-                    0x81,
-                    Direction::Both,
-                    RewriteAction::Drop,
-                )
-                .matching(vec![0x01], vec![0xFF]),
+                &RewriteRule::new(RewriteClass::Emit, 1, Direction::IN, RewriteAction::Drop)
+                    .matching(vec![0x01], vec![0xFF]),
             )
             .unwrap();
             d.clear_rewrite().unwrap();
@@ -2261,13 +2251,19 @@ fn dev_layer_commands_reach_the_wire_like_the_crate() {
         move |dev| unsafe {
             let bytes = [0x00u8, 0x01, 0x02, 0x03];
             assert_eq!(
-                medius_device_raw(dev, 0x81, bytes.as_ptr(), bytes.len()),
+                medius_device_raw(
+                    dev,
+                    1,
+                    MediusDirection::Positive as u8,
+                    bytes.as_ptr(),
+                    bytes.len()
+                ),
                 MediusStatus::Ok
             );
             let drop = c_rewrite(
                 MediusRewriteClass::Emit as u8,
-                0x81,
-                MediusDirection::Both as u8,
+                1,
+                MediusDirection::Positive as u8,
                 MediusRewriteAction::Drop as u8,
                 0,
                 &[0x01],
@@ -2515,13 +2511,21 @@ fn the_gated_dev_layer_calls_are_refused_with_the_opt_in_off() {
     );
     let bytes = [0u8, 1];
     assert_eq!(
-        unsafe { medius_device_raw(dev, 0x81, bytes.as_ptr(), bytes.len()) },
+        unsafe {
+            medius_device_raw(
+                dev,
+                1,
+                MediusDirection::Positive as u8,
+                bytes.as_ptr(),
+                bytes.len(),
+            )
+        },
         MediusStatus::ErrImperfectRequired
     );
     let rule = c_rewrite(
         MediusRewriteClass::Emit as u8,
-        0x81,
-        MediusDirection::Both as u8,
+        1,
+        MediusDirection::Positive as u8,
         MediusRewriteAction::Drop as u8,
         0,
         &[],
@@ -2554,8 +2558,8 @@ fn rewrite_validation_errors_have_their_own_status() {
     // match and mask of different lengths.
     let mask_mismatch = c_rewrite(
         MediusRewriteClass::Emit as u8,
-        0x81,
-        MediusDirection::Both as u8,
+        1,
+        MediusDirection::Positive as u8,
         MediusRewriteAction::Drop as u8,
         0,
         &[0x01, 0x02],
@@ -2584,7 +2588,7 @@ fn rewrite_validation_errors_have_their_own_status() {
     // A bearing-relative direction is rejected for a rewrite rule.
     let relative = c_rewrite(
         MediusRewriteClass::Emit as u8,
-        0x81,
+        1,
         MediusDirection::With as u8,
         MediusRewriteAction::Drop as u8,
         0,
@@ -2599,8 +2603,8 @@ fn rewrite_validation_errors_have_their_own_status() {
     // A 100-byte Replace on a report surface exceeds the 64-byte head the box holds.
     let too_big = c_rewrite(
         MediusRewriteClass::Emit as u8,
-        0x81,
-        MediusDirection::Both as u8,
+        1,
+        MediusDirection::Positive as u8,
         MediusRewriteAction::Replace as u8,
         0,
         &[],
@@ -2615,6 +2619,52 @@ fn rewrite_validation_errors_have_their_own_status() {
     let bad_class = c_rewrite(0x77, 0, MediusDirection::Both as u8, 0, 0, &[], &[], &[]);
     assert_eq!(
         unsafe { medius_device_set_rewrite(dev, &bad_class) },
+        MediusStatus::ErrInvalidArg
+    );
+    unsafe {
+        medius_device_free(dev);
+        medius_mock_free(mock);
+    }
+}
+
+#[test]
+fn raw_rejects_a_non_flow_direction_with_its_own_status() {
+    let mock = medius_mock_new();
+    unsafe { medius_mock_set_imperfect_status(mock, allowed_status()) };
+    let mut dev: *mut MediusDevice = ptr::null_mut();
+    assert_eq!(
+        unsafe { medius_device_with_mock(mock, &mut dev) },
+        MediusStatus::Ok
+    );
+    let bytes = [0u8, 1];
+    // Both names two flows and the bearing-relative pair has none here; each carries its own status,
+    // ahead of the opt-in, and an unknown direction byte is refused as an invalid argument.
+    assert_eq!(
+        unsafe {
+            medius_device_raw(
+                dev,
+                1,
+                MediusDirection::Both as u8,
+                bytes.as_ptr(),
+                bytes.len(),
+            )
+        },
+        MediusStatus::ErrRawDirection
+    );
+    assert_eq!(
+        unsafe {
+            medius_device_raw(
+                dev,
+                1,
+                MediusDirection::With as u8,
+                bytes.as_ptr(),
+                bytes.len(),
+            )
+        },
+        MediusStatus::ErrRelativeDirection
+    );
+    assert_eq!(
+        unsafe { medius_device_raw(dev, 1, 99, bytes.as_ptr(), bytes.len()) },
         MediusStatus::ErrInvalidArg
     );
     unsafe {

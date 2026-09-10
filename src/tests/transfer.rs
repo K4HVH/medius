@@ -2,15 +2,19 @@
 //! round-trip including the opt-in gate.
 
 use crate::protocol::command::{raw_payload, transfer_payload};
-use crate::types::{Setup, TransferStatus};
+use crate::types::{Direction, Setup, TransferStatus};
 
 #[test]
 fn raw_payload_bytes() {
+    // [ep_num][dir][bytes...]: endpoint 3 IN, then the report. The number and the direction byte
+    // differ, so a transpose of the two shows here.
     assert_eq!(
-        raw_payload(0x81, &[0x00, 0x01, 0x00, 0x00]),
-        vec![0x81, 0x00, 0x01, 0x00, 0x00]
+        raw_payload(3, Direction::IN, &[0x00, 0x01, 0x00, 0x00]),
+        vec![0x03, 0x01, 0x00, 0x01, 0x00, 0x00]
     );
-    assert_eq!(raw_payload(0x02, &[]), vec![0x02]);
+    // Endpoint 2 OUT, empty body. The ep is masked to its low nibble, so a caller that still packs
+    // the direction into bit 7 lands on the same number.
+    assert_eq!(raw_payload(0x82, Direction::OUT, &[]), vec![0x02, 0x02]);
 }
 
 #[test]
@@ -60,14 +64,14 @@ fn transfer_status_wire() {
 #[cfg(feature = "mock")]
 mod mock_roundtrip {
     use crate::error::Error;
-    use crate::types::{Setup, TransferStatus};
+    use crate::types::{Direction, Setup, TransferStatus};
     use crate::{Device, FrameType, MockBox};
 
     #[test]
     fn raw_requires_the_opt_in() {
         let device = Device::with_mock(MockBox::new());
         assert!(matches!(
-            device.raw(0x81, &[0x00]),
+            device.raw(1, Direction::IN, &[0x00]),
             Err(Error::ImperfectRequired)
         ));
     }
@@ -76,8 +80,25 @@ mod mock_roundtrip {
     fn raw_sends_when_allowed() {
         let mock = MockBox::new().with_imperfect(true);
         let device = Device::with_mock(mock.clone());
-        device.raw(0x81, &[0x00, 0x01, 0x00, 0x00]).unwrap();
+        device
+            .raw(1, Direction::IN, &[0x00, 0x01, 0x00, 0x00])
+            .unwrap();
         assert!(mock.saw(FrameType::Raw));
+    }
+
+    #[test]
+    fn raw_rejects_a_direction_that_is_not_a_flow() {
+        let device = Device::with_mock(MockBox::new().with_imperfect(true));
+        // Both names two flows at once; the bearing-relative pair has no bearing here. Both are
+        // refused before the wire, ahead of the opt-in check.
+        assert!(matches!(
+            device.raw(1, Direction::Both, &[0x00]),
+            Err(Error::RawDirection { .. })
+        ));
+        assert!(matches!(
+            device.raw(1, Direction::With, &[0x00]),
+            Err(Error::RelativeDirection { .. })
+        ));
     }
 
     #[test]

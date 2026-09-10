@@ -68,19 +68,19 @@
 // Raw HID input report bytes, keyed by interface number.
 #define MEDIUS_CATCH_CLASS_HID_IN 4
 
-// Interrupt-OUT report bytes the PC wrote, keyed by endpoint address.
+// Interrupt-OUT report bytes the PC wrote, keyed by endpoint number, direction OUT.
 #define MEDIUS_CATCH_CLASS_HID_OUT 5
 
-// Vendor-interface interrupt traffic, keyed by endpoint address.
+// Vendor-interface interrupt traffic, keyed by endpoint number and direction.
 #define MEDIUS_CATCH_CLASS_VENDOR_INTERRUPT 6
 
-// Vendor-interface bulk traffic, keyed by endpoint address.
+// Vendor-interface bulk traffic, keyed by endpoint number and direction.
 #define MEDIUS_CATCH_CLASS_VENDOR_BULK 7
 
 // A proxied control transaction, keyed by endpoint number (0 = EP0).
 #define MEDIUS_CATCH_CLASS_CONTROL 8
 
-// The bytes the clone put on the wire, keyed by endpoint address.
+// The bytes the clone put on the wire, keyed by endpoint number, direction IN.
 #define MEDIUS_CATCH_CLASS_EMIT 9
 
 // Bus lifecycle: reset, suspend, configuration and interface changes, attach and detach.
@@ -158,6 +158,8 @@ enum MediusStatus
     MEDIUS_STATUS_ERR_TRANSFORM_OP_FIELDS = 24,
     // A scale of 0 on an invert, which ignores its scale (so 0 would block the field it must pass).
     MEDIUS_STATUS_ERR_TRANSFORM_INVERT_ZERO_SCALE = 25,
+    // A raw injection direction other than `MEDIUS_DIRECTION_POSITIVE` (IN) or `MEDIUS_DIRECTION_NEGATIVE` (OUT).
+    MEDIUS_STATUS_ERR_RAW_DIRECTION = 26,
 };
 #ifndef __cplusplus
 #if __STDC_VERSION__ >= 202311L
@@ -1025,7 +1027,7 @@ typedef struct MediusRewriteRule {
     // validate it before anything reads it as one; C++ renders the enum as `enum : uint8_t`, so
     // assigning this to a `MediusRewriteClass` there needs a cast.
     uint8_t class_;
-    // The address within the class: an interface number, endpoint address, or endpoint number.
+    // The address within the class: an interface number or an endpoint number.
     uint16_t id;
     // A `MEDIUS_DIRECTION_*` value (`REWRITE` takes `BOTH`/`POSITIVE`/`NEGATIVE`). A byte rather than
     // `MediusDirection`, so the boundary can validate it; C++ needs a cast to assign it to one.
@@ -1952,12 +1954,16 @@ MediusStatus medius_device_reboot(struct MediusDevice *dev, uint8_t target);
 
 MediusStatus medius_device_allow_imperfect_clones(struct MediusDevice *dev, bool allow);
 
-// `RAW` (§3.14): put `bytes[0..len]` verbatim on cloned endpoint `ep`, fire-and-forget. An IN
-// endpoint (`ep & 0x80`) emits toward the game PC; an OUT endpoint relays to the real device. Gated
-// on `medius_device_allow_imperfect_clones`: with the opt-in off this is
+// `RAW` (§3.14): put `bytes[0..len]` verbatim on cloned endpoint number `ep_num` in `dir`,
+// fire-and-forget. `ep_num` is the bare endpoint number (0 to 15); `dir` is a `MEDIUS_DIRECTION_*`
+// value, and only `MEDIUS_DIRECTION_POSITIVE` (IN, toward the game PC) and `MEDIUS_DIRECTION_NEGATIVE`
+// (OUT, to the real device) address one, so any other is `MEDIUS_STATUS_ERR_RAW_DIRECTION` (or
+// `MEDIUS_STATUS_ERR_RELATIVE_DIRECTION` for the bearing-relative pair). Gated on
+// `medius_device_allow_imperfect_clones`: with the opt-in off this is
 // `MEDIUS_STATUS_ERR_IMPERFECT_REQUIRED` rather than a frame the box would drop.
 MediusStatus medius_device_raw(struct MediusDevice *dev,
-                               uint8_t ep,
+                               uint8_t ep_num,
+                               uint8_t dir,
                                const uint8_t *bytes,
                                uintptr_t len);
 

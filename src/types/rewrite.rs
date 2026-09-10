@@ -23,17 +23,20 @@ use crate::types::Direction;
 pub enum RewriteClass {
     /// The device's HID input report, before the renderer; `id` is the interface number.
     HidIn = CATCH_CLS_HID_IN,
-    /// An interrupt-OUT report the game PC wrote, relayed to the device; `id` is the endpoint address.
+    /// An interrupt-OUT report the game PC wrote, relayed to the device; `id` is the endpoint number
+    /// and the `direction` is [`OUT`](crate::Direction::OUT).
     HidOut = CATCH_CLS_HID_OUT,
-    /// Interrupt traffic on a vendor interface; `id` is the endpoint address.
+    /// Interrupt traffic on a vendor interface; `id` is the endpoint number and the `direction` is
+    /// [`IN`](crate::Direction::IN) or [`OUT`](crate::Direction::OUT).
     VendorInterrupt = CATCH_CLS_VEND_INTR,
-    /// Bulk traffic on a vendor interface; `id` is the endpoint address.
+    /// Bulk traffic on a vendor interface; `id` is the endpoint number and the `direction` is
+    /// [`IN`](crate::Direction::IN) or [`OUT`](crate::Direction::OUT).
     VendorBulk = CATCH_CLS_VEND_BULK,
     /// A proxied control transfer; `id` is the endpoint number (0 = EP0). The one class that may
     /// `Answer`/`Stall`/`Nak` or rewrite the device's reply.
     Control = CATCH_CLS_CONTROL,
-    /// The outgoing wire, after the renderer; `id` is the endpoint address. Catches injected and
-    /// rendered frames as well as relayed ones.
+    /// The outgoing wire, after the renderer; `id` is the endpoint number and the `direction` is
+    /// [`IN`](crate::Direction::IN). Catches injected and rendered frames as well as relayed ones.
     Emit = CATCH_CLS_EMIT,
     /// Every rewritable class at once (the wire wildcard `0xFF`).
     Any = 0xFF,
@@ -164,18 +167,19 @@ impl RewriteAction {
 /// # fn main() -> Result<()> {
 /// let device = Device::find()?;
 /// device.allow_imperfect_clones(true)?;
-/// // Mute the clone's own wire on the interrupt-IN endpoint.
-/// device.set_rewrite(&RewriteRule::new(RewriteClass::Emit, 0x81, Direction::Both, RewriteAction::Drop))?;
+/// // Mute the clone's own wire on interrupt-IN endpoint 1 (Emit is an IN endpoint).
+/// device.set_rewrite(&RewriteRule::new(RewriteClass::Emit, 1, Direction::IN, RewriteAction::Drop))?;
 /// # Ok(()) }
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct RewriteRule {
     /// The traffic class the rule addresses.
     pub class: RewriteClass,
-    /// The address within the class: an interface number, endpoint address, or endpoint number.
+    /// The address within the class: an interface number or an endpoint number.
     pub id: u16,
     /// The flow the rule matches. `REWRITE` uses `Both`/`Positive`/`Negative` only; the bearing-relative
-    /// directions are rejected by the box.
+    /// directions are rejected by the box. For an endpoint class it carries the endpoint's
+    /// [`IN`](crate::Direction::IN)/[`OUT`](crate::Direction::OUT).
     pub direction: Direction,
     /// What the rule does to a matched packet.
     pub action: RewriteAction,

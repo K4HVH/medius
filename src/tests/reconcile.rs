@@ -416,7 +416,7 @@ fn stored(class: u8, id: u16) -> StoredRewrite {
 #[test]
 fn rewrite_rule_is_held_and_non_idle() {
     let mut d = DesiredState::default();
-    d.apply_rewrite(stored(9, 0x81));
+    d.apply_rewrite(stored(9, 1));
     assert!(!d.is_idle());
     assert_eq!(d.held_rewrites().len(), 1);
 }
@@ -424,8 +424,8 @@ fn rewrite_rule_is_held_and_non_idle() {
 #[test]
 fn rewrite_overwrite_keeps_one_row() {
     let mut d = DesiredState::default();
-    d.apply_rewrite(stored(9, 0x81));
-    let mut r = stored(9, 0x81);
+    d.apply_rewrite(stored(9, 1));
+    let mut r = stored(9, 1);
     r.action = 3; // same key, new action
     d.apply_rewrite(r);
     let held = d.held_rewrites();
@@ -436,8 +436,8 @@ fn rewrite_overwrite_keeps_one_row() {
 #[test]
 fn rewrite_remove_and_restore() {
     let mut d = DesiredState::default();
-    d.apply_rewrite(stored(9, 0x81));
-    let key = stored(9, 0x81).key();
+    d.apply_rewrite(stored(9, 1));
+    let key = stored(9, 1).key();
     let undo = d.remove_rewrite(key);
     assert!(d.held_rewrites().is_empty());
     d.restore_rewrite(undo); // a send that never went out is rolled back
@@ -447,7 +447,7 @@ fn rewrite_remove_and_restore() {
 #[test]
 fn rewrite_apply_undo_puts_it_back() {
     let mut d = DesiredState::default();
-    let undo = d.apply_rewrite(stored(9, 0x81));
+    let undo = d.apply_rewrite(stored(9, 1));
     d.restore_rewrite(undo);
     assert!(d.held_rewrites().is_empty());
     assert!(d.is_idle());
@@ -456,7 +456,7 @@ fn rewrite_apply_undo_puts_it_back() {
 #[test]
 fn clear_rewrites_empties_the_table() {
     let mut d = DesiredState::default();
-    d.apply_rewrite(stored(9, 0x81));
+    d.apply_rewrite(stored(9, 1));
     d.apply_rewrite(stored(4, 0));
     d.clear_rewrites();
     assert!(d.held_rewrites().is_empty());
@@ -465,7 +465,7 @@ fn clear_rewrites_empties_the_table() {
 #[test]
 fn reset_clears_rewrites_too() {
     let mut d = DesiredState::default();
-    d.apply_rewrite(stored(9, 0x81));
+    d.apply_rewrite(stored(9, 1));
     d.clear(); // the RESET path
     assert!(d.held_rewrites().is_empty());
     assert!(d.is_idle());

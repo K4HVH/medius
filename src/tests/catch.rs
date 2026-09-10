@@ -21,7 +21,7 @@ fn catch_payload_bytes() {
         [0xFF, 0xFF, 0xFF, 0, 1, 0]
     );
     // One vendor bulk endpoint, IN only, cut to 16 bytes.
-    assert_eq!(catch_payload(7, 0x83, 1, 1, 16), [7, 0x83, 0x00, 1, 1, 16]);
+    assert_eq!(catch_payload(7, 3, 1, 1, 16), [7, 3, 0x00, 1, 1, 16]);
     // The blanket clear a host sends to tear the whole table down.
     assert_eq!(
         catch_payload(CATCH_CLS_ANY, CATCH_ID_ANY, 0, 0, 0),
@@ -116,7 +116,7 @@ fn equality_covers_the_capture_and_addressing_does_not() {
     // The box dedups its table on (class, id, direction), so two filters differing only in capture
     // are ONE box entry, but a PartialEq that said they were equal meant assert_eq! passed
     // on two filters that behave differently. Addressing is same_address(); equality is equality.
-    let a = CatchFilter::traffic(TrafficClass::VendorBulk, 0x83);
+    let a = CatchFilter::traffic(TrafficClass::VendorBulk, 3);
     let b = a.with_capture(Capture::First(16));
     assert_ne!(a, b);
     assert!(a.same_address(b));
@@ -161,10 +161,10 @@ fn filter_builders_produce_the_right_wire_pair() {
         (9, CATCH_ID_ANY)
     );
     assert_eq!(
-        CatchFilter::traffic(TrafficClass::VendorBulk, 0x83).wire(),
-        (7, 0x83)
+        CatchFilter::traffic(TrafficClass::VendorBulk, 3).wire(),
+        (7, 3)
     );
-    let f = CatchFilter::traffic(TrafficClass::HidOut, 0x02)
+    let f = CatchFilter::traffic(TrafficClass::HidOut, 2)
         .outbound()
         .with_capture(Capture::First(24));
     assert_eq!(f.direction(), Direction::Negative);
@@ -189,12 +189,12 @@ fn a_wildcard_class_carrying_a_real_id_addresses_nothing() {
     assert!(CatchFilter::from_wire(CATCH_CLS_ANY, CATCH_ID_ANY, 0, 0).is_some());
     assert!(CatchFilter::from_wire(200, 5, 0, 0).is_none()); // unknown class
     assert!(CatchFilter::from_wire(7, 5, 9, 0).is_none()); // unknown direction
-    let f = CatchFilter::from_wire(7, 0x83, 2, 16).unwrap();
+    let f = CatchFilter::from_wire(7, 3, 2, 16).unwrap();
     assert_eq!(f.class(), Some(CatchClass::VendorBulk));
-    assert_eq!(f.id(), Some(0x83));
+    assert_eq!(f.id(), Some(3));
     assert_eq!(f.direction(), Direction::OUT);
     assert_eq!(f.capture(), Capture::First(16));
-    assert_eq!(f.wire(), (7, 0x83));
+    assert_eq!(f.wire(), (7, 3));
 }
 
 #[test]
@@ -297,7 +297,7 @@ fn control_status_covers_every_answer_the_device_can_give() {
     // firmware's new status would read as a device fault that never happened.
     assert_eq!(with_flags(0x42), Some(ControlStatus::Other(0x42)));
     // A class that is not Control has no control status at all, whatever its flags say.
-    let p = [0, 0, 0, 0, 1, 7, 0x83, 0x00, 1, 0x01, 0, 0];
+    let p = [0, 0, 0, 0, 1, 7, 3, 0x00, 1, 0x01, 0, 0];
     assert_eq!(
         TrafficEvent::from_payload(&p).unwrap().control_status(),
         None
@@ -307,7 +307,7 @@ fn control_status_covers_every_answer_the_device_can_give() {
 #[test]
 fn a_bulk_zero_length_packet_is_flagged_both_ways() {
     let zlp = |flags: u8| {
-        let p = [0, 0, 0, 0, 1, 7, 0x83, 0x00, 1, flags, 0, 0];
+        let p = [0, 0, 0, 0, 1, 7, 3, 0x00, 1, flags, 0, 0];
         TrafficEvent::from_payload(&p).unwrap().bulk_zlp()
     };
     assert!(!zlp(0x00));
@@ -318,15 +318,15 @@ fn a_bulk_zero_length_packet_is_flagged_both_ways() {
 
 #[test]
 fn traffic_event_decodes() {
-    // [ts][clk=1][class=7 VendorBulk][id=0x0083][dir=1 IN][flags=1 END][true_len=4][4 bytes]
+    // [ts][clk=1][class=7 VendorBulk][id=3][dir=1 IN][flags=1 END][true_len=4][4 bytes]
     let p = [
-        0x04, 0x03, 0x02, 0x01, 1, 7, 0x83, 0x00, 1, 0x01, 0x04, 0x00, 0xDE, 0xAD, 0xBE, 0xEF,
+        0x04, 0x03, 0x02, 0x01, 1, 7, 3, 0x00, 1, 0x01, 0x04, 0x00, 0xDE, 0xAD, 0xBE, 0xEF,
     ];
     let t = TrafficEvent::from_payload(&p).unwrap();
     assert_eq!(t.ts_us, 0x0102_0304);
     assert_eq!(t.clock, ClockDomain::DeviceChip);
     assert_eq!(t.class, CatchClass::VendorBulk);
-    assert_eq!(t.id, 0x83);
+    assert_eq!(t.id, 3);
     assert_eq!(t.direction, Direction::IN);
     assert_eq!(t.true_len, 4);
     assert_eq!(t.bytes, [0xDE, 0xAD, 0xBE, 0xEF]);
@@ -344,7 +344,7 @@ fn traffic_event_decodes() {
 fn truncation_is_visible() {
     // true_len 64 with 8 bytes delivered: without the flag a cut capture and a genuinely short
     // packet are indistinguishable, which is the whole reason true_len is on the wire.
-    let mut p = vec![0, 0, 0, 0, 1, 6, 0x83, 0x00, 1, 0, 64, 0];
+    let mut p = vec![0, 0, 0, 0, 1, 6, 3, 0x00, 1, 0, 64, 0];
     p.extend_from_slice(&[1, 2, 3, 4, 5, 6, 7, 8]);
     let t = TrafficEvent::from_payload(&p).unwrap();
     assert_eq!(t.true_len, 64);
@@ -419,10 +419,10 @@ fn a_catch_event_answers_class_id_and_direction_uniformly() {
     assert!(usages.bytes().is_empty());
 
     let traffic = CatchEvent::Traffic(
-        TrafficEvent::from_payload(&[0, 0, 0, 0, 1, 7, 0x83, 0, 2, 0, 1, 0, 9]).unwrap(),
+        TrafficEvent::from_payload(&[0, 0, 0, 0, 1, 7, 3, 0, 2, 0, 1, 0, 9]).unwrap(),
     );
     assert_eq!(traffic.class(), CatchClass::VendorBulk);
-    assert_eq!(traffic.id(), Some(0x83));
+    assert_eq!(traffic.id(), Some(3));
     assert_eq!(traffic.direction(), Direction::OUT);
     assert_eq!(traffic.bytes(), &[9]);
 }
@@ -437,7 +437,7 @@ fn catch_state_decodes_header_entries_and_clock() {
     p.extend_from_slice(&12u16.to_le_bytes()); // clk_age_ms
     p.push(2); // n
     p.extend_from_slice(&[3, 0xFF, 0xFF, 0, 0, 7, 0]); // axis blanket, 7 drops
-    p.extend_from_slice(&[7, 0x83, 0x00, 1, 16, 0xA0, 0x0F]); // vend bulk ep, 4000 drops
+    p.extend_from_slice(&[7, 3, 0x00, 1, 16, 0xA0, 0x0F]); // vend bulk ep, 4000 drops
 
     let c = CatchState::from_payload(&p).unwrap();
     assert!(c.table_full);
@@ -451,7 +451,7 @@ fn catch_state_decodes_header_entries_and_clock() {
     assert_eq!(c.entries[0].filter.class(), Some(CatchClass::Axis));
     assert_eq!(c.entries[0].filter.id(), None);
     assert_eq!(c.entries[0].dropped, 7);
-    assert_eq!(c.entries[1].filter.id(), Some(0x83));
+    assert_eq!(c.entries[1].filter.id(), Some(3));
     assert_eq!(c.entries[1].filter.capture(), Capture::First(16));
     assert_eq!(c.entries[1].dropped, 4000);
     assert!(CatchState::from_payload(&p[..18]).is_none());
@@ -471,7 +471,7 @@ fn one_unrecognised_entry_does_not_discard_the_whole_reply() {
     p.push(3);
     p.extend_from_slice(&[3, 0xFF, 0xFF, 0, 0, 7, 0]); // axis blanket
     p.extend_from_slice(&[77, 0x01, 0x00, 0, 0, 1, 0]); // a class from some later firmware
-    p.extend_from_slice(&[7, 0x83, 0x00, 1, 16, 5, 0]); // vendor bulk
+    p.extend_from_slice(&[7, 3, 0x00, 1, 16, 5, 0]); // vendor bulk
 
     let c = CatchState::from_payload(&p).unwrap();
     assert_eq!(c.dropped, 99);
@@ -588,7 +588,7 @@ mod with_mock {
             let _s = dev
                 .catch_events([
                     CatchFilter::everything().with_capture(Capture::First(16)),
-                    bulk(0x83),
+                    bulk(3),
                 ])
                 .unwrap();
             let sent: Vec<_> = mock
@@ -784,8 +784,8 @@ mod with_mock {
         let capture_sent_to_box = |a: Capture, b: Capture| {
             let mock = MockBox::new();
             let dev = Device::with_mock(mock.clone());
-            let _first = dev.catch_events([bulk(0x83).with_capture(a)]).unwrap();
-            let _second = dev.catch_events([bulk(0x83).with_capture(b)]).unwrap();
+            let _first = dev.catch_events([bulk(3).with_capture(a)]).unwrap();
+            let _second = dev.catch_events([bulk(3).with_capture(b)]).unwrap();
             mock.recorded_frames()
                 .iter()
                 .filter(|f| f.ty == FrameType::Catch)
@@ -810,7 +810,7 @@ mod with_mock {
         let dev = Device::with_mock(mock.clone());
         let _broad = dev.catch_events([CatchFilter::everything()]).unwrap();
         let _narrow = dev
-            .catch_events([bulk(0x83).with_capture(Capture::First(8))])
+            .catch_events([bulk(3).with_capture(Capture::First(8))])
             .unwrap();
         let captures: Vec<u8> = mock
             .recorded_frames()
@@ -837,7 +837,7 @@ mod with_mock {
             .catch_events([CatchFilter::traffic_class(TrafficClass::VendorBulk)
                 .with_capture(Capture::First(16))])
             .unwrap();
-        let _whole = dev.catch_events([bulk(0x83)]).unwrap();
+        let _whole = dev.catch_events([bulk(3)]).unwrap();
         let sent: Vec<(u16, u8)> = mock
             .recorded_frames()
             .iter()
@@ -854,7 +854,7 @@ mod with_mock {
             "the blanket stays capped, got {sent:?}"
         );
         assert!(
-            sent.contains(&(0x83, 0)),
+            sent.contains(&(3, 0)),
             "the exact endpoint gets whole packets, got {sent:?}"
         );
     }
@@ -868,9 +868,9 @@ mod with_mock {
         let sent = |broad: Capture, narrow: Capture| {
             let mock = MockBox::new();
             let dev = Device::with_mock(mock.clone());
-            let _b = dev.catch_events([bulk(0x83).with_capture(broad)]).unwrap();
+            let _b = dev.catch_events([bulk(3).with_capture(broad)]).unwrap();
             let _n = dev
-                .catch_events([bulk(0x83).outbound().with_capture(narrow)])
+                .catch_events([bulk(3).outbound().with_capture(narrow)])
                 .unwrap();
             let mut out: Vec<(u8, u8)> = mock
                 .recorded_frames()
@@ -905,14 +905,12 @@ mod with_mock {
         use crate::protocol::opcode::CATCH_MAX_ENTRIES;
         let mock = MockBox::new();
         let dev = Device::with_mock(mock.clone());
-        let fits: Vec<CatchFilter> = (0..CATCH_MAX_ENTRIES as u16)
-            .map(|i| bulk(0x80 + i))
-            .collect();
+        let fits: Vec<CatchFilter> = (0..CATCH_MAX_ENTRIES as u16).map(bulk).collect();
         let _ok = dev
             .catch_events(fits.clone())
             .expect("exactly the table size fits");
 
-        let one_more = CatchFilter::traffic(TrafficClass::VendorInterrupt, 0x99);
+        let one_more = CatchFilter::traffic(TrafficClass::VendorInterrupt, 9);
         let err = dev.catch_events([one_more]).unwrap_err();
         assert!(
             matches!(
@@ -939,13 +937,13 @@ mod with_mock {
         let dev = Device::with_mock(mock.clone());
         let a = dev
             .catch_events([
-                bulk(0x83),
-                bulk(0x84),
+                bulk(3),
+                bulk(4),
                 CatchFilter::traffic_class(TrafficClass::Bus),
             ])
             .unwrap();
         let b = dev
-            .catch_events([CatchFilter::traffic(TrafficClass::VendorInterrupt, 0x85)])
+            .catch_events([CatchFilter::traffic(TrafficClass::VendorInterrupt, 5)])
             .unwrap();
         let before = mock
             .recorded_frames()
@@ -975,7 +973,7 @@ mod with_mock {
         let mock = MockBox::new();
         let dev = Device::with_mock(mock.clone());
         let a = dev
-            .catch_events([bulk(0x83).with_capture(Capture::First(8))])
+            .catch_events([bulk(3).with_capture(Capture::First(8))])
             .unwrap();
         let before = mock
             .recorded_frames()
@@ -983,7 +981,7 @@ mod with_mock {
             .filter(|f| f.ty == FrameType::Catch)
             .count();
         // A second subscriber wants whole packets on the same address: the entry must be rewritten.
-        let _b = dev.catch_events([bulk(0x83)]).unwrap();
+        let _b = dev.catch_events([bulk(3)]).unwrap();
         let sent: Vec<Vec<u8>> = mock
             .recorded_frames()
             .iter()
@@ -1011,7 +1009,7 @@ mod with_mock {
                 .next_back()
                 .expect("a CATCH frame")
         };
-        let a = bulk(0x83);
+        let a = bulk(3);
         let f = Capture::First;
         assert_eq!(sent([a.with_capture(f(16)), a.with_capture(f(64))]), 64);
         assert_eq!(sent([a.with_capture(f(64)), a.with_capture(f(16))]), 64);
@@ -1196,7 +1194,7 @@ mod with_mock {
         let keys = dev
             .catch_events([CatchFilter::watch_class(Class::Key)])
             .unwrap();
-        let traffic = dev.catch_events([bulk(0x83)]).unwrap();
+        let traffic = dev.catch_events([bulk(3)]).unwrap();
         mock.push_usages(0, 1_000, Class::Key, Direction::RELEASE, &[]);
         match keys.recv_timeout(Duration::from_secs(1)).expect("release") {
             CatchEvent::Usages(u) => assert!(u.usages.is_empty() && u.class == Class::Key),
@@ -1215,7 +1213,7 @@ mod with_mock {
         // process subscribed to something else.
         let mock = MockBox::new();
         let dev = Device::with_mock(mock.clone());
-        let b = dev.catch_events([bulk(0x83)]).unwrap();
+        let b = dev.catch_events([bulk(3)]).unwrap();
         let bus = dev
             .catch_events([CatchFilter::traffic_class(TrafficClass::Bus)])
             .unwrap();
@@ -1225,7 +1223,7 @@ mod with_mock {
             1,
             ClockDomain::DeviceChip,
             CatchClass::VendorBulk,
-            0x83,
+            3,
             Direction::IN,
             0,
             2,
@@ -1266,13 +1264,13 @@ mod with_mock {
     fn an_endpoint_filter_excludes_its_neighbours() {
         let mock = MockBox::new();
         let dev = Device::with_mock(mock.clone());
-        let s = dev.catch_events([bulk(0x83)]).unwrap();
+        let s = dev.catch_events([bulk(3)]).unwrap();
         mock.push_traffic(
             0,
             1,
             ClockDomain::DeviceChip,
             CatchClass::VendorBulk,
-            0x84,
+            4,
             Direction::IN,
             0,
             1,
@@ -1283,15 +1281,15 @@ mod with_mock {
             2,
             ClockDomain::DeviceChip,
             CatchClass::VendorBulk,
-            0x83,
+            3,
             Direction::IN,
             0,
             1,
             &[7],
         );
         match s.recv().unwrap() {
-            CatchEvent::Traffic(t) => assert_eq!((t.id, t.bytes[0]), (0x83, 7)),
-            other => panic!("expected 0x83, got {other:?}"),
+            CatchEvent::Traffic(t) => assert_eq!((t.id, t.bytes[0]), (3, 7)),
+            other => panic!("expected 3, got {other:?}"),
         }
     }
 

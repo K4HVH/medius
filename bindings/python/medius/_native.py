@@ -579,7 +579,7 @@ _decl("medius_device_query_render", i32, [HANDLE, ctypes.POINTER(MediusRenderSta
 _decl("medius_device_query_spread", i32, [HANDLE, ctypes.POINTER(MediusSpreadStatus)])
 _decl("medius_device_counters", i32, [HANDLE, ctypes.POINTER(MediusCountersSnapshot)])
 
-_decl("medius_device_raw", i32, [HANDLE, u8, ctypes.POINTER(u8), usize])
+_decl("medius_device_raw", i32, [HANDLE, u8, u8, ctypes.POINTER(u8), usize])
 _decl(
     "medius_device_transfer",
     i32,

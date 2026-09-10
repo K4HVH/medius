@@ -483,14 +483,17 @@ class Device:
     # The developer layer (§3.14): raw injection, control transfers, rewrite rules and descriptor
     # patches. Admitted by the imperfect-clone opt-in (`allow_imperfect_clones`).
 
-    def raw(self, ep: int, data: bytes) -> None:
-        """`RAW` (§3.14): put `data` verbatim on cloned endpoint `ep`, fire-and-forget.
+    def raw(self, ep: int, direction: Direction, data: bytes) -> None:
+        """`RAW` (§3.14): put `data` verbatim on cloned endpoint number `ep` in `direction`, fire-and-forget.
 
-        An IN endpoint (``ep & 0x80``) emits toward the game PC; an OUT endpoint relays to the real
-        device. Needs the imperfect-clone opt-in, or it raises `ImperfectRequiredError`.
+        `ep` is the bare endpoint number (0 to 15). `Direction.IN` emits toward the game PC;
+        `Direction.OUT` relays to the real device. Only those two address one: `Direction.BOTH` raises
+        `RawDirectionError` and the bearing-relative pair raises `RelativeDirectionError`. Needs the
+        imperfect-clone opt-in, or it raises `ImperfectRequiredError`.
         """
+        direction = _enum(direction, Direction, "direction")
         buf, n = _bytes_buf(data)
-        check(_native.lib.medius_device_raw(self._handle, _u8(ep, "ep"), buf, n))
+        check(_native.lib.medius_device_raw(self._handle, _u8(ep, "ep"), int(direction), buf, n))
 
     def transfer(self, ep: int, setup: Setup, out: bytes = b"") -> TransferOutcome:
         """`TRANSFER` (§3.14): run one control transfer against the real device and return its answer.

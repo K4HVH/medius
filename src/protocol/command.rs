@@ -2,7 +2,7 @@ use super::opcode::{
     INJ_MOTION_CURSOR, INJ_MOTION_PAN, INJ_MOTION_WHEEL, OPT_BEARING, OPT_EMIT, OPT_IMPERFECT,
     OPT_MOVE_RIDE, OPT_NAME, OPT_RENDER, OPT_SPREAD, PATCH_APPLY, PATCH_CLEAR,
 };
-use crate::types::Setup;
+use crate::types::{Direction, Setup};
 
 /// `MOVE` cursor (§3.1): `[motion=0][dx i16 LE][dy i16 LE][flags u8]`, no clamp (firmware clamps with carry).
 pub fn move_cursor_payload(dx: i16, dy: i16, flags: u8) -> [u8; 6] {
@@ -109,10 +109,13 @@ pub fn name_payload(name: &str) -> Vec<u8> {
     v
 }
 
-/// `RAW` (§3.14): `[ep u8][bytes…]`; put `bytes` verbatim on cloned endpoint `ep`.
-pub fn raw_payload(ep: u8, bytes: &[u8]) -> Vec<u8> {
-    let mut v = Vec::with_capacity(1 + bytes.len());
-    v.push(ep);
+/// `RAW` (§3.14): `[ep_num u8][dir u8][bytes…]`; put `bytes` verbatim on cloned endpoint `ep` in
+/// `direction` (IN toward the game PC, OUT to the device). `ep` is masked to its low nibble, the
+/// bare endpoint number the box reassembles into an address.
+pub fn raw_payload(ep: u8, direction: Direction, bytes: &[u8]) -> Vec<u8> {
+    let mut v = Vec::with_capacity(2 + bytes.len());
+    v.push(ep & 0x0f);
+    v.push(direction.as_u8());
     v.extend_from_slice(bytes);
     v
 }

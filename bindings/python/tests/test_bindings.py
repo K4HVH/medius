@@ -96,6 +96,7 @@ from medius import (
     Transforms,
     TransformOp,
     ImperfectRequiredError,
+    RawDirectionError,
     RelativeDirectionError,
     RewriteMaskLengthError,
     RewriteActionClassError,
@@ -559,7 +560,7 @@ def test_catch_state_roundtrip():
         entries=[
             CatchEntry(CatchFilter.everything().with_capture(16), dropped=3),
             CatchEntry(
-                CatchFilter.traffic(TrafficClass.VENDOR_BULK, 0x83).with_direction(
+                CatchFilter.traffic(TrafficClass.VENDOR_BULK, 3).with_direction(
                     Direction.POSITIVE
                 ),
                 dropped=7,
@@ -571,7 +572,7 @@ def test_catch_state_roundtrip():
     assert got.clock.error_bound_us == 45
     assert [e.dropped for e in got.entries] == [3, 7]
     assert got.entries[1].filter.catch_class == CatchClass.VENDOR_BULK
-    assert got.entries[1].filter.id == 0x83
+    assert got.entries[1].filter.id == 3
 
 
 def test_catch_state_clock_age_none_is_not_a_zero_age():
@@ -833,14 +834,14 @@ def test_traffic_event_true_len_above_the_capture_is_truncation():
     # them, so it has to survive the wire.
     cut = TrafficEvent(
         catch_class=CatchClass.VENDOR_BULK,
-        id=0x83,
+        id=3,
         direction=Direction.POSITIVE,
         flags=0x03,
         true_len=512,
         bytes=bytes(range(16)),
     )
     with MockBox() as mock, Device.with_mock(mock) as d:
-        with d.catch_events(CatchFilter.traffic(TrafficClass.VENDOR_BULK, 0x83).with_capture(16)) as s:
+        with d.catch_events(CatchFilter.traffic(TrafficClass.VENDOR_BULK, 3).with_capture(16)) as s:
             ev = _push_and_recv(mock, s, cut)
     assert ev.traffic.true_len == 512
     assert len(ev.traffic.bytes) == 16
@@ -848,7 +849,7 @@ def test_traffic_event_true_len_above_the_capture_is_truncation():
     assert ev.traffic.bulk_end_of_transfer()
     assert ev.traffic.bulk_zlp()
 
-    whole = TrafficEvent(CatchClass.VENDOR_BULK, 0x83, Direction.POSITIVE, 0, 16, bytes(16))
+    whole = TrafficEvent(CatchClass.VENDOR_BULK, 3, Direction.POSITIVE, 0, 16, bytes(16))
     assert not whole.truncated()
 
 
@@ -1265,7 +1266,7 @@ def test_the_filter_constructors_address_inputs_like_lock_does():
         CatchClass.AXIS,
     ]
     # Capture is not part of a filter's address; direction is.
-    bulk = CatchFilter.traffic(TrafficClass.VENDOR_BULK, 0x83)
+    bulk = CatchFilter.traffic(TrafficClass.VENDOR_BULK, 3)
     assert bulk.same_address(bulk.with_capture(16))
     assert not bulk.same_address(bulk.outbound())
     assert bulk != bulk.with_capture(16)
@@ -1436,8 +1437,8 @@ def test_dev_layer_frames_carry_their_type():
     with MockBox() as mock:
         mock.set_imperfect_status(_allowed())
         with Device.with_mock(mock) as d:
-            d.raw(0x81, b"\x00\x01\x02\x03")
-            d.set_rewrite(RewriteRule(RewriteClass.EMIT, 0x81, Direction.BOTH, RewriteAction.DROP))
+            d.raw(1, Direction.IN, b"\x00\x01\x02\x03")
+            d.set_rewrite(RewriteRule(RewriteClass.EMIT, 1, Direction.IN, RewriteAction.DROP))
             d.set_patch(Patch(PatchSection.DEVICE, 0, 0, 8, b"\x34\x12"))
             d.transfer(0, Setup(0x80, 0x06, 0x0100, 0, 18))
         assert mock.saw(FrameType.RAW)
@@ -1450,24 +1451,35 @@ def test_raw_reaches_the_wire_verbatim():
     with MockBox() as mock:
         mock.set_imperfect_status(_allowed())
         with Device.with_mock(mock) as d:
-            d.raw(0x81, b"\x00\x01\x00\x00")
+            d.raw(1, Direction.IN, b"\x00\x01\x00\x00")
         frame = next(
             mock.recorded_frame(i)
             for i in range(mock.recorded())
             if mock.recorded_frame(i).type == FrameType.RAW
         )
-    # RAW payload is [ep][bytes...].
-    assert bytes(frame.payload) == b"\x81\x00\x01\x00\x00"
+    # RAW payload is [ep_num][dir][bytes...]: endpoint 1, IN, then the report.
+    assert bytes(frame.payload) == b"\x01\x01\x00\x01\x00\x00"
 
 
 def test_gated_dev_layer_calls_need_the_opt_in():
     with MockBox() as mock, Device.with_mock(mock) as d:
         with pytest.raises(ImperfectRequiredError):
-            d.raw(0x81, b"\x00\x01")
+            d.raw(1, Direction.IN, b"\x00\x01")
         with pytest.raises(ImperfectRequiredError):
-            d.set_rewrite(RewriteRule(RewriteClass.EMIT, 0x81, Direction.BOTH, RewriteAction.DROP))
+            d.set_rewrite(RewriteRule(RewriteClass.EMIT, 1, Direction.IN, RewriteAction.DROP))
         with pytest.raises(ImperfectRequiredError):
             d.apply_patch()
+
+
+def test_raw_rejects_a_direction_that_is_not_a_flow():
+    with MockBox() as mock:
+        mock.set_imperfect_status(_allowed())
+        with Device.with_mock(mock) as d:
+            # Both names two flows at once; the bearing-relative pair has no bearing here.
+            with pytest.raises(RawDirectionError):
+                d.raw(1, Direction.BOTH, b"\x00")
+            with pytest.raises(RelativeDirectionError):
+                d.raw(1, Direction.WITH, b"\x00")
 
 
 def test_transfer_roundtrips_the_answer():
@@ -1543,7 +1555,7 @@ def test_clear_rewrite_empties_the_table():
     with MockBox() as mock:
         mock.set_imperfect_status(_allowed())
         with Device.with_mock(mock) as d:
-            d.set_rewrite(RewriteRule(RewriteClass.EMIT, 0x81, Direction.BOTH, RewriteAction.DROP))
+            d.set_rewrite(RewriteRule(RewriteClass.EMIT, 1, Direction.IN, RewriteAction.DROP))
             assert len(d.query_rewrite().entries) == 1
             d.clear_rewrite()
             assert d.query_rewrite().entries == []
@@ -1557,8 +1569,8 @@ def test_rewrite_validation_errors_have_their_own_exception():
                 d.set_rewrite(
                     RewriteRule(
                         RewriteClass.EMIT,
-                        0x81,
-                        Direction.BOTH,
+                        1,
+                        Direction.IN,
                         RewriteAction.DROP,
                         match_bytes=b"\x01\x02",
                         mask=b"\xFF",
@@ -1567,13 +1579,13 @@ def test_rewrite_validation_errors_have_their_own_exception():
             with pytest.raises(RewriteActionClassError):
                 d.set_rewrite(RewriteRule(RewriteClass.CONTROL, 0, Direction.BOTH, RewriteAction.DROP))
             with pytest.raises(RelativeDirectionError):
-                d.set_rewrite(RewriteRule(RewriteClass.EMIT, 0x81, Direction.WITH, RewriteAction.DROP))
+                d.set_rewrite(RewriteRule(RewriteClass.EMIT, 1, Direction.WITH, RewriteAction.DROP))
             with pytest.raises(RewritePayloadTooLargeError):
                 d.set_rewrite(
                     RewriteRule(
                         RewriteClass.EMIT,
-                        0x81,
-                        Direction.BOTH,
+                        1,
+                        Direction.IN,
                         RewriteAction.REPLACE,
                         payload=bytes(100),
                     )
@@ -1590,8 +1602,8 @@ def test_over_capacity_bytes_are_refused_before_ctypes():
                 d.set_rewrite(
                     RewriteRule(
                         RewriteClass.EMIT,
-                        0x81,
-                        Direction.BOTH,
+                        1,
+                        Direction.IN,
                         RewriteAction.DROP,
                         match_bytes=bytes(17),
                         mask=bytes(17),

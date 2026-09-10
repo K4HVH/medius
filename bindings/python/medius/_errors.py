@@ -115,6 +115,10 @@ class TransformInvertZeroScaleError(MediusError):
     """A scale of 0 on an invert, which ignores its scale (so 0 would block the field it must pass)."""
 
 
+class RawDirectionError(MediusError):
+    """A raw injection direction that is neither `Direction.IN` nor `Direction.OUT`."""
+
+
 _STATUS_EXC = {
     Status.ERR_IO: IoError,
     Status.ERR_NOT_FOUND: NotFoundError,
@@ -140,6 +144,7 @@ _STATUS_EXC = {
     Status.ERR_REWRITE_PAYLOAD_TOO_LARGE: RewritePayloadTooLargeError,
     Status.ERR_TRANSFORM_OP_FIELDS: TransformOpFieldsError,
     Status.ERR_TRANSFORM_INVERT_ZERO_SCALE: TransformInvertZeroScaleError,
+    Status.ERR_RAW_DIRECTION: RawDirectionError,
 }
 
 
