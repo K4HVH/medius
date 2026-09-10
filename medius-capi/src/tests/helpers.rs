@@ -35,7 +35,8 @@ fn motion_constructors_select_the_right_arm() {
             kind: MediusMotionKind::Cursor as u8,
             dx: 100,
             dy: -50,
-            wheel: 0
+            wheel: 0,
+            pan: 0
         }
     );
     assert_eq!(
@@ -44,7 +45,18 @@ fn motion_constructors_select_the_right_arm() {
             kind: MediusMotionKind::Wheel as u8,
             dx: 0,
             dy: 0,
-            wheel: 3
+            wheel: 3,
+            pan: 0
+        }
+    );
+    assert_eq!(
+        medius_motion_pan(-4),
+        MediusMotion {
+            kind: MediusMotionKind::Pan as u8,
+            dx: 0,
+            dy: 0,
+            wheel: 0,
+            pan: -4
         }
     );
 }
@@ -211,6 +223,7 @@ fn caps_predicates() {
             has_x: 1,
             has_y: 1,
             has_wheel: 1,
+            pan: 0,
             has_report_id: 0,
             n_hid: 1,
         },

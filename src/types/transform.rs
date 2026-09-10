@@ -3,8 +3,8 @@
 //!
 //! A transform is a field operation on the semantic path: it negates, scales, swaps or remaps a field
 //! the box's descriptor already declares, so every emitted report stays one the real device could
-//! itself produce. It is descriptor-bounded on both ends — a source or destination the parsed map does
-//! not declare is refused — and it is session state, re-asserted on reconnect and held alive by the
+//! itself produce. It is descriptor-bounded on both ends (a source or destination the parsed map does
+//! not declare is refused), and it is session state, re-asserted on reconnect and held alive by the
 //! keepalive exactly like a [`lock`](crate::Device::lock). Unlike the rewrite/raw/patch layer it is
 //! faithful and needs no [imperfect-clone opt-in](crate::Device::allow_imperfect_clones).
 
@@ -17,7 +17,7 @@ use crate::types::{Axis, Class, Usage};
 ///
 /// [`Invert`](TransformOp::Invert) and [`Scale`](TransformOp::Scale) act on one axis (source ==
 /// destination); [`Swap`](TransformOp::Swap) exchanges two axes; [`Remap`](TransformOp::Remap) moves a
-/// source field into a destination — axis→axis or button→button in one report, or button→key /
+/// source field into a destination: axis→axis or button→button in one report, or button→key /
 /// button→media across classes. [`admits`](TransformOp::admits) mirrors the box's own admissibility
 /// check over a source/destination pair.
 #[repr(u8)]
@@ -289,7 +289,7 @@ pub struct Transforms {
 
 impl Transforms {
     /// Decode a `RESP(TRANSFORMS)` payload (§4.18): `[what][flags u8][n u8]` then `n` ×
-    /// `[op u8][sclass u8][sid u16][dclass u8][did u16][scale i16]` — no `state` byte per entry.
+    /// `[op u8][sclass u8][sid u16][dclass u8][did u16][scale i16]`, with no `state` byte per entry.
     pub(crate) fn from_payload(p: &[u8]) -> Option<Transforms> {
         if p.len() < 3 {
             return None;

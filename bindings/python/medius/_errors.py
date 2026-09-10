@@ -107,6 +107,14 @@ class RewritePayloadTooLargeError(MediusError):
     """A rewrite payload larger than the head the box holds for its class."""
 
 
+class TransformOpFieldsError(MediusError):
+    """A transform op that cannot address its `source`/`dest` pair."""
+
+
+class TransformInvertZeroScaleError(MediusError):
+    """A scale of 0 on an invert, which ignores its scale (so 0 would block the field it must pass)."""
+
+
 _STATUS_EXC = {
     Status.ERR_IO: IoError,
     Status.ERR_NOT_FOUND: NotFoundError,
@@ -130,6 +138,8 @@ _STATUS_EXC = {
     Status.ERR_REWRITE_MASK_LENGTH: RewriteMaskLengthError,
     Status.ERR_REWRITE_ACTION_CLASS: RewriteActionClassError,
     Status.ERR_REWRITE_PAYLOAD_TOO_LARGE: RewritePayloadTooLargeError,
+    Status.ERR_TRANSFORM_OP_FIELDS: TransformOpFieldsError,
+    Status.ERR_TRANSFORM_INVERT_ZERO_SCALE: TransformInvertZeroScaleError,
 }
 
 

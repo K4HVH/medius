@@ -44,6 +44,9 @@
 // Largest number of rows in a decoded `RESP(PATCHES)` (the firmware `PATCH_MAX`).
 #define MEDIUS_MAX_PATCH_ENTRIES 16
 
+// Largest number of entries in a decoded `RESP(TRANSFORMS)` (the firmware `CTRL_TRANSFORM_MAXN`).
+#define MEDIUS_MAX_TRANSFORM_ENTRIES 8
+
 // The most `match`/`mask` bytes one rewrite rule compares (the firmware `REWRITE_MATCH_MAX`).
 #define MEDIUS_MAX_REWRITE_MATCH 16
 
@@ -151,6 +154,10 @@ enum MediusStatus
     MEDIUS_STATUS_ERR_REWRITE_ACTION_CLASS = 22,
     // A rewrite payload larger than the head the box holds for its class.
     MEDIUS_STATUS_ERR_REWRITE_PAYLOAD_TOO_LARGE = 23,
+    // A transform op that cannot address its `source`/`dest` pair.
+    MEDIUS_STATUS_ERR_TRANSFORM_OP_FIELDS = 24,
+    // A scale of 0 on an invert, which ignores its scale (so 0 would block the field it must pass).
+    MEDIUS_STATUS_ERR_TRANSFORM_INVERT_ZERO_SCALE = 25,
 };
 #ifndef __cplusplus
 #if __STDC_VERSION__ >= 202311L
@@ -385,6 +392,7 @@ enum MediusFrameType
     MEDIUS_FRAME_TYPE_TRANSFER_RESP = 27,
     MEDIUS_FRAME_TYPE_REWRITE = 28,
     MEDIUS_FRAME_TYPE_PATCH = 29,
+    MEDIUS_FRAME_TYPE_TRANSFORM = 30,
 };
 #ifndef __cplusplus
 #if __STDC_VERSION__ >= 202311L
@@ -421,6 +429,8 @@ enum MediusAxis
     MEDIUS_AXIS_X = 0,
     MEDIUS_AXIS_Y = 1,
     MEDIUS_AXIS_WHEEL = 2,
+    // AC Pan (horizontal scroll), a full peer of the wheel.
+    MEDIUS_AXIS_PAN = 3,
 };
 #ifndef __cplusplus
 #if __STDC_VERSION__ >= 202311L
@@ -642,8 +652,10 @@ enum MediusLockTargetKind
     MEDIUS_LOCK_TARGET_KIND_Y = 1,
     // The wheel.
     MEDIUS_LOCK_TARGET_KIND_WHEEL = 2,
+    // AC Pan (horizontal scroll).
+    MEDIUS_LOCK_TARGET_KIND_PAN = 3,
     // A momentary usage; read `usage`.
-    MEDIUS_LOCK_TARGET_KIND_USAGE = 3,
+    MEDIUS_LOCK_TARGET_KIND_USAGE = 4,
 };
 #ifndef __cplusplus
 #if __STDC_VERSION__ >= 202311L
@@ -661,6 +673,8 @@ enum MediusMotionKind
  {
     MEDIUS_MOTION_KIND_CURSOR = 0,
     MEDIUS_MOTION_KIND_WHEEL = 1,
+    // AC Pan (horizontal scroll); read `pan`.
+    MEDIUS_MOTION_KIND_PAN = 2,
 };
 #ifndef __cplusplus
 #if __STDC_VERSION__ >= 202311L
@@ -816,6 +830,30 @@ typedef uint8_t MediusTransferStatus;
 #endif // __STDC_VERSION__ >= 202311L
 #endif // __cplusplus
 
+// The operation a `MediusTransform` performs on its fields (§3.15). Crosses the ABI as the `op` byte
+// of a `MediusTransform`.
+enum MediusTransformOp
+#if defined(__cplusplus) || __STDC_VERSION__ >= 202311L
+  : uint8_t
+#endif // defined(__cplusplus) || __STDC_VERSION__ >= 202311L
+ {
+    // Move a source field's contribution into a destination, clearing the source.
+    MEDIUS_TRANSFORM_OP_REMAP = 0,
+    // Exchange two axes: read both, then write both, so it is not two remaps.
+    MEDIUS_TRANSFORM_OP_SWAP = 1,
+    // Negate one axis; the signed scale is ignored.
+    MEDIUS_TRANSFORM_OP_INVERT = 2,
+    // Weigh one axis by the signed scale.
+    MEDIUS_TRANSFORM_OP_SCALE = 3,
+};
+#ifndef __cplusplus
+#if __STDC_VERSION__ >= 202311L
+typedef enum MediusTransformOp MediusTransformOp;
+#else
+typedef uint8_t MediusTransformOp;
+#endif // __STDC_VERSION__ >= 202311L
+#endif // __cplusplus
+
 // A handle to one box's buffered-clip playback (owns the append-sequence counter, one per session).
 typedef struct MediusClip MediusClip;
 
@@ -942,6 +980,7 @@ typedef struct MediusMotion {
     int16_t dx;
     int16_t dy;
     int16_t wheel;
+    int16_t pan;
 } MediusMotion;
 
 // A lock target: an axis (`kind` is `X`/`Y`/`Wheel`) or a momentary usage (`kind` is `Usage`, read `usage`).
@@ -1090,6 +1129,37 @@ typedef struct MediusPatchSet {
     struct MediusPatchEntry entries[MEDIUS_MAX_PATCH_ENTRIES];
 } MediusPatchSet;
 
+// One field transform (§3.15): an operation, the `source` field it reads, the `dest` field it
+// writes, and a signed scale.
+//
+// `source` and `dest` reuse `MediusLockTarget` (an axis `kind`, or `Usage` with `usage` read): the
+// transform field space is the lock-target space. The **signed scale** is a percent carrying a sign:
+// `-100` inverts, `100` is identity, `200` doubles, `-50` halves and flips, `0` blocks the source.
+// `Invert` ignores it and the box refuses a `0`. The same shape `medius_device_query_transforms`
+// reads back, so a read entry replays as a set.
+typedef struct MediusTransform {
+    // One of `MEDIUS_TRANSFORM_OP_*`. A byte rather than `MediusTransformOp`, so the boundary can
+    // validate it before anything reads it as one; C++ renders the enum as `enum : uint8_t`, so
+    // assigning this to a `MediusTransformOp` there needs a cast.
+    uint8_t op;
+    // The field the transform reads.
+    struct MediusLockTarget source;
+    // The field the transform writes (equal to `source` for invert and scale).
+    struct MediusLockTarget dest;
+    // The signed percent (see the type docs). Ignored by `Invert`.
+    int16_t scale;
+} MediusTransform;
+
+// Decoded `RESP(TRANSFORMS)` (§4.18): the whole transform table in `entries[0..n]`, in installation
+// order, each entry in the shape `medius_device_transform` takes.
+typedef struct MediusTransforms {
+    // The table is full: a further entry was, or would be, refused.
+    uint8_t table_full;
+    // The number of valid entries in `entries`.
+    uint16_t n;
+    struct MediusTransform entries[MEDIUS_MAX_TRANSFORM_ENTRIES];
+} MediusTransforms;
+
 // One chip's firmware version and which of its two app slots it booted.
 typedef struct MediusChipFirmware {
     uint8_t major;
@@ -1127,7 +1197,7 @@ typedef struct MediusHealth {
     uint8_t rewrite_on;
     // A descriptor-patch set (§3.14) is applied to the clone (v3.4.0).
     uint8_t patch_on;
-    // A field transform is active (reserved; the transforms feature owns this bit) (v3.4.0).
+    // A field transform is active (v3.4.0).
     uint8_t transform_on;
 } MediusHealth;
 
@@ -1137,6 +1207,8 @@ typedef struct MediusMouseCaps {
     uint8_t has_x;
     uint8_t has_y;
     uint8_t has_wheel;
+    // AC Pan (horizontal scroll) present.
+    uint8_t pan;
     uint8_t has_report_id;
     uint8_t n_hid;
 } MediusMouseCaps;
@@ -1385,6 +1457,8 @@ typedef struct MediusMotionEvent {
     int16_t dy;
     // Wheel delta this report (up positive).
     int16_t dz;
+    // AC Pan (horizontal-scroll) delta this report (right positive).
+    int16_t pan;
 } MediusMotionEvent;
 
 // The populated arm of a [`MediusCatchEvent`]; read the field matching the event's `kind`.
@@ -1423,6 +1497,8 @@ typedef struct MediusInputEvent {
     int16_t dy;
     // Wheel delta this report (up positive); 0 unless `kind` is `Motion`.
     int16_t dz;
+    // AC Pan (horizontal-scroll) delta this report (right positive); 0 unless `kind` is `Motion`.
+    int16_t pan;
 } MediusInputEvent;
 
 // One event placed on this machine's clock by a `MediusTimeline`.
@@ -1767,6 +1843,12 @@ MediusStatus medius_device_move_rel_now(struct MediusDevice *dev, int16_t dx, in
 // A wheel move that bypasses movement riding.
 MediusStatus medius_device_wheel_now(struct MediusDevice *dev, int16_t delta);
 
+// An AC Pan (horizontal-scroll) move; full `i16`, no clamp.
+MediusStatus medius_device_pan(struct MediusDevice *dev, int16_t delta);
+
+// An AC Pan move that bypasses movement riding.
+MediusStatus medius_device_pan_now(struct MediusDevice *dev, int16_t delta);
+
 // Emit the motion held for a ride now, ignoring the ride window.
 MediusStatus medius_device_flush_motion(struct MediusDevice *dev);
 
@@ -1947,6 +2029,49 @@ MediusStatus medius_device_query_patch_entry(struct MediusDevice *dev,
                                              uint8_t index,
                                              struct MediusPatch *out);
 
+// `TRANSFORM` (§3.15): install (add or overwrite) one field transform, fire-and-forget. A transform
+// negates, scales, swaps or remaps a field the clone already declares, so it is faithful and needs
+// no imperfect-clone opt-in, unlike the rewrite/raw/patch layer. An entry is keyed by its
+// `(source, dest)`. `transform->op` takes a `MEDIUS_TRANSFORM_OP_*` constant, and `source`/`dest` a
+// `MEDIUS_LOCK_TARGET_KIND_*` axis or usage; a combination the op cannot address is
+// `MEDIUS_STATUS_ERR_TRANSFORM_OP_FIELDS` and a `scale` of 0 on an invert is
+// `..._TRANSFORM_INVERT_ZERO_SCALE`. `medius_device_query_transforms` confirms what the box holds.
+MediusStatus medius_device_transform(struct MediusDevice *dev,
+                                     const struct MediusTransform *transform);
+
+// `TRANSFORM` remove (§3.15): drop the transform keyed by `transform`'s `(source, dest)`; its op and
+// scale are ignored. A no-op on the box if no such entry is held.
+MediusStatus medius_device_untransform(struct MediusDevice *dev,
+                                       const struct MediusTransform *transform);
+
+// `TRANSFORM` clear (§3.15): drop the whole transform table.
+MediusStatus medius_device_clear_transforms(struct MediusDevice *dev);
+
+// Invert an axis on the wire: convenience for a `medius_device_transform` of an invert. `axis` takes
+// a `MEDIUS_AXIS_*` constant; any other value is `MEDIUS_STATUS_ERR_INVALID_ARG`.
+MediusStatus medius_device_invert(struct MediusDevice *dev,
+                                  uint8_t axis);
+
+// Weigh an axis by a signed percent (`200` doubles, `-50` halves and flips): convenience for a
+// `medius_device_transform` of a scale. `axis` takes a `MEDIUS_AXIS_*` constant; any other value is
+// `MEDIUS_STATUS_ERR_INVALID_ARG`.
+MediusStatus medius_device_scale_transform(struct MediusDevice *dev, uint8_t axis, int16_t percent);
+
+// Exchange two axes on the wire: convenience for a `medius_device_transform` of a swap. `a` and `b`
+// take `MEDIUS_AXIS_*` constants; any other value is `MEDIUS_STATUS_ERR_INVALID_ARG`.
+MediusStatus medius_device_swap(struct MediusDevice *dev, uint8_t a, uint8_t b);
+
+// Remap a source field into a destination: convenience for a `medius_device_transform` of a remap.
+// `source` and `dest` are a `MEDIUS_LOCK_TARGET_KIND_*` axis or usage; a `kind` or usage no constant
+// names is `MEDIUS_STATUS_ERR_INVALID_ARG`.
+MediusStatus medius_device_remap(struct MediusDevice *dev,
+                                 struct MediusLockTarget source,
+                                 struct MediusLockTarget dest);
+
+// `QUERY(TRANSFORMS)` → `*out` (§4.18): the whole transform table, a row per entry in the shape
+// `medius_device_transform` takes, so a read entry replays as a set.
+MediusStatus medius_device_query_transforms(struct MediusDevice *dev, struct MediusTransforms *out);
+
 // Set movement riding; when `enabled`, injected motion rides a native cursor report seen within `window_ms`.
 MediusStatus medius_device_set_movement_riding(struct MediusDevice *dev,
                                                bool enabled,
@@ -2083,9 +2208,12 @@ struct MediusMotion medius_motion_cursor(int16_t dx, int16_t dy);
 // Build a wheel [`MediusMotion`].
 struct MediusMotion medius_motion_wheel(int16_t delta);
 
-// Build a [`MediusLockTarget`] addressing an axis: `kind` takes `MEDIUS_LOCK_TARGET_KIND_X`, `_Y` or
-// `_WHEEL`. Any other byte is carried through and refused by the call that takes the target, since a
-// constructor has no status to return.
+// Build an AC Pan (horizontal-scroll) [`MediusMotion`].
+struct MediusMotion medius_motion_pan(int16_t delta);
+
+// Build a [`MediusLockTarget`] addressing an axis: `kind` takes `MEDIUS_LOCK_TARGET_KIND_X`, `_Y`,
+// `_WHEEL` or `_PAN`. Any other byte is carried through and refused by the call that takes the
+// target, since a constructor has no status to return.
 struct MediusLockTarget medius_lock_target_axis(uint8_t kind);
 
 // Build a [`MediusLockTarget`] addressing a momentary usage (button, key, or media).
@@ -2126,7 +2254,7 @@ struct MediusCatchFilter medius_catch_filter_watch_axis(uint8_t axis);
 // yields a filter subscribing refuses.
 struct MediusCatchFilter medius_catch_filter_watch_class(uint8_t class_);
 
-// Every relative axis: X, Y and the wheel.
+// Every relative axis: X, Y, the wheel and AC Pan.
 struct MediusCatchFilter medius_catch_filter_watch_axes(void);
 
 // Write the four input-class filters to `out[0..4]`: buttons, keys, media and axes. This is the

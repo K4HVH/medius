@@ -14,6 +14,7 @@ from ._enums import (
     BEARING_WINDOW_DEFAULT_MS,
     BearingMode,
     Blanket,
+    LOCK_SCALE_PASS,
     BusEventKind,
     CatchClass,
     CatchEventKind,
@@ -35,6 +36,7 @@ from ._enums import (
     RewriteClass,
     TrafficClass,
     TransferStatus,
+    TransformOp,
     Button,
     Key,
     MediaKey,
@@ -107,6 +109,19 @@ def _as_usage(usage) -> "Usage":
     )
 
 
+def _as_lock_target(field) -> "LockTarget":
+    """A `LockTarget`, an `Axis`, or a usage (`Usage`/`Button`/`Key`/`MediaKey`), as a `LockTarget`.
+
+    This is the transform field space: a relative axis, or a momentary usage, addressed the same way a
+    lock target is.
+    """
+    if isinstance(field, LockTarget):
+        return field
+    if isinstance(field, Axis):
+        return LockTarget.axis(field)
+    return LockTarget.usage(_as_usage(field))
+
+
 def _cstr(buf) -> str:
     raw = bytes(buf)
     return raw.split(b"\x00", 1)[0].decode("utf-8", "replace")
@@ -167,7 +182,7 @@ class Health:
     rewrite_on: bool = False
     #: A descriptor-patch set (§3.14) is applied to the clone (v3.4.0).
     patch_on: bool = False
-    #: A field transform is active (reserved; the transforms feature owns this bit) (v3.4.0).
+    #: A field transform is active (v3.4.0).
     transform_on: bool = False
 
 
@@ -189,6 +204,8 @@ class MouseCaps:
     has_x: bool
     has_y: bool
     has_wheel: bool
+    #: AC Pan (horizontal scroll) present.
+    pan: bool
     has_report_id: bool
     n_hid: int
 
@@ -461,6 +478,65 @@ class PatchSet:
     entries: List[PatchEntry] = field(default_factory=list)
 
 
+@dataclass
+class Transform:
+    """One field transform (§3.15), keyed by ``(source, dest)``.
+
+    A transform negates, scales, swaps or remaps a field the clone already declares, on the semantic
+    path where locks, riding and rendering run, so every emitted report stays one the real device
+    could produce. Unlike the rewrite/raw/patch layer it is faithful and needs no imperfect-clone
+    opt-in. ``source`` and ``dest`` are `LockTarget`\\ s (an axis, or a momentary usage). The signed
+    ``scale`` is a percent carrying a sign: ``-100`` inverts, ``100`` is identity, ``200`` doubles,
+    ``-50`` halves and flips, ``0`` blocks the source; ``INVERT`` ignores it.
+
+    Build one with `invert`, `scale_axis`, `swap`, `remap`, or the constructor for the general case.
+    """
+
+    op: TransformOp
+    source: "LockTarget"
+    dest: "LockTarget"
+    scale: int = LOCK_SCALE_PASS
+
+    @classmethod
+    def invert(cls, axis) -> "Transform":
+        """Invert an axis: emit the report the device produces when moved the other way."""
+        t = LockTarget.axis(axis)
+        return cls(TransformOp.INVERT, t, t, LOCK_SCALE_PASS)
+
+    @classmethod
+    def scale_axis(cls, axis, percent: int) -> "Transform":
+        """Weigh an axis by a signed percent (``200`` doubles, ``-50`` halves and flips)."""
+        t = LockTarget.axis(axis)
+        return cls(TransformOp.SCALE, t, t, percent)
+
+    @classmethod
+    def swap(cls, a, b) -> "Transform":
+        """Exchange two axes atomically (read both, then write both)."""
+        return cls(TransformOp.SWAP, LockTarget.axis(a), LockTarget.axis(b), LOCK_SCALE_PASS)
+
+    @classmethod
+    def remap(cls, source, dest) -> "Transform":
+        """Move a source field's contribution into a destination, clearing the source. ``source`` and
+        ``dest`` are a `LockTarget`, an `Axis`, or a usage (`Usage`/`Button`/`Key`/`MediaKey`)."""
+        return cls(TransformOp.REMAP, _as_lock_target(source), _as_lock_target(dest), LOCK_SCALE_PASS)
+
+    def with_scale(self, scale: int) -> "Transform":
+        """This transform with a different signed scale, for a scaled `swap` or `remap`."""
+        return Transform(self.op, self.source, self.dest, scale)
+
+
+@dataclass
+class Transforms:
+    """Decoded RESP(TRANSFORMS) (§4.18): the whole transform table, in installation order.
+
+    Each entry is what you would send to reproduce it; ``table_full`` flags that the eight-entry
+    ceiling refused a further entry.
+    """
+
+    table_full: bool = False
+    entries: List[Transform] = field(default_factory=list)
+
+
 @dataclass(frozen=True)
 class Bearing:
     """The configured bearing: what `Direction.WITH` and `Direction.AGAINST` are measured against.
@@ -553,6 +629,8 @@ class MotionEvent:
     dx: int
     dy: int
     dz: int
+    #: AC Pan (horizontal-scroll) delta this report (right positive).
+    pan: int = 0
 
 
 @dataclass
@@ -700,7 +778,9 @@ class Usage:
 
     @classmethod
     def button(cls, button) -> "Usage":
-        return cls(_native.lib.medius_usage_button(int(_enum(button, Button, "button"))))
+        # Any 0-based id addresses a button, not just the five named ones: the box drives it up to the
+        # clone's declared button count, so this takes a `Button` or a raw `u8`.
+        return cls(_native.lib.medius_usage_button(_u8(button, "button")))
 
     @classmethod
     def key(cls, key) -> "Usage":
@@ -747,6 +827,10 @@ class Motion:
     def wheel(cls, delta) -> "Motion":
         return cls(_native.lib.medius_motion_wheel(_i16(delta, "delta")))
 
+    @classmethod
+    def pan(cls, delta) -> "Motion":
+        return cls(_native.lib.medius_motion_pan(_i16(delta, "delta")))
+
 
 class LockTarget:
     """A lock target: an axis (`LockTarget.x/y/wheel`) or a momentary usage (`LockTarget.usage`)."""
@@ -765,6 +849,15 @@ class LockTarget:
     @classmethod
     def wheel(cls) -> "LockTarget":
         return cls(_native.lib.medius_lock_target_axis(int(LockTargetKind.WHEEL)))
+
+    @classmethod
+    def pan(cls) -> "LockTarget":
+        return cls(_native.lib.medius_lock_target_axis(int(LockTargetKind.PAN)))
+
+    @classmethod
+    def axis(cls, axis) -> "LockTarget":
+        """An axis target from an `Axis`. The four axis kinds share the `Axis` wire values."""
+        return cls(_native.lib.medius_lock_target_axis(int(_enum(axis, Axis, "axis"))))
 
     @classmethod
     def usage(cls, usage: "Usage") -> "LockTarget":
@@ -984,6 +1077,8 @@ class InputEvent:
     dy: int = 0
     #: Wheel delta this report (up positive); 0 unless `kind` is `MOTION`.
     dz: int = 0
+    #: AC Pan (horizontal-scroll) delta this report (right positive); 0 unless `kind` is `MOTION`.
+    pan: int = 0
 
     @property
     def is_press(self) -> bool:
@@ -1011,7 +1106,9 @@ def input_event_from_c(c) -> InputEvent:
     usage = None
     if kind != InputKind.MOTION:
         usage = Usage(_native.MediusUsage(kind=c.usage.kind, id=c.usage.id))
-    return InputEvent(kind, int(c.ts_us), ClockDomain(c.clock), usage, int(c.dx), int(c.dy), int(c.dz))
+    return InputEvent(
+        kind, int(c.ts_us), ClockDomain(c.clock), usage, int(c.dx), int(c.dy), int(c.dz), int(c.pan)
+    )
 
 
 def _chip_firmware_from_c(c) -> ChipFirmware:
@@ -1126,13 +1223,25 @@ def box_from_c(c) -> BoxInfo:
 
 def mouse_caps_from_c(c) -> MouseCaps:
     return MouseCaps(
-        c.n_buttons, bool(c.has_x), bool(c.has_y), bool(c.has_wheel), bool(c.has_report_id), c.n_hid
+        c.n_buttons,
+        bool(c.has_x),
+        bool(c.has_y),
+        bool(c.has_wheel),
+        bool(c.pan),
+        bool(c.has_report_id),
+        c.n_hid,
     )
 
 
 def mouse_caps_to_c(m) -> "_native.MediusMouseCaps":
     return _native.MediusMouseCaps(
-        m.n_buttons, int(m.has_x), int(m.has_y), int(m.has_wheel), int(m.has_report_id), m.n_hid
+        m.n_buttons,
+        int(m.has_x),
+        int(m.has_y),
+        int(m.has_wheel),
+        int(m.pan),
+        int(m.has_report_id),
+        m.n_hid,
     )
 
 
@@ -1363,6 +1472,30 @@ def patch_set_from_c(c) -> PatchSet:
     )
 
 
+def transform_to_c(t) -> "_native.MediusTransform":
+    c = _native.MediusTransform()
+    c.op = int(_enum(t.op, TransformOp, "op"))
+    c.source = _as_lock_target(t.source)._c
+    c.dest = _as_lock_target(t.dest)._c
+    c.scale = _i16(t.scale, "scale")
+    return c
+
+
+def transform_from_c(c) -> Transform:
+    return Transform(
+        TransformOp(c.op),
+        lock_target_from_c(c.source),
+        lock_target_from_c(c.dest),
+        int(c.scale),
+    )
+
+
+def transforms_from_c(c) -> Transforms:
+    n = min(int(c.n), _native.MEDIUS_MAX_TRANSFORM_ENTRIES)
+    entries = [transform_from_c(c.entries[i]) for i in range(n)]
+    return Transforms(bool(c.table_full), entries)
+
+
 def emit_pace_status_from_c(c) -> EmitPaceStatus:
     mode = EmitMode(c.mode)
     return EmitPaceStatus(
@@ -1574,7 +1707,7 @@ def locks_to_c(locks) -> "_native.MediusLocks":
 
 
 def motion_event_to_c(e) -> "_native.MediusMotionEvent":
-    return _native.MediusMotionEvent(e.dx, e.dy, e.dz)
+    return _native.MediusMotionEvent(e.dx, e.dy, e.dz, e.pan)
 
 
 def usage_snapshot_to_c(s) -> "_native.MediusUsageEvent":
@@ -1619,7 +1752,7 @@ def decode_catch_event(c) -> CatchEvent:
     clock = ClockDomain(c.clock)
     if kind == CatchEventKind.MOTION:
         m = c.data.motion
-        return CatchEvent(kind, MotionEvent(m.dx, m.dy, m.dz), c.ts_us, clock)
+        return CatchEvent(kind, MotionEvent(m.dx, m.dy, m.dz, m.pan), c.ts_us, clock)
     if kind == CatchEventKind.TRAFFIC:
         return CatchEvent(kind, traffic_event_from_c(c.data.traffic), c.ts_us, clock)
     u = c.data.usages

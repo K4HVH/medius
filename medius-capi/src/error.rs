@@ -46,6 +46,10 @@ pub enum MediusStatus {
     ErrRewriteActionClass = 22,
     /// A rewrite payload larger than the head the box holds for its class.
     ErrRewritePayloadTooLarge = 23,
+    /// A transform op that cannot address its `source`/`dest` pair.
+    ErrTransformOpFields = 24,
+    /// A scale of 0 on an invert, which ignores its scale (so 0 would block the field it must pass).
+    ErrTransformInvertZeroScale = 25,
 }
 
 #[derive(Default)]
@@ -95,6 +99,8 @@ fn status_for(err: &Error) -> MediusStatus {
         Error::RewriteMaskLength { .. } => MediusStatus::ErrRewriteMaskLength,
         Error::RewriteActionClass { .. } => MediusStatus::ErrRewriteActionClass,
         Error::RewritePayloadTooLarge { .. } => MediusStatus::ErrRewritePayloadTooLarge,
+        Error::TransformOpFields { .. } => MediusStatus::ErrTransformOpFields,
+        Error::TransformInvertZeroScale => MediusStatus::ErrTransformInvertZeroScale,
         Error::Update { .. } => MediusStatus::ErrUpdate,
         _ => MediusStatus::ErrUnknown,
     }

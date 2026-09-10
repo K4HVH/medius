@@ -8,9 +8,10 @@ use medius::Device;
 use medius::{UpdateProgress, UpdateTarget};
 
 use crate::convert::{
-    action_from_c, blanket_from_c, emit_pace_from_c, input_to_medius, led_mode_from_c,
+    action_from_c, axis_from_c, blanket_from_c, emit_pace_from_c, input_to_medius, led_mode_from_c,
     led_target_from_c, lock_target_to_medius, motion_from_c, move_timing_from_c, patch_from_c,
     pending_motion_from_c, reboot_target_from_c, rewrite_rule_from_c, setup_from_c,
+    transform_field_from_c, transform_from_c,
 };
 use crate::ctypes::*;
 use crate::error::{MediusStatus, clear_error, fail, guard, guard_status, record, status_of};
@@ -270,6 +271,18 @@ pub unsafe extern "C" fn medius_device_wheel_now(
     delta: i16,
 ) -> MediusStatus {
     with_device(dev, |d| d.wheel_now(delta))
+}
+
+/// An AC Pan (horizontal-scroll) move; full `i16`, no clamp.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn medius_device_pan(dev: *mut MediusDevice, delta: i16) -> MediusStatus {
+    with_device(dev, |d| d.pan(delta))
+}
+
+/// An AC Pan move that bypasses movement riding.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn medius_device_pan_now(dev: *mut MediusDevice, delta: i16) -> MediusStatus {
+    with_device(dev, |d| d.pan_now(delta))
 }
 
 /// Emit the motion held for a ride now, ignoring the ride window.
@@ -753,6 +766,123 @@ pub unsafe extern "C" fn medius_device_query_patch_entry(
     out: *mut MediusPatch,
 ) -> MediusStatus {
     query(dev, out, |d| d.query_patch_entry(index))
+}
+
+// Field transforms (§3.15): a faithful field operation on the semantic path. Unlike the developer
+// layer above, a transform is not gated on the imperfect-clone opt-in.
+
+fn with_transform(
+    dev: *mut MediusDevice,
+    transform: *const MediusTransform,
+    f: impl FnOnce(&Device, medius::Transform) -> Result<(), medius::Error>,
+) -> MediusStatus {
+    guard_status(|| {
+        if dev.is_null() || transform.is_null() {
+            return fail(MediusStatus::ErrInvalidArg, "null pointer");
+        }
+        let Some(t) = transform_from_c(unsafe { &*transform }) else {
+            return fail(
+                MediusStatus::ErrInvalidArg,
+                "invalid transform op, source or dest",
+            );
+        };
+        status_of(f(unsafe { &(*dev).inner }, t))
+    })
+}
+
+/// `TRANSFORM` (§3.15): install (add or overwrite) one field transform, fire-and-forget. A transform
+/// negates, scales, swaps or remaps a field the clone already declares, so it is faithful and needs
+/// no imperfect-clone opt-in, unlike the rewrite/raw/patch layer. An entry is keyed by its
+/// `(source, dest)`. `transform->op` takes a `MEDIUS_TRANSFORM_OP_*` constant, and `source`/`dest` a
+/// `MEDIUS_LOCK_TARGET_KIND_*` axis or usage; a combination the op cannot address is
+/// `MEDIUS_STATUS_ERR_TRANSFORM_OP_FIELDS` and a `scale` of 0 on an invert is
+/// `..._TRANSFORM_INVERT_ZERO_SCALE`. `medius_device_query_transforms` confirms what the box holds.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn medius_device_transform(
+    dev: *mut MediusDevice,
+    transform: *const MediusTransform,
+) -> MediusStatus {
+    with_transform(dev, transform, |d, t| d.transform(&t))
+}
+
+/// `TRANSFORM` remove (§3.15): drop the transform keyed by `transform`'s `(source, dest)`; its op and
+/// scale are ignored. A no-op on the box if no such entry is held.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn medius_device_untransform(
+    dev: *mut MediusDevice,
+    transform: *const MediusTransform,
+) -> MediusStatus {
+    with_transform(dev, transform, |d, t| d.untransform(&t))
+}
+
+/// `TRANSFORM` clear (§3.15): drop the whole transform table.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn medius_device_clear_transforms(dev: *mut MediusDevice) -> MediusStatus {
+    with_device(dev, |d| d.clear_transforms())
+}
+
+/// Invert an axis on the wire: convenience for a `medius_device_transform` of an invert. `axis` takes
+/// a `MEDIUS_AXIS_*` constant; any other value is `MEDIUS_STATUS_ERR_INVALID_ARG`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn medius_device_invert(dev: *mut MediusDevice, axis: u8) -> MediusStatus {
+    let Some(axis) = axis_from_c(axis) else {
+        return fail(MediusStatus::ErrInvalidArg, "invalid axis");
+    };
+    with_device(dev, |d| d.invert(axis))
+}
+
+/// Weigh an axis by a signed percent (`200` doubles, `-50` halves and flips): convenience for a
+/// `medius_device_transform` of a scale. `axis` takes a `MEDIUS_AXIS_*` constant; any other value is
+/// `MEDIUS_STATUS_ERR_INVALID_ARG`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn medius_device_scale_transform(
+    dev: *mut MediusDevice,
+    axis: u8,
+    percent: i16,
+) -> MediusStatus {
+    let Some(axis) = axis_from_c(axis) else {
+        return fail(MediusStatus::ErrInvalidArg, "invalid axis");
+    };
+    with_device(dev, |d| d.scale_transform(axis, percent))
+}
+
+/// Exchange two axes on the wire: convenience for a `medius_device_transform` of a swap. `a` and `b`
+/// take `MEDIUS_AXIS_*` constants; any other value is `MEDIUS_STATUS_ERR_INVALID_ARG`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn medius_device_swap(dev: *mut MediusDevice, a: u8, b: u8) -> MediusStatus {
+    let (Some(a), Some(b)) = (axis_from_c(a), axis_from_c(b)) else {
+        return fail(MediusStatus::ErrInvalidArg, "invalid axis");
+    };
+    with_device(dev, |d| d.swap(a, b))
+}
+
+/// Remap a source field into a destination: convenience for a `medius_device_transform` of a remap.
+/// `source` and `dest` are a `MEDIUS_LOCK_TARGET_KIND_*` axis or usage; a `kind` or usage no constant
+/// names is `MEDIUS_STATUS_ERR_INVALID_ARG`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn medius_device_remap(
+    dev: *mut MediusDevice,
+    source: MediusLockTarget,
+    dest: MediusLockTarget,
+) -> MediusStatus {
+    let (Some(source), Some(dest)) = (transform_field_from_c(source), transform_field_from_c(dest))
+    else {
+        return fail(
+            MediusStatus::ErrInvalidArg,
+            "invalid transform source or dest",
+        );
+    };
+    with_device(dev, |d| d.remap(source, dest))
+}
+
+/// `QUERY(TRANSFORMS)` → `*out` (§4.18): the whole transform table, a row per entry in the shape
+/// `medius_device_transform` takes, so a read entry replays as a set.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn medius_device_query_transforms(
+    dev: *mut MediusDevice,
+    out: *mut MediusTransforms,
+) -> MediusStatus {
+    query(dev, out, |d| d.query_transforms())
 }
 
 /// Set movement riding; when `enabled`, injected motion rides a native cursor report seen within `window_ms`.

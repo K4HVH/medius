@@ -62,6 +62,7 @@ from medius import (
     LockEntry,
     Locks,
     LockTarget,
+    LockTargetKind,
     DeviceInfo,
     DeviceKind,
     LogLevel,
@@ -91,11 +92,16 @@ from medius import (
     Setup,
     TransferOutcome,
     TransferStatus,
+    Transform,
+    Transforms,
+    TransformOp,
     ImperfectRequiredError,
     RelativeDirectionError,
     RewriteMaskLengthError,
     RewriteActionClassError,
     RewritePayloadTooLargeError,
+    TransformOpFieldsError,
+    TransformInvertZeroScaleError,
 )
 
 
@@ -189,7 +195,7 @@ def test_move_riding_override_frames_carry_their_flags():
 
 def test_caps_roundtrip():
     caps = Caps(
-        mouse=MouseCaps(n_buttons=5, has_x=True, has_y=True, has_wheel=True, has_report_id=False, n_hid=2),
+        mouse=MouseCaps(n_buttons=5, has_x=True, has_y=True, has_wheel=True, pan=True, has_report_id=False, n_hid=2),
         keyboard=KbdCaps(n_keys=6, nkro=False, has_consumer=True, has_system=False, has_report_id=True),
         mouse_change_driven=False,
         kbd_change_driven=True,
@@ -763,7 +769,7 @@ def test_counters_readable():
 def test_catch_delivers_motion_event():
     with MockBox() as mock, Device.with_mock(mock) as d:
         with d.catch_events(CatchFilter.everything()) as stream:
-            mock.push_motion(1, 7_000, MotionEvent(dx=12, dy=-34, dz=1))
+            mock.push_motion(1, 7_000, MotionEvent(dx=12, dy=-34, dz=1, pan=2))
             ev = stream.recv_timeout(2000)
             assert ev is not None
             assert ev.kind == CatchEventKind.MOTION
@@ -771,6 +777,7 @@ def test_catch_delivers_motion_event():
             assert ev.motion.dx == 12
             assert ev.motion.dy == -34
             assert ev.motion.dz == 1
+            assert ev.motion.pan == 2
 
 
 def test_catch_delivers_usage_event_for_a_key():
@@ -1328,7 +1335,7 @@ def test_every_enum_parameter_is_checked_before_it_reaches_the_boundary():
         with pytest.raises(ValueError):
             d.move_rel(70_000, 0)
         with pytest.raises(ValueError):
-            Usage.button(200)
+            Usage.button(300)
         with pytest.raises(ValueError):
             Usage.key(300)
         with pytest.raises(ValueError):
@@ -1631,3 +1638,113 @@ def test_an_empty_patch_removes_the_stored_one():
         assert len(d.query_patches().entries) == 1
         d.set_patch(Patch(PatchSection.DEVICE, 0, 0, 8, b""))
         assert d.query_patches().entries == []
+
+
+def test_pan_frames_carry_the_motion_tag():
+    with MockBox() as mock, Device.with_mock(mock) as d:
+        d.pan(3)
+        d.pan_now(-2)
+        d.move_axis(Motion.pan(4), MoveTiming.NOW, PendingMotion.KEEP)
+        sent = [mock.recorded_frame(i) for i in range(3)]
+    payloads = [bytes(f.payload) for f in sent]
+    assert all(f.type == FrameType.MOVE for f in sent)
+    # MOVE AC Pan: [motion=2][dpan i16 LE][flags]. Ride/Keep is 0x00, Now is 0x01.
+    assert payloads == [
+        bytes([2, 3, 0, 0x00]),
+        bytes([2, 0xFE, 0xFF, 0x01]),
+        bytes([2, 4, 0, 0x01]),
+    ]
+
+
+def test_buttons_past_five_address_by_id():
+    # Button is an open id, not just the five named ones, so any u8 addresses one.
+    u = Usage.button(7)
+    assert u.kind == Class.BUTTON
+    assert u.id == 7
+    with MockBox() as mock, Device.with_mock(mock) as d:
+        d.press(Usage.button(7))
+        d.lock(LockTarget.button(9), Direction.PRESS)
+        frame = mock.recorded_frame(0)
+    # INJECT: [class=0][id u16 LE][action=press(1)].
+    assert frame.type == FrameType.INJECT
+    assert bytes(frame.payload) == bytes([0, 7, 0, 1])
+
+
+def test_transform_verbs_reach_the_wire_ungated():
+    # A transform is faithful, so it needs no imperfect-clone opt-in (unlike the rewrite/patch layer).
+    with MockBox() as mock, Device.with_mock(mock) as d:
+        d.invert(Axis.Y)
+        d.scale_transform(Axis.WHEEL, 200)
+        d.swap(Axis.X, Axis.Y)
+        d.remap(Axis.X, Axis.WHEEL)
+        d.transform(Transform.scale_axis(Axis.Y, 175))
+        d.untransform(Transform.scale_axis(Axis.Y, 175))
+        d.clear_transforms()
+        assert mock.saw(FrameType.TRANSFORM)
+        # Seven verbs, one TRANSFORM frame each.
+        types = [mock.recorded_frame(i).type for i in range(mock.recorded())]
+        assert types.count(FrameType.TRANSFORM) == 7
+
+
+def test_a_transform_survives_the_query_roundtrip():
+    with MockBox() as mock, Device.with_mock(mock) as d:
+        d.invert(Axis.Y)
+        d.scale_transform(Axis.WHEEL, 200)
+        d.swap(Axis.X, Axis.Y)
+        got = d.query_transforms()
+    assert isinstance(got, Transforms)
+    assert got.table_full is False
+    assert len(got.entries) == 3
+    assert got.entries[0].op == TransformOp.INVERT
+    assert got.entries[0].source.kind == LockTargetKind.Y
+    assert got.entries[0].dest.kind == LockTargetKind.Y
+    assert got.entries[1].op == TransformOp.SCALE
+    assert got.entries[1].source.kind == LockTargetKind.WHEEL
+    assert got.entries[1].scale == 200
+    assert got.entries[2].op == TransformOp.SWAP
+    assert got.entries[2].source.kind == LockTargetKind.X
+    assert got.entries[2].dest.kind == LockTargetKind.Y
+
+
+def test_a_pan_axis_transform_is_first_class():
+    with MockBox() as mock:
+        mock.set_mouse_caps(
+            MouseCaps(
+                n_buttons=5,
+                has_x=True,
+                has_y=True,
+                has_wheel=True,
+                pan=True,
+                has_report_id=False,
+                n_hid=1,
+            )
+        )
+        with Device.with_mock(mock) as d:
+            assert d.caps().mouse.pan is True
+            d.invert(Axis.PAN)
+            got = d.query_transforms()
+    assert len(got.entries) == 1
+    assert got.entries[0].op == TransformOp.INVERT
+    assert got.entries[0].source.kind == LockTargetKind.PAN
+
+
+def test_transform_validation_errors_have_their_own_exception():
+    with MockBox() as mock, Device.with_mock(mock) as d:
+        # Remap cannot move an axis into a usage.
+        with pytest.raises(TransformOpFieldsError):
+            d.transform(
+                Transform(TransformOp.REMAP, LockTarget.x(), LockTarget.button(Button.LEFT), 100)
+            )
+        # An invert ignores its scale, so a scale of 0 is contradictory and refused.
+        with pytest.raises(TransformInvertZeroScaleError):
+            d.transform(Transform(TransformOp.INVERT, LockTarget.y(), LockTarget.y(), 0))
+
+
+def test_input_event_carries_pan():
+    with MockBox() as mock, Device.with_mock(mock) as d:
+        with d.input_events(CatchFilter.all_input()) as s:
+            mock.push_motion(1, 4_000, MotionEvent(dx=3, dy=-4, dz=0, pan=5))
+            ev = s.recv_timeout(2000)
+    assert ev is not None
+    assert ev.kind == InputKind.MOTION
+    assert (ev.dx, ev.dy, ev.dz, ev.pan) == (3, -4, 0, 5)

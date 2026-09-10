@@ -11,7 +11,8 @@ use medius::{
     LedTarget, LockEntry, LockScope, LockTarget, Locks, LogLevel, LogLine, MediaKey, Motion,
     MouseCaps, MoveTiming, Patch, PatchEntry, PatchSection, PatchSet, PendingMotion, PortInfo,
     Rate, RebootTarget, RenderMode, RenderStatus, RewriteAction, RewriteClass, RewriteEntry,
-    RewriteRule, RewriteTable, Setup, SpreadStatus, Stats, TransferOutcome, Usage, Version,
+    RewriteRule, RewriteTable, Setup, SpreadStatus, Stats, TransferOutcome, Transform,
+    TransformField, TransformOp, Transforms, Usage, Version,
 };
 
 use crate::ctypes::*;
@@ -122,6 +123,7 @@ pub(crate) fn axis_from_c(v: u8) -> Option<Axis> {
         0 => Axis::X,
         1 => Axis::Y,
         2 => Axis::Wheel,
+        3 => Axis::Pan,
         _ => return None,
     })
 }
@@ -190,6 +192,7 @@ pub(crate) fn motion_from_c(v: MediusMotion) -> Option<Motion> {
     Some(match v.kind {
         0 => Motion::Cursor { dx: v.dx, dy: v.dy },
         1 => Motion::Wheel(v.wheel),
+        2 => Motion::Pan(v.pan),
         _ => return None,
     })
 }
@@ -233,22 +236,23 @@ impl From<MediusLogLevel> for LogLevel {
 }
 
 // `MediusLockTarget` to [`LockTarget`]; `None` for a `kind` no constant names or a `Usage` target
-// with an out-of-range button id.
+// whose id does not fit its class.
 pub(crate) fn lock_target_to_medius(v: MediusLockTarget) -> Option<LockTarget> {
     Some(match v.kind {
         0 => LockTarget::Axis(Axis::X),
         1 => LockTarget::Axis(Axis::Y),
         2 => LockTarget::Axis(Axis::Wheel),
-        3 => LockTarget::Usage(input_to_medius(v.usage)?),
+        3 => LockTarget::Axis(Axis::Pan),
+        4 => LockTarget::Usage(input_to_medius(v.usage)?),
         _ => return None,
     })
 }
 
-// `MediusUsage` to a [`Usage`]; `None` for a `kind` no constant names, or a button/key id out of
-// range for its class.
+// `MediusUsage` to a [`Usage`]; `None` for a `kind` no constant names, or a button/key id past a
+// `u8` (any button id fits a button, so only a value above 255 is refused).
 pub(crate) fn input_to_medius(v: MediusUsage) -> Option<Usage> {
     Some(match Class::from_u8(v.kind)? {
-        Class::Button => Usage::from(Button::from_id(u8::try_from(v.id).ok()?)?),
+        Class::Button => Usage::from(Button::from_id(u8::try_from(v.id).ok()?)),
         Class::Key => Usage::from(Key::new(u8::try_from(v.id).ok()?)),
         Class::Media => Usage::from(MediaKey::new(v.id)),
     })
@@ -263,13 +267,22 @@ pub(crate) fn usage_to_c(u: Usage) -> MediusUsage {
 
 fn lock_target_to_c(t: LockTarget) -> MediusLockTarget {
     match t {
-        LockTarget::Axis(Axis::X) => axis_target(MediusLockTargetKind::X),
-        LockTarget::Axis(Axis::Y) => axis_target(MediusLockTargetKind::Y),
-        LockTarget::Axis(Axis::Wheel) => axis_target(MediusLockTargetKind::Wheel),
+        LockTarget::Axis(a) => axis_target(axis_lock_kind(a)),
         LockTarget::Usage(u) => MediusLockTarget {
             kind: MediusLockTargetKind::Usage as u8,
             usage: usage_to_c(u),
         },
+    }
+}
+
+/// The `MediusLockTargetKind` that names an axis. The four axis kinds share the `MediusAxis` values,
+/// so this is total over [`Axis`].
+fn axis_lock_kind(a: Axis) -> MediusLockTargetKind {
+    match a {
+        Axis::X => MediusLockTargetKind::X,
+        Axis::Y => MediusLockTargetKind::Y,
+        Axis::Wheel => MediusLockTargetKind::Wheel,
+        Axis::Pan => MediusLockTargetKind::Pan,
     }
 }
 
@@ -368,6 +381,7 @@ impl From<MouseCaps> for MediusMouseCaps {
             has_x: b(c.has_x),
             has_y: b(c.has_y),
             has_wheel: b(c.has_wheel),
+            pan: b(c.pan),
             has_report_id: b(c.has_report_id),
             n_hid: c.n_hid,
         }
@@ -509,10 +523,10 @@ pub(crate) fn catch_filter_from_c(f: MediusCatchFilter) -> Option<CatchFilter> {
 // a C caller reading `dx` on a press must see 0, not whatever was on the stack.
 pub(crate) fn input_event_to_c(e: InputEvent) -> MediusInputEvent {
     let blank = blank_usage();
-    let (kind, usage, dx, dy, dz) = match e.input {
-        Input::Press(u) => (MediusInputKind::Press, usage_to_c(u), 0, 0, 0),
-        Input::Release(u) => (MediusInputKind::Release, usage_to_c(u), 0, 0, 0),
-        Input::Motion { dx, dy, dz } => (MediusInputKind::Motion, blank, dx, dy, dz),
+    let (kind, usage, dx, dy, dz, pan) = match e.input {
+        Input::Press(u) => (MediusInputKind::Press, usage_to_c(u), 0, 0, 0, 0),
+        Input::Release(u) => (MediusInputKind::Release, usage_to_c(u), 0, 0, 0, 0),
+        Input::Motion { dx, dy, dz, pan } => (MediusInputKind::Motion, blank, dx, dy, dz, pan),
     };
     MediusInputEvent {
         kind,
@@ -522,6 +536,7 @@ pub(crate) fn input_event_to_c(e: InputEvent) -> MediusInputEvent {
         dx,
         dy,
         dz,
+        pan,
     }
 }
 
@@ -759,6 +774,65 @@ impl From<PatchSet> for MediusPatchSet {
     }
 }
 
+// A `MediusLockTarget` to a [`TransformField`]; the transform field space is the lock-target space,
+// so this reuses [`lock_target_to_medius`] and is `None` for the same reasons it is.
+pub(crate) fn transform_field_from_c(v: MediusLockTarget) -> Option<TransformField> {
+    Some(match lock_target_to_medius(v)? {
+        LockTarget::Axis(a) => TransformField::Axis(a),
+        LockTarget::Usage(u) => TransformField::Usage(u),
+    })
+}
+
+/// A [`TransformField`] to a `MediusLockTarget`, reusing [`lock_target_to_c`].
+fn transform_field_to_c(f: TransformField) -> MediusLockTarget {
+    lock_target_to_c(match f {
+        TransformField::Axis(a) => LockTarget::Axis(a),
+        TransformField::Usage(u) => LockTarget::Usage(u),
+    })
+}
+
+// A `MediusTransform` to a [`Transform`]; `None` for an op, source or dest byte no constant names.
+// The device-dependent and structural refusals (an op a class pair cannot take, a zero-scale invert)
+// are the crate's, made when the transform is sent.
+pub(crate) fn transform_from_c(c: &MediusTransform) -> Option<Transform> {
+    Some(Transform {
+        op: TransformOp::from_u8(c.op)?,
+        source: transform_field_from_c(c.source)?,
+        dest: transform_field_from_c(c.dest)?,
+        scale: c.scale,
+    })
+}
+
+fn transform_to_c(t: &Transform) -> MediusTransform {
+    MediusTransform {
+        op: t.op.as_u8(),
+        source: transform_field_to_c(t.source),
+        dest: transform_field_to_c(t.dest),
+        scale: t.scale,
+    }
+}
+
+impl From<Transforms> for MediusTransforms {
+    fn from(t: Transforms) -> Self {
+        let blank = MediusTransform {
+            op: 0,
+            source: axis_target(MediusLockTargetKind::X),
+            dest: axis_target(MediusLockTargetKind::X),
+            scale: 0,
+        };
+        let mut entries = [blank; MEDIUS_MAX_TRANSFORM_ENTRIES];
+        let n = t.entries.len().min(MEDIUS_MAX_TRANSFORM_ENTRIES);
+        for (slot, e) in entries.iter_mut().zip(t.entries.iter()).take(n) {
+            *slot = transform_to_c(e);
+        }
+        MediusTransforms {
+            table_full: b(t.table_full),
+            n: n as u16,
+            entries,
+        }
+    }
+}
+
 fn clip_state_to_c(s: ClipState) -> u8 {
     let s = match s {
         ClipState::Idle => MediusClipState::Idle,
@@ -979,6 +1053,7 @@ impl From<CatchEvent> for MediusCatchEvent {
                         dx: m.dx,
                         dy: m.dy,
                         dz: m.dz,
+                        pan: m.pan,
                     },
                 },
             },
@@ -1081,6 +1156,7 @@ impl From<MediusMouseCaps> for MouseCaps {
             has_x: nz(c.has_x),
             has_y: nz(c.has_y),
             has_wheel: nz(c.has_wheel),
+            pan: nz(c.pan),
             has_report_id: nz(c.has_report_id),
             n_hid: c.n_hid,
         }
@@ -1244,6 +1320,7 @@ impl From<medius::FrameType> for MediusFrameType {
             F::TransferResp => MediusFrameType::TransferResp,
             F::Rewrite => MediusFrameType::Rewrite,
             F::Patch => MediusFrameType::Patch,
+            F::Transform => MediusFrameType::Transform,
         }
     }
 }

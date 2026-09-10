@@ -24,8 +24,8 @@ impl Device {
     /// The crate rejects the two refusals it can see structurally: an op a class pair cannot take
     /// ([`Error::TransformOpFields`]) and a `scale` of `0` on an
     /// [`Invert`](crate::TransformOp::Invert) ([`Error::TransformInvertZeroScale`]). The
-    /// device-dependent refusals — a field the clone does not declare, a cross-class remap with no
-    /// destination collection, the eight-entry table full — are the box's to make; delivery is
+    /// device-dependent refusals (a field the clone does not declare, a cross-class remap with no
+    /// destination collection, the eight-entry table full) are the box's to make; delivery is
     /// fire-and-forget and [`query_transforms`](Device::query_transforms) confirms what it holds (a
     /// refused entry is simply absent).
     ///

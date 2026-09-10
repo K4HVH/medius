@@ -344,7 +344,7 @@ pub unsafe extern "C" fn medius_mock_push_motion(
     event: MediusMotionEvent,
 ) {
     with_mock(mock, |m| {
-        m.push_motion(seq, ts_us, event.dx, event.dy, event.dz)
+        m.push_motion(seq, ts_us, event.dx, event.dy, event.dz, event.pan)
     });
 }
 
