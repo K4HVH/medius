@@ -88,6 +88,44 @@ pub(crate) struct LockUndo {
     media_order: Vec<u16>,
 }
 
+/// A rewrite rule the host wants held, in its wire fields, so a reconnect re-sends it byte-for-byte.
+/// Rules are session state on the same lifecycle as locks and catches (§3.14).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct StoredRewrite {
+    pub(crate) class: u8,
+    pub(crate) id: u16,
+    pub(crate) direction: u8,
+    pub(crate) action: u8,
+    pub(crate) offset: u16,
+    pub(crate) match_bytes: Vec<u8>,
+    pub(crate) mask: Vec<u8>,
+    pub(crate) payload: Vec<u8>,
+}
+
+/// The `(class, id, direction, match, mask)` key the box files a rule under; two rules that differ in
+/// any of these are separate entries.
+pub(crate) type RewriteWireKey = (u8, u16, u8, Vec<u8>, Vec<u8>);
+
+impl StoredRewrite {
+    pub(crate) fn key(&self) -> RewriteWireKey {
+        (
+            self.class,
+            self.id,
+            self.direction,
+            self.match_bytes.clone(),
+            self.mask.clone(),
+        )
+    }
+}
+
+/// What [`DesiredState::apply_rewrite`]/[`remove_rewrite`](DesiredState::remove_rewrite) changed, enough
+/// to put it back when the frame never went out.
+#[derive(Debug)]
+pub(crate) struct RewriteUndo {
+    key: RewriteWireKey,
+    prior: Option<StoredRewrite>,
+}
+
 /// PC-owned injection + subscription state, re-asserted after a reconnect so held usages and open catches survive a control-link blip.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub(crate) struct DesiredState {
@@ -101,6 +139,9 @@ pub(crate) struct DesiredState {
     // dropping. The blanket is its own flag on the box, not a slot, so it stays out.
     media_order: Vec<u16>,
     catch: FilterSet,
+    // The rewrite-rule table the box should be holding, keyed by wire key so a re-set is exact and
+    // idempotent. Re-asserted on reconnect and by the keepalive, exactly like `catch`.
+    rewrites: BTreeMap<RewriteWireKey, StoredRewrite>,
 }
 
 impl DesiredState {
@@ -164,12 +205,51 @@ impl DesiredState {
         self.media_order = undo.media_order;
     }
 
+    /// Record a rewrite rule (add or overwrite) for reconnect-replay, returning the prior state so the
+    /// device layer can roll it back if the frame never went out (the [`apply_lock`] pattern).
+    pub(crate) fn apply_rewrite(&mut self, rule: StoredRewrite) -> RewriteUndo {
+        let key = rule.key();
+        let prior = self.rewrites.insert(key.clone(), rule);
+        RewriteUndo { key, prior }
+    }
+
+    /// Record a rewrite-rule removal, returning the prior state for the same rollback path.
+    pub(crate) fn remove_rewrite(&mut self, key: RewriteWireKey) -> RewriteUndo {
+        let prior = self.rewrites.remove(&key);
+        RewriteUndo { key, prior }
+    }
+
+    /// Put back what an `apply_rewrite`/`remove_rewrite` changed, for a frame that never went out.
+    pub(crate) fn restore_rewrite(&mut self, undo: RewriteUndo) {
+        match undo.prior {
+            Some(rule) => {
+                self.rewrites.insert(undo.key, rule);
+            }
+            None => {
+                self.rewrites.remove(&undo.key);
+            }
+        }
+    }
+
+    /// Drop every held rewrite rule (the whole-table clear).
+    pub(crate) fn clear_rewrites(&mut self) {
+        self.rewrites.clear();
+    }
+
+    /// Every held rewrite rule, for the reconnect and keepalive re-assertion.
+    pub(crate) fn held_rewrites(&self) -> Vec<StoredRewrite> {
+        self.rewrites.values().cloned().collect()
+    }
+
     pub(crate) fn clear(&mut self) {
         // Catch teardown is handled by Link::catch_disconnect_all (drops the EventStream senders); catch
         // otherwise clears firmware-side on the same lifecycle as injection.
         self.overrides.clear();
         self.locks.clear();
         self.media_order.clear();
+        // `RESET` clears the box's rewrite table too (§3.14), so drop the local copy or the keepalive
+        // would re-assert rules the reset was meant to remove. Patches are not session state and stay.
+        self.rewrites.clear();
     }
 
     /// The catch subscription table the box should be holding (re-asserted on reconnect).
@@ -181,9 +261,12 @@ impl DesiredState {
         self.catch.clone()
     }
 
-    /// Idle = nothing for the keepalive to hold alive; a catch subscription counts.
+    /// Idle = nothing for the keepalive to hold alive; a catch subscription or a rewrite rule counts.
     pub(crate) fn is_idle(&self) -> bool {
-        self.catch.is_empty() && self.overrides.is_empty() && self.locks.is_empty()
+        self.catch.is_empty()
+            && self.overrides.is_empty()
+            && self.locks.is_empty()
+            && self.rewrites.is_empty()
     }
 
     /// Every held momentary override, as `(Usage, Action)`, for the reconnect reapply.

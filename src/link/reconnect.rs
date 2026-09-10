@@ -5,7 +5,7 @@ use std::time::{Duration, Instant};
 use parking_lot::Mutex;
 
 use crate::error::{Error, Result};
-use crate::protocol::command::{catch_payload, inject_payload, lock_payload};
+use crate::protocol::command::{catch_payload, inject_payload, lock_payload, rewrite_payload};
 use crate::protocol::opcode::Q_VERSION;
 use crate::protocol::{FrameDecoder, FrameType, Resp, encode, parse_resp};
 use crate::transport::Transport;
@@ -139,9 +139,14 @@ fn reconnect(ctx: &ReconnectCtx) -> Result<()> {
 
 fn reapply_held(ctx: &ReconnectCtx) -> Result<()> {
     let _serial = ctx.catch_lock.lock();
-    let (held, held_locks, catch) = {
+    let (held, held_locks, catch, rewrites) = {
         let d = ctx.desired.lock();
-        (d.held().collect::<Vec<_>>(), d.held_locks(), d.catch())
+        (
+            d.held().collect::<Vec<_>>(),
+            d.held_locks(),
+            d.catch(),
+            d.held_rewrites(),
+        )
     };
     for (usage, action) in held {
         let (class, id) = usage.class_id();
@@ -182,6 +187,30 @@ fn reapply_held(ctx: &ReconnectCtx) -> Result<()> {
             seq,
             FrameType::Catch,
             &catch_payload(class, id, f.direction().as_u8(), 1, f.capture().as_u8()),
+        )?;
+    }
+    // Re-assert the rewrite table: a drop past the firmware silence window, or a re-clone, clears it
+    // box-side, so without this the rules stay dead. Each goes out as state 1 (add/overwrite), which
+    // is idempotent if the drop was short.
+    for r in rewrites {
+        let seq = ctx.seq.fetch_add(1, Ordering::Relaxed);
+        write_frame(
+            &ctx.transport,
+            &ctx.write_lock,
+            &ctx.counters,
+            seq,
+            FrameType::Rewrite,
+            &rewrite_payload(
+                r.class,
+                r.id,
+                r.direction,
+                1,
+                r.action,
+                r.offset,
+                &r.match_bytes,
+                &r.mask,
+                &r.payload,
+            ),
         )?;
     }
     Ok(())

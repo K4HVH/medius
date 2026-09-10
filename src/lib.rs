@@ -26,12 +26,16 @@ pub use device::discover::BoxInfo;
 pub use device::input::InputStream;
 pub use device::logs::LogStream;
 pub use device::options::{BEARING_WINDOW_DEFAULT, EMIT_MAX_HZ, NAME_MAX};
+pub use device::raw::DEFAULT_TRANSFER_TIMEOUT;
 pub use error::{Error, Result};
 pub use link::{DEFAULT_KEEPALIVE_CADENCE, DEFAULT_QUERY_TIMEOUT};
 /// The control-protocol version this build speaks. A box reporting anything else is refused at the
 /// handshake; exposing it lets a caller say so in its own words before connecting.
 pub use protocol::PROTO_VER;
-pub use protocol::opcode::{LOCK_SCALE_BLOCK, LOCK_SCALE_MAX, LOCK_SCALE_PASS};
+pub use protocol::opcode::{
+    LOCK_SCALE_BLOCK, LOCK_SCALE_MAX, LOCK_SCALE_PASS, PATCH_MAX_ENTRIES, REWRITE_MATCH_MAX,
+    REWRITE_MAX_ENTRIES,
+};
 pub use protocol::{DecodedFrame, FrameType};
 pub use transport::scan::find_medius;
 pub use types::{
@@ -41,10 +45,12 @@ pub use types::{
     ControlStatus, CountersSnapshot, DeviceInfo, DeviceKind, Direction, DirectionMeaning, Edge,
     EmitPace, EmitPaceStatus, FirmwareInfo, Health, ImageState, ImperfectStatus, Input, InputEvent,
     KbdCaps, Key, LedMode, LedTarget, LockEntry, LockScope, LockTarget, Locks, LogLevel, LogLine,
-    MediaKey, Motion, MotionEvent, MouseCaps, MoveTiming, PendingMotion, PortInfo, Rate,
-    RebootTarget, RenderMode, RenderStatus, SpreadStatus, Stamped, Stats, Timeline, Timestamped,
-    TrafficClass, TrafficEvent, UpdateProgress, UpdateStatus, UpdateTarget, Usage, UsageSnapshot,
-    Version,
+    MediaKey, Motion, MotionEvent, MouseCaps, MoveTiming, Patch, PatchEntry, PatchKey,
+    PatchSection, PatchSet, PendingMotion, PortInfo, Rate, RebootTarget, RenderMode, RenderStatus,
+    RewriteAction, RewriteClass, RewriteEntry, RewriteKey, RewriteRule, RewriteTable, Setup,
+    SpreadStatus, Stamped, Stats, Timeline, Timestamped, TrafficClass, TrafficEvent,
+    TransferOutcome, TransferStatus, UpdateProgress, UpdateStatus, UpdateTarget, Usage,
+    UsageSnapshot, Version,
 };
 
 #[cfg(feature = "async")]

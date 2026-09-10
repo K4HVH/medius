@@ -1,7 +1,8 @@
 use super::opcode::{
     INJ_MOTION_CURSOR, INJ_MOTION_WHEEL, OPT_BEARING, OPT_EMIT, OPT_IMPERFECT, OPT_MOVE_RIDE,
-    OPT_NAME, OPT_RENDER, OPT_SPREAD,
+    OPT_NAME, OPT_RENDER, OPT_SPREAD, PATCH_APPLY, PATCH_CLEAR,
 };
+use crate::types::Setup;
 
 /// `MOVE` cursor (§3.1): `[motion=0][dx i16 LE][dy i16 LE][flags u8]`, no clamp (firmware clamps with carry).
 pub fn move_cursor_payload(dx: i16, dy: i16, flags: u8) -> [u8; 6] {
@@ -100,4 +101,72 @@ pub fn name_payload(name: &str) -> Vec<u8> {
     v.push(OPT_NAME);
     v.extend_from_slice(name.as_bytes());
     v
+}
+
+/// `RAW` (§3.14): `[ep u8][bytes…]`; put `bytes` verbatim on cloned endpoint `ep`.
+pub fn raw_payload(ep: u8, bytes: &[u8]) -> Vec<u8> {
+    let mut v = Vec::with_capacity(1 + bytes.len());
+    v.push(ep);
+    v.extend_from_slice(bytes);
+    v
+}
+
+/// `TRANSFER` (§3.14): `[ep u8][setup 8][OUT data…]`; run one control transfer against the device.
+pub fn transfer_payload(ep: u8, setup: Setup, out: &[u8]) -> Vec<u8> {
+    let mut v = Vec::with_capacity(1 + 8 + out.len());
+    v.push(ep);
+    v.extend_from_slice(&setup.to_bytes());
+    v.extend_from_slice(out);
+    v
+}
+
+/// `REWRITE` (§3.14): `[cls u8][id u16 LE][dir u8][state u8][action u8][off u16 LE][mlen u8][match][mask][payload]`.
+/// `state` 1 adds/overwrites, 0 removes; `match` and `mask` must be the same length (the caller ensures it).
+#[allow(clippy::too_many_arguments)]
+pub fn rewrite_payload(
+    class: u8,
+    id: u16,
+    direction: u8,
+    state: u8,
+    action: u8,
+    offset: u16,
+    match_bytes: &[u8],
+    mask: &[u8],
+    payload: &[u8],
+) -> Vec<u8> {
+    let mlen = match_bytes.len();
+    let mut v = Vec::with_capacity(9 + 2 * mlen + payload.len());
+    v.push(class);
+    v.extend_from_slice(&id.to_le_bytes());
+    v.push(direction);
+    v.push(state);
+    v.push(action);
+    v.extend_from_slice(&offset.to_le_bytes());
+    v.push(mlen as u8);
+    v.extend_from_slice(match_bytes);
+    v.extend_from_slice(mask);
+    v.extend_from_slice(payload);
+    v
+}
+
+/// `PATCH` (§3.14): `[section u8][cfg u8][index u8][offset u16 LE][bytes…]`; a zero-length `bytes`
+/// removes the patch at that key.
+pub fn patch_payload(section: u8, cfg: u8, index: u8, offset: u16, bytes: &[u8]) -> Vec<u8> {
+    let mut v = Vec::with_capacity(5 + bytes.len());
+    v.push(section);
+    v.push(cfg);
+    v.push(index);
+    v.extend_from_slice(&offset.to_le_bytes());
+    v.extend_from_slice(bytes);
+    v
+}
+
+/// `PATCH` APPLY (§3.14): the single `section = 0xFE` byte; re-present the clone with the stored set.
+pub fn patch_apply_payload() -> [u8; 1] {
+    [PATCH_APPLY]
+}
+
+/// `PATCH` CLEAR (§3.14): the single `section = 0xFF` byte; drop every patch and re-present.
+pub fn patch_clear_payload() -> [u8; 1] {
+    [PATCH_CLEAR]
 }
