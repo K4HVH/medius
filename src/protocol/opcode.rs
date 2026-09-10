@@ -181,15 +181,15 @@ pub const CATCH_CLS_MEDIA: u8 = 2;
 pub const CATCH_CLS_AXIS: u8 = 3;
 /// `CATCH` class: raw HID input report bytes, keyed by interface number (§3.9).
 pub const CATCH_CLS_HID_IN: u8 = 4;
-/// `CATCH` class: interrupt-OUT report bytes, keyed by endpoint address (§3.9).
+/// `CATCH` class: interrupt-OUT report bytes, keyed by endpoint number, direction OUT (§3.9).
 pub const CATCH_CLS_HID_OUT: u8 = 5;
-/// `CATCH` class: vendor-interface interrupt traffic, keyed by endpoint address (§3.9).
+/// `CATCH` class: vendor-interface interrupt traffic, keyed by endpoint number and direction (§3.9).
 pub const CATCH_CLS_VEND_INTR: u8 = 6;
-/// `CATCH` class: vendor-interface bulk traffic, keyed by endpoint address (§3.9).
+/// `CATCH` class: vendor-interface bulk traffic, keyed by endpoint number and direction (§3.9).
 pub const CATCH_CLS_VEND_BULK: u8 = 7;
 /// `CATCH` class: a proxied control transaction, keyed by endpoint number (§3.9).
 pub const CATCH_CLS_CONTROL: u8 = 8;
-/// `CATCH` class: the bytes the clone emitted, keyed by interface number (§3.9).
+/// `CATCH` class: the bytes the clone emitted, keyed by endpoint number, direction IN (§3.9).
 pub const CATCH_CLS_EMIT: u8 = 9;
 /// `CATCH` class: bus lifecycle events (§3.9).
 pub const CATCH_CLS_BUS: u8 = 10;

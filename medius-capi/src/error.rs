@@ -50,6 +50,8 @@ pub enum MediusStatus {
     ErrTransformOpFields = 24,
     /// A scale of 0 on an invert, which ignores its scale (so 0 would block the field it must pass).
     ErrTransformInvertZeroScale = 25,
+    /// A raw injection direction other than `MEDIUS_DIRECTION_POSITIVE` (IN) or `MEDIUS_DIRECTION_NEGATIVE` (OUT).
+    ErrRawDirection = 26,
 }
 
 #[derive(Default)]
@@ -95,6 +97,7 @@ fn status_for(err: &Error) -> MediusStatus {
         Error::HalfEdgeInputFilter => MediusStatus::ErrHalfEdgeInputFilter,
         Error::ReservedId { .. } => MediusStatus::ErrReservedId,
         Error::RelativeDirection { .. } => MediusStatus::ErrRelativeDirection,
+        Error::RawDirection { .. } => MediusStatus::ErrRawDirection,
         Error::ImperfectRequired => MediusStatus::ErrImperfectRequired,
         Error::RewriteMaskLength { .. } => MediusStatus::ErrRewriteMaskLength,
         Error::RewriteActionClass { .. } => MediusStatus::ErrRewriteActionClass,

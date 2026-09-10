@@ -637,7 +637,7 @@ fn a_relative_direction_is_refused_on_a_catch_subscription() {
     let device = Device::with_mock(MockBox::new());
     let err = device
         .catch_events([
-            CatchFilter::traffic(TrafficClass::VendorBulk, 0x83).with_direction(Direction::Against)
+            CatchFilter::traffic(TrafficClass::VendorBulk, 3).with_direction(Direction::Against)
         ])
         .unwrap_err();
     assert!(

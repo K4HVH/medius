@@ -43,15 +43,15 @@ pub const MEDIUS_CATCH_CLASS_MEDIA: u8 = 2;
 pub const MEDIUS_CATCH_CLASS_AXIS: u8 = 3;
 /// Raw HID input report bytes, keyed by interface number.
 pub const MEDIUS_CATCH_CLASS_HID_IN: u8 = 4;
-/// Interrupt-OUT report bytes the PC wrote, keyed by endpoint address.
+/// Interrupt-OUT report bytes the PC wrote, keyed by endpoint number, direction OUT.
 pub const MEDIUS_CATCH_CLASS_HID_OUT: u8 = 5;
-/// Vendor-interface interrupt traffic, keyed by endpoint address.
+/// Vendor-interface interrupt traffic, keyed by endpoint number and direction.
 pub const MEDIUS_CATCH_CLASS_VENDOR_INTERRUPT: u8 = 6;
-/// Vendor-interface bulk traffic, keyed by endpoint address.
+/// Vendor-interface bulk traffic, keyed by endpoint number and direction.
 pub const MEDIUS_CATCH_CLASS_VENDOR_BULK: u8 = 7;
 /// A proxied control transaction, keyed by endpoint number (0 = EP0).
 pub const MEDIUS_CATCH_CLASS_CONTROL: u8 = 8;
-/// The bytes the clone put on the wire, keyed by endpoint address.
+/// The bytes the clone put on the wire, keyed by endpoint number, direction IN.
 pub const MEDIUS_CATCH_CLASS_EMIT: u8 = 9;
 /// Bus lifecycle: reset, suspend, configuration and interface changes, attach and detach.
 pub const MEDIUS_CATCH_CLASS_BUS: u8 = 10;
@@ -748,7 +748,7 @@ pub struct MediusRewriteRule {
     /// validate it before anything reads it as one; C++ renders the enum as `enum : uint8_t`, so
     /// assigning this to a `MediusRewriteClass` there needs a cast.
     pub class: u8,
-    /// The address within the class: an interface number, endpoint address, or endpoint number.
+    /// The address within the class: an interface number or an endpoint number.
     pub id: u16,
     /// A `MEDIUS_DIRECTION_*` value (`REWRITE` takes `BOTH`/`POSITIVE`/`NEGATIVE`). A byte rather than
     /// `MediusDirection`, so the boundary can validate it; C++ needs a cast to assign it to one.

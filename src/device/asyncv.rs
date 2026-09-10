@@ -543,10 +543,11 @@ impl AsyncDevice {
         }
     }
 
-    /// `RAW`: put raw bytes on a cloned endpoint. See [`Device::raw`].
-    pub async fn raw(&self, ep: u8, bytes: &[u8]) -> Result<()> {
+    /// `RAW`: put raw bytes on a cloned endpoint number in a direction. See [`Device::raw`].
+    pub async fn raw(&self, ep: u8, direction: Direction, bytes: &[u8]) -> Result<()> {
+        crate::device::raw::validate_raw_direction(direction)?;
         self.require_imperfect().await?;
-        self.dev().raw_frame(ep, bytes)
+        self.dev().raw_frame(ep, direction, bytes)
     }
 
     /// `TRANSFER`: run one control transfer against the device. See [`Device::transfer`].

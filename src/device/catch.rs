@@ -168,7 +168,7 @@ impl Device {
     /// # fn f(dev: &Device) -> medius::Result<()> {
     /// let events = dev.catch_events([
     ///     CatchFilter::everything().with_capture(Capture::First(16)),
-    ///     CatchFilter::traffic(TrafficClass::VendorBulk, 0x83),
+    ///     CatchFilter::traffic(TrafficClass::VendorBulk, 3),
     /// ])?;
     /// # Ok(()) }
     /// ```

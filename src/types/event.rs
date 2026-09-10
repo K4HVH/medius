@@ -153,7 +153,7 @@ pub struct TrafficEvent {
     pub clock: ClockDomain,
     /// What this event is.
     pub class: CatchClass,
-    /// Endpoint address, interface number, or endpoint number, per the class.
+    /// Endpoint number or interface number, per the class.
     pub id: u16,
     /// [`Direction::IN`] is device to PC, [`Direction::OUT`] is PC to device.
     pub direction: Direction,

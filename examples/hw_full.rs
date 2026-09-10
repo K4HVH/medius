@@ -1870,10 +1870,10 @@ mod linux {
             );
 
             // RAW: a null report on the clone's interrupt-IN endpoint, then the opt-in gate.
-            let raw_on = dev.raw(0x81, &[0, 0, 0, 0]).is_ok();
+            let raw_on = dev.raw(1, Direction::IN, &[0, 0, 0, 0]).is_ok();
             let _ = dev.allow_imperfect_clones(false);
             let raw_gated = matches!(
-                dev.raw(0x81, &[0, 0, 0, 0]),
+                dev.raw(1, Direction::IN, &[0, 0, 0, 0]),
                 Err(medius::Error::ImperfectRequired)
             );
             let _ = dev.allow_imperfect_clones(true);
@@ -1884,12 +1884,7 @@ mod linux {
             );
 
             // REWRITE: a no-op PASS rule on the emit wire; read it back, then clear.
-            let rule = RewriteRule::new(
-                RewriteClass::Emit,
-                0x81,
-                Direction::Both,
-                RewriteAction::Pass,
-            );
+            let rule = RewriteRule::new(RewriteClass::Emit, 1, Direction::IN, RewriteAction::Pass);
             let set_ok = dev.set_rewrite(&rule).is_ok();
             let q = dev.query_rewrite();
             let present =

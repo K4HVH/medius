@@ -100,6 +100,12 @@ pub enum Error {
     },
 
     #[error(
+        "a raw injection puts bytes on one cloned endpoint flow, so it needs Direction::IN or \
+         Direction::OUT; {direction:?} names neither"
+    )]
+    RawDirection { direction: crate::types::Direction },
+
+    #[error(
         "id 0x{id:04X} is the blanket sentinel on the wire, so an exact {class:?} subscription to it \
          would address the whole class instead"
     )]

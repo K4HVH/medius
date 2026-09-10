@@ -8,11 +8,11 @@ use crate::types::{Direction, RewriteAction, RewriteClass, RewriteRule};
 
 #[test]
 fn rewrite_payload_bytes() {
-    // Emit(9), ep 0x81, Both, state add, Replace, off 0, match [01,00] / mask [FF,00], payload [AA,BB].
+    // Emit(9), endpoint 1 IN, state add, Replace, off 0, match [01,00] / mask [FF,00], payload [AA,BB].
     let p = rewrite_payload(
         9,
-        0x0081,
-        0,
+        0x0001,
+        1,
         1,
         3,
         0,
@@ -23,7 +23,7 @@ fn rewrite_payload_bytes() {
     assert_eq!(
         p,
         vec![
-            0x09, 0x81, 0x00, 0x00, 0x01, 0x03, 0x00, 0x00, 0x02, 0x01, 0x00, 0xFF, 0x00, 0xAA,
+            0x09, 0x01, 0x00, 0x01, 0x01, 0x03, 0x00, 0x00, 0x02, 0x01, 0x00, 0xFF, 0x00, 0xAA,
             0xBB
         ]
     );
@@ -68,9 +68,9 @@ fn rewrite_action_admissibility_matches_firmware() {
 
 #[test]
 fn resp_rewrite_decode() {
-    // [12][flags 0][gen 5][n 1] then one entry: Emit ep 0x81 Both Replace mlen 2 off 0 plen 2 hits 7.
+    // [12][flags 0][gen 5][n 1] then one entry: Emit ep 1 IN Replace mlen 2 off 0 plen 2 hits 7.
     let p = [
-        12, 0, 5, 1, 0x09, 0x81, 0x00, 0x00, 0x03, 0x02, 0x00, 0x00, 0x02, 0x00, 0x07, 0x00,
+        12, 0, 5, 1, 0x09, 0x01, 0x00, 0x01, 0x03, 0x02, 0x00, 0x00, 0x02, 0x00, 0x07, 0x00,
     ];
     let Some(Resp::Rewrite(t)) = parse_resp(&p) else {
         panic!("not a RESP(REWRITE)");
@@ -80,8 +80,8 @@ fn resp_rewrite_decode() {
     assert_eq!(t.entries.len(), 1);
     let e = t.entries[0];
     assert_eq!(e.class, RewriteClass::Emit);
-    assert_eq!(e.id, 0x81);
-    assert_eq!(e.direction, Direction::Both);
+    assert_eq!(e.id, 1);
+    assert_eq!(e.direction, Direction::IN);
     assert_eq!(e.action, RewriteAction::Replace);
     assert_eq!((e.match_len, e.offset, e.payload_len, e.hits), (2, 0, 2, 7));
 }
@@ -104,7 +104,7 @@ fn resp_rewrite_high_bytes_decode() {
     // transpose of offset/payload_len, fails here where every prior test kept those bytes zero.
     let p = [
         12, 0x00, 0x00, 1, // what, flags, gen, n
-        0x09, 0x81, 0x00, 0x00, 0x03, 0x04, 0x02, 0x01, 0x03, 0x00, 0xFF, 0xFF,
+        0x09, 0x01, 0x00, 0x01, 0x03, 0x04, 0x02, 0x01, 0x03, 0x00, 0xFF, 0xFF,
     ];
     let Some(Resp::Rewrite(t)) = parse_resp(&p) else {
         panic!("not a RESP(REWRITE)");
@@ -112,8 +112,8 @@ fn resp_rewrite_high_bytes_decode() {
     assert_eq!(t.entries.len(), 1);
     let e = t.entries[0];
     assert_eq!(e.class, RewriteClass::Emit);
-    assert_eq!(e.id, 0x81);
-    assert_eq!(e.direction, Direction::Both);
+    assert_eq!(e.id, 1);
+    assert_eq!(e.direction, Direction::IN);
     assert_eq!(e.action, RewriteAction::Replace);
     assert_eq!(e.match_len, 4);
     assert_eq!(e.offset, 258);
@@ -125,13 +125,13 @@ fn resp_rewrite_high_bytes_decode() {
 fn resp_rewrite_entry_replays_as_a_set() {
     // [13][index 0] then the rule in the REWRITE command shape (state hardcoded 1).
     let p = [
-        13, 0, 0x09, 0x81, 0x00, 0x00, 0x01, 0x03, 0x00, 0x00, 0x02, 0x01, 0x00, 0xFF, 0x00, 0xAA,
+        13, 0, 0x09, 0x01, 0x00, 0x01, 0x01, 0x03, 0x00, 0x00, 0x02, 0x01, 0x00, 0xFF, 0x00, 0xAA,
         0xBB,
     ];
     let rule = rewrite_entry_from_payload(&p).expect("decodes");
     assert_eq!(rule.class, RewriteClass::Emit);
-    assert_eq!(rule.id, 0x81);
-    assert_eq!(rule.direction, Direction::Both);
+    assert_eq!(rule.id, 1);
+    assert_eq!(rule.direction, Direction::IN);
     assert_eq!(rule.action, RewriteAction::Replace);
     assert_eq!(rule.offset, 0);
     assert_eq!(rule.match_bytes, vec![0x01, 0x00]);
@@ -220,12 +220,7 @@ mod mock_roundtrip {
     #[test]
     fn set_rewrite_requires_the_opt_in() {
         let device = Device::with_mock(MockBox::new()); // opt-in off by default
-        let rule = RewriteRule::new(
-            RewriteClass::Emit,
-            0x81,
-            Direction::Both,
-            RewriteAction::Drop,
-        );
+        let rule = RewriteRule::new(RewriteClass::Emit, 1, Direction::IN, RewriteAction::Drop);
         assert!(matches!(
             device.set_rewrite(&rule),
             Err(Error::ImperfectRequired)
@@ -236,12 +231,7 @@ mod mock_roundtrip {
     fn set_query_and_clear_roundtrip() {
         let mock = allowed_mock();
         let device = Device::with_mock(mock.clone());
-        let rule = RewriteRule::new(
-            RewriteClass::Emit,
-            0x81,
-            Direction::Both,
-            RewriteAction::Drop,
-        );
+        let rule = RewriteRule::new(RewriteClass::Emit, 1, Direction::IN, RewriteAction::Drop);
         device.set_rewrite(&rule).unwrap();
 
         let table = device.query_rewrite().unwrap();
@@ -262,13 +252,8 @@ mod mock_roundtrip {
     #[test]
     fn idempotent_reset_does_not_bump_gen() {
         let device = Device::with_mock(allowed_mock());
-        let rule = RewriteRule::new(
-            RewriteClass::Emit,
-            0x81,
-            Direction::Both,
-            RewriteAction::Replace,
-        )
-        .with_payload(vec![0xAA, 0xBB]);
+        let rule = RewriteRule::new(RewriteClass::Emit, 1, Direction::IN, RewriteAction::Replace)
+            .with_payload(vec![0xAA, 0xBB]);
         device.set_rewrite(&rule).unwrap();
         device.set_rewrite(&rule).unwrap();
         assert_eq!(device.query_rewrite().unwrap().generation, 1);
@@ -277,12 +262,7 @@ mod mock_roundtrip {
     #[test]
     fn remove_rewrite_drops_one_rule() {
         let device = Device::with_mock(allowed_mock());
-        let a = RewriteRule::new(
-            RewriteClass::Emit,
-            0x81,
-            Direction::Both,
-            RewriteAction::Drop,
-        );
+        let a = RewriteRule::new(RewriteClass::Emit, 1, Direction::IN, RewriteAction::Drop);
         let b = RewriteRule::new(RewriteClass::HidIn, 0, Direction::Both, RewriteAction::Drop);
         device.set_rewrite(&a).unwrap();
         device.set_rewrite(&b).unwrap();
@@ -317,12 +297,7 @@ mod mock_roundtrip {
     fn bad_mask_length_is_rejected_before_the_wire() {
         let mock = allowed_mock();
         let device = Device::with_mock(mock.clone());
-        let mut rule = RewriteRule::new(
-            RewriteClass::Emit,
-            0x81,
-            Direction::Both,
-            RewriteAction::Patch,
-        );
+        let mut rule = RewriteRule::new(RewriteClass::Emit, 1, Direction::IN, RewriteAction::Patch);
         rule.match_bytes = vec![0x00, 0x00];
         rule.mask = vec![0xFF]; // shorter than match
         assert!(matches!(
@@ -335,12 +310,7 @@ mod mock_roundtrip {
     #[test]
     fn control_only_action_on_report_class_is_rejected() {
         let device = Device::with_mock(allowed_mock());
-        let rule = RewriteRule::new(
-            RewriteClass::Emit,
-            0x81,
-            Direction::Both,
-            RewriteAction::Stall,
-        );
+        let rule = RewriteRule::new(RewriteClass::Emit, 1, Direction::IN, RewriteAction::Stall);
         assert!(matches!(
             device.set_rewrite(&rule),
             Err(Error::RewriteActionClass { .. })
@@ -350,12 +320,7 @@ mod mock_roundtrip {
     #[test]
     fn relative_direction_is_rejected() {
         let device = Device::with_mock(allowed_mock());
-        let rule = RewriteRule::new(
-            RewriteClass::Emit,
-            0x81,
-            Direction::With,
-            RewriteAction::Drop,
-        );
+        let rule = RewriteRule::new(RewriteClass::Emit, 1, Direction::With, RewriteAction::Drop);
         assert!(matches!(
             device.set_rewrite(&rule),
             Err(Error::RelativeDirection { .. })
@@ -371,12 +336,7 @@ mod mock_roundtrip {
             clone_imperfect: true,
         });
         let device = Device::with_mock(mock);
-        let rule = RewriteRule::new(
-            RewriteClass::Emit,
-            0x81,
-            Direction::Both,
-            RewriteAction::Drop,
-        );
+        let rule = RewriteRule::new(RewriteClass::Emit, 1, Direction::IN, RewriteAction::Drop);
         assert!(device.set_rewrite(&rule).is_ok());
     }
 
@@ -385,12 +345,7 @@ mod mock_roundtrip {
         // The box clears its rewrite table when the opt-in goes off (firmware safety_clear); the crate
         // drops the held copy to match, or the keepalive re-asserts the rules when the opt-in returns.
         let device = Device::with_mock(allowed_mock());
-        let rule = RewriteRule::new(
-            RewriteClass::Emit,
-            0x81,
-            Direction::Both,
-            RewriteAction::Drop,
-        );
+        let rule = RewriteRule::new(RewriteClass::Emit, 1, Direction::IN, RewriteAction::Drop);
         device.set_rewrite(&rule).unwrap();
         assert!(!device.link.desired().lock().held_rewrites().is_empty());
         assert!(device.query_health().unwrap().rewrite_on);
@@ -413,13 +368,8 @@ mod mock_roundtrip {
         let device = Device::with_mock(allowed_mock());
         // A Replace on a report surface (Emit) with a 100-byte payload: the box holds 64, so it
         // refuses; the crate rejects it before the wire rather than hold a rule the box drops.
-        let big = RewriteRule::new(
-            RewriteClass::Emit,
-            0x81,
-            Direction::Both,
-            RewriteAction::Replace,
-        )
-        .with_payload(vec![0u8; 100]);
+        let big = RewriteRule::new(RewriteClass::Emit, 1, Direction::IN, RewriteAction::Replace)
+            .with_payload(vec![0u8; 100]);
         assert!(matches!(
             device.set_rewrite(&big),
             Err(Error::RewritePayloadTooLarge { .. })
@@ -466,20 +416,10 @@ mod mock_roundtrip {
         // Two rules with the same (class, id, direction) but different match bytes are two table rows,
         // not an overwrite: match and mask are part of the key.
         let device = Device::with_mock(allowed_mock());
-        let a = RewriteRule::new(
-            RewriteClass::Emit,
-            0x81,
-            Direction::Both,
-            RewriteAction::Drop,
-        )
-        .matching(vec![0x01], vec![0xFF]);
-        let b = RewriteRule::new(
-            RewriteClass::Emit,
-            0x81,
-            Direction::Both,
-            RewriteAction::Drop,
-        )
-        .matching(vec![0x02], vec![0xFF]);
+        let a = RewriteRule::new(RewriteClass::Emit, 1, Direction::IN, RewriteAction::Drop)
+            .matching(vec![0x01], vec![0xFF]);
+        let b = RewriteRule::new(RewriteClass::Emit, 1, Direction::IN, RewriteAction::Drop)
+            .matching(vec![0x02], vec![0xFF]);
         device.set_rewrite(&a).unwrap();
         device.set_rewrite(&b).unwrap();
         assert_eq!(
@@ -497,8 +437,8 @@ mod mock_roundtrip {
         device
             .set_rewrite(&RewriteRule::new(
                 RewriteClass::Emit,
-                0x81,
-                Direction::Both,
+                1,
+                Direction::IN,
                 RewriteAction::Drop,
             ))
             .unwrap();
@@ -513,8 +453,8 @@ mod mock_roundtrip {
         device
             .set_rewrite(&RewriteRule::new(
                 RewriteClass::HidOut,
-                0x02,
-                Direction::Both,
+                2,
+                Direction::OUT,
                 RewriteAction::Drop,
             ))
             .unwrap();

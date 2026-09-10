@@ -917,7 +917,7 @@ class CatchFilter:
         CatchFilter.all_input()                       # buttons, keys, media, axes
 
         CatchFilter.traffic_class(TrafficClass.HID_IN)
-        CatchFilter.traffic(TrafficClass.VENDOR_BULK, 0x83).with_capture(16)
+        CatchFilter.traffic(TrafficClass.VENDOR_BULK, 3).with_capture(16)
         CatchFilter.everything().with_capture(16)
 
     The box resolves each event to its most specific matching entry: an exact `(class, id)` outranks

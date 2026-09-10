@@ -335,8 +335,8 @@ fn catch_filter_wildcards_round_trip_through_the_sentinels() {
     assert_eq!(class_only.class, MEDIUS_CATCH_CLASS_HID_IN);
     assert_eq!(class_only.id, MEDIUS_CATCH_ID_ANY);
 
-    let exact = medius_catch_filter_traffic(MEDIUS_CATCH_CLASS_VENDOR_INTERRUPT, 0x81);
-    assert_eq!(exact.id, 0x81);
+    let exact = medius_catch_filter_traffic(MEDIUS_CATCH_CLASS_VENDOR_INTERRUPT, 1);
+    assert_eq!(exact.id, 1);
 
     // A wildcard is `None` on the Rust side and the sentinel on the C side, and the pair has to come
     // back byte-identical or a re-sent subscription would address something else.
@@ -350,7 +350,7 @@ fn catch_filter_wildcards_round_trip_through_the_sentinels() {
     );
     assert_eq!(
         crate::convert::catch_filter_from_c(exact).unwrap(),
-        medius::CatchFilter::traffic(medius::TrafficClass::VendorInterrupt, 0x81)
+        medius::CatchFilter::traffic(medius::TrafficClass::VendorInterrupt, 1)
     );
     assert!(crate::convert::catch_filter_from_c(medius_catch_filter_traffic_class(99)).is_none());
     // The wildcard class with a real id addresses nothing: `id` means something different in every
@@ -401,7 +401,7 @@ fn the_input_filter_constructors_mirror_the_rust_ones() {
 
 #[test]
 fn the_filter_setters_narrow_without_moving_the_address() {
-    let f = medius_catch_filter_traffic(MEDIUS_CATCH_CLASS_VENDOR_BULK, 0x83);
+    let f = medius_catch_filter_traffic(MEDIUS_CATCH_CLASS_VENDOR_BULK, 3);
     let capped = medius_catch_filter_with_capture(f, 16);
     assert_eq!(capped.capture, 16);
     assert!(medius_catch_filter_same_address(f, capped));

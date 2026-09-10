@@ -573,14 +573,18 @@ unsafe fn opt_slice<'a>(ptr: *const u8, len: usize) -> Option<&'a [u8]> {
     }
 }
 
-/// `RAW` (§3.14): put `bytes[0..len]` verbatim on cloned endpoint `ep`, fire-and-forget. An IN
-/// endpoint (`ep & 0x80`) emits toward the game PC; an OUT endpoint relays to the real device. Gated
-/// on `medius_device_allow_imperfect_clones`: with the opt-in off this is
+/// `RAW` (§3.14): put `bytes[0..len]` verbatim on cloned endpoint number `ep_num` in `dir`,
+/// fire-and-forget. `ep_num` is the bare endpoint number (0 to 15); `dir` is a `MEDIUS_DIRECTION_*`
+/// value, and only `MEDIUS_DIRECTION_POSITIVE` (IN, toward the game PC) and `MEDIUS_DIRECTION_NEGATIVE`
+/// (OUT, to the real device) address one, so any other is `MEDIUS_STATUS_ERR_RAW_DIRECTION` (or
+/// `MEDIUS_STATUS_ERR_RELATIVE_DIRECTION` for the bearing-relative pair). Gated on
+/// `medius_device_allow_imperfect_clones`: with the opt-in off this is
 /// `MEDIUS_STATUS_ERR_IMPERFECT_REQUIRED` rather than a frame the box would drop.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_device_raw(
     dev: *mut MediusDevice,
-    ep: u8,
+    ep_num: u8,
+    dir: u8,
     bytes: *const u8,
     len: usize,
 ) -> MediusStatus {
@@ -588,10 +592,13 @@ pub unsafe extern "C" fn medius_device_raw(
         if dev.is_null() {
             return fail(MediusStatus::ErrInvalidArg, "null device handle");
         }
+        let Some(dir) = medius::Direction::from_u8(dir) else {
+            return fail(MediusStatus::ErrInvalidArg, "invalid direction");
+        };
         let Some(slice) = (unsafe { opt_slice(bytes, len) }) else {
             return fail(MediusStatus::ErrInvalidArg, "null bytes with len > 0");
         };
-        status_of(unsafe { &(*dev).inner }.raw(ep, slice))
+        status_of(unsafe { &(*dev).inner }.raw(ep_num, dir, slice))
     })
 }
 
