@@ -51,6 +51,18 @@ pub enum Error {
         class: crate::types::RewriteClass,
     },
 
+    #[error(
+        "a {action:?} rewrite payload of {len} bytes at offset {offset} exceeds the {cap}-byte head \
+         the box holds for a {class:?} rule"
+    )]
+    RewritePayloadTooLarge {
+        action: crate::types::RewriteAction,
+        class: crate::types::RewriteClass,
+        len: usize,
+        offset: usize,
+        cap: usize,
+    },
+
     #[error("{class:?} arrives decoded and carries no packet, so a capture on it does nothing")]
     CaptureNotApplicable { class: CatchClass },
 

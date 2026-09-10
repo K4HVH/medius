@@ -296,7 +296,8 @@ pub struct RewriteTable {
     pub table_full: bool,
     /// The table's generation counter (see the type docs).
     pub generation: u8,
-    /// One row per installed rule, most-specific-first as the box orders them.
+    /// One row per installed rule, in installation order (the order the box holds them). The
+    /// most-specific-first ordering is how the box *selects* a match, not how it lists the table here.
     pub entries: Vec<RewriteEntry>,
 }
 

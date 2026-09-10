@@ -66,12 +66,11 @@ struct State {
     rewrites: Vec<MockRewrite>,
     rewrite_gen: u8,
     rewrite_full: bool,
-    // The patch store the PATCH frames build, plus its apply state.
+    // The patch store the PATCH frames build, plus its apply state. `pending` and `full` are not held
+    // here: patches_resp_payload derives them from the store the way usbdev_pack_patches does.
     patches: Vec<MockPatch>,
     patch_applied: bool,
-    patch_pending: bool,
     patch_refused: bool,
-    patch_full: bool,
     // The canned answer to a TRANSFER (status, IN data). The box answers 0xFC when the opt-in is off.
     transfer_reply: (u8, Vec<u8>),
     recorded: Vec<DecodedFrame>,
@@ -164,9 +163,7 @@ impl Default for State {
             rewrite_full: false,
             patches: Vec::new(),
             patch_applied: false,
-            patch_pending: false,
             patch_refused: false,
-            patch_full: false,
             transfer_reply: (0x00, Vec::new()),
             recorded: Vec::new(),
             respond: true,
@@ -508,7 +505,6 @@ impl State {
             PATCH_APPLY => {
                 if self.imperfect.allowed {
                     self.patch_applied = true;
-                    self.patch_pending = false;
                     self.patch_refused = false;
                 }
                 return;
@@ -516,9 +512,7 @@ impl State {
             PATCH_CLEAR => {
                 self.patches.clear();
                 self.patch_applied = false;
-                self.patch_pending = false;
                 self.patch_refused = false;
-                self.patch_full = false;
                 return;
             }
             _ => {}
@@ -535,7 +529,6 @@ impl State {
         if bytes.is_empty() {
             if let Some(i) = pos {
                 self.patches.remove(i);
-                self.patch_pending = true;
             }
             return;
         }
@@ -551,8 +544,7 @@ impl State {
             }
             None => {
                 if self.patches.len() >= PATCH_MAX_ENTRIES {
-                    self.patch_full = true;
-                    return;
+                    return; // the box refuses a store past PATCH_MAX; full is derived from the count
                 }
                 self.patches.push(MockPatch {
                     section,
@@ -563,7 +555,6 @@ impl State {
                 });
             }
         }
-        self.patch_pending = true;
     }
 
     fn apply_option_frame(&mut self, p: &[u8]) {
@@ -571,7 +562,20 @@ impl State {
             return;
         }
         match (p.first().copied(), &p[1..]) {
-            (Some(OPT_IMPERFECT), [allow, ..]) => self.imperfect.allowed = *allow != 0,
+            (Some(OPT_IMPERFECT), [allow, ..]) => {
+                self.imperfect.allowed = *allow != 0;
+                if !self.imperfect.allowed {
+                    // Opt-off clears the rewrite table (usbdev_set_imperfect_allowed) so nothing in this
+                    // layer rewrites while the clone is faithful-only; gen stays monotonic across the clear.
+                    if !self.rewrites.is_empty() {
+                        self.rewrites.clear();
+                        self.rewrite_gen = self.rewrite_gen.wrapping_add(1);
+                    }
+                    self.rewrite_full = false;
+                    // The clone re-presents without the opt-in, so a stored set stops being shown.
+                    self.patch_applied = false;
+                }
+            }
             (Some(OPT_MOVE_RIDE), [lo, hi, ..]) => {
                 self.move_ride_ms = u16::from_le_bytes([*lo, *hi])
             }
@@ -951,17 +955,19 @@ fn rewrite_entry_resp_payload(st: &State, index: u8) -> Vec<u8> {
 
 // RESP(PATCHES): [14][flags][n] then n × [section][cfg][index][offset u16][len u16].
 fn patches_resp_payload(st: &State) -> Vec<u8> {
+    // pending and full are derived at pack time exactly as usbdev_pack_patches does, not held stickily:
+    // pending = (n && !applied), mutually exclusive with applied; full = (n >= PATCH_MAX).
     let mut flags = 0u8;
     if st.patch_applied {
         flags |= 0x01;
     }
-    if st.patch_pending {
+    if !st.patches.is_empty() && !st.patch_applied {
         flags |= 0x02;
     }
     if st.patch_refused {
         flags |= 0x04;
     }
-    if st.patch_full {
+    if st.patches.len() >= PATCH_MAX_ENTRIES {
         flags |= 0x08;
     }
     let mut p = vec![Q_PATCHES, flags, st.patches.len() as u8];
@@ -1234,11 +1240,16 @@ impl MockBox {
                     // TRANSFER_RESP [ep][status][IN data], SEQ echoes. The box answers 0xFC (refused)
                     // while the opt-in is off; otherwise the canned reply the test scripted.
                     let ep = payload.first().copied().unwrap_or(0);
-                    let (status, data) = if st.imperfect.allowed {
+                    let (status, mut data) = if st.imperfect.allowed {
                         st.transfer_reply.clone()
                     } else {
                         (0xFC, Vec::new())
                     };
+                    // The box sets in_len = 0 unless status == 0 (usbdev_transfer): a non-OK answer
+                    // carries no IN data, so drop any the test scripted alongside a failing status.
+                    if status != 0 {
+                        data.clear();
+                    }
                     let mut p = vec![ep, status];
                     p.extend_from_slice(&data);
                     break 'reply encode(FrameType::TransferResp, seq, &p).expect("resp fits");
