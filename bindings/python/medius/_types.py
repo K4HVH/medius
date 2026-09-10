@@ -30,7 +30,11 @@ from ._enums import (
     InputKind,
     LockTargetKind,
     LogLevel,
+    PatchSection,
+    RewriteAction,
+    RewriteClass,
     TrafficClass,
+    TransferStatus,
     Button,
     Key,
     MediaKey,
@@ -159,6 +163,12 @@ class Health:
     lock_on: bool
     catch_on: bool
     kbd_attached: bool
+    #: The rewrite-rule table (§3.14) is non-empty (v3.4.0).
+    rewrite_on: bool = False
+    #: A descriptor-patch set (§3.14) is applied to the clone (v3.4.0).
+    patch_on: bool = False
+    #: A field transform is active (reserved; the transforms feature owns this bit) (v3.4.0).
+    transform_on: bool = False
 
 
 @dataclass
@@ -333,6 +343,122 @@ class ImperfectStatus:
     allowed: bool
     over_capacity: bool
     clone_imperfect: bool
+
+
+@dataclass
+class Setup:
+    """A USB control-transfer setup packet (§9.3): the eight ``<BBHHH>`` little-endian bytes.
+
+    ``length`` is the data-stage length: bytes to read for an IN request, the length of the OUT data
+    passed to `Device.transfer` otherwise.
+    """
+
+    request_type: int
+    request: int
+    value: int
+    index: int
+    length: int
+
+
+@dataclass
+class TransferOutcome:
+    """The real device's answer to `Device.transfer`: its status and any IN data.
+
+    ``status`` is a `TransferStatus` for a value the ABI names, or the raw wire byte for one it does
+    not. A status other than `TransferStatus.OK` is a real protocol outcome, not a link error, and a
+    non-OK answer carries no data.
+    """
+
+    status: "TransferStatus | int"
+    data: bytes = b""
+
+    @property
+    def is_ok(self) -> bool:
+        return self.status == TransferStatus.OK
+
+
+@dataclass
+class RewriteRule:
+    """A rewrite rule (§3.14), keyed by ``(rewrite_class, id, direction, match_bytes, mask)``.
+
+    ``match_bytes`` and ``mask`` are the masked head compare and must be the same length (an empty
+    match matches every packet on the address); ``payload`` is the bytes an action that carries one
+    supplies; ``offset`` is where a ``PATCH``/``REPLY_PATCH`` writes.
+    """
+
+    rewrite_class: RewriteClass
+    id: int
+    direction: Direction
+    action: RewriteAction
+    offset: int = 0
+    match_bytes: bytes = b""
+    mask: bytes = b""
+    payload: bytes = b""
+
+
+@dataclass
+class RewriteEntry:
+    """One row of a decoded RESP(REWRITE) (§4.17): a rule's address, action and live counters, without
+    its match/mask/payload bytes."""
+
+    rewrite_class: RewriteClass
+    id: int
+    direction: Direction
+    action: RewriteAction
+    match_len: int
+    offset: int
+    payload_len: int
+    hits: int
+
+
+@dataclass
+class RewriteTable:
+    """Decoded RESP(REWRITE) (§4.17): the rewrite table's summary in installation order.
+
+    ``generation`` bumps only on a change that alters the table; the crate replays rules on reconnect,
+    so the field is exposed for a host running its own reconcile.
+    """
+
+    table_full: bool = False
+    generation: int = 0
+    entries: List[RewriteEntry] = field(default_factory=list)
+
+
+@dataclass
+class Patch:
+    """A descriptor patch (§3.14), keyed by ``(section, cfg, index, offset)``.
+
+    ``bytes`` overwrites the descriptor from ``offset``; an empty ``bytes`` removes the patch at that
+    key. A patch never changes a descriptor's byte count.
+    """
+
+    section: PatchSection
+    cfg: int
+    index: int
+    offset: int
+    bytes: bytes = b""
+
+
+@dataclass
+class PatchEntry:
+    """One row of a decoded RESP(PATCHES) (§4.17): a stored patch's key and length, without its bytes."""
+
+    section: PatchSection
+    cfg: int
+    index: int
+    offset: int
+    len: int
+
+
+@dataclass
+class PatchSet:
+    """Decoded RESP(PATCHES) (§4.17): the stored patch set plus its apply state."""
+
+    applied: bool = False
+    pending: bool = False
+    refused: bool = False
+    table_full: bool = False
+    entries: List[PatchEntry] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -934,6 +1060,9 @@ def health_from_c(c) -> Health:
         bool(c.lock_on),
         bool(c.catch_on),
         bool(c.kbd_attached),
+        bool(c.rewrite_on),
+        bool(c.patch_on),
+        bool(c.transform_on),
     )
 
 
@@ -947,6 +1076,9 @@ def health_to_c(h) -> "_native.MediusHealth":
         int(h.lock_on),
         int(h.catch_on),
         int(h.kbd_attached),
+        int(h.rewrite_on),
+        int(h.patch_on),
+        int(h.transform_on),
     )
 
 
@@ -1115,6 +1247,119 @@ def imperfect_from_c(c) -> ImperfectStatus:
 def imperfect_to_c(i) -> "_native.MediusImperfectStatus":
     return _native.MediusImperfectStatus(
         int(i.allowed), int(i.over_capacity), int(i.clone_imperfect)
+    )
+
+
+# The developer layer (§3.14). Over-capacity byte fields raise here rather than reach ctypes, which
+# would truncate silently; the crate-level refusals (mask length, action/class, payload size, relative
+# direction) are values that DO marshal and come back as their own status.
+def _fixed_bytes(dst, src: bytes, cap: int, what: str) -> int:
+    if len(src) > cap:
+        raise ValueError(f"{what} is {len(src)} bytes, over the {cap}-byte ABI limit")
+    for i, byte in enumerate(src):
+        dst[i] = byte
+    return len(src)
+
+
+def setup_to_c(s) -> "_native.MediusSetup":
+    return _native.MediusSetup(
+        _u8(s.request_type, "request_type"),
+        _u8(s.request, "request"),
+        _u16(s.value, "value"),
+        _u16(s.index, "index"),
+        _u16(s.length, "length"),
+    )
+
+
+def transfer_outcome_from_c(c) -> TransferOutcome:
+    n = min(int(c.len), _native.MEDIUS_MAX_DEV_PAYLOAD)
+    try:
+        status = TransferStatus(c.status)
+    except ValueError:
+        status = int(c.status)
+    return TransferOutcome(status, bytes(c.data[:n]))
+
+
+def rewrite_rule_to_c(r) -> "_native.MediusRewriteRule":
+    c = _native.MediusRewriteRule()
+    c.class_ = int(_enum(r.rewrite_class, RewriteClass, "rewrite_class"))
+    c.id = _u16(r.id, "id")
+    c.direction = int(_enum(r.direction, Direction, "direction"))
+    c.action = int(_enum(r.action, RewriteAction, "action"))
+    c.offset = _u16(r.offset, "offset")
+    c.match_len = _fixed_bytes(
+        c.match_bytes, bytes(r.match_bytes), _native.MEDIUS_MAX_REWRITE_MATCH, "match_bytes"
+    )
+    c.mask_len = _fixed_bytes(c.mask, bytes(r.mask), _native.MEDIUS_MAX_REWRITE_MATCH, "mask")
+    c.payload_len = _fixed_bytes(
+        c.payload, bytes(r.payload), _native.MEDIUS_MAX_DEV_PAYLOAD, "payload"
+    )
+    return c
+
+
+def rewrite_rule_from_c(c) -> RewriteRule:
+    ml = min(int(c.match_len), _native.MEDIUS_MAX_REWRITE_MATCH)
+    msl = min(int(c.mask_len), _native.MEDIUS_MAX_REWRITE_MATCH)
+    pl = min(int(c.payload_len), _native.MEDIUS_MAX_DEV_PAYLOAD)
+    return RewriteRule(
+        RewriteClass(c.class_),
+        int(c.id),
+        Direction(c.direction),
+        RewriteAction(c.action),
+        int(c.offset),
+        bytes(c.match_bytes[:ml]),
+        bytes(c.mask[:msl]),
+        bytes(c.payload[:pl]),
+    )
+
+
+def rewrite_entry_from_c(c) -> RewriteEntry:
+    return RewriteEntry(
+        RewriteClass(c.class_),
+        int(c.id),
+        Direction(c.direction),
+        RewriteAction(c.action),
+        int(c.match_len),
+        int(c.offset),
+        int(c.payload_len),
+        int(c.hits),
+    )
+
+
+def rewrite_table_from_c(c) -> RewriteTable:
+    n = min(int(c.n), _native.MEDIUS_MAX_REWRITE_ENTRIES)
+    entries = [rewrite_entry_from_c(c.entries[i]) for i in range(n)]
+    return RewriteTable(bool(c.table_full), int(c.generation), entries)
+
+
+def patch_to_c(p) -> "_native.MediusPatch":
+    c = _native.MediusPatch()
+    c.section = int(_enum(p.section, PatchSection, "section"))
+    c.cfg = _u8(p.cfg, "cfg")
+    c.index = _u8(p.index, "index")
+    c.offset = _u16(p.offset, "offset")
+    c.len = _fixed_bytes(c.bytes, bytes(p.bytes), _native.MEDIUS_MAX_DEV_PAYLOAD, "bytes")
+    return c
+
+
+def patch_from_c(c) -> Patch:
+    n = min(int(c.len), _native.MEDIUS_MAX_DEV_PAYLOAD)
+    return Patch(
+        PatchSection(c.section), int(c.cfg), int(c.index), int(c.offset), bytes(c.bytes[:n])
+    )
+
+
+def patch_entry_from_c(c) -> PatchEntry:
+    return PatchEntry(
+        PatchSection(c.section), int(c.cfg), int(c.index), int(c.offset), int(c.len)
+    )
+
+
+def patch_set_from_c(c) -> PatchSet:
+    n = min(int(c.n), _native.MEDIUS_MAX_PATCH_ENTRIES)
+    entries = [patch_entry_from_c(c.entries[i]) for i in range(n)]
+    return PatchSet(
+        bool(c.applied), bool(c.pending), bool(c.refused), bool(c.table_full), entries
     )
 
 

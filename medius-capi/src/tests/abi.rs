@@ -2127,3 +2127,522 @@ fn a_bad_update_target_is_refused_rather_than_sent() {
         "a rejected target must not reach the wire"
     );
 }
+
+// --- Developer layer (§3.14): raw injection, control transfers, rewrite rules, descriptor patches ---
+
+fn allowed_status() -> MediusImperfectStatus {
+    MediusImperfectStatus {
+        allowed: 1,
+        over_capacity: 0,
+        clone_imperfect: 0,
+    }
+}
+
+fn native_frames_imperfect(f: impl FnOnce(&Device)) -> Vec<DecodedFrame> {
+    let mock = MockBox::new().with_imperfect(true);
+    let dev = Device::with_mock(mock.clone());
+    f(&dev);
+    mock.recorded_frames()
+}
+
+unsafe fn capi_frames_imperfect(f: impl FnOnce(*mut MediusDevice)) -> Vec<DecodedFrame> {
+    let mock = medius_mock_new();
+    unsafe { medius_mock_set_imperfect_status(mock, allowed_status()) };
+    let mut dev: *mut MediusDevice = ptr::null_mut();
+    assert_eq!(
+        unsafe { medius_device_with_mock(mock, &mut dev) },
+        MediusStatus::Ok
+    );
+    f(dev);
+    let frames = unsafe { (*mock).inner.recorded_frames() };
+    unsafe {
+        medius_device_free(dev);
+        medius_mock_free(mock);
+    }
+    frames
+}
+
+fn assert_parity_imperfect(native: impl FnOnce(&Device), capi: impl FnOnce(*mut MediusDevice)) {
+    let want = native_frames_imperfect(native);
+    let got = unsafe { capi_frames_imperfect(capi) };
+    assert_eq!(
+        want, got,
+        "C ABI developer-layer frames differ from the native crate"
+    );
+}
+
+// Eight args because a rewrite rule carries eight wire fields; a struct-of-args here would only move
+// the same list one line up.
+#[allow(clippy::too_many_arguments)]
+fn c_rewrite(
+    class: u8,
+    id: u16,
+    direction: u8,
+    action: u8,
+    offset: u16,
+    match_bytes: &[u8],
+    mask: &[u8],
+    payload: &[u8],
+) -> MediusRewriteRule {
+    let mut r: MediusRewriteRule = unsafe { std::mem::zeroed() };
+    r.class = class;
+    r.id = id;
+    r.direction = direction;
+    r.action = action;
+    r.offset = offset;
+    r.match_len = match_bytes.len() as u16;
+    r.mask_len = mask.len() as u16;
+    r.payload_len = payload.len() as u16;
+    r.match_bytes[..match_bytes.len()].copy_from_slice(match_bytes);
+    r.mask[..mask.len()].copy_from_slice(mask);
+    r.payload[..payload.len()].copy_from_slice(payload);
+    r
+}
+
+fn c_patch(section: u8, cfg: u8, index: u8, offset: u16, bytes: &[u8]) -> MediusPatch {
+    let mut p: MediusPatch = unsafe { std::mem::zeroed() };
+    p.section = section;
+    p.cfg = cfg;
+    p.index = index;
+    p.offset = offset;
+    p.len = bytes.len() as u16;
+    p.bytes[..bytes.len()].copy_from_slice(bytes);
+    p
+}
+
+#[test]
+fn dev_layer_commands_reach_the_wire_like_the_crate() {
+    use medius::{Direction, Patch, PatchSection, RewriteAction, RewriteClass, RewriteRule};
+    let big = vec![0xABu8; 40];
+    let cbig = big.clone();
+    assert_parity_imperfect(
+        move |d| {
+            d.raw(0x81, &[0x00, 0x01, 0x02, 0x03]).unwrap();
+            d.set_rewrite(
+                &RewriteRule::new(
+                    RewriteClass::Emit,
+                    0x81,
+                    Direction::Both,
+                    RewriteAction::Drop,
+                )
+                .matching(vec![0x01], vec![0xFF]),
+            )
+            .unwrap();
+            d.set_rewrite(
+                &RewriteRule::new(
+                    RewriteClass::Control,
+                    0,
+                    Direction::Both,
+                    RewriteAction::ReplyPatch,
+                )
+                .at_offset(4)
+                .matching(vec![0x80, 0x06], vec![0xFF, 0xFF])
+                .with_payload(big.clone()),
+            )
+            .unwrap();
+            d.remove_rewrite(
+                &RewriteRule::new(
+                    RewriteClass::Emit,
+                    0x81,
+                    Direction::Both,
+                    RewriteAction::Drop,
+                )
+                .matching(vec![0x01], vec![0xFF]),
+            )
+            .unwrap();
+            d.clear_rewrite().unwrap();
+            d.set_patch(&Patch::new(PatchSection::Device, 8, [0x34, 0x12]))
+                .unwrap();
+            d.apply_patch().unwrap();
+            d.clear_patch().unwrap();
+        },
+        move |dev| unsafe {
+            let bytes = [0x00u8, 0x01, 0x02, 0x03];
+            assert_eq!(
+                medius_device_raw(dev, 0x81, bytes.as_ptr(), bytes.len()),
+                MediusStatus::Ok
+            );
+            let drop = c_rewrite(
+                MediusRewriteClass::Emit as u8,
+                0x81,
+                MediusDirection::Both as u8,
+                MediusRewriteAction::Drop as u8,
+                0,
+                &[0x01],
+                &[0xFF],
+                &[],
+            );
+            assert_eq!(medius_device_set_rewrite(dev, &drop), MediusStatus::Ok);
+            let reply = c_rewrite(
+                MediusRewriteClass::Control as u8,
+                0,
+                MediusDirection::Both as u8,
+                MediusRewriteAction::ReplyPatch as u8,
+                4,
+                &[0x80, 0x06],
+                &[0xFF, 0xFF],
+                &cbig,
+            );
+            assert_eq!(medius_device_set_rewrite(dev, &reply), MediusStatus::Ok);
+            assert_eq!(medius_device_remove_rewrite(dev, &drop), MediusStatus::Ok);
+            assert_eq!(medius_device_clear_rewrite(dev), MediusStatus::Ok);
+            let patch = c_patch(MediusPatchSection::Device as u8, 0, 0, 8, &[0x34, 0x12]);
+            assert_eq!(medius_device_set_patch(dev, &patch), MediusStatus::Ok);
+            assert_eq!(medius_device_apply_patch(dev), MediusStatus::Ok);
+            assert_eq!(medius_device_clear_patch(dev), MediusStatus::Ok);
+        },
+    );
+}
+
+#[test]
+fn transfer_roundtrips_the_devices_answer() {
+    let want = {
+        let mock = MockBox::new()
+            .with_imperfect(true)
+            .with_transfer_reply(0x00, &[0x12, 0x01, 0x10, 0x02]);
+        let dev = Device::with_mock(mock);
+        dev.transfer(0, medius::Setup::new(0x80, 0x06, 0x0100, 0x0000, 18), &[])
+            .unwrap()
+    };
+
+    let mock = medius_mock_new();
+    unsafe {
+        medius_mock_set_imperfect_status(mock, allowed_status());
+        let data = [0x12u8, 0x01, 0x10, 0x02];
+        medius_mock_set_transfer_reply(mock, 0x00, data.as_ptr(), data.len());
+    }
+    let mut dev: *mut MediusDevice = ptr::null_mut();
+    assert_eq!(
+        unsafe { medius_device_with_mock(mock, &mut dev) },
+        MediusStatus::Ok
+    );
+    let setup = MediusSetup {
+        request_type: 0x80,
+        request: 0x06,
+        value: 0x0100,
+        index: 0x0000,
+        length: 18,
+    };
+    let mut out: MediusTransferOutcome = unsafe { std::mem::zeroed() };
+    assert_eq!(
+        unsafe { medius_device_transfer(dev, 0, setup, ptr::null(), 0, &mut out) },
+        MediusStatus::Ok
+    );
+    assert_eq!(out.status, MediusTransferStatus::Ok as u8);
+    assert_eq!(out.status, want.status.as_u8());
+    assert_eq!(&out.data[..out.len as usize], want.data());
+    unsafe {
+        medius_device_free(dev);
+        medius_mock_free(mock);
+    }
+}
+
+#[test]
+fn a_refused_transfer_carries_no_data() {
+    // With the opt-in off the box answers REFUSED and no data, whatever a caller passes.
+    let mock = medius_mock_new();
+    let mut dev: *mut MediusDevice = ptr::null_mut();
+    assert_eq!(
+        unsafe { medius_device_with_mock(mock, &mut dev) },
+        MediusStatus::Ok
+    );
+    let setup = MediusSetup {
+        request_type: 0x80,
+        request: 0x06,
+        value: 0x0100,
+        index: 0,
+        length: 18,
+    };
+    let mut out: MediusTransferOutcome = unsafe { std::mem::zeroed() };
+    assert_eq!(
+        unsafe { medius_device_transfer(dev, 0, setup, ptr::null(), 0, &mut out) },
+        MediusStatus::Ok
+    );
+    assert_eq!(out.status, MediusTransferStatus::Refused as u8);
+    assert_eq!(out.len, 0);
+    unsafe {
+        medius_device_free(dev);
+        medius_mock_free(mock);
+    }
+}
+
+#[test]
+fn a_rewrite_survives_the_query_roundtrip() {
+    use medius::{Direction, RewriteAction, RewriteClass, RewriteRule};
+    let payload = vec![0xABu8; 40];
+    let (want_summary, want_entry) = {
+        let mock = MockBox::new().with_imperfect(true);
+        let dev = Device::with_mock(mock);
+        let rule = RewriteRule::new(
+            RewriteClass::Control,
+            0,
+            Direction::Both,
+            RewriteAction::ReplyPatch,
+        )
+        .at_offset(258)
+        .matching(vec![0x80, 0x06], vec![0xFF, 0xFF])
+        .with_payload(payload.clone());
+        dev.set_rewrite(&rule).unwrap();
+        (
+            dev.query_rewrite().unwrap(),
+            dev.query_rewrite_entry(0).unwrap(),
+        )
+    };
+
+    let mock = medius_mock_new();
+    unsafe { medius_mock_set_imperfect_status(mock, allowed_status()) };
+    let mut dev: *mut MediusDevice = ptr::null_mut();
+    assert_eq!(
+        unsafe { medius_device_with_mock(mock, &mut dev) },
+        MediusStatus::Ok
+    );
+    let rule = c_rewrite(
+        MediusRewriteClass::Control as u8,
+        0,
+        MediusDirection::Both as u8,
+        MediusRewriteAction::ReplyPatch as u8,
+        258,
+        &[0x80, 0x06],
+        &[0xFF, 0xFF],
+        &payload,
+    );
+    assert_eq!(
+        unsafe { medius_device_set_rewrite(dev, &rule) },
+        MediusStatus::Ok
+    );
+
+    let mut table: MediusRewriteTable = unsafe { std::mem::zeroed() };
+    assert_eq!(
+        unsafe { medius_device_query_rewrite(dev, &mut table) },
+        MediusStatus::Ok
+    );
+    assert_eq!(table.n as usize, want_summary.entries.len());
+    assert_eq!(table.n, 1);
+    assert_eq!(table.entries[0].class, MediusRewriteClass::Control as u8);
+    assert_eq!(table.entries[0].offset, want_summary.entries[0].offset);
+    assert_eq!(table.entries[0].offset, 258);
+    assert_eq!(
+        table.entries[0].payload_len,
+        want_summary.entries[0].payload_len
+    );
+
+    let mut read: MediusRewriteRule = unsafe { std::mem::zeroed() };
+    assert_eq!(
+        unsafe { medius_device_query_rewrite_entry(dev, 0, &mut read) },
+        MediusStatus::Ok
+    );
+    assert_eq!(read.action, MediusRewriteAction::ReplyPatch as u8);
+    assert_eq!(read.offset, want_entry.offset);
+    assert_eq!(read.offset, 258);
+    assert_eq!(read.payload_len as usize, want_entry.payload.len());
+    assert_eq!(
+        &read.payload[..read.payload_len as usize],
+        &want_entry.payload[..]
+    );
+    assert_eq!(
+        &read.match_bytes[..read.match_len as usize],
+        &want_entry.match_bytes[..]
+    );
+    unsafe {
+        medius_device_free(dev);
+        medius_mock_free(mock);
+    }
+}
+
+#[test]
+fn a_patch_survives_the_query_roundtrip() {
+    use medius::Patch;
+    let bytes = vec![0xCDu8; 40];
+    let (want_set, want_entry) = {
+        let mock = MockBox::new().with_imperfect(true);
+        let dev = Device::with_mock(mock);
+        dev.set_patch(&Patch::in_interface(1, 2, 258, bytes.clone()))
+            .unwrap();
+        (
+            dev.query_patches().unwrap(),
+            dev.query_patch_entry(0).unwrap(),
+        )
+    };
+
+    let mock = medius_mock_new();
+    let mut dev: *mut MediusDevice = ptr::null_mut();
+    assert_eq!(
+        unsafe { medius_device_with_mock(mock, &mut dev) },
+        MediusStatus::Ok
+    );
+    // set_patch is not gated on the opt-in; the box always stores it.
+    let patch = c_patch(MediusPatchSection::Report as u8, 1, 2, 258, &bytes);
+    assert_eq!(
+        unsafe { medius_device_set_patch(dev, &patch) },
+        MediusStatus::Ok
+    );
+
+    let mut set: MediusPatchSet = unsafe { std::mem::zeroed() };
+    assert_eq!(
+        unsafe { medius_device_query_patches(dev, &mut set) },
+        MediusStatus::Ok
+    );
+    assert_eq!(set.n as usize, want_set.entries.len());
+    assert_eq!(set.n, 1);
+    assert_eq!(set.entries[0].section, MediusPatchSection::Report as u8);
+    assert_eq!(set.entries[0].offset, 258);
+    assert_eq!(set.entries[0].len, want_set.entries[0].len);
+
+    let mut read: MediusPatch = unsafe { std::mem::zeroed() };
+    assert_eq!(
+        unsafe { medius_device_query_patch_entry(dev, 0, &mut read) },
+        MediusStatus::Ok
+    );
+    assert_eq!(read.section, MediusPatchSection::Report as u8);
+    assert_eq!(read.offset, 258);
+    assert_eq!(read.len as usize, want_entry.bytes.len());
+    assert_eq!(&read.bytes[..read.len as usize], &want_entry.bytes[..]);
+    unsafe {
+        medius_device_free(dev);
+        medius_mock_free(mock);
+    }
+}
+
+#[test]
+fn the_gated_dev_layer_calls_are_refused_with_the_opt_in_off() {
+    let mock = medius_mock_new(); // imperfect off by default
+    let mut dev: *mut MediusDevice = ptr::null_mut();
+    assert_eq!(
+        unsafe { medius_device_with_mock(mock, &mut dev) },
+        MediusStatus::Ok
+    );
+    let bytes = [0u8, 1];
+    assert_eq!(
+        unsafe { medius_device_raw(dev, 0x81, bytes.as_ptr(), bytes.len()) },
+        MediusStatus::ErrImperfectRequired
+    );
+    let rule = c_rewrite(
+        MediusRewriteClass::Emit as u8,
+        0x81,
+        MediusDirection::Both as u8,
+        MediusRewriteAction::Drop as u8,
+        0,
+        &[],
+        &[],
+        &[],
+    );
+    assert_eq!(
+        unsafe { medius_device_set_rewrite(dev, &rule) },
+        MediusStatus::ErrImperfectRequired
+    );
+    assert_eq!(
+        unsafe { medius_device_apply_patch(dev) },
+        MediusStatus::ErrImperfectRequired
+    );
+    unsafe {
+        medius_device_free(dev);
+        medius_mock_free(mock);
+    }
+}
+
+#[test]
+fn rewrite_validation_errors_have_their_own_status() {
+    let mock = medius_mock_new();
+    unsafe { medius_mock_set_imperfect_status(mock, allowed_status()) };
+    let mut dev: *mut MediusDevice = ptr::null_mut();
+    assert_eq!(
+        unsafe { medius_device_with_mock(mock, &mut dev) },
+        MediusStatus::Ok
+    );
+    // match and mask of different lengths.
+    let mask_mismatch = c_rewrite(
+        MediusRewriteClass::Emit as u8,
+        0x81,
+        MediusDirection::Both as u8,
+        MediusRewriteAction::Drop as u8,
+        0,
+        &[0x01, 0x02],
+        &[0xFF],
+        &[],
+    );
+    assert_eq!(
+        unsafe { medius_device_set_rewrite(dev, &mask_mismatch) },
+        MediusStatus::ErrRewriteMaskLength
+    );
+    // Drop is a report-only action; not admissible on the control class.
+    let bad_action = c_rewrite(
+        MediusRewriteClass::Control as u8,
+        0,
+        MediusDirection::Both as u8,
+        MediusRewriteAction::Drop as u8,
+        0,
+        &[],
+        &[],
+        &[],
+    );
+    assert_eq!(
+        unsafe { medius_device_set_rewrite(dev, &bad_action) },
+        MediusStatus::ErrRewriteActionClass
+    );
+    // A bearing-relative direction is rejected for a rewrite rule.
+    let relative = c_rewrite(
+        MediusRewriteClass::Emit as u8,
+        0x81,
+        MediusDirection::With as u8,
+        MediusRewriteAction::Drop as u8,
+        0,
+        &[],
+        &[],
+        &[],
+    );
+    assert_eq!(
+        unsafe { medius_device_set_rewrite(dev, &relative) },
+        MediusStatus::ErrRelativeDirection
+    );
+    // A 100-byte Replace on a report surface exceeds the 64-byte head the box holds.
+    let too_big = c_rewrite(
+        MediusRewriteClass::Emit as u8,
+        0x81,
+        MediusDirection::Both as u8,
+        MediusRewriteAction::Replace as u8,
+        0,
+        &[],
+        &[],
+        &[0u8; 100],
+    );
+    assert_eq!(
+        unsafe { medius_device_set_rewrite(dev, &too_big) },
+        MediusStatus::ErrRewritePayloadTooLarge
+    );
+    // An unknown class byte is refused before the wire.
+    let bad_class = c_rewrite(0x77, 0, MediusDirection::Both as u8, 0, 0, &[], &[], &[]);
+    assert_eq!(
+        unsafe { medius_device_set_rewrite(dev, &bad_class) },
+        MediusStatus::ErrInvalidArg
+    );
+    unsafe {
+        medius_device_free(dev);
+        medius_mock_free(mock);
+    }
+}
+
+#[test]
+fn the_new_health_bits_cross_the_boundary() {
+    let mock = medius_mock_new();
+    let mut set: MediusHealth = unsafe { std::mem::zeroed() };
+    set.rewrite_on = 1;
+    set.transform_on = 1; // patch_on left 0
+    unsafe { medius_mock_set_health(mock, set) };
+    let mut dev: *mut MediusDevice = ptr::null_mut();
+    assert_eq!(
+        unsafe { medius_device_with_mock(mock, &mut dev) },
+        MediusStatus::Ok
+    );
+    let mut out: MediusHealth = unsafe { std::mem::zeroed() };
+    assert_eq!(
+        unsafe { medius_device_query_health(dev, &mut out) },
+        MediusStatus::Ok
+    );
+    assert_eq!(out.rewrite_on, 1);
+    assert_eq!(out.patch_on, 0);
+    assert_eq!(out.transform_on, 1);
+    unsafe {
+        medius_device_free(dev);
+        medius_mock_free(mock);
+    }
+}

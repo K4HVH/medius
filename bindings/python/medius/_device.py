@@ -31,6 +31,12 @@ from ._types import (
     SpreadStatus,
     Health,
     ImperfectStatus,
+    Patch,
+    PatchSet,
+    RewriteRule,
+    RewriteTable,
+    Setup,
+    TransferOutcome,
     Usage,
     Locks,
     LockTarget,
@@ -50,8 +56,16 @@ from ._types import (
     health_from_c,
     imperfect_from_c,
     locks_from_c,
+    patch_from_c,
+    patch_set_from_c,
+    patch_to_c,
     rate_from_c,
+    rewrite_rule_from_c,
+    rewrite_rule_to_c,
+    rewrite_table_from_c,
+    setup_to_c,
     stats_from_c,
+    transfer_outcome_from_c,
     version_from_c,
 )
 
@@ -62,6 +76,14 @@ def _require_mock():
             "the loaded medius_capi library was built without the mock feature "
             "(rebuild with --features mock)"
         )
+
+
+def _bytes_buf(data: bytes):
+    """A ``(c_uint8 * n)`` buffer copied from `data`, and its length, for a ``POINTER(u8)`` argument.
+    An empty payload is a real zero-length buffer the C side never reads (it maps len 0 to an empty
+    slice)."""
+    raw = bytes(data)
+    return (ctypes.c_uint8 * len(raw)).from_buffer_copy(raw), len(raw)
 
 
 class Device:
@@ -444,6 +466,102 @@ class Device:
         out = _native.MediusCountersSnapshot()
         check(_native.lib.medius_device_counters(self._handle, ctypes.byref(out)))
         return counters_from_c(out)
+
+    # The developer layer (§3.14): raw injection, control transfers, rewrite rules and descriptor
+    # patches. Admitted by the imperfect-clone opt-in (`allow_imperfect_clones`).
+
+    def raw(self, ep: int, data: bytes) -> None:
+        """`RAW` (§3.14): put `data` verbatim on cloned endpoint `ep`, fire-and-forget.
+
+        An IN endpoint (``ep & 0x80``) emits toward the game PC; an OUT endpoint relays to the real
+        device. Needs the imperfect-clone opt-in, or it raises `ImperfectRequiredError`.
+        """
+        buf, n = _bytes_buf(data)
+        check(_native.lib.medius_device_raw(self._handle, _u8(ep, "ep"), buf, n))
+
+    def transfer(self, ep: int, setup: Setup, out: bytes = b"") -> TransferOutcome:
+        """`TRANSFER` (§3.14): run one control transfer against the real device and return its answer.
+
+        `ep` is 0 for EP0 or a control endpoint the device declares; `out` is the OUT data stage
+        (empty for an IN transfer). A `TransferOutcome.status` other than `TransferStatus.OK` is a real
+        protocol outcome returned rather than raised; the box answers `REFUSED` while the opt-in is off.
+        """
+        buf, n = _bytes_buf(out)
+        outcome = _native.MediusTransferOutcome()
+        check(
+            _native.lib.medius_device_transfer(
+                self._handle, _u8(ep, "ep"), setup_to_c(setup), buf, n, ctypes.byref(outcome)
+            )
+        )
+        return transfer_outcome_from_c(outcome)
+
+    def set_rewrite(self, rule: RewriteRule) -> None:
+        """`REWRITE` (§3.14): install (add or overwrite) one rewrite rule. Needs the opt-in.
+
+        `match_bytes` and `mask` must be the same length (`RewriteMaskLengthError`), the action must be
+        valid for the class (`RewriteActionClassError`), the direction must not be bearing-relative
+        (`RelativeDirectionError`), and the payload must fit the box's head
+        (`RewritePayloadTooLargeError`). `query_rewrite` confirms what the box holds.
+        """
+        c = rewrite_rule_to_c(rule)
+        check(_native.lib.medius_device_set_rewrite(self._handle, ctypes.byref(c)))
+
+    def remove_rewrite(self, rule: RewriteRule) -> None:
+        """`REWRITE` remove (§3.14): drop the rule keyed by `rule`'s
+        ``(rewrite_class, id, direction, match_bytes, mask)``; its action and payload are ignored."""
+        c = rewrite_rule_to_c(rule)
+        check(_native.lib.medius_device_remove_rewrite(self._handle, ctypes.byref(c)))
+
+    def clear_rewrite(self) -> None:
+        """`REWRITE` clear (§3.14): drop the whole rewrite table. Always clears the held rules."""
+        check(_native.lib.medius_device_clear_rewrite(self._handle))
+
+    def query_rewrite(self) -> RewriteTable:
+        """`QUERY(REWRITE)` (§4.17): the whole table's summary, a row per rule without its bytes."""
+        out = _native.MediusRewriteTable()
+        check(_native.lib.medius_device_query_rewrite(self._handle, ctypes.byref(out)))
+        return rewrite_table_from_c(out)
+
+    def query_rewrite_entry(self, index: int) -> RewriteRule:
+        """`QUERY(REWRITE_ENTRY, index)` (§4.17): one rule in full, in the shape `set_rewrite` takes."""
+        out = _native.MediusRewriteRule()
+        check(
+            _native.lib.medius_device_query_rewrite_entry(
+                self._handle, _u8(index, "index"), ctypes.byref(out)
+            )
+        )
+        return rewrite_rule_from_c(out)
+
+    def set_patch(self, patch: Patch) -> None:
+        """`PATCH` (§3.14): store one descriptor patch. A patch with empty `bytes` removes the patch at
+        its key. Storing is not gated on the opt-in; it takes effect once `apply_patch` re-presents the
+        clone under the opt-in."""
+        c = patch_to_c(patch)
+        check(_native.lib.medius_device_set_patch(self._handle, ctypes.byref(c)))
+
+    def apply_patch(self) -> None:
+        """`PATCH` APPLY (§3.14): re-present the clone with the stored patch set. Needs the opt-in."""
+        check(_native.lib.medius_device_apply_patch(self._handle))
+
+    def clear_patch(self) -> None:
+        """`PATCH` CLEAR (§3.14): drop every patch for this device and re-present the clone unpatched."""
+        check(_native.lib.medius_device_clear_patch(self._handle))
+
+    def query_patches(self) -> PatchSet:
+        """`QUERY(PATCHES)` (§4.17): the stored patch set and its apply state, a row per patch."""
+        out = _native.MediusPatchSet()
+        check(_native.lib.medius_device_query_patches(self._handle, ctypes.byref(out)))
+        return patch_set_from_c(out)
+
+    def query_patch_entry(self, index: int) -> Patch:
+        """`QUERY(PATCH_ENTRY, index)` (§4.17): one patch in full, in the shape `set_patch` takes."""
+        out = _native.MediusPatch()
+        check(
+            _native.lib.medius_device_query_patch_entry(
+                self._handle, _u8(index, "index"), ctypes.byref(out)
+            )
+        )
+        return patch_from_c(out)
 
     def clip(self) -> ClipHandle:
         """A handle to this box's buffered-clip playback (§3.11)."""

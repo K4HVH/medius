@@ -44,6 +44,10 @@ class Status(IntEnum):
     ERR_HALF_EDGE_INPUT_FILTER = 17
     ERR_RESERVED_ID = 18
     ERR_RELATIVE_DIRECTION = 19
+    ERR_IMPERFECT_REQUIRED = 20
+    ERR_REWRITE_MASK_LENGTH = 21
+    ERR_REWRITE_ACTION_CLASS = 22
+    ERR_REWRITE_PAYLOAD_TOO_LARGE = 23
 
 
 class DeviceKind(IntEnum):
@@ -302,6 +306,68 @@ class ControlStatus(IntEnum):
     OTHER = 3
 
 
+class RewriteClass(IntEnum):
+    """A traffic class a rewrite rule addresses (§3.14).
+
+    These are the write-direction CATCH classes the box will rewrite; the parsed-input and bus classes
+    are not rewritable. `ANY` is the wire wildcard, matching every rewritable class at once.
+    """
+
+    HID_IN = 4
+    HID_OUT = 5
+    VENDOR_INTERRUPT = 6
+    VENDOR_BULK = 7
+    CONTROL = 8
+    EMIT = 9
+    ANY = 0xFF
+
+
+class RewriteAction(IntEnum):
+    """What the winning rewrite rule does to a matched packet (§3.14).
+
+    A report class may `PASS`, `DROP`, `PATCH` or `REPLACE`. The control class adds `ANSWER`, `STALL`,
+    `NAK` and the two reply rewrites, which the box refuses on any other class.
+    """
+
+    PASS = 0
+    DROP = 1
+    PATCH = 2
+    REPLACE = 3
+    ANSWER = 4
+    STALL = 5
+    NAK = 6
+    REPLY_PATCH = 7
+    REPLY_REPLACE = 8
+
+
+class PatchSection(IntEnum):
+    """Which descriptor a patch overwrites (§3.14)."""
+
+    DEVICE = 0
+    CONFIG = 1
+    REPORT = 2
+    STRING = 3
+    BOS = 4
+
+
+class TransferStatus(IntEnum):
+    """How a control transfer ended (§3.14).
+
+    A status other than `OK` is a real protocol outcome, not a link error. A wire byte no member names
+    is a status this build does not know, kept as its integer value rather than raising.
+    """
+
+    OK = 0x00
+    REFUSED = 0xFC
+    STALL = 0xFD
+    NAK = 0xFE
+    NO_DEVICE = 0xFF
+
+    @property
+    def is_ok(self) -> bool:
+        return self == TransferStatus.OK
+
+
 class BusEventKind(IntEnum):
     """What a `CatchClass.BUS` event describes."""
 
@@ -347,6 +413,13 @@ class FrameType(IntEnum):
     CLIP_CTRL = 19
     CLIP_SET = 20
     CLIP_TRIGGER = 21
+    UPDATE = 23
+    UPDATE_RESP = 24
+    RAW = 25
+    TRANSFER = 26
+    TRANSFER_RESP = 27
+    REWRITE = 28
+    PATCH = 29
 
 
 class Key(IntEnum):

@@ -9,8 +9,9 @@ use medius::{
     ClockEstimate, CountersSnapshot, DeviceInfo, DeviceKind, Direction, EmitPace, EmitPaceStatus,
     FirmwareInfo, Health, ImageState, ImperfectStatus, Input, InputEvent, KbdCaps, Key, LedMode,
     LedTarget, LockEntry, LockScope, LockTarget, Locks, LogLevel, LogLine, MediaKey, Motion,
-    MouseCaps, MoveTiming, PendingMotion, PortInfo, Rate, RebootTarget, RenderMode, RenderStatus,
-    SpreadStatus, Stats, Usage, Version,
+    MouseCaps, MoveTiming, Patch, PatchEntry, PatchSection, PatchSet, PendingMotion, PortInfo,
+    Rate, RebootTarget, RenderMode, RenderStatus, RewriteAction, RewriteClass, RewriteEntry,
+    RewriteRule, RewriteTable, Setup, SpreadStatus, Stats, TransferOutcome, Usage, Version,
 };
 
 use crate::ctypes::*;
@@ -353,6 +354,9 @@ impl From<Health> for MediusHealth {
             lock_on: b(h.lock_on),
             catch_on: b(h.catch_on),
             kbd_attached: b(h.kbd_attached),
+            rewrite_on: b(h.rewrite_on),
+            patch_on: b(h.patch_on),
+            transform_on: b(h.transform_on),
         }
     }
 }
@@ -572,6 +576,185 @@ impl From<ImperfectStatus> for MediusImperfectStatus {
             allowed: b(s.allowed),
             over_capacity: b(s.over_capacity),
             clone_imperfect: b(s.clone_imperfect),
+        }
+    }
+}
+
+// The developer layer (§3.14): raw injection, control transfers, rewrite rules and descriptor
+// patches. The class/action/direction/section enums cross the boundary as bytes, mapped back through
+// the crate's own `from_u8`, so a byte no variant names becomes `None` and is refused rather than
+// materialised as an enum. The variable-length fields follow the catch-event convention: a fixed max
+// array plus a length, truncated at the array's capacity.
+
+/// A [`Setup`] from its C mirror. Every field is raw, so this never fails.
+pub(crate) fn setup_from_c(c: MediusSetup) -> Setup {
+    Setup {
+        request_type: c.request_type,
+        request: c.request,
+        value: c.value,
+        index: c.index,
+        length: c.length,
+    }
+}
+
+impl From<TransferOutcome> for MediusTransferOutcome {
+    fn from(o: TransferOutcome) -> Self {
+        let mut data = [0u8; MEDIUS_MAX_DEV_PAYLOAD];
+        let n = o.data.len().min(MEDIUS_MAX_DEV_PAYLOAD);
+        data[..n].copy_from_slice(&o.data[..n]);
+        MediusTransferOutcome {
+            status: o.status.as_u8(),
+            len: n as u16,
+            data,
+        }
+    }
+}
+
+// A `MediusRewriteRule` to a [`RewriteRule`]; `None` for a class, action or direction byte no
+// constant names. `match_len` and `mask_len` are kept separate so an unequal pair still reaches the
+// crate, which refuses it with `RewriteMaskLength` rather than this layer papering over it.
+pub(crate) fn rewrite_rule_from_c(c: &MediusRewriteRule) -> Option<RewriteRule> {
+    let ml = (c.match_len as usize).min(MEDIUS_MAX_REWRITE_MATCH);
+    let msl = (c.mask_len as usize).min(MEDIUS_MAX_REWRITE_MATCH);
+    let pl = (c.payload_len as usize).min(MEDIUS_MAX_DEV_PAYLOAD);
+    Some(RewriteRule {
+        class: RewriteClass::from_u8(c.class)?,
+        id: c.id,
+        direction: Direction::from_u8(c.direction)?,
+        action: RewriteAction::from_u8(c.action)?,
+        offset: c.offset,
+        match_bytes: c.match_bytes[..ml].to_vec(),
+        mask: c.mask[..msl].to_vec(),
+        payload: c.payload[..pl].to_vec(),
+    })
+}
+
+impl From<RewriteRule> for MediusRewriteRule {
+    fn from(r: RewriteRule) -> Self {
+        let mut match_bytes = [0u8; MEDIUS_MAX_REWRITE_MATCH];
+        let ml = r.match_bytes.len().min(MEDIUS_MAX_REWRITE_MATCH);
+        match_bytes[..ml].copy_from_slice(&r.match_bytes[..ml]);
+        let mut mask = [0u8; MEDIUS_MAX_REWRITE_MATCH];
+        let msl = r.mask.len().min(MEDIUS_MAX_REWRITE_MATCH);
+        mask[..msl].copy_from_slice(&r.mask[..msl]);
+        let mut payload = [0u8; MEDIUS_MAX_DEV_PAYLOAD];
+        let pl = r.payload.len().min(MEDIUS_MAX_DEV_PAYLOAD);
+        payload[..pl].copy_from_slice(&r.payload[..pl]);
+        MediusRewriteRule {
+            class: r.class.as_u8(),
+            id: r.id,
+            direction: r.direction.as_u8(),
+            action: r.action.as_u8(),
+            offset: r.offset,
+            match_len: ml as u16,
+            mask_len: msl as u16,
+            payload_len: pl as u16,
+            match_bytes,
+            mask,
+            payload,
+        }
+    }
+}
+
+fn rewrite_entry_to_c(e: &RewriteEntry) -> MediusRewriteEntry {
+    MediusRewriteEntry {
+        class: e.class.as_u8(),
+        id: e.id,
+        direction: e.direction.as_u8(),
+        action: e.action.as_u8(),
+        match_len: e.match_len,
+        offset: e.offset,
+        payload_len: e.payload_len,
+        hits: e.hits,
+    }
+}
+
+impl From<RewriteTable> for MediusRewriteTable {
+    fn from(t: RewriteTable) -> Self {
+        let blank = MediusRewriteEntry {
+            class: 0,
+            id: 0,
+            direction: 0,
+            action: 0,
+            match_len: 0,
+            offset: 0,
+            payload_len: 0,
+            hits: 0,
+        };
+        let mut entries = [blank; MEDIUS_MAX_REWRITE_ENTRIES];
+        let n = t.entries.len().min(MEDIUS_MAX_REWRITE_ENTRIES);
+        for (slot, e) in entries.iter_mut().zip(t.entries.iter()).take(n) {
+            *slot = rewrite_entry_to_c(e);
+        }
+        MediusRewriteTable {
+            table_full: b(t.table_full),
+            generation: t.generation,
+            n: n as u16,
+            entries,
+        }
+    }
+}
+
+// A `MediusPatch` to a [`Patch`]; `None` for a section byte no constant names (the `APPLY`/`CLEAR`
+// engine verbs are not sections and decode to `None`).
+pub(crate) fn patch_from_c(c: &MediusPatch) -> Option<Patch> {
+    let n = (c.len as usize).min(MEDIUS_MAX_DEV_PAYLOAD);
+    Some(Patch {
+        section: PatchSection::from_u8(c.section)?,
+        cfg: c.cfg,
+        index: c.index,
+        offset: c.offset,
+        bytes: c.bytes[..n].to_vec(),
+    })
+}
+
+impl From<Patch> for MediusPatch {
+    fn from(p: Patch) -> Self {
+        let mut bytes = [0u8; MEDIUS_MAX_DEV_PAYLOAD];
+        let n = p.bytes.len().min(MEDIUS_MAX_DEV_PAYLOAD);
+        bytes[..n].copy_from_slice(&p.bytes[..n]);
+        MediusPatch {
+            section: p.section.as_u8(),
+            cfg: p.cfg,
+            index: p.index,
+            offset: p.offset,
+            len: n as u16,
+            bytes,
+        }
+    }
+}
+
+fn patch_entry_to_c(e: &PatchEntry) -> MediusPatchEntry {
+    MediusPatchEntry {
+        section: e.section.as_u8(),
+        cfg: e.cfg,
+        index: e.index,
+        offset: e.offset,
+        len: e.len,
+    }
+}
+
+impl From<PatchSet> for MediusPatchSet {
+    fn from(s: PatchSet) -> Self {
+        let blank = MediusPatchEntry {
+            section: 0,
+            cfg: 0,
+            index: 0,
+            offset: 0,
+            len: 0,
+        };
+        let mut entries = [blank; MEDIUS_MAX_PATCH_ENTRIES];
+        let n = s.entries.len().min(MEDIUS_MAX_PATCH_ENTRIES);
+        for (slot, e) in entries.iter_mut().zip(s.entries.iter()).take(n) {
+            *slot = patch_entry_to_c(e);
+        }
+        MediusPatchSet {
+            applied: b(s.applied),
+            pending: b(s.pending),
+            refused: b(s.refused),
+            table_full: b(s.table_full),
+            n: n as u16,
+            entries,
         }
     }
 }
@@ -884,12 +1067,9 @@ impl From<MediusHealth> for Health {
             lock_on: nz(h.lock_on),
             catch_on: nz(h.catch_on),
             kbd_attached: nz(h.kbd_attached),
-            // The developer-layer HEALTH bits (§4.2) have no C ABI field yet: exposing them on
-            // MediusHealth is part of the C-binding work, so a round-trip through the C struct reads
-            // them clear. The native crate decodes them from the wire.
-            rewrite_on: false,
-            patch_on: false,
-            transform_on: false,
+            rewrite_on: nz(h.rewrite_on),
+            patch_on: nz(h.patch_on),
+            transform_on: nz(h.transform_on),
         }
     }
 }
