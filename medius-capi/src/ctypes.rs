@@ -26,6 +26,8 @@ pub const MEDIUS_MAX_TRAFFIC_BYTES: usize = 180;
 pub const MEDIUS_MAX_REWRITE_ENTRIES: usize = 16;
 /// Largest number of rows in a decoded `RESP(PATCHES)` (the firmware `PATCH_MAX`).
 pub const MEDIUS_MAX_PATCH_ENTRIES: usize = 16;
+/// Largest number of entries in a decoded `RESP(TRANSFORMS)` (the firmware `CTRL_TRANSFORM_MAXN`).
+pub const MEDIUS_MAX_TRANSFORM_ENTRIES: usize = 8;
 /// The most `match`/`mask` bytes one rewrite rule compares (the firmware `REWRITE_MATCH_MAX`).
 pub const MEDIUS_MAX_REWRITE_MATCH: usize = 16;
 /// The largest developer-layer byte payload the control link carries in one frame (`MAX_PAYLOAD`):
@@ -233,13 +235,14 @@ pub enum MediusFrameType {
     ClipTrigger = 0x15,
     Update = 0x17,
     UpdateResp = 0x18,
-    // v3.4.0 developer layer (§3.14). The raw/rewrite/patch C entry points are a follow-up; these
-    // frame-type values exist so the mock's recorded-frame introspection stays exhaustive.
+    // v3.4.0 developer layer (§3.14) and field transforms (§3.15); these frame-type values back the
+    // mock's recorded-frame introspection.
     Raw = 0x19,
     Transfer = 0x1A,
     TransferResp = 0x1B,
     Rewrite = 0x1C,
     Patch = 0x1D,
+    Transform = 0x1E,
 }
 
 /// Which arm of a [`MediusCatchEvent`] is populated.
@@ -284,6 +287,8 @@ pub enum MediusAxis {
     X = 0,
     Y = 1,
     Wheel = 2,
+    /// AC Pan (horizontal scroll), a full peer of the wheel.
+    Pan = 3,
 }
 
 /// When a delta reaches the game PC, against movement riding.
@@ -309,6 +314,8 @@ pub enum MediusPendingMotion {
 pub enum MediusMotionKind {
     Cursor = 0,
     Wheel = 1,
+    /// AC Pan (horizontal scroll); read `pan`.
+    Pan = 2,
 }
 
 /// What a lock addresses: a relative axis, or a momentary usage (button/key/media).
@@ -321,8 +328,10 @@ pub enum MediusLockTargetKind {
     Y = 1,
     /// The wheel.
     Wheel = 2,
+    /// AC Pan (horizontal scroll).
+    Pan = 3,
     /// A momentary usage; read `usage`.
-    Usage = 3,
+    Usage = 4,
 }
 
 /// A momentary usage for `medius_device_inject`; build with the `medius_usage_*` helpers.
@@ -376,6 +385,7 @@ pub struct MediusMotion {
     pub dx: i16,
     pub dy: i16,
     pub wheel: i16,
+    pub pan: i16,
 }
 
 /// A lock target: an axis (`kind` is `X`/`Y`/`Wheel`) or a momentary usage (`kind` is `Usage`, read `usage`).
@@ -451,7 +461,7 @@ pub struct MediusHealth {
     pub rewrite_on: u8,
     /// A descriptor-patch set (§3.14) is applied to the clone (v3.4.0).
     pub patch_on: u8,
-    /// A field transform is active (reserved; the transforms feature owns this bit) (v3.4.0).
+    /// A field transform is active (v3.4.0).
     pub transform_on: u8,
 }
 
@@ -463,6 +473,8 @@ pub struct MediusMouseCaps {
     pub has_x: u8,
     pub has_y: u8,
     pub has_wheel: u8,
+    /// AC Pan (horizontal scroll) present.
+    pub pan: u8,
     pub has_report_id: u8,
     pub n_hid: u8,
 }
@@ -850,6 +862,59 @@ pub struct MediusPatchSet {
     pub entries: [MediusPatchEntry; MEDIUS_MAX_PATCH_ENTRIES],
 }
 
+// Field transforms (§3.15): a faithful field operation on the semantic path — negate, scale, swap or
+// remap a field the clone already declares. Not gated on the imperfect-clone opt-in.
+
+/// The operation a `MediusTransform` performs on its fields (§3.15). Crosses the ABI as the `op` byte
+/// of a `MediusTransform`.
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MediusTransformOp {
+    /// Move a source field's contribution into a destination, clearing the source.
+    Remap = 0,
+    /// Exchange two axes: read both, then write both, so it is not two remaps.
+    Swap = 1,
+    /// Negate one axis; the signed scale is ignored.
+    Invert = 2,
+    /// Weigh one axis by the signed scale.
+    Scale = 3,
+}
+
+/// One field transform (§3.15): an operation, the `source` field it reads, the `dest` field it
+/// writes, and a signed scale.
+///
+/// `source` and `dest` reuse `MediusLockTarget` (an axis `kind`, or `Usage` with `usage` read): the
+/// transform field space is the lock-target space. The **signed scale** is a percent carrying a sign:
+/// `-100` inverts, `100` is identity, `200` doubles, `-50` halves and flips, `0` blocks the source.
+/// `Invert` ignores it and the box refuses a `0`. The same shape `medius_device_query_transforms`
+/// reads back, so a read entry replays as a set.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MediusTransform {
+    /// One of `MEDIUS_TRANSFORM_OP_*`. A byte rather than `MediusTransformOp`, so the boundary can
+    /// validate it before anything reads it as one; C++ renders the enum as `enum : uint8_t`, so
+    /// assigning this to a `MediusTransformOp` there needs a cast.
+    pub op: u8,
+    /// The field the transform reads.
+    pub source: MediusLockTarget,
+    /// The field the transform writes (equal to `source` for invert and scale).
+    pub dest: MediusLockTarget,
+    /// The signed percent (see the type docs). Ignored by `Invert`.
+    pub scale: i16,
+}
+
+/// Decoded `RESP(TRANSFORMS)` (§4.18): the whole transform table in `entries[0..n]`, in installation
+/// order, each entry in the shape `medius_device_transform` takes.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct MediusTransforms {
+    /// The table is full: a further entry was, or would be, refused.
+    pub table_full: u8,
+    /// The number of valid entries in `entries`.
+    pub n: u16,
+    pub entries: [MediusTransform; MEDIUS_MAX_TRANSFORM_ENTRIES],
+}
+
 /// Emit-rate pacing mode plus the rate in effect and the rate the clone advertises.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -982,6 +1047,8 @@ pub struct MediusMotionEvent {
     pub dy: i16,
     /// Wheel delta this report (up positive).
     pub dz: i16,
+    /// AC Pan (horizontal-scroll) delta this report (right positive).
+    pub pan: i16,
 }
 
 /// One held-usage snapshot: every held usage of one class in `usages[0..n]`.
@@ -1121,6 +1188,8 @@ pub struct MediusInputEvent {
     pub dy: i16,
     /// Wheel delta this report (up positive); 0 unless `kind` is `Motion`.
     pub dz: i16,
+    /// AC Pan (horizontal-scroll) delta this report (right positive); 0 unless `kind` is `Motion`.
+    pub pan: i16,
 }
 
 /// One event placed on this machine's clock by a `MediusTimeline`.

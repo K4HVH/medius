@@ -48,6 +48,7 @@ from ._enums import (
     InputKind,
     TrafficClass,
     TransferStatus,
+    TransformOp,
 )
 from ._errors import (
     BadProtoVerError,
@@ -72,6 +73,8 @@ from ._errors import (
     RewriteActionClassError,
     RewriteMaskLengthError,
     RewritePayloadTooLargeError,
+    TransformOpFieldsError,
+    TransformInvertZeroScaleError,
     WildcardNotInputError,
 )
 from ._device import Device
@@ -109,6 +112,8 @@ from ._types import (
     RewriteTable,
     Setup,
     TransferOutcome,
+    Transform,
+    Transforms,
     Usage,
     KbdCaps,
     Locks,
@@ -207,6 +212,7 @@ __all__ = [
     "RewriteAction",
     "RewriteClass",
     "TransferStatus",
+    "TransformOp",
     "Status",
     "MediusError",
     "IoError",
@@ -250,6 +256,8 @@ __all__ = [
     "RewriteMaskLengthError",
     "RewriteActionClassError",
     "RewritePayloadTooLargeError",
+    "TransformOpFieldsError",
+    "TransformInvertZeroScaleError",
     "CatchFilter",
     "CatchState",
     "Bearing",
@@ -273,6 +281,8 @@ __all__ = [
     "RewriteTable",
     "Setup",
     "TransferOutcome",
+    "Transform",
+    "Transforms",
     "Usage",
     "KbdCaps",
     "Locks",

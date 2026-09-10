@@ -48,6 +48,8 @@ class Status(IntEnum):
     ERR_REWRITE_MASK_LENGTH = 21
     ERR_REWRITE_ACTION_CLASS = 22
     ERR_REWRITE_PAYLOAD_TOO_LARGE = 23
+    ERR_TRANSFORM_OP_FIELDS = 24
+    ERR_TRANSFORM_INVERT_ZERO_SCALE = 25
 
 
 class DeviceKind(IntEnum):
@@ -211,13 +213,16 @@ class Axis(IntEnum):
     X = 0
     Y = 1
     WHEEL = 2
+    #: AC Pan (horizontal scroll), a full peer of the wheel.
+    PAN = 3
 
 
 class LockTargetKind(IntEnum):
     X = 0
     Y = 1
     WHEEL = 2
-    USAGE = 3
+    PAN = 3
+    USAGE = 4
 
 
 class Blanket(IntEnum):
@@ -368,6 +373,20 @@ class TransferStatus(IntEnum):
         return self == TransferStatus.OK
 
 
+class TransformOp(IntEnum):
+    """The operation a `Transform` performs on its fields (§3.15).
+
+    `INVERT` and `SCALE` act on one axis (source == dest); `SWAP` exchanges two axes; `REMAP` moves a
+    source field into a destination (axis→axis or button→button in one report, or button→key /
+    button→media across classes).
+    """
+
+    REMAP = 0
+    SWAP = 1
+    INVERT = 2
+    SCALE = 3
+
+
 class BusEventKind(IntEnum):
     """What a `CatchClass.BUS` event describes."""
 
@@ -386,6 +405,8 @@ class BusEventKind(IntEnum):
 class MotionKind(IntEnum):
     CURSOR = 0
     WHEEL = 1
+    #: AC Pan (horizontal scroll).
+    PAN = 2
 
 
 class Class(IntEnum):
@@ -420,6 +441,7 @@ class FrameType(IntEnum):
     TRANSFER_RESP = 27
     REWRITE = 28
     PATCH = 29
+    TRANSFORM = 30
 
 
 class Key(IntEnum):

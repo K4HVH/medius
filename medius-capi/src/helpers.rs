@@ -42,6 +42,7 @@ pub extern "C" fn medius_motion_cursor(dx: i16, dy: i16) -> MediusMotion {
         dx,
         dy,
         wheel: 0,
+        pan: 0,
     }
 }
 
@@ -53,12 +54,25 @@ pub extern "C" fn medius_motion_wheel(delta: i16) -> MediusMotion {
         dx: 0,
         dy: 0,
         wheel: delta,
+        pan: 0,
     }
 }
 
-/// Build a [`MediusLockTarget`] addressing an axis: `kind` takes `MEDIUS_LOCK_TARGET_KIND_X`, `_Y` or
-/// `_WHEEL`. Any other byte is carried through and refused by the call that takes the target, since a
-/// constructor has no status to return.
+/// Build an AC Pan (horizontal-scroll) [`MediusMotion`].
+#[unsafe(no_mangle)]
+pub extern "C" fn medius_motion_pan(delta: i16) -> MediusMotion {
+    MediusMotion {
+        kind: MediusMotionKind::Pan as u8,
+        dx: 0,
+        dy: 0,
+        wheel: 0,
+        pan: delta,
+    }
+}
+
+/// Build a [`MediusLockTarget`] addressing an axis: `kind` takes `MEDIUS_LOCK_TARGET_KIND_X`, `_Y`,
+/// `_WHEEL` or `_PAN`. Any other byte is carried through and refused by the call that takes the
+/// target, since a constructor has no status to return.
 #[unsafe(no_mangle)]
 pub extern "C" fn medius_lock_target_axis(kind: u8) -> MediusLockTarget {
     MediusLockTarget {
@@ -224,7 +238,7 @@ pub extern "C" fn medius_catch_filter_watch_class(class: u8) -> MediusCatchFilte
     }
 }
 
-/// Every relative axis: X, Y and the wheel.
+/// Every relative axis: X, Y, the wheel and AC Pan.
 #[unsafe(no_mangle)]
 pub extern "C" fn medius_catch_filter_watch_axes() -> MediusCatchFilter {
     blanket(MEDIUS_CATCH_CLASS_AXIS)

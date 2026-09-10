@@ -141,7 +141,7 @@ fn move_riding_override_parity() {
 fn inject_button_parity() {
     assert_parity(
         |d| {
-            d.inject(medius::Button::Right, medius::Action::Press)
+            d.inject(medius::Button::RIGHT, medius::Action::Press)
                 .unwrap();
         },
         |dev| unsafe {
@@ -161,9 +161,9 @@ fn inject_button_parity() {
 fn press_release_parity() {
     assert_parity(
         |d| {
-            d.press(medius::Button::Left).unwrap();
-            d.release(medius::Button::Left).unwrap();
-            d.force_release(medius::Button::Left).unwrap();
+            d.press(medius::Button::LEFT).unwrap();
+            d.release(medius::Button::LEFT).unwrap();
+            d.force_release(medius::Button::LEFT).unwrap();
         },
         |dev| unsafe {
             let left = medius_usage_button(MediusButton::Left as u8);
@@ -229,7 +229,7 @@ fn lock_parity() {
     assert_parity(
         |d| {
             d.lock(medius::Axis::X, medius::Direction::Both).unwrap();
-            d.lock(medius::Button::Side1, medius::Direction::Positive)
+            d.lock(medius::Button::SIDE1, medius::Direction::Positive)
                 .unwrap();
             d.unlock(medius::Axis::X, medius::Direction::Both).unwrap();
         },
@@ -968,7 +968,7 @@ fn catch_delivers_a_motion_event() {
     );
     let stream = unsafe { subscribe(dev, &[medius_catch_filter_everything()]) };
     unsafe {
-        (*mock).inner.push_motion(1, 7_000, 12, -34, 1);
+        (*mock).inner.push_motion(1, 7_000, 12, -34, 1, 2);
     }
     let mut event = zeroed_event();
     assert!(unsafe { medius_event_stream_recv_timeout(stream, 2000, &mut event) });
@@ -979,6 +979,7 @@ fn catch_delivers_a_motion_event() {
     assert_eq!(m.dx, 12);
     assert_eq!(m.dy, -34);
     assert_eq!(m.dz, 1);
+    assert_eq!(m.pan, 2);
     unsafe {
         medius_event_stream_free(stream);
         medius_device_free(dev);
@@ -1171,7 +1172,7 @@ fn input_events_decode_edges_across_the_abi() {
             medius::Direction::RELEASE,
             &[],
         );
-        (*mock).inner.push_motion(3, 9_000, 4, -5, 0);
+        (*mock).inner.push_motion(3, 9_000, 4, -5, 0, 0);
     }
     let mut ev: MediusInputEvent = unsafe { std::mem::zeroed() };
     assert!(unsafe { medius_input_stream_recv_timeout(stream, 2000, &mut ev) });
@@ -1651,7 +1652,7 @@ fn event_stream_clone_shares_the_subscription() {
     let stream2 = unsafe { medius_event_stream_clone(stream) };
     assert!(!stream2.is_null());
     unsafe {
-        (*mock).inner.push_motion(1, 7_000, 5, 0, 0);
+        (*mock).inner.push_motion(1, 7_000, 5, 0, 0, 0);
     }
     let mut event = zeroed_event();
     assert!(unsafe { medius_event_stream_recv_timeout(stream2, 2000, &mut event) });
@@ -1687,7 +1688,7 @@ fn clip_control_parity() {
             clip.set_retain(true).unwrap();
             clip.set_ride(true).unwrap();
             clip.bind(medius::ClipTrigger::new(
-                medius::Button::Right,
+                medius::Button::RIGHT,
                 medius::Edge::Press,
                 medius::ClipAction::Start,
             ))
@@ -1707,7 +1708,7 @@ fn clip_control_parity() {
                 medius::ClipAction::Toggle,
             ))
             .unwrap();
-            clip.unbind(medius::Button::Right, medius::Edge::Press)
+            clip.unbind(medius::Button::RIGHT, medius::Edge::Press)
                 .unwrap();
             clip.clear_triggers().unwrap();
             clip.start().unwrap();
@@ -1785,9 +1786,9 @@ fn clip_append_parity() {
             for _ in 0..150 {
                 b.move_by(3, -2);
             }
-            b.press(medius::Button::Left);
+            b.press(medius::Button::LEFT);
             b.gap(4);
-            b.release(medius::Button::Left);
+            b.release(medius::Button::LEFT);
             d.clip().append(&b).unwrap();
         },
         |dev| unsafe {
@@ -1823,7 +1824,7 @@ fn clip_builder_frame_edges_match_native() {
                 2,
                 -1,
                 &[
-                    (medius::Button::Left.into(), medius::Action::Press),
+                    (medius::Button::LEFT.into(), medius::Action::Press),
                     (medius::Key::new(0x04).into(), medius::Action::Press),
                 ],
             );
@@ -1923,6 +1924,7 @@ fn every_enum_byte_on_the_boundary_is_refused_rather_than_materialized() {
         dx: 1,
         dy: 1,
         wheel: 0,
+        pan: 0,
     };
     let ride = MediusMoveTiming::Ride as u8;
     let keep = MediusPendingMotion::Keep as u8;
@@ -2641,6 +2643,207 @@ fn the_new_health_bits_cross_the_boundary() {
     assert_eq!(out.rewrite_on, 1);
     assert_eq!(out.patch_on, 0);
     assert_eq!(out.transform_on, 1);
+    unsafe {
+        medius_device_free(dev);
+        medius_mock_free(mock);
+    }
+}
+
+#[test]
+fn pan_parity() {
+    assert_parity(
+        |d| {
+            d.pan(3).unwrap();
+        },
+        |dev| unsafe {
+            assert_eq!(medius_device_pan(dev, 3), MediusStatus::Ok);
+        },
+    );
+}
+
+#[test]
+fn pan_now_parity() {
+    assert_parity(
+        |d| {
+            d.pan_now(-2).unwrap();
+        },
+        |dev| unsafe {
+            assert_eq!(medius_device_pan_now(dev, -2), MediusStatus::Ok);
+        },
+    );
+}
+
+#[test]
+fn move_axis_pan_parity() {
+    assert_parity(
+        |d| {
+            d.move_axis(
+                medius::Motion::Pan(4),
+                medius::MoveTiming::Now,
+                medius::PendingMotion::Keep,
+            )
+            .unwrap();
+        },
+        |dev| unsafe {
+            assert_eq!(
+                medius_device_move_axis(
+                    dev,
+                    medius_motion_pan(4),
+                    MediusMoveTiming::Now as u8,
+                    MediusPendingMotion::Keep as u8
+                ),
+                MediusStatus::Ok
+            );
+        },
+    );
+}
+
+#[test]
+fn transform_verbs_parity() {
+    use medius::{Axis, Transform};
+    assert_parity(
+        |d| {
+            d.invert(Axis::Y).unwrap();
+            d.scale_transform(Axis::Wheel, 200).unwrap();
+            d.swap(Axis::X, Axis::Y).unwrap();
+            d.remap(Axis::X, Axis::Wheel).unwrap();
+            let scaled = Transform::scale_axis(Axis::Y, 175);
+            d.transform(&scaled).unwrap();
+            d.untransform(&scaled).unwrap();
+            d.clear_transforms().unwrap();
+        },
+        |dev| unsafe {
+            assert_eq!(
+                medius_device_invert(dev, MediusAxis::Y as u8),
+                MediusStatus::Ok
+            );
+            assert_eq!(
+                medius_device_scale_transform(dev, MediusAxis::Wheel as u8, 200),
+                MediusStatus::Ok
+            );
+            assert_eq!(
+                medius_device_swap(dev, MediusAxis::X as u8, MediusAxis::Y as u8),
+                MediusStatus::Ok
+            );
+            assert_eq!(
+                medius_device_remap(
+                    dev,
+                    medius_lock_target_axis(MediusLockTargetKind::X as u8),
+                    medius_lock_target_axis(MediusLockTargetKind::Wheel as u8)
+                ),
+                MediusStatus::Ok
+            );
+            let scaled = MediusTransform {
+                op: MediusTransformOp::Scale as u8,
+                source: medius_lock_target_axis(MediusLockTargetKind::Y as u8),
+                dest: medius_lock_target_axis(MediusLockTargetKind::Y as u8),
+                scale: 175,
+            };
+            assert_eq!(medius_device_transform(dev, &scaled), MediusStatus::Ok);
+            assert_eq!(medius_device_untransform(dev, &scaled), MediusStatus::Ok);
+            assert_eq!(medius_device_clear_transforms(dev), MediusStatus::Ok);
+        },
+    );
+}
+
+#[test]
+fn a_transform_survives_the_query_roundtrip() {
+    use medius::Axis;
+    let want = {
+        let mock = MockBox::new();
+        let dev = Device::with_mock(mock);
+        dev.invert(Axis::Y).unwrap();
+        dev.scale_transform(Axis::Wheel, 200).unwrap();
+        dev.swap(Axis::X, Axis::Y).unwrap();
+        dev.query_transforms().unwrap()
+    };
+
+    let mock = medius_mock_new();
+    let mut dev: *mut MediusDevice = ptr::null_mut();
+    assert_eq!(
+        unsafe { medius_device_with_mock(mock, &mut dev) },
+        MediusStatus::Ok
+    );
+    unsafe {
+        assert_eq!(
+            medius_device_invert(dev, MediusAxis::Y as u8),
+            MediusStatus::Ok
+        );
+        assert_eq!(
+            medius_device_scale_transform(dev, MediusAxis::Wheel as u8, 200),
+            MediusStatus::Ok
+        );
+        assert_eq!(
+            medius_device_swap(dev, MediusAxis::X as u8, MediusAxis::Y as u8),
+            MediusStatus::Ok
+        );
+    }
+
+    let mut got: MediusTransforms = unsafe { std::mem::zeroed() };
+    assert_eq!(
+        unsafe { medius_device_query_transforms(dev, &mut got) },
+        MediusStatus::Ok
+    );
+    assert_eq!(got.n as usize, want.entries.len());
+    assert_eq!(got.n, 3);
+    // Entry for entry, the C readback matches the native crate's.
+    for (i, w) in want.entries.iter().enumerate() {
+        assert_eq!(got.entries[i].op, w.op.as_u8());
+        assert_eq!(got.entries[i].scale, w.scale);
+    }
+    assert_eq!(got.entries[0].op, MediusTransformOp::Invert as u8);
+    assert_eq!(got.entries[0].source.kind, MediusLockTargetKind::Y as u8);
+    assert_eq!(got.entries[1].op, MediusTransformOp::Scale as u8);
+    assert_eq!(
+        got.entries[1].source.kind,
+        MediusLockTargetKind::Wheel as u8
+    );
+    assert_eq!(got.entries[1].scale, 200);
+    assert_eq!(got.entries[2].op, MediusTransformOp::Swap as u8);
+    assert_eq!(got.entries[2].source.kind, MediusLockTargetKind::X as u8);
+    assert_eq!(got.entries[2].dest.kind, MediusLockTargetKind::Y as u8);
+    unsafe {
+        medius_device_free(dev);
+        medius_mock_free(mock);
+    }
+}
+
+#[test]
+fn mouse_caps_pan_crosses_the_boundary() {
+    let mock = medius_mock_new();
+    let mut caps: MediusMouseCaps = unsafe { std::mem::zeroed() };
+    caps.n_buttons = 5;
+    caps.has_x = 1;
+    caps.has_y = 1;
+    caps.has_wheel = 1;
+    caps.pan = 1;
+    caps.n_hid = 1;
+    unsafe { medius_mock_set_mouse_caps(mock, caps) };
+    let mut dev: *mut MediusDevice = ptr::null_mut();
+    assert_eq!(
+        unsafe { medius_device_with_mock(mock, &mut dev) },
+        MediusStatus::Ok
+    );
+    let mut out: MediusCaps = unsafe { std::mem::zeroed() };
+    assert_eq!(
+        unsafe { medius_device_caps(dev, &mut out) },
+        MediusStatus::Ok
+    );
+    assert_eq!(out.mouse.pan, 1);
+    assert_eq!(out.mouse.has_wheel, 1);
+    // A clone that declares pan holds a pan-axis transform, so pan is first-class end to end.
+    assert_eq!(
+        unsafe { medius_device_invert(dev, MediusAxis::Pan as u8) },
+        MediusStatus::Ok
+    );
+    let mut tf: MediusTransforms = unsafe { std::mem::zeroed() };
+    assert_eq!(
+        unsafe { medius_device_query_transforms(dev, &mut tf) },
+        MediusStatus::Ok
+    );
+    assert_eq!(tf.n, 1);
+    assert_eq!(tf.entries[0].op, MediusTransformOp::Invert as u8);
+    assert_eq!(tf.entries[0].source.kind, MediusLockTargetKind::Pan as u8);
     unsafe {
         medius_device_free(dev);
         medius_mock_free(mock);
