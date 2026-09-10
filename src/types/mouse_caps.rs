@@ -11,6 +11,8 @@ pub struct MouseCaps {
     pub has_y: bool,
     /// Wheel present.
     pub has_wheel: bool,
+    /// AC Pan (horizontal scroll) present.
+    pub pan: bool,
     /// The mouse report sits behind a HID report ID.
     pub has_report_id: bool,
     /// Number of cloned HID interfaces (`> 1` = composite).

@@ -45,19 +45,54 @@ fn async_movement_verbs_send_the_same_frames_as_the_sync_ones() {
         moves(&|d| {
             d.move_rel_now(7, -2).unwrap();
             d.wheel_now(3).unwrap();
+            d.pan_now(6).unwrap();
             d.flush_motion().unwrap();
             d.discard_motion().unwrap();
             d.move_axis(Motion::Wheel(1), MoveTiming::Now, PendingMotion::Flush)
+                .unwrap();
+            d.move_axis(Motion::Pan(4), MoveTiming::Ride, PendingMotion::Flush)
                 .unwrap();
         }),
         vec![
             vec![0, 7, 0, 0xFE, 0xFF, 0x01],
             vec![1, 3, 0, 0x01],
+            vec![2, 6, 0, 0x01],
             vec![0, 0, 0, 0, 0, 0x02],
             vec![0, 0, 0, 0, 0, 0x04],
             vec![1, 1, 0, 0x03],
+            vec![2, 4, 0, 0x02],
         ]
     );
+}
+
+#[test]
+fn async_caps_caches_the_declared_button_count_for_the_blanket() {
+    use crate::protocol::FrameType;
+    use crate::types::MouseCaps;
+    use crate::{Blanket, Direction};
+
+    let mock = MockBox::new().with_mouse_caps(MouseCaps {
+        n_buttons: 16,
+        has_x: true,
+        has_y: true,
+        has_wheel: true,
+        pan: false,
+        has_report_id: false,
+        n_hid: 1,
+    });
+    let device = Device::with_mock(mock.clone()).into_async();
+    // The async caps() caches the declared count the same way the sync one does.
+    assert_eq!(block_on(device.caps()).unwrap().mouse.n_buttons, 16);
+    device.lock_all(Blanket::Buttons, Direction::Both).unwrap();
+    mock.clear_recorded();
+    device.reapply().unwrap();
+    let ids: Vec<u16> = mock
+        .recorded_frames()
+        .iter()
+        .filter(|f| f.ty == FrameType::Lock)
+        .map(|f| u16::from_le_bytes([f.payload[1], f.payload[2]]))
+        .collect();
+    assert_eq!(ids, (0..16).collect::<Vec<u16>>());
 }
 
 #[test]
@@ -116,7 +151,7 @@ fn async_refuses_a_relative_direction_the_box_would_drop() {
     use crate::{Blanket, Button, Direction};
     let device = Device::with_mock(MockBox::new()).into_async();
     assert!(matches!(
-        device.lock(Button::Left, Direction::With),
+        device.lock(Button::LEFT, Direction::With),
         Err(Error::RelativeDirection { .. })
     ));
     assert!(matches!(

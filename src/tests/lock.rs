@@ -44,12 +44,52 @@ fn lock_scale_constants() {
 }
 
 #[test]
+fn axis_wire_ids_and_total_from_u16() {
+    assert_eq!(
+        (
+            Axis::X.as_u16(),
+            Axis::Y.as_u16(),
+            Axis::Wheel.as_u16(),
+            Axis::Pan.as_u16(),
+        ),
+        (0, 1, 2, 3)
+    );
+    // Every named axis round-trips, and from_u16 is total: an id no axis names is None, never a panic.
+    for a in Axis::ALL {
+        assert_eq!(Axis::from_u16(a.as_u16()), Some(a));
+    }
+    assert_eq!(Axis::from_u16(4), None);
+    assert_eq!(Axis::from_u16(0xFFFF), None);
+}
+
+#[test]
+fn button_is_an_open_id() {
+    // The five names are constants over the wire ids; any id past them is representable.
+    assert_eq!(
+        (
+            Button::LEFT.as_id(),
+            Button::RIGHT.as_id(),
+            Button::MIDDLE.as_id(),
+            Button::SIDE1.as_id(),
+            Button::SIDE2.as_id(),
+        ),
+        (0, 1, 2, 3, 4)
+    );
+    assert_eq!(Button::new(0), Button::LEFT);
+    assert_eq!(Button::new(8).as_id(), 8);
+    // from_id is total: every byte is a button, including one past what any device wires.
+    assert_eq!(Button::from_id(200).as_id(), 200);
+    // A button past five carries into the momentary-usage space unchanged.
+    assert_eq!(Usage::from(Button::new(8)), Usage::new(Class::Button, 8));
+}
+
+#[test]
 fn lock_target_and_direction_wire() {
     assert_eq!(
         (Axis::X.as_u16(), Axis::Y.as_u16(), Axis::Wheel.as_u16()),
         (0, 1, 2)
     );
-    let bt: LockTarget = Button::Left.into();
+    let bt: LockTarget = Button::LEFT.into();
     assert_eq!(bt, LockTarget::Usage(Usage::new(Class::Button, 0)));
     let at: LockTarget = Axis::Wheel.into();
     assert_eq!(at, LockTarget::Axis(Axis::Wheel));
@@ -174,7 +214,7 @@ fn decode_locks_through_parse_resp() {
         panic!("expected Locks");
     };
     assert!(l.is_locked(Axis::Y, Direction::Negative));
-    assert!(l.is_locked(Button::Side2, Direction::Negative));
+    assert!(l.is_locked(Button::SIDE2, Direction::Negative));
 }
 
 #[test]
@@ -186,7 +226,7 @@ fn locks_blanket_entry_decodes() {
     assert!(e.is_block());
     assert!(l.is_locked(crate::Key::A, Direction::Positive));
     assert!(!l.is_locked(crate::Key::A, Direction::Negative));
-    assert!(!l.is_locked(Button::Left, Direction::Positive));
+    assert!(!l.is_locked(Button::LEFT, Direction::Positive));
 }
 
 #[test]
@@ -251,7 +291,7 @@ fn a_relative_direction_needs_a_bearing_and_only_an_axis_has_one() {
     let dev = crate::Device::with_mock(crate::MockBox::new());
     for d in [Direction::With, Direction::Against] {
         for r in [
-            dev.lock(Button::Left, d),
+            dev.lock(Button::LEFT, d),
             dev.scale(Key::A, d, 40),
             dev.lock(MediaKey::MUTE, d),
             dev.lock_all(Blanket::Buttons, d),
@@ -273,7 +313,7 @@ fn nothing_refused_reaches_the_wire() {
     use crate::types::Blanket;
     let mock = crate::MockBox::new();
     let dev = crate::Device::with_mock(mock.clone());
-    let _ = dev.lock(Button::Left, Direction::With);
+    let _ = dev.lock(Button::LEFT, Direction::With);
     let _ = dev.lock_all(Blanket::Keys, Direction::Against);
     assert_eq!(
         mock.recorded_frames()
@@ -324,6 +364,55 @@ fn the_mock_answers_locks_from_the_table_the_frames_build() {
     assert_eq!(l.scale_of(Axis::X, Direction::Against), LOCK_SCALE_PASS);
     dev.unlock(Axis::X, Direction::Both).unwrap();
     assert_eq!(dev.query_locks().unwrap().entries().len(), 0);
+}
+
+#[cfg(feature = "mock")]
+#[test]
+fn ac_pan_is_a_lockable_axis_peer_of_the_wheel() {
+    let dev = crate::Device::with_mock(crate::MockBox::new());
+    dev.lock(Axis::Pan, Direction::Positive).unwrap();
+    dev.scale(Axis::Pan, Direction::Against, 40).unwrap();
+    let l = dev.query_locks().unwrap();
+    assert!(l.is_locked(Axis::Pan, Direction::Positive));
+    assert_eq!(l.scale_of(Axis::Pan, Direction::Against), 40);
+    // Pan is its own axis row: the wheel it neighbours is untouched.
+    assert_eq!(
+        l.scale_of(Axis::Wheel, Direction::Positive),
+        LOCK_SCALE_PASS
+    );
+    // Both clears the relative pair too, so the Against weighing does not keep applying unseen.
+    dev.unlock(Axis::Pan, Direction::Both).unwrap();
+    let l = dev.query_locks().unwrap();
+    assert!(!l.is_locked(Axis::Pan, Direction::Positive));
+    assert_eq!(l.scale_of(Axis::Pan, Direction::Against), LOCK_SCALE_PASS);
+}
+
+#[cfg(feature = "mock")]
+#[test]
+fn a_button_past_the_five_named_locks_only_when_the_clone_declares_it() {
+    use crate::types::MouseCaps;
+    let wide = crate::MockBox::new().with_mouse_caps(MouseCaps {
+        n_buttons: 16,
+        has_x: true,
+        has_y: true,
+        has_wheel: true,
+        pan: false,
+        has_report_id: false,
+        n_hid: 1,
+    });
+    let dev = crate::Device::with_mock(wide);
+    dev.lock(Button::new(8), Direction::Positive).unwrap();
+    let l = dev.query_locks().unwrap();
+    assert!(l.is_locked(Button::new(8), Direction::Positive));
+    assert_eq!(
+        l.scale_of(Button::new(8), Direction::Positive),
+        LOCK_SCALE_BLOCK
+    );
+
+    // A narrow clone (the default five-button mock) has no row for button 8, so the box drops it.
+    let narrow = crate::Device::with_mock(crate::MockBox::new());
+    narrow.lock(Button::new(8), Direction::Positive).unwrap();
+    assert_eq!(narrow.query_locks().unwrap().entries().len(), 0);
 }
 
 #[cfg(feature = "mock")]
@@ -409,16 +498,16 @@ fn a_media_lock_reports_as_both_whatever_edge_was_asked_for() {
 #[test]
 fn a_scale_at_or_above_a_pass_unlocks_a_one_bit_class() {
     let dev = crate::Device::with_mock(crate::MockBox::new());
-    dev.scale(Button::Left, Direction::Positive, 50).unwrap();
+    dev.scale(Button::LEFT, Direction::Positive, 50).unwrap();
     let l = dev.query_locks().unwrap();
     // Under a full pass a button truncates to a block, so that is what reads back.
     assert_eq!(
-        l.scale_of(Button::Left, Direction::Positive),
+        l.scale_of(Button::LEFT, Direction::Positive),
         LOCK_SCALE_BLOCK
     );
-    assert!(l.is_locked(Button::Left, Direction::Positive));
+    assert!(l.is_locked(Button::LEFT, Direction::Positive));
     // 150% is an amplification a one-bit field cannot carry, so the box truncates it to a pass.
-    dev.scale(Button::Left, Direction::Positive, 150).unwrap();
+    dev.scale(Button::LEFT, Direction::Positive, 150).unwrap();
     assert_eq!(dev.query_locks().unwrap().entries().len(), 0);
 }
 
@@ -430,12 +519,18 @@ fn a_relative_direction_on_a_one_bit_class_writes_nothing_box_side() {
     use crate::protocol::opcode::{LOCK_CLS_BTN, LOCK_ID_ALL};
     use crate::types::BearingMode;
     let mut t = LockTable::default();
-    t.apply(LOCK_CLS_BTN, 0, LOCK_DIR_AGAINST, LOCK_SCALE_BLOCK);
-    t.apply(LOCK_CLS_KEY, 0x04, LOCK_DIR_WITH, LOCK_SCALE_BLOCK);
-    t.apply(LOCK_CLS_KEY, LOCK_ID_ALL, LOCK_DIR_WITH, LOCK_SCALE_BLOCK);
+    t.apply(LOCK_CLS_BTN, 0, LOCK_DIR_AGAINST, LOCK_SCALE_BLOCK, 5);
+    t.apply(LOCK_CLS_KEY, 0x04, LOCK_DIR_WITH, LOCK_SCALE_BLOCK, 5);
+    t.apply(
+        LOCK_CLS_KEY,
+        LOCK_ID_ALL,
+        LOCK_DIR_WITH,
+        LOCK_SCALE_BLOCK,
+        5,
+    );
     assert_eq!(t.pack(BearingMode::PerAxis).entries().len(), 0);
     // A media usage reads no direction at all, so the same frame blocks it whole.
-    t.apply(LOCK_CLS_MEDIA, 0xE2, LOCK_DIR_WITH, LOCK_SCALE_BLOCK);
+    t.apply(LOCK_CLS_MEDIA, 0xE2, LOCK_DIR_WITH, LOCK_SCALE_BLOCK, 5);
     assert_eq!(t.pack(BearingMode::PerAxis).entries().len(), 1);
 }
 

@@ -155,11 +155,12 @@ mod linux {
 
     fn btn_val(acc: &Acc, button: Button) -> i64 {
         match button {
-            Button::Left => acc.btn_left.load(Ordering::Relaxed),
-            Button::Right => acc.btn_right.load(Ordering::Relaxed),
-            Button::Middle => acc.btn_middle.load(Ordering::Relaxed),
-            Button::Side1 => acc.btn_side.load(Ordering::Relaxed),
-            Button::Side2 => acc.btn_extra.load(Ordering::Relaxed),
+            Button::LEFT => acc.btn_left.load(Ordering::Relaxed),
+            Button::RIGHT => acc.btn_right.load(Ordering::Relaxed),
+            Button::MIDDLE => acc.btn_middle.load(Ordering::Relaxed),
+            Button::SIDE1 => acc.btn_side.load(Ordering::Relaxed),
+            Button::SIDE2 => acc.btn_extra.load(Ordering::Relaxed),
+            _ => 0,
         }
     }
 
@@ -719,7 +720,7 @@ mod linux {
             let dev = device.as_ref().unwrap();
             let _ = dev.reset();
             let _ = dev.lock(Axis::X, Direction::Positive);
-            let _ = dev.lock(Button::Left, Direction::Positive);
+            let _ = dev.lock(Button::LEFT, Direction::Positive);
             let locks = dev.query_locks();
             let lock_on = dev.query_health().map(|h| h.lock_on).unwrap_or(false);
             let n = locks.as_ref().map(|l| l.entries().len()).unwrap_or(0);
@@ -728,7 +729,7 @@ mod linux {
                 .map(|l| {
                     l.is_locked(Axis::X, Direction::Positive)
                         && !l.is_locked(Axis::X, Direction::Negative)
-                        && l.is_locked(Button::Left, Direction::Positive)
+                        && l.is_locked(Button::LEFT, Direction::Positive)
                         && l.entries().len() == 2
                 })
                 .unwrap_or(false);
@@ -736,6 +737,40 @@ mod linux {
                 "lock: query + health",
                 q_ok && lock_on,
                 format!("{n} locks q_ok={q_ok} lock_on={lock_on}"),
+            );
+            let _ = dev.reset();
+        }
+
+        {
+            // PAN + BUTTONS PAST FIVE: AC Pan is a first-class axis, so an axis lock on it is a
+            // box-table operation the query reflects on any clone, and it is injectable like the wheel.
+            // A button past the five named ones the box drives only when the clone declares it, so the
+            // query reflecting a lock on button 8 is exactly the declared-count gate.
+            let dev = device.as_ref().unwrap();
+            let _ = dev.reset();
+            let nbtn = dev.caps().map(|c| c.mouse.n_buttons).unwrap_or(0);
+            let pan_inject_ok = dev.pan(3).is_ok() && dev.pan_now(-3).is_ok();
+            let _ = dev.lock(Axis::Pan, Direction::Positive);
+            let btn8 = Button::new(8);
+            let btn8_inject_ok = dev.press(btn8).is_ok() && dev.force_release(btn8).is_ok();
+            let _ = dev.lock(btn8, Direction::Positive);
+            let locks = dev.query_locks();
+            let pan_locked = locks
+                .as_ref()
+                .map(|l| l.is_locked(Axis::Pan, Direction::Positive))
+                .unwrap_or(false);
+            let btn8_locked = locks
+                .as_ref()
+                .map(|l| l.is_locked(btn8, Direction::Positive))
+                .unwrap_or(false);
+            let btn8_ok = btn8_locked == (nbtn > 8);
+            check(
+                "pan + wide button: pan lock/inject, button-8 gated by the declared count",
+                pan_inject_ok && pan_locked && btn8_inject_ok && btn8_ok,
+                format!(
+                    "nbtn={nbtn} pan_locked={pan_locked} btn8_locked={btn8_locked} (declared={})",
+                    nbtn > 8
+                ),
             );
             let _ = dev.reset();
         }
@@ -751,8 +786,8 @@ mod linux {
             let _ = dev.scale(Axis::Y, Direction::With, 130);
             // A one-bit field truncates: under a full pass it stores a block, at or above one a pass,
             // so 50% on a button reads back as 0 and 150% reads back as nothing at all.
-            let _ = dev.scale(Button::Left, Direction::Positive, 50);
-            let _ = dev.scale(Button::Right, Direction::Positive, 150);
+            let _ = dev.scale(Button::LEFT, Direction::Positive, 50);
+            let _ = dev.scale(Button::RIGHT, Direction::Positive, 150);
             let locks = dev.query_locks();
             let s_ok = locks
                 .as_ref()
@@ -761,8 +796,8 @@ mod linux {
                         && l.scale_of(Axis::Y, Direction::With) == 130
                         && l.scale_of(Axis::X, Direction::Positive) == medius::LOCK_SCALE_PASS
                         && !l.is_locked(Axis::X, Direction::Negative)
-                        && l.scale_of(Button::Left, Direction::Positive) == medius::LOCK_SCALE_BLOCK
-                        && l.scale_of(Button::Right, Direction::Positive) == medius::LOCK_SCALE_PASS
+                        && l.scale_of(Button::LEFT, Direction::Positive) == medius::LOCK_SCALE_BLOCK
+                        && l.scale_of(Button::RIGHT, Direction::Positive) == medius::LOCK_SCALE_PASS
                 })
                 .unwrap_or(false);
             let on = dev.query_health().map(|h| h.lock_on).unwrap_or(false);
@@ -892,7 +927,7 @@ mod linux {
                 dev.lock(MediaKey::MUTE, Direction::Against),
                 Err(medius::Error::RelativeDirection { .. })
             ) && matches!(
-                dev.lock(Button::Left, Direction::With),
+                dev.lock(Button::LEFT, Direction::With),
                 Err(medius::Error::RelativeDirection { .. })
             );
             check(
@@ -925,10 +960,10 @@ mod linux {
             // LOCK: injection overrides a hand-locked button (block-press, but a forced press wins).
             let dev = device.as_ref().unwrap();
             let _ = dev.reset();
-            let _ = dev.lock(Button::Left, Direction::Positive);
-            let _ = dev.press(Button::Left);
+            let _ = dev.lock(Button::LEFT, Direction::Positive);
+            let _ = dev.press(Button::LEFT);
             std::thread::sleep(Duration::from_millis(200));
-            let down = btn_val(&acc, Button::Left);
+            let down = btn_val(&acc, Button::LEFT);
             check(
                 "lock: inject overrides",
                 down == 1,
@@ -1203,9 +1238,9 @@ mod linux {
                             consistent &= held.contains(&u);
                             held.retain(|h| *h != u);
                         }
-                        Input::Motion { dx, dy, dz } => {
+                        Input::Motion { dx, dy, dz, pan } => {
                             motions += 1;
-                            consistent &= (dx, dy, dz) != (0, 0, 0);
+                            consistent &= (dx, dy, dz, pan) != (0, 0, 0, 0);
                         }
                     }
                 }
@@ -1218,7 +1253,7 @@ mod linux {
                 dev.input_events([CatchFilter::everything()]),
                 Err(medius::Error::WildcardNotInput)
             ) && matches!(
-                dev.input_events([CatchFilter::watch(Button::Left).on_press()]),
+                dev.input_events([CatchFilter::watch(Button::LEFT).on_press()]),
                 Err(medius::Error::HalfEdgeInputFilter)
             );
             let _ = dev.reset();
@@ -1483,7 +1518,7 @@ mod linux {
                 .bind(ClipTrigger::new(Key::A, Edge::Press, ClipAction::Start))
                 .is_ok();
             let bound_btn = clip
-                .bind(ClipTrigger::new(Button::Side1, Edge::Release, ClipAction::Stop).consume())
+                .bind(ClipTrigger::new(Button::SIDE1, Edge::Release, ClipAction::Stop).consume())
                 .is_ok();
             let loop_set = clip.set_loop(true).is_ok();
             let ride_set = clip.set_ride(true).is_ok();
@@ -1571,11 +1606,11 @@ mod linux {
             let mut all_btn_ok = true;
             let mut report = String::new();
             for button in [
-                Button::Left,
-                Button::Right,
-                Button::Middle,
-                Button::Side1,
-                Button::Side2,
+                Button::LEFT,
+                Button::RIGHT,
+                Button::MIDDLE,
+                Button::SIDE1,
+                Button::SIDE2,
             ] {
                 acc.side_other_code.store(-1, Ordering::Relaxed);
                 let _ = dev.press(button);
@@ -1590,7 +1625,7 @@ mod linux {
                     report.push_str(&format!("{button:?}=ok "));
                 } else {
                     let other = acc.side_other_code.load(Ordering::Relaxed);
-                    if matches!(button, Button::Side1 | Button::Side2) && other >= 0 {
+                    if matches!(button, Button::SIDE1 | Button::SIDE2) && other >= 0 {
                         report.push_str(&format!(
                             "{button:?}=expected-code-silent(saw code 0x{other:x}) "
                         ));
@@ -1605,13 +1640,13 @@ mod linux {
 
         {
             let dev = device.as_ref().unwrap();
-            let _ = dev.press(Button::Left);
+            let _ = dev.press(Button::LEFT);
             std::thread::sleep(Duration::from_millis(200));
             let down = acc.btn_left.load(Ordering::Relaxed);
-            let _ = dev.force_release(Button::Left);
+            let _ = dev.force_release(Button::LEFT);
             std::thread::sleep(Duration::from_millis(200));
             let up = acc.btn_left.load(Ordering::Relaxed);
-            let _ = dev.release(Button::Left);
+            let _ = dev.release(Button::LEFT);
             check(
                 "force_release",
                 down == 1 && up == 0,
@@ -1621,7 +1656,7 @@ mod linux {
 
         {
             let dev = device.as_ref().unwrap();
-            let _ = dev.inject(Button::Right, Action::Press);
+            let _ = dev.inject(Button::RIGHT, Action::Press);
             std::thread::sleep(Duration::from_millis(200));
             let down = acc.btn_right.load(Ordering::Relaxed);
             let _ = dev.reset();
@@ -1720,12 +1755,12 @@ mod linux {
 
         {
             let dev = device.as_ref().unwrap();
-            let _ = dev.press(Button::Right);
+            let _ = dev.press(Button::RIGHT);
             std::thread::sleep(Duration::from_millis(200));
             let down = acc.btn_right.load(Ordering::Relaxed);
             std::thread::sleep(Duration::from_millis(1600));
             let still = acc.btn_right.load(Ordering::Relaxed);
-            let _ = dev.release(Button::Right);
+            let _ = dev.release(Button::RIGHT);
             std::thread::sleep(Duration::from_millis(150));
             check(
                 "keepalive holds",
@@ -1766,7 +1801,7 @@ mod linux {
 
         {
             let dev = device.as_ref().unwrap();
-            let _ = dev.press(Button::Side1);
+            let _ = dev.press(Button::SIDE1);
             std::thread::sleep(Duration::from_millis(200));
             let rc = dev.reconnect();
             std::thread::sleep(Duration::from_millis(300));
@@ -1775,7 +1810,7 @@ mod linux {
             let _ = dev.move_rel(10, 0);
             std::thread::sleep(Duration::from_millis(200));
             let moved = acc.rel_x.load(Ordering::Relaxed);
-            let side_held = btn_val(&acc, Button::Side1) == 1;
+            let side_held = btn_val(&acc, Button::SIDE1) == 1;
             let _ = dev.reset();
             check(
                 "reconnect",
@@ -1942,7 +1977,7 @@ mod linux {
             let abear_ok = matches!(block_on(adev.query_bearing()), Ok(b)
                 if b.window == Some(Duration::from_millis(35)) && b.mode == BearingMode::Vector);
             let arel_ok = matches!(
-                adev.lock(Button::Left, Direction::Against),
+                adev.lock(Button::LEFT, Direction::Against),
                 Err(medius::Error::RelativeDirection { .. })
             );
             let _ = adev.set_bearing(Some(BEARING_WINDOW_DEFAULT), BearingMode::PerAxis);
@@ -1976,7 +2011,7 @@ mod linux {
 
         {
             let dev = device.as_ref().unwrap();
-            let _ = dev.press(Button::Middle);
+            let _ = dev.press(Button::MIDDLE);
             std::thread::sleep(Duration::from_millis(200));
             let down = acc.btn_middle.load(Ordering::Relaxed);
             drop(device.take().unwrap());

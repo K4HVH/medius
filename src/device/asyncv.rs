@@ -76,6 +76,16 @@ impl AsyncDevice {
         self.dev().wheel_now(delta)
     }
 
+    /// `MOVE` (AC Pan): horizontal scroll. Instant; see [`Device::pan`].
+    pub fn pan(&self, delta: i16) -> Result<()> {
+        self.dev().pan(delta)
+    }
+
+    /// `MOVE` (AC Pan) bypassing movement riding. Instant; see [`Device::pan_now`].
+    pub fn pan_now(&self, delta: i16) -> Result<()> {
+        self.dev().pan_now(delta)
+    }
+
     /// Emit the motion held for a ride now. Instant; see [`Device::flush_motion`].
     pub fn flush_motion(&self) -> Result<()> {
         self.dev().flush_motion()
@@ -86,7 +96,7 @@ impl AsyncDevice {
         self.dev().discard_motion()
     }
 
-    /// `MOVE`: field-generic relative axis (cursor or wheel). Instant; see [`Device::move_axis`].
+    /// `MOVE`: field-generic relative axis (cursor, wheel, or AC Pan). Instant; see [`Device::move_axis`].
     pub fn move_axis(
         &self,
         motion: Motion,
@@ -386,7 +396,15 @@ impl AsyncDevice {
             .query_async(Q_CAPS, self.link.query_timeout_default())
             .await?;
         match parse_resp(&payload) {
-            Some(Resp::Caps(c)) => Ok(c),
+            Some(Resp::Caps(c)) => {
+                // Cache the declared button count, exactly as the sync path does, so a later button
+                // blanket expands onto every declared button.
+                self.link
+                    .desired()
+                    .lock()
+                    .note_declared_buttons(c.mouse.n_buttons);
+                Ok(c)
+            }
             _ => Err(Error::NoReply),
         }
     }

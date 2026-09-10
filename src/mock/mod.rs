@@ -5,10 +5,10 @@ use std::sync::Arc;
 use parking_lot::Mutex;
 
 use crate::protocol::opcode::{
-    BTN_COUNT, CAP_REPORT_ID, CAP_WHEEL, CAP_X, CAP_Y, CAPS_CD_KBD, CAPS_CD_MOUSE, DI_HAS_BOS,
-    DI_HAS_SERIAL, KBC_CONSUMER, KBC_NKRO, KBC_REPORT_ID, KBC_SYSTEM, LOCK_AXIS_WHEEL,
-    LOCK_CLS_AXIS, LOCK_CLS_BTN, LOCK_CLS_KEY, LOCK_CLS_MEDIA, LOCK_DIR_AGAINST, LOCK_DIR_BOTH,
-    LOCK_DIR_NEG, LOCK_DIR_POS, LOCK_DIR_WITH, LOCK_ID_ALL, LOCK_SCALE_BLOCK, LOCK_SCALE_PASS,
+    CAP_PAN, CAP_REPORT_ID, CAP_WHEEL, CAP_X, CAP_Y, CAPS_CD_KBD, CAPS_CD_MOUSE, DI_HAS_BOS,
+    DI_HAS_SERIAL, KBC_CONSUMER, KBC_NKRO, KBC_REPORT_ID, KBC_SYSTEM, LOCK_AXIS_PAN, LOCK_CLS_AXIS,
+    LOCK_CLS_BTN, LOCK_CLS_KEY, LOCK_CLS_MEDIA, LOCK_DIR_AGAINST, LOCK_DIR_BOTH, LOCK_DIR_NEG,
+    LOCK_DIR_POS, LOCK_DIR_WITH, LOCK_ID_ALL, LOCK_SCALE_BLOCK, LOCK_SCALE_PASS, MAX_BUTTONS,
     OPT_BEARING, OPT_EMIT, OPT_IMPERFECT, OPT_MOVE_RIDE, OPT_NAME, OPT_RENDER, OPT_SPREAD,
     Q_FIRMWARE, RATE_CONFIDENT,
 };
@@ -135,7 +135,20 @@ impl Default for State {
             },
             health: Health::from_flags(0),
             device_info: DeviceInfo::default(),
-            caps: Caps::default(),
+            // A plain five-button mouse by default, so the lock table's button cap agrees with the
+            // count `RESP(CAPS)` reports; a test wanting buttons past five or AC Pan sets its own caps.
+            caps: Caps {
+                mouse: MouseCaps {
+                    n_buttons: 5,
+                    has_x: true,
+                    has_y: true,
+                    has_wheel: true,
+                    pan: false,
+                    has_report_id: false,
+                    n_hid: 1,
+                },
+                ..Caps::default()
+            },
             rate: Rate::from_payload(&[4, 0, 0, 0, 0, 0]).unwrap(),
             stats: Stats::from_payload(&[5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
                 .unwrap(),
@@ -172,10 +185,10 @@ impl Default for State {
 }
 
 // The box's lock table, modelled the way the firmware holds it so the mock answers `RESP(LOCKS)` the
-// way a box would rather than echoing what the host sent. Mouse rows are X, Y, wheel then the five
+// way a box would rather than echoing what the host sent. Mouse rows are X, Y, wheel, pan then the
 // buttons; slots are POS, NEG, WITH, AGAINST.
-const LOCK_TGT_BTN_BASE: usize = 3;
-const LOCK_TGT_COUNT: usize = 8;
+const LOCK_TGT_BTN_BASE: usize = 4; // CTRL_LOCK_TGT_BTN_BASE: 4 axes (X, Y, wheel, pan) precede the buttons
+const LOCK_TGT_COUNT: usize = LOCK_TGT_BTN_BASE + MAX_BUTTONS as usize; // 4 axes + 16 buttons
 const LOCK_SLOT_WITH: usize = 2;
 const SLOT_DIRS: [u8; 4] = [LOCK_DIR_POS, LOCK_DIR_NEG, LOCK_DIR_WITH, LOCK_DIR_AGAINST];
 // CTRL_RESP_LOCKS_MAXN and INPUT_MEDIA_MAX: past either the box drops silently.
@@ -258,24 +271,27 @@ impl LockTable {
         }
     }
 
-    pub(crate) fn apply(&mut self, class: u8, id: u16, dir: u8, scale: u8) {
+    // `n_buttons` is the clone's declared button count: a button blanket writes that many rows and a
+    // button id past it is dropped, exactly as the firmware caps at `nbtn`.
+    pub(crate) fn apply(&mut self, class: u8, id: u16, dir: u8, scale: u8, n_buttons: u8) {
         let on = scale < LOCK_SCALE_PASS;
         match class {
             LOCK_CLS_AXIS => {
                 if id == LOCK_ID_ALL {
-                    for t in 0..=LOCK_AXIS_WHEEL as usize {
+                    for t in 0..=LOCK_AXIS_PAN as usize {
                         self.set_mouse(t, dir, scale);
                     }
-                } else if id <= LOCK_AXIS_WHEEL {
+                } else if id <= LOCK_AXIS_PAN {
                     self.set_mouse(id as usize, dir, scale);
                 }
             }
             LOCK_CLS_BTN => {
+                let nbtn = (n_buttons as usize).min(MAX_BUTTONS as usize);
                 if id == LOCK_ID_ALL {
-                    for b in 0..BTN_COUNT as usize {
+                    for b in 0..nbtn {
                         self.set_mouse(LOCK_TGT_BTN_BASE + b, dir, scale);
                     }
-                } else if id < BTN_COUNT as u16 {
+                } else if (id as usize) < nbtn {
                     self.set_mouse(LOCK_TGT_BTN_BASE + id as usize, dir, scale);
                 }
             }
@@ -357,7 +373,8 @@ impl LockTable {
                     LockTarget::Axis(match t {
                         0 => Axis::X,
                         1 => Axis::Y,
-                        _ => Axis::Wheel,
+                        2 => Axis::Wheel,
+                        _ => Axis::Pan,
                     })
                 } else {
                     LockTarget::Usage(Usage::new(Class::Button, (t - LOCK_TGT_BTN_BASE) as u16))
@@ -407,8 +424,14 @@ impl State {
         if p.len() < 5 {
             return;
         }
-        self.table
-            .apply(p[0], u16::from_le_bytes([p[1], p[2]]), p[3], p[4]);
+        let n_buttons = self.caps.mouse.n_buttons;
+        self.table.apply(
+            p[0],
+            u16::from_le_bytes([p[1], p[2]]),
+            p[3],
+            p[4],
+            n_buttons,
+        );
     }
 
     // Apply a REWRITE frame the way the box would: keyed add/overwrite/remove, a monotonic gen, a
@@ -667,6 +690,9 @@ fn caps_payload(c: Caps) -> Vec<u8> {
     }
     if c.mouse.has_wheel {
         axis |= CAP_WHEEL;
+    }
+    if c.mouse.pan {
+        axis |= CAP_PAN;
     }
     if c.mouse.has_report_id {
         axis |= CAP_REPORT_ID;
@@ -994,14 +1020,15 @@ fn patch_entry_resp_payload(st: &State, index: u8) -> Vec<u8> {
     p
 }
 
-fn motion_event_payload(ts_us: u32, dx: i16, dy: i16, dz: i16) -> Vec<u8> {
-    let mut p = Vec::with_capacity(11);
+fn motion_event_payload(ts_us: u32, dx: i16, dy: i16, dz: i16, dpan: i16) -> Vec<u8> {
+    let mut p = Vec::with_capacity(13);
     p.extend_from_slice(&ts_us.to_le_bytes());
     p.push(0); // clk: a motion event only exists for a real device's report
 
     p.extend_from_slice(&dx.to_le_bytes());
     p.extend_from_slice(&dy.to_le_bytes());
     p.extend_from_slice(&dz.to_le_bytes());
+    p.extend_from_slice(&dpan.to_le_bytes());
     p
 }
 
@@ -1650,11 +1677,12 @@ impl MockBox {
 
     /// Push a `MOTION_EVENT` as if the box emitted it; surfaces as [`CatchEvent::Motion`](crate::CatchEvent).
     /// `ts_us` is the raw wire timestamp, so a test can drive the `u32` wrap and the clock-restart case.
-    pub fn push_motion(&self, seq: u8, ts_us: u32, dx: i16, dy: i16, dz: i16) {
+    /// The four axes are X, Y, wheel and AC Pan (`dpan`).
+    pub fn push_motion(&self, seq: u8, ts_us: u32, dx: i16, dy: i16, dz: i16, dpan: i16) {
         self.transport.push_frame(
             FrameType::MotionEvent,
             seq,
-            &motion_event_payload(ts_us, dx, dy, dz),
+            &motion_event_payload(ts_us, dx, dy, dz, dpan),
         );
     }
 

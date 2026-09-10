@@ -2,8 +2,9 @@ use std::collections::BTreeMap;
 
 use crate::link::catch::FilterSet;
 use crate::protocol::opcode::{
-    LOCK_CLS_AXIS, LOCK_CLS_BTN, LOCK_CLS_MEDIA, LOCK_DIR_AGAINST, LOCK_DIR_BOTH, LOCK_DIR_NEG,
-    LOCK_DIR_POS, LOCK_DIR_WITH, LOCK_ID_ALL, LOCK_SCALE_BLOCK, LOCK_SCALE_PASS,
+    BTN_COUNT, LOCK_CLS_AXIS, LOCK_CLS_BTN, LOCK_CLS_MEDIA, LOCK_DIR_AGAINST, LOCK_DIR_BOTH,
+    LOCK_DIR_NEG, LOCK_DIR_POS, LOCK_DIR_WITH, LOCK_ID_ALL, LOCK_SCALE_BLOCK, LOCK_SCALE_PASS,
+    MAX_BUTTONS,
 };
 use crate::types::{Action, Class, Usage};
 
@@ -142,6 +143,12 @@ pub(crate) struct DesiredState {
     // The rewrite-rule table the box should be holding, keyed by wire key so a re-set is exact and
     // idempotent. Re-asserted on reconnect and by the keepalive, exactly like `catch`.
     rewrites: BTreeMap<RewriteWireKey, StoredRewrite>,
+    // The clone's declared button count, cached from the last `RESP(CAPS)`. A button blanket expands
+    // onto this many rows, so a lock on a button past the five named ones survives a reconnect. `None`
+    // before any CAPS read: the box has no button-blanket state, so the host expands the blanket at
+    // apply time, and until CAPS is read the only count it knows is the named one. A device fact, not
+    // PC-owned injection state, so `clear()`/`is_idle()` leave it alone.
+    declared_buttons: Option<u8>,
 }
 
 impl DesiredState {
@@ -177,7 +184,7 @@ impl DesiredState {
             rows: Vec::new(),
             media_order: self.media_order.clone(),
         };
-        for id in expand_blanket(class, id) {
+        for id in self.expand_blanket(class, id) {
             let key = (class, id);
             undo.rows.push((key, self.locks.get(&key).copied()));
             let row = self.locks.entry(key).or_default();
@@ -192,6 +199,30 @@ impl DesiredState {
             }
         }
         undo
+    }
+
+    /// Cache the clone's declared button count from a `RESP(CAPS)`, capped at the box's ceiling. A
+    /// later button blanket expands onto this many rows, so a reconnect re-asserts a lock on a button
+    /// past the five named ones.
+    pub(crate) fn note_declared_buttons(&mut self, n_buttons: u8) {
+        self.declared_buttons = Some(n_buttons.min(MAX_BUTTONS));
+    }
+
+    // How many button rows a button blanket expands onto: the declared count once CAPS is read, else
+    // the five named buttons (the box holds no button-blanket state, so the host expands at apply
+    // time). Always within the box's ceiling.
+    fn button_count(&self) -> u16 {
+        self.declared_buttons.unwrap_or(BTN_COUNT) as u16
+    }
+
+    // The box has no button-blanket state: it writes the button rows and forgets it was ever one
+    // command. A key or media blanket is its own flag on the box, so it stays its own row here.
+    fn expand_blanket(&self, class: u8, id: u16) -> Vec<u16> {
+        if class == LOCK_CLS_BTN && id == LOCK_ID_ALL {
+            (0..self.button_count()).collect()
+        } else {
+            vec![id]
+        }
     }
 
     /// Put back what an `apply_lock` wrote, for a frame that never reached the transport.
@@ -309,14 +340,4 @@ impl DesiredState {
 // A granular media lock, the only class the box holds in a slot array. Its blanket is a separate flag.
 fn is_media_slot(class: u8, id: u16) -> bool {
     class == LOCK_CLS_MEDIA && id != LOCK_ID_ALL
-}
-
-// The box has no button-blanket state: it writes the five button rows and forgets it was ever one
-// command. A key or media blanket is its own flag on the box, so it stays its own row here.
-fn expand_blanket(class: u8, id: u16) -> Vec<u16> {
-    if class == LOCK_CLS_BTN && id == LOCK_ID_ALL {
-        (0..crate::protocol::opcode::BTN_COUNT as u16).collect()
-    } else {
-        vec![id]
-    }
 }
