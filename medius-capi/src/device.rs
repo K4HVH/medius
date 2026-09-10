@@ -9,8 +9,8 @@ use medius::{UpdateProgress, UpdateTarget};
 
 use crate::convert::{
     action_from_c, blanket_from_c, emit_pace_from_c, input_to_medius, led_mode_from_c,
-    led_target_from_c, lock_target_to_medius, motion_from_c, move_timing_from_c,
-    pending_motion_from_c, reboot_target_from_c,
+    led_target_from_c, lock_target_to_medius, motion_from_c, move_timing_from_c, patch_from_c,
+    pending_motion_from_c, reboot_target_from_c, rewrite_rule_from_c, setup_from_c,
 };
 use crate::ctypes::*;
 use crate::error::{MediusStatus, clear_error, fail, guard, guard_status, record, status_of};
@@ -547,6 +547,214 @@ pub unsafe extern "C" fn medius_device_allow_imperfect_clones(
     with_device(dev, |d| d.allow_imperfect_clones(allow))
 }
 
+// A read-only byte slice from a caller pointer + length. `from_raw_parts` needs a non-null aligned
+// pointer even for a zero length, so an empty request maps to a real empty slice, and a null pointer
+// with a non-zero length is refused before it is read.
+unsafe fn opt_slice<'a>(ptr: *const u8, len: usize) -> Option<&'a [u8]> {
+    if len == 0 {
+        Some(&[])
+    } else if ptr.is_null() {
+        None
+    } else {
+        Some(unsafe { std::slice::from_raw_parts(ptr, len) })
+    }
+}
+
+/// `RAW` (§3.14): put `bytes[0..len]` verbatim on cloned endpoint `ep`, fire-and-forget. An IN
+/// endpoint (`ep & 0x80`) emits toward the game PC; an OUT endpoint relays to the real device. Gated
+/// on `medius_device_allow_imperfect_clones`: with the opt-in off this is
+/// `MEDIUS_STATUS_ERR_IMPERFECT_REQUIRED` rather than a frame the box would drop.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn medius_device_raw(
+    dev: *mut MediusDevice,
+    ep: u8,
+    bytes: *const u8,
+    len: usize,
+) -> MediusStatus {
+    guard_status(|| {
+        if dev.is_null() {
+            return fail(MediusStatus::ErrInvalidArg, "null device handle");
+        }
+        let Some(slice) = (unsafe { opt_slice(bytes, len) }) else {
+            return fail(MediusStatus::ErrInvalidArg, "null bytes with len > 0");
+        };
+        status_of(unsafe { &(*dev).inner }.raw(ep, slice))
+    })
+}
+
+/// `TRANSFER` (§3.14): run one control transfer against the real device, writing the answer to
+/// `*out`. `ep` is 0 for EP0 or a control endpoint the device declares; `out_data[0..out_len]` is the
+/// OUT data stage (empty for an IN transfer). A status other than `MEDIUS_TRANSFER_STATUS_OK` is a
+/// real protocol outcome carried in `out->status`, not a failure; the box answers `REFUSED` while the
+/// opt-in is off. `out` is the answer, so `MEDIUS_STATUS_OK` means the box answered at all.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn medius_device_transfer(
+    dev: *mut MediusDevice,
+    ep: u8,
+    setup: MediusSetup,
+    out_data: *const u8,
+    out_len: usize,
+    out: *mut MediusTransferOutcome,
+) -> MediusStatus {
+    guard_status(|| {
+        if dev.is_null() || out.is_null() {
+            return fail(MediusStatus::ErrInvalidArg, "null pointer");
+        }
+        let Some(data) = (unsafe { opt_slice(out_data, out_len) }) else {
+            return fail(
+                MediusStatus::ErrInvalidArg,
+                "null out_data with out_len > 0",
+            );
+        };
+        match unsafe { &(*dev).inner }.transfer(ep, setup_from_c(setup), data) {
+            Ok(outcome) => {
+                unsafe { *out = outcome.into() };
+                clear_error();
+                MediusStatus::Ok
+            }
+            Err(e) => record(&e),
+        }
+    })
+}
+
+fn with_rewrite_rule(
+    dev: *mut MediusDevice,
+    rule: *const MediusRewriteRule,
+    f: impl FnOnce(&Device, medius::RewriteRule) -> Result<(), medius::Error>,
+) -> MediusStatus {
+    guard_status(|| {
+        if dev.is_null() || rule.is_null() {
+            return fail(MediusStatus::ErrInvalidArg, "null pointer");
+        }
+        let Some(r) = rewrite_rule_from_c(unsafe { &*rule }) else {
+            return fail(
+                MediusStatus::ErrInvalidArg,
+                "invalid rewrite class, action or direction",
+            );
+        };
+        status_of(f(unsafe { &(*dev).inner }, r))
+    })
+}
+
+/// `REWRITE` (§3.14): install (add or overwrite) one rewrite rule. Gated on the imperfect-clone
+/// opt-in. `rule->class` takes a `MEDIUS_REWRITE_CLASS_*` constant, `rule->action` a
+/// `MEDIUS_REWRITE_ACTION_*` one and `rule->direction` a `MEDIUS_DIRECTION_*` one; any other value is
+/// `MEDIUS_STATUS_ERR_INVALID_ARG`. `match_len` must equal `mask_len`
+/// (`MEDIUS_STATUS_ERR_REWRITE_MASK_LENGTH`), the action must be valid for the class
+/// (`..._REWRITE_ACTION_CLASS`), the direction must not be bearing-relative
+/// (`..._RELATIVE_DIRECTION`), and the payload must fit the box's head
+/// (`..._REWRITE_PAYLOAD_TOO_LARGE`). `medius_device_query_rewrite` confirms what the box holds.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn medius_device_set_rewrite(
+    dev: *mut MediusDevice,
+    rule: *const MediusRewriteRule,
+) -> MediusStatus {
+    with_rewrite_rule(dev, rule, |d, r| d.set_rewrite(&r))
+}
+
+/// `REWRITE` remove (§3.14): drop the rule keyed by `rule`'s `(class, id, direction, match, mask)`;
+/// its action and payload are ignored. A no-op on the box if no such rule is held.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn medius_device_remove_rewrite(
+    dev: *mut MediusDevice,
+    rule: *const MediusRewriteRule,
+) -> MediusStatus {
+    with_rewrite_rule(dev, rule, |d, r| d.remove_rewrite(&r))
+}
+
+/// `REWRITE` clear (§3.14): drop the whole rewrite table. Always clears the crate's held rules,
+/// whatever the opt-in.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn medius_device_clear_rewrite(dev: *mut MediusDevice) -> MediusStatus {
+    with_device(dev, |d| d.clear_rewrite())
+}
+
+/// `QUERY(REWRITE)` → `*out` (§4.17): the whole table's summary, a row per rule without its
+/// match/mask/payload bytes. Read one rule in full with `medius_device_query_rewrite_entry`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn medius_device_query_rewrite(
+    dev: *mut MediusDevice,
+    out: *mut MediusRewriteTable,
+) -> MediusStatus {
+    query(dev, out, |d| d.query_rewrite())
+}
+
+/// `QUERY(REWRITE_ENTRY, index)` → `*out` (§4.17): one rule in full, in the shape
+/// `medius_device_set_rewrite` takes, so a read rule replays as a set. `index` is the row in the
+/// `medius_device_query_rewrite` summary.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn medius_device_query_rewrite_entry(
+    dev: *mut MediusDevice,
+    index: u8,
+    out: *mut MediusRewriteRule,
+) -> MediusStatus {
+    query(dev, out, |d| d.query_rewrite_entry(index))
+}
+
+fn with_patch(
+    dev: *mut MediusDevice,
+    patch: *const MediusPatch,
+    f: impl FnOnce(&Device, medius::Patch) -> Result<(), medius::Error>,
+) -> MediusStatus {
+    guard_status(|| {
+        if dev.is_null() || patch.is_null() {
+            return fail(MediusStatus::ErrInvalidArg, "null pointer");
+        }
+        let Some(p) = patch_from_c(unsafe { &*patch }) else {
+            return fail(MediusStatus::ErrInvalidArg, "invalid patch section");
+        };
+        status_of(f(unsafe { &(*dev).inner }, p))
+    })
+}
+
+/// `PATCH` (§3.14): store one descriptor patch, keyed by `(section, cfg, index, offset)`. A patch
+/// with `len` 0 removes the patch at that key. Storing is not gated on the opt-in (the box always
+/// stores it); it takes effect only once `medius_device_apply_patch` re-presents the clone under the
+/// opt-in. `patch->section` takes a `MEDIUS_PATCH_SECTION_*` constant; any other value is
+/// `MEDIUS_STATUS_ERR_INVALID_ARG`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn medius_device_set_patch(
+    dev: *mut MediusDevice,
+    patch: *const MediusPatch,
+) -> MediusStatus {
+    with_patch(dev, patch, |d, p| d.set_patch(&p))
+}
+
+/// `PATCH` APPLY (§3.14): re-present the clone with the stored patch set (one replug to the game PC).
+/// Gated on the imperfect-clone opt-in; with it off this is `MEDIUS_STATUS_ERR_IMPERFECT_REQUIRED`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn medius_device_apply_patch(dev: *mut MediusDevice) -> MediusStatus {
+    with_device(dev, |d| d.apply_patch())
+}
+
+/// `PATCH` CLEAR (§3.14): drop every patch for this device and re-present the clone unpatched.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn medius_device_clear_patch(dev: *mut MediusDevice) -> MediusStatus {
+    with_device(dev, |d| d.clear_patch())
+}
+
+/// `QUERY(PATCHES)` → `*out` (§4.17): the stored patch set and its apply state, a row per patch
+/// without its bytes. Read one patch in full with `medius_device_query_patch_entry`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn medius_device_query_patches(
+    dev: *mut MediusDevice,
+    out: *mut MediusPatchSet,
+) -> MediusStatus {
+    query(dev, out, |d| d.query_patches())
+}
+
+/// `QUERY(PATCH_ENTRY, index)` → `*out` (§4.17): one patch in full, in the shape
+/// `medius_device_set_patch` takes, so a read patch replays as a set. `index` is the row in the
+/// `medius_device_query_patches` summary.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn medius_device_query_patch_entry(
+    dev: *mut MediusDevice,
+    index: u8,
+    out: *mut MediusPatch,
+) -> MediusStatus {
+    query(dev, out, |d| d.query_patch_entry(index))
+}
+
 /// Set movement riding; when `enabled`, injected motion rides a native cursor report seen within `window_ms`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_device_set_movement_riding(
@@ -880,7 +1088,7 @@ pub extern "C" fn medius_default_keepalive_cadence_ms() -> u32 {
 /// The C ABI version, bumped on any breaking change to this header.
 #[unsafe(no_mangle)]
 pub extern "C" fn medius_abi_version() -> u32 {
-    6
+    7
 }
 
 /// The medius-capi crate version as a static NUL-terminated string.

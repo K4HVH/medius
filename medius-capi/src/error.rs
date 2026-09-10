@@ -38,6 +38,14 @@ pub enum MediusStatus {
     ErrReservedId = 18,
     /// `MEDIUS_DIRECTION_WITH` / `_AGAINST` on something with no bearing to measure them against.
     ErrRelativeDirection = 19,
+    /// A developer-layer call with the imperfect-clone opt-in off, which gates the whole layer.
+    ErrImperfectRequired = 20,
+    /// A rewrite rule whose `match` and `mask` are different lengths.
+    ErrRewriteMaskLength = 21,
+    /// A rewrite action that is not valid for its class (a report-only or control-only action misused).
+    ErrRewriteActionClass = 22,
+    /// A rewrite payload larger than the head the box holds for its class.
+    ErrRewritePayloadTooLarge = 23,
 }
 
 #[derive(Default)]
@@ -83,6 +91,10 @@ fn status_for(err: &Error) -> MediusStatus {
         Error::HalfEdgeInputFilter => MediusStatus::ErrHalfEdgeInputFilter,
         Error::ReservedId { .. } => MediusStatus::ErrReservedId,
         Error::RelativeDirection { .. } => MediusStatus::ErrRelativeDirection,
+        Error::ImperfectRequired => MediusStatus::ErrImperfectRequired,
+        Error::RewriteMaskLength { .. } => MediusStatus::ErrRewriteMaskLength,
+        Error::RewriteActionClass { .. } => MediusStatus::ErrRewriteActionClass,
+        Error::RewritePayloadTooLarge { .. } => MediusStatus::ErrRewritePayloadTooLarge,
         Error::Update { .. } => MediusStatus::ErrUpdate,
         _ => MediusStatus::ErrUnknown,
     }

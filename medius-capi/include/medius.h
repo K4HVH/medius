@@ -38,6 +38,20 @@
 // Largest traffic payload one event carries (the firmware `CTRL_TRAFFIC_DATA_MAX`).
 #define MEDIUS_MAX_TRAFFIC_BYTES 180
 
+// Largest number of rows in a decoded `RESP(REWRITE)` (the firmware `REWRITE_TAB_MAX`).
+#define MEDIUS_MAX_REWRITE_ENTRIES 16
+
+// Largest number of rows in a decoded `RESP(PATCHES)` (the firmware `PATCH_MAX`).
+#define MEDIUS_MAX_PATCH_ENTRIES 16
+
+// The most `match`/`mask` bytes one rewrite rule compares (the firmware `REWRITE_MATCH_MAX`).
+#define MEDIUS_MAX_REWRITE_MATCH 16
+
+// The largest developer-layer byte payload the control link carries in one frame (`MAX_PAYLOAD`):
+// the bound on a `medius_device_raw` write, a rewrite rule's payload, a descriptor patch's bytes,
+// and a control transfer's data stage.
+#define MEDIUS_MAX_DEV_PAYLOAD 512
+
 // CATCH classes, the `class` of a `MediusCatchFilter`. 0-3 are the classes `LOCK` and `INJECT`
 // address; 4-10 are the traffic the box relays.
 #define MEDIUS_CATCH_CLASS_BTN 0
@@ -129,6 +143,14 @@ enum MediusStatus
     MEDIUS_STATUS_ERR_RESERVED_ID = 18,
     // `MEDIUS_DIRECTION_WITH` / `_AGAINST` on something with no bearing to measure them against.
     MEDIUS_STATUS_ERR_RELATIVE_DIRECTION = 19,
+    // A developer-layer call with the imperfect-clone opt-in off, which gates the whole layer.
+    MEDIUS_STATUS_ERR_IMPERFECT_REQUIRED = 20,
+    // A rewrite rule whose `match` and `mask` are different lengths.
+    MEDIUS_STATUS_ERR_REWRITE_MASK_LENGTH = 21,
+    // A rewrite action that is not valid for its class (a report-only or control-only action misused).
+    MEDIUS_STATUS_ERR_REWRITE_ACTION_CLASS = 22,
+    // A rewrite payload larger than the head the box holds for its class.
+    MEDIUS_STATUS_ERR_REWRITE_PAYLOAD_TOO_LARGE = 23,
 };
 #ifndef __cplusplus
 #if __STDC_VERSION__ >= 202311L
@@ -358,6 +380,11 @@ enum MediusFrameType
     MEDIUS_FRAME_TYPE_CLIP_TRIGGER = 21,
     MEDIUS_FRAME_TYPE_UPDATE = 23,
     MEDIUS_FRAME_TYPE_UPDATE_RESP = 24,
+    MEDIUS_FRAME_TYPE_RAW = 25,
+    MEDIUS_FRAME_TYPE_TRANSFER = 26,
+    MEDIUS_FRAME_TYPE_TRANSFER_RESP = 27,
+    MEDIUS_FRAME_TYPE_REWRITE = 28,
+    MEDIUS_FRAME_TYPE_PATCH = 29,
 };
 #ifndef __cplusplus
 #if __STDC_VERSION__ >= 202311L
@@ -660,6 +687,27 @@ typedef uint8_t MediusMoveTiming;
 #endif // __STDC_VERSION__ >= 202311L
 #endif // __cplusplus
 
+// Which descriptor a patch overwrites (§3.14). Crosses the ABI as the `section` byte of a
+// `MediusPatch`/`MediusPatchEntry`.
+enum MediusPatchSection
+#if defined(__cplusplus) || __STDC_VERSION__ >= 202311L
+  : uint8_t
+#endif // defined(__cplusplus) || __STDC_VERSION__ >= 202311L
+ {
+    MEDIUS_PATCH_SECTION_DEVICE = 0,
+    MEDIUS_PATCH_SECTION_CONFIG = 1,
+    MEDIUS_PATCH_SECTION_REPORT = 2,
+    MEDIUS_PATCH_SECTION_STRING = 3,
+    MEDIUS_PATCH_SECTION_BOS = 4,
+};
+#ifndef __cplusplus
+#if __STDC_VERSION__ >= 202311L
+typedef enum MediusPatchSection MediusPatchSection;
+#else
+typedef uint8_t MediusPatchSection;
+#endif // __STDC_VERSION__ >= 202311L
+#endif // __cplusplus
+
 // What a move does to the motion already held for a ride.
 enum MediusPendingMotion
 #if defined(__cplusplus) || __STDC_VERSION__ >= 202311L
@@ -694,6 +742,77 @@ enum MediusRebootTarget
 typedef enum MediusRebootTarget MediusRebootTarget;
 #else
 typedef uint8_t MediusRebootTarget;
+#endif // __STDC_VERSION__ >= 202311L
+#endif // __cplusplus
+
+// What the winning rewrite rule does to a matched packet (§3.14). Crosses the ABI as the `action`
+// byte. `Drop` is a report surface only; `Answer`/`Stall`/`Nak` and the two reply rewrites are
+// control-only, mirroring the box's own admissibility check.
+enum MediusRewriteAction
+#if defined(__cplusplus) || __STDC_VERSION__ >= 202311L
+  : uint8_t
+#endif // defined(__cplusplus) || __STDC_VERSION__ >= 202311L
+ {
+    MEDIUS_REWRITE_ACTION_PASS = 0,
+    MEDIUS_REWRITE_ACTION_DROP = 1,
+    MEDIUS_REWRITE_ACTION_PATCH = 2,
+    MEDIUS_REWRITE_ACTION_REPLACE = 3,
+    MEDIUS_REWRITE_ACTION_ANSWER = 4,
+    MEDIUS_REWRITE_ACTION_STALL = 5,
+    MEDIUS_REWRITE_ACTION_NAK = 6,
+    MEDIUS_REWRITE_ACTION_REPLY_PATCH = 7,
+    MEDIUS_REWRITE_ACTION_REPLY_REPLACE = 8,
+};
+#ifndef __cplusplus
+#if __STDC_VERSION__ >= 202311L
+typedef enum MediusRewriteAction MediusRewriteAction;
+#else
+typedef uint8_t MediusRewriteAction;
+#endif // __STDC_VERSION__ >= 202311L
+#endif // __cplusplus
+
+// A traffic class a rewrite rule addresses (§3.14). Crosses the ABI as the `class` byte of a
+// `MediusRewriteRule`/`MediusRewriteEntry`; these are the write-direction `CATCH` classes the box
+// will rewrite. `Any` is the wire wildcard `0xFF`.
+enum MediusRewriteClass
+#if defined(__cplusplus) || __STDC_VERSION__ >= 202311L
+  : uint8_t
+#endif // defined(__cplusplus) || __STDC_VERSION__ >= 202311L
+ {
+    MEDIUS_REWRITE_CLASS_HID_IN = 4,
+    MEDIUS_REWRITE_CLASS_HID_OUT = 5,
+    MEDIUS_REWRITE_CLASS_VENDOR_INTERRUPT = 6,
+    MEDIUS_REWRITE_CLASS_VENDOR_BULK = 7,
+    MEDIUS_REWRITE_CLASS_CONTROL = 8,
+    MEDIUS_REWRITE_CLASS_EMIT = 9,
+    MEDIUS_REWRITE_CLASS_ANY = 255,
+};
+#ifndef __cplusplus
+#if __STDC_VERSION__ >= 202311L
+typedef enum MediusRewriteClass MediusRewriteClass;
+#else
+typedef uint8_t MediusRewriteClass;
+#endif // __STDC_VERSION__ >= 202311L
+#endif // __cplusplus
+
+// How a control transfer ended (§3.14): the `status` byte of a `MediusTransferOutcome`. A byte no
+// constant names is a status this build does not know, carried through verbatim.
+enum MediusTransferStatus
+#if defined(__cplusplus) || __STDC_VERSION__ >= 202311L
+  : uint8_t
+#endif // defined(__cplusplus) || __STDC_VERSION__ >= 202311L
+ {
+    MEDIUS_TRANSFER_STATUS_OK = 0,
+    MEDIUS_TRANSFER_STATUS_REFUSED = 252,
+    MEDIUS_TRANSFER_STATUS_STALL = 253,
+    MEDIUS_TRANSFER_STATUS_NAK = 254,
+    MEDIUS_TRANSFER_STATUS_NO_DEVICE = 255,
+};
+#ifndef __cplusplus
+#if __STDC_VERSION__ >= 202311L
+typedef enum MediusTransferStatus MediusTransferStatus;
+#else
+typedef uint8_t MediusTransferStatus;
 #endif // __STDC_VERSION__ >= 202311L
 #endif // __cplusplus
 
@@ -832,6 +951,145 @@ typedef struct MediusLockTarget {
     struct MediusUsage usage;
 } MediusLockTarget;
 
+// A USB control-transfer setup packet: the eight `<BBHHH>` little-endian bytes of `bmRequestType`,
+// `bRequest`, `wValue`, `wIndex`, `wLength` (§9.3 of the USB spec). `length` is the data-stage
+// length: bytes to read for an IN request, the length of the OUT data you pass otherwise.
+typedef struct MediusSetup {
+    uint8_t request_type;
+    uint8_t request;
+    uint16_t value;
+    uint16_t index;
+    uint16_t length;
+} MediusSetup;
+
+// The real device's answer to a `medius_device_transfer`: its status and the IN data in
+// `data[0..len]`. A `status` other than `MEDIUS_TRANSFER_STATUS_OK` is a real protocol outcome, not
+// a link error, and a non-OK answer carries no data.
+typedef struct MediusTransferOutcome {
+    // One of `MEDIUS_TRANSFER_STATUS_*`; a byte no constant names is an unknown status carried
+    // through. A byte rather than `MediusTransferStatus`, so the boundary can carry a value no
+    // constant names; C++ renders the enum as `enum : uint8_t`, so comparing this to one needs a cast.
+    uint8_t status;
+    // Valid bytes in `data`.
+    uint16_t len;
+    uint8_t data[MEDIUS_MAX_DEV_PAYLOAD];
+} MediusTransferOutcome;
+
+// A rewrite rule (§3.14), keyed by `(class, id, direction, match, mask)`.
+//
+// `match_bytes[0..match_len]` and `mask[0..mask_len]` are the masked head compare (they must be the
+// same length; an empty match matches every packet on the address). `payload[0..payload_len]` is the
+// bytes an action that carries one supplies, and `offset` is where a `Patch`/`ReplyPatch` writes.
+// The same shape `medius_device_query_rewrite_entry` reads back, so a read rule replays as a set.
+typedef struct MediusRewriteRule {
+    // One of `MEDIUS_REWRITE_CLASS_*`. A byte rather than `MediusRewriteClass`, so the boundary can
+    // validate it before anything reads it as one; C++ renders the enum as `enum : uint8_t`, so
+    // assigning this to a `MediusRewriteClass` there needs a cast.
+    uint8_t class_;
+    // The address within the class: an interface number, endpoint address, or endpoint number.
+    uint16_t id;
+    // A `MEDIUS_DIRECTION_*` value (`REWRITE` takes `BOTH`/`POSITIVE`/`NEGATIVE`). A byte rather than
+    // `MediusDirection`, so the boundary can validate it; C++ needs a cast to assign it to one.
+    uint8_t direction;
+    // One of `MEDIUS_REWRITE_ACTION_*`. A byte rather than `MediusRewriteAction`, so the boundary can
+    // validate it; C++ needs a cast to assign it to one.
+    uint8_t action;
+    // Where a `Patch`/`ReplyPatch` writes; other actions ignore it.
+    uint16_t offset;
+    // Valid bytes in `match_bytes` (must equal `mask_len`).
+    uint16_t match_len;
+    // Valid bytes in `mask` (must equal `match_len`).
+    uint16_t mask_len;
+    // Valid bytes in `payload`.
+    uint16_t payload_len;
+    uint8_t match_bytes[MEDIUS_MAX_REWRITE_MATCH];
+    uint8_t mask[MEDIUS_MAX_REWRITE_MATCH];
+    uint8_t payload[MEDIUS_MAX_DEV_PAYLOAD];
+} MediusRewriteRule;
+
+// One row of a decoded `RESP(REWRITE)` (§4.17): a rule's address, action and live counters, without
+// its match/mask/payload bytes. Read the full rule with `medius_device_query_rewrite_entry`.
+typedef struct MediusRewriteEntry {
+    // One of `MEDIUS_REWRITE_CLASS_*`. A byte rather than `MediusRewriteClass`; C++ needs a cast.
+    uint8_t class_;
+    // The address within the class.
+    uint16_t id;
+    // A `MEDIUS_DIRECTION_*` value. A byte rather than `MediusDirection`; C++ needs a cast.
+    uint8_t direction;
+    // One of `MEDIUS_REWRITE_ACTION_*`. A byte rather than `MediusRewriteAction`; C++ needs a cast.
+    uint8_t action;
+    // How many `match`/`mask` bytes the rule compares.
+    uint8_t match_len;
+    // The write offset for a patching action.
+    uint16_t offset;
+    // How many payload bytes the rule carries.
+    uint16_t payload_len;
+    // Packets the rule has matched since it was installed (saturating).
+    uint16_t hits;
+} MediusRewriteEntry;
+
+// Decoded `RESP(REWRITE)` (§4.17): the rewrite table's summary in `entries[0..n]`, in installation
+// order (the order the box holds them, not the most-specific-first order it selects a match by).
+typedef struct MediusRewriteTable {
+    // The table is full: a further rule was, or would be, refused.
+    uint8_t table_full;
+    // The generation counter; bumps only on a change that alters the table.
+    uint8_t generation;
+    // The number of valid entries in `entries`.
+    uint16_t n;
+    struct MediusRewriteEntry entries[MEDIUS_MAX_REWRITE_ENTRIES];
+} MediusRewriteTable;
+
+// A descriptor patch (§3.14), keyed by `(section, cfg, index, offset)`.
+//
+// `bytes[0..len]` overwrites the descriptor from `offset`; an empty `bytes` (`len` 0) removes the
+// patch at that key. A patch never changes a descriptor's byte count. The same shape
+// `medius_device_query_patch_entry` reads back, so a read patch replays as a set.
+typedef struct MediusPatch {
+    // One of `MEDIUS_PATCH_SECTION_*`. A byte rather than `MediusPatchSection`, so the boundary can
+    // validate it; C++ renders the enum as `enum : uint8_t`, so assigning this to one needs a cast.
+    uint8_t section;
+    // The configuration index, for `Config`/`Report`.
+    uint8_t cfg;
+    // The interface or string index, for `Report`/`String`.
+    uint8_t index;
+    // The byte offset within the descriptor the overwrite starts at.
+    uint16_t offset;
+    // Valid bytes in `bytes`; 0 removes the patch at this key.
+    uint16_t len;
+    uint8_t bytes[MEDIUS_MAX_DEV_PAYLOAD];
+} MediusPatch;
+
+// One row of a decoded `RESP(PATCHES)` (§4.17): a stored patch's key and length, without its bytes.
+// Read the full patch with `medius_device_query_patch_entry`.
+typedef struct MediusPatchEntry {
+    // One of `MEDIUS_PATCH_SECTION_*`. A byte rather than `MediusPatchSection`; C++ needs a cast.
+    uint8_t section;
+    // The configuration index.
+    uint8_t cfg;
+    // The interface or string index.
+    uint8_t index;
+    // The byte offset within the descriptor.
+    uint16_t offset;
+    // How many bytes the patch overwrites.
+    uint16_t len;
+} MediusPatchEntry;
+
+// Decoded `RESP(PATCHES)` (§4.17): the stored patch set in `entries[0..n]` plus its apply state.
+typedef struct MediusPatchSet {
+    // The stored set is applied to the live clone.
+    uint8_t applied;
+    // A stored change has not been applied yet.
+    uint8_t pending;
+    // The last apply was refused (a patched descriptor's length no longer matched what it serves).
+    uint8_t refused;
+    // The store is full: a further patch was, or would be, refused.
+    uint8_t table_full;
+    // The number of valid entries in `entries`.
+    uint16_t n;
+    struct MediusPatchEntry entries[MEDIUS_MAX_PATCH_ENTRIES];
+} MediusPatchSet;
+
 // One chip's firmware version and which of its two app slots it booted.
 typedef struct MediusChipFirmware {
     uint8_t major;
@@ -865,6 +1123,12 @@ typedef struct MediusHealth {
     uint8_t lock_on;
     uint8_t catch_on;
     uint8_t kbd_attached;
+    // The rewrite-rule table (§3.14) is non-empty (v3.4.0).
+    uint8_t rewrite_on;
+    // A descriptor-patch set (§3.14) is applied to the clone (v3.4.0).
+    uint8_t patch_on;
+    // A field transform is active (reserved; the transforms feature owns this bit) (v3.4.0).
+    uint8_t transform_on;
 } MediusHealth;
 
 // Mouse half of the cloned device's capabilities.
@@ -1606,6 +1870,83 @@ MediusStatus medius_device_reboot(struct MediusDevice *dev, uint8_t target);
 
 MediusStatus medius_device_allow_imperfect_clones(struct MediusDevice *dev, bool allow);
 
+// `RAW` (§3.14): put `bytes[0..len]` verbatim on cloned endpoint `ep`, fire-and-forget. An IN
+// endpoint (`ep & 0x80`) emits toward the game PC; an OUT endpoint relays to the real device. Gated
+// on `medius_device_allow_imperfect_clones`: with the opt-in off this is
+// `MEDIUS_STATUS_ERR_IMPERFECT_REQUIRED` rather than a frame the box would drop.
+MediusStatus medius_device_raw(struct MediusDevice *dev,
+                               uint8_t ep,
+                               const uint8_t *bytes,
+                               uintptr_t len);
+
+// `TRANSFER` (§3.14): run one control transfer against the real device, writing the answer to
+// `*out`. `ep` is 0 for EP0 or a control endpoint the device declares; `out_data[0..out_len]` is the
+// OUT data stage (empty for an IN transfer). A status other than `MEDIUS_TRANSFER_STATUS_OK` is a
+// real protocol outcome carried in `out->status`, not a failure; the box answers `REFUSED` while the
+// opt-in is off. `out` is the answer, so `MEDIUS_STATUS_OK` means the box answered at all.
+MediusStatus medius_device_transfer(struct MediusDevice *dev,
+                                    uint8_t ep,
+                                    struct MediusSetup setup,
+                                    const uint8_t *out_data,
+                                    uintptr_t out_len,
+                                    struct MediusTransferOutcome *out);
+
+// `REWRITE` (§3.14): install (add or overwrite) one rewrite rule. Gated on the imperfect-clone
+// opt-in. `rule->class` takes a `MEDIUS_REWRITE_CLASS_*` constant, `rule->action` a
+// `MEDIUS_REWRITE_ACTION_*` one and `rule->direction` a `MEDIUS_DIRECTION_*` one; any other value is
+// `MEDIUS_STATUS_ERR_INVALID_ARG`. `match_len` must equal `mask_len`
+// (`MEDIUS_STATUS_ERR_REWRITE_MASK_LENGTH`), the action must be valid for the class
+// (`..._REWRITE_ACTION_CLASS`), the direction must not be bearing-relative
+// (`..._RELATIVE_DIRECTION`), and the payload must fit the box's head
+// (`..._REWRITE_PAYLOAD_TOO_LARGE`). `medius_device_query_rewrite` confirms what the box holds.
+MediusStatus medius_device_set_rewrite(struct MediusDevice *dev,
+                                       const struct MediusRewriteRule *rule);
+
+// `REWRITE` remove (§3.14): drop the rule keyed by `rule`'s `(class, id, direction, match, mask)`;
+// its action and payload are ignored. A no-op on the box if no such rule is held.
+MediusStatus medius_device_remove_rewrite(struct MediusDevice *dev,
+                                          const struct MediusRewriteRule *rule);
+
+// `REWRITE` clear (§3.14): drop the whole rewrite table. Always clears the crate's held rules,
+// whatever the opt-in.
+MediusStatus medius_device_clear_rewrite(struct MediusDevice *dev);
+
+// `QUERY(REWRITE)` → `*out` (§4.17): the whole table's summary, a row per rule without its
+// match/mask/payload bytes. Read one rule in full with `medius_device_query_rewrite_entry`.
+MediusStatus medius_device_query_rewrite(struct MediusDevice *dev, struct MediusRewriteTable *out);
+
+// `QUERY(REWRITE_ENTRY, index)` → `*out` (§4.17): one rule in full, in the shape
+// `medius_device_set_rewrite` takes, so a read rule replays as a set. `index` is the row in the
+// `medius_device_query_rewrite` summary.
+MediusStatus medius_device_query_rewrite_entry(struct MediusDevice *dev,
+                                               uint8_t index,
+                                               struct MediusRewriteRule *out);
+
+// `PATCH` (§3.14): store one descriptor patch, keyed by `(section, cfg, index, offset)`. A patch
+// with `len` 0 removes the patch at that key. Storing is not gated on the opt-in (the box always
+// stores it); it takes effect only once `medius_device_apply_patch` re-presents the clone under the
+// opt-in. `patch->section` takes a `MEDIUS_PATCH_SECTION_*` constant; any other value is
+// `MEDIUS_STATUS_ERR_INVALID_ARG`.
+MediusStatus medius_device_set_patch(struct MediusDevice *dev, const struct MediusPatch *patch);
+
+// `PATCH` APPLY (§3.14): re-present the clone with the stored patch set (one replug to the game PC).
+// Gated on the imperfect-clone opt-in; with it off this is `MEDIUS_STATUS_ERR_IMPERFECT_REQUIRED`.
+MediusStatus medius_device_apply_patch(struct MediusDevice *dev);
+
+// `PATCH` CLEAR (§3.14): drop every patch for this device and re-present the clone unpatched.
+MediusStatus medius_device_clear_patch(struct MediusDevice *dev);
+
+// `QUERY(PATCHES)` → `*out` (§4.17): the stored patch set and its apply state, a row per patch
+// without its bytes. Read one patch in full with `medius_device_query_patch_entry`.
+MediusStatus medius_device_query_patches(struct MediusDevice *dev, struct MediusPatchSet *out);
+
+// `QUERY(PATCH_ENTRY, index)` → `*out` (§4.17): one patch in full, in the shape
+// `medius_device_set_patch` takes, so a read patch replays as a set. `index` is the row in the
+// `medius_device_query_patches` summary.
+MediusStatus medius_device_query_patch_entry(struct MediusDevice *dev,
+                                             uint8_t index,
+                                             struct MediusPatch *out);
+
 // Set movement riding; when `enabled`, injected motion rides a native cursor report seen within `window_ms`.
 MediusStatus medius_device_set_movement_riding(struct MediusDevice *dev,
                                                bool enabled,
@@ -2119,6 +2460,15 @@ void medius_mock_set_catch_state(struct MediusMockBox *mock, struct MediusCatchS
 // Set the imperfect-clone status the mock answers to an OPTION(IMPERFECT) query.
 void medius_mock_set_imperfect_status(struct MediusMockBox *mock,
                                       struct MediusImperfectStatus value);
+#endif
+
+#if defined(MEDIUS_FEATURE_MOCK)
+// Set the canned `(status, IN data)` the mock answers a `TRANSFER` with while the opt-in is on; with
+// it off the mock answers `REFUSED` regardless. A non-OK status carries no data, as the box does.
+void medius_mock_set_transfer_reply(struct MediusMockBox *mock,
+                                    uint8_t status,
+                                    const uint8_t *data,
+                                    uintptr_t len);
 #endif
 
 #if defined(MEDIUS_FEATURE_MOCK)

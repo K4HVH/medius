@@ -79,6 +79,23 @@ from medius import (
     TrafficEvent,
     UsageSnapshot,
     Version,
+    Patch,
+    PatchEntry,
+    PatchSet,
+    PatchSection,
+    RewriteRule,
+    RewriteEntry,
+    RewriteTable,
+    RewriteClass,
+    RewriteAction,
+    Setup,
+    TransferOutcome,
+    TransferStatus,
+    ImperfectRequiredError,
+    RelativeDirectionError,
+    RewriteMaskLengthError,
+    RewriteActionClassError,
+    RewritePayloadTooLargeError,
 )
 
 
@@ -89,7 +106,7 @@ def test_mock_feature_present():
 def test_meta_functions():
     # These are a hand-written mirror of the C structs, so a bumped ABI means they are stale until
     # someone re-reads the header. Pin it rather than accept anything newer.
-    assert medius.abi_version() == 6
+    assert medius.abi_version() == 7
     assert medius.version_string()
     assert medius.default_query_timeout_ms() > 0
     assert medius.default_keepalive_cadence_ms() > 0
@@ -1375,3 +1392,242 @@ def test_mock_and_stream_enum_parameters_are_checked():
         with pytest.raises(ValueError):
             stream.held(200)
         stream.close()
+
+
+# --- Developer layer (§3.14): raw injection, control transfers, rewrite rules, descriptor patches ---
+
+
+def _allowed():
+    return ImperfectStatus(allowed=True, over_capacity=False, clone_imperfect=False)
+
+
+def test_dev_layer_health_bits_roundtrip():
+    health = Health(
+        link_up=True,
+        mouse_attached=False,
+        clone_configured=False,
+        injection_active=False,
+        rate_confident=False,
+        lock_on=False,
+        catch_on=False,
+        kbd_attached=False,
+        rewrite_on=True,
+        patch_on=False,
+        transform_on=True,
+    )
+    with MockBox() as mock:
+        mock.set_health(health)
+        with Device.with_mock(mock) as d:
+            got = d.query_health()
+    assert got.rewrite_on is True
+    assert got.patch_on is False
+    assert got.transform_on is True
+    assert got == health
+
+
+def test_dev_layer_frames_carry_their_type():
+    with MockBox() as mock:
+        mock.set_imperfect_status(_allowed())
+        with Device.with_mock(mock) as d:
+            d.raw(0x81, b"\x00\x01\x02\x03")
+            d.set_rewrite(RewriteRule(RewriteClass.EMIT, 0x81, Direction.BOTH, RewriteAction.DROP))
+            d.set_patch(Patch(PatchSection.DEVICE, 0, 0, 8, b"\x34\x12"))
+            d.transfer(0, Setup(0x80, 0x06, 0x0100, 0, 18))
+        assert mock.saw(FrameType.RAW)
+        assert mock.saw(FrameType.REWRITE)
+        assert mock.saw(FrameType.PATCH)
+        assert mock.saw(FrameType.TRANSFER)
+
+
+def test_raw_reaches_the_wire_verbatim():
+    with MockBox() as mock:
+        mock.set_imperfect_status(_allowed())
+        with Device.with_mock(mock) as d:
+            d.raw(0x81, b"\x00\x01\x00\x00")
+        frame = next(
+            mock.recorded_frame(i)
+            for i in range(mock.recorded())
+            if mock.recorded_frame(i).type == FrameType.RAW
+        )
+    # RAW payload is [ep][bytes...].
+    assert bytes(frame.payload) == b"\x81\x00\x01\x00\x00"
+
+
+def test_gated_dev_layer_calls_need_the_opt_in():
+    with MockBox() as mock, Device.with_mock(mock) as d:
+        with pytest.raises(ImperfectRequiredError):
+            d.raw(0x81, b"\x00\x01")
+        with pytest.raises(ImperfectRequiredError):
+            d.set_rewrite(RewriteRule(RewriteClass.EMIT, 0x81, Direction.BOTH, RewriteAction.DROP))
+        with pytest.raises(ImperfectRequiredError):
+            d.apply_patch()
+
+
+def test_transfer_roundtrips_the_answer():
+    reply = bytes([0x12, 0x01, 0x10, 0x02])
+    with MockBox() as mock:
+        mock.set_imperfect_status(_allowed())
+        mock.set_transfer_reply(TransferStatus.OK, reply)
+        with Device.with_mock(mock) as d:
+            out = d.transfer(0, Setup(0x80, 0x06, 0x0100, 0, 18))
+    assert isinstance(out, TransferOutcome)
+    assert out.status == TransferStatus.OK
+    assert out.is_ok
+    assert out.data == reply
+
+
+def test_transfer_is_refused_without_the_opt_in():
+    with MockBox() as mock, Device.with_mock(mock) as d:
+        out = d.transfer(0, Setup(0x80, 0x06, 0x0100, 0, 18))
+    assert out.status == TransferStatus.REFUSED
+    assert not out.is_ok
+    assert out.data == b""
+
+
+def test_a_non_ok_transfer_carries_no_data():
+    # The box zeroes the IN length unless the status is OK, so a stall scripted with bytes drops them.
+    with MockBox() as mock:
+        mock.set_imperfect_status(_allowed())
+        mock.set_transfer_reply(TransferStatus.STALL, b"\x12\x01\x00\x02")
+        with Device.with_mock(mock) as d:
+            out = d.transfer(0, Setup(0x80, 0x06, 0x0100, 0, 18))
+    assert out.status == TransferStatus.STALL
+    assert out.data == b""
+
+
+def test_rewrite_survives_the_query_roundtrip():
+    payload = bytes([0xAB] * 40)
+    with MockBox() as mock:
+        mock.set_imperfect_status(_allowed())
+        with Device.with_mock(mock) as d:
+            d.set_rewrite(
+                RewriteRule(
+                    RewriteClass.CONTROL,
+                    0,
+                    Direction.BOTH,
+                    RewriteAction.REPLY_PATCH,
+                    offset=258,
+                    match_bytes=bytes([0x80, 0x06]),
+                    mask=bytes([0xFF, 0xFF]),
+                    payload=payload,
+                )
+            )
+            table = d.query_rewrite()
+            assert isinstance(table, RewriteTable)
+            assert len(table.entries) == 1
+            entry = table.entries[0]
+            assert isinstance(entry, RewriteEntry)
+            assert entry.rewrite_class == RewriteClass.CONTROL
+            assert entry.action == RewriteAction.REPLY_PATCH
+            assert entry.offset == 258
+            assert entry.payload_len == 40
+
+            read = d.query_rewrite_entry(0)
+            assert read.rewrite_class == RewriteClass.CONTROL
+            assert read.direction == Direction.BOTH
+            assert read.action == RewriteAction.REPLY_PATCH
+            assert read.offset == 258
+            assert read.match_bytes == bytes([0x80, 0x06])
+            assert read.mask == bytes([0xFF, 0xFF])
+            assert read.payload == payload
+
+
+def test_clear_rewrite_empties_the_table():
+    with MockBox() as mock:
+        mock.set_imperfect_status(_allowed())
+        with Device.with_mock(mock) as d:
+            d.set_rewrite(RewriteRule(RewriteClass.EMIT, 0x81, Direction.BOTH, RewriteAction.DROP))
+            assert len(d.query_rewrite().entries) == 1
+            d.clear_rewrite()
+            assert d.query_rewrite().entries == []
+
+
+def test_rewrite_validation_errors_have_their_own_exception():
+    with MockBox() as mock:
+        mock.set_imperfect_status(_allowed())
+        with Device.with_mock(mock) as d:
+            with pytest.raises(RewriteMaskLengthError):
+                d.set_rewrite(
+                    RewriteRule(
+                        RewriteClass.EMIT,
+                        0x81,
+                        Direction.BOTH,
+                        RewriteAction.DROP,
+                        match_bytes=b"\x01\x02",
+                        mask=b"\xFF",
+                    )
+                )
+            with pytest.raises(RewriteActionClassError):
+                d.set_rewrite(RewriteRule(RewriteClass.CONTROL, 0, Direction.BOTH, RewriteAction.DROP))
+            with pytest.raises(RelativeDirectionError):
+                d.set_rewrite(RewriteRule(RewriteClass.EMIT, 0x81, Direction.WITH, RewriteAction.DROP))
+            with pytest.raises(RewritePayloadTooLargeError):
+                d.set_rewrite(
+                    RewriteRule(
+                        RewriteClass.EMIT,
+                        0x81,
+                        Direction.BOTH,
+                        RewriteAction.REPLACE,
+                        payload=bytes(100),
+                    )
+                )
+
+
+def test_over_capacity_bytes_are_refused_before_ctypes():
+    # The C struct holds a fixed 16 match bytes and 512 payload bytes; over that raises here rather than
+    # letting ctypes truncate a rule to a wrong-length one that the box would silently misapply.
+    with MockBox() as mock:
+        mock.set_imperfect_status(_allowed())
+        with Device.with_mock(mock) as d:
+            with pytest.raises(ValueError):
+                d.set_rewrite(
+                    RewriteRule(
+                        RewriteClass.EMIT,
+                        0x81,
+                        Direction.BOTH,
+                        RewriteAction.DROP,
+                        match_bytes=bytes(17),
+                        mask=bytes(17),
+                    )
+                )
+            with pytest.raises(ValueError):
+                d.set_patch(Patch(PatchSection.DEVICE, 0, 0, 0, bytes(513)))
+
+
+def test_patch_survives_the_query_roundtrip():
+    data = bytes([0xCD] * 40)
+    with MockBox() as mock, Device.with_mock(mock) as d:
+        # set_patch is not gated on the opt-in; the box always stores it.
+        d.set_patch(Patch(PatchSection.REPORT, 1, 2, 258, data))
+        pset = d.query_patches()
+        assert isinstance(pset, PatchSet)
+        assert len(pset.entries) == 1
+        entry = pset.entries[0]
+        assert isinstance(entry, PatchEntry)
+        assert entry.section == PatchSection.REPORT
+        assert (entry.cfg, entry.index, entry.offset, entry.len) == (1, 2, 258, 40)
+
+        read = d.query_patch_entry(0)
+        assert read.section == PatchSection.REPORT
+        assert (read.cfg, read.index, read.offset) == (1, 2, 258)
+        assert read.bytes == data
+
+
+def test_apply_and_clear_patch_reach_the_wire():
+    with MockBox() as mock:
+        mock.set_imperfect_status(_allowed())
+        with Device.with_mock(mock) as d:
+            d.set_patch(Patch(PatchSection.DEVICE, 0, 0, 8, b"\x34\x12"))
+            assert d.query_patches().pending is True
+            d.apply_patch()
+            assert d.query_patches().applied is True
+            d.clear_patch()
+            assert d.query_patches().entries == []
+
+
+def test_an_empty_patch_removes_the_stored_one():
+    with MockBox() as mock, Device.with_mock(mock) as d:
+        d.set_patch(Patch(PatchSection.DEVICE, 0, 0, 8, b"\x34\x12"))
+        assert len(d.query_patches().entries) == 1
+        d.set_patch(Patch(PatchSection.DEVICE, 0, 0, 8, b""))
+        assert d.query_patches().entries == []
