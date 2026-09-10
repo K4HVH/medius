@@ -335,3 +335,78 @@ fn a_row_of_another_class_never_disturbs_the_media_order() {
     d.apply_lock((LOCK_CLS_BTN, 3, LOCK_DIR_POS), LOCK_SCALE_PASS);
     assert_eq!(media_ids(&d), vec![3, 0xEA]);
 }
+
+// --- rewrite rules (§3.14): session state re-asserted like locks/catch ---
+
+use crate::link::reconcile::StoredRewrite;
+
+fn stored(class: u8, id: u16) -> StoredRewrite {
+    StoredRewrite {
+        class,
+        id,
+        direction: 0,
+        action: 1,
+        offset: 0,
+        match_bytes: vec![],
+        mask: vec![],
+        payload: vec![],
+    }
+}
+
+#[test]
+fn rewrite_rule_is_held_and_non_idle() {
+    let mut d = DesiredState::default();
+    d.apply_rewrite(stored(9, 0x81));
+    assert!(!d.is_idle());
+    assert_eq!(d.held_rewrites().len(), 1);
+}
+
+#[test]
+fn rewrite_overwrite_keeps_one_row() {
+    let mut d = DesiredState::default();
+    d.apply_rewrite(stored(9, 0x81));
+    let mut r = stored(9, 0x81);
+    r.action = 3; // same key, new action
+    d.apply_rewrite(r);
+    let held = d.held_rewrites();
+    assert_eq!(held.len(), 1);
+    assert_eq!(held[0].action, 3);
+}
+
+#[test]
+fn rewrite_remove_and_restore() {
+    let mut d = DesiredState::default();
+    d.apply_rewrite(stored(9, 0x81));
+    let key = stored(9, 0x81).key();
+    let undo = d.remove_rewrite(key);
+    assert!(d.held_rewrites().is_empty());
+    d.restore_rewrite(undo); // a send that never went out is rolled back
+    assert_eq!(d.held_rewrites().len(), 1);
+}
+
+#[test]
+fn rewrite_apply_undo_puts_it_back() {
+    let mut d = DesiredState::default();
+    let undo = d.apply_rewrite(stored(9, 0x81));
+    d.restore_rewrite(undo);
+    assert!(d.held_rewrites().is_empty());
+    assert!(d.is_idle());
+}
+
+#[test]
+fn clear_rewrites_empties_the_table() {
+    let mut d = DesiredState::default();
+    d.apply_rewrite(stored(9, 0x81));
+    d.apply_rewrite(stored(4, 0));
+    d.clear_rewrites();
+    assert!(d.held_rewrites().is_empty());
+}
+
+#[test]
+fn reset_clears_rewrites_too() {
+    let mut d = DesiredState::default();
+    d.apply_rewrite(stored(9, 0x81));
+    d.clear(); // the RESET path
+    assert!(d.held_rewrites().is_empty());
+    assert!(d.is_idle());
+}

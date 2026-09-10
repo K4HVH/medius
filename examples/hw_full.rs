@@ -21,7 +21,8 @@ mod linux {
     use medius::{
         Action, Axis, BearingMode, Blanket, Button, CatchClass, CatchFilter, Class, ClipAction,
         ClipBuilder, ClipState, ClipTrigger, Device, Direction, Edge, EmitPace, Input, Key,
-        LedMode, LedTarget, MediaKey, RebootTarget, RenderMode, Timeline, TrafficClass,
+        LedMode, LedTarget, MediaKey, Patch, PatchSection, RebootTarget, RenderMode, RewriteAction,
+        RewriteClass, RewriteRule, Setup, Timeline, TrafficClass, TransferStatus,
     };
     use medius::{BEARING_WINDOW_DEFAULT, PROTO_VER};
 
@@ -1809,6 +1810,92 @@ mod linux {
                 recovered && moved == 10,
                 format!("reboot(HostRun) → responsive={recovered}, post-reboot move REL_X={moved}"),
             );
+        }
+
+        // Developer layer (§3.14): raw injection, control transfers, rewrite rules, descriptor
+        // patches. Runs after the motion checks because clear_patch re-presents the clone (one
+        // replug), which recreates the evdev node this suite grabbed.
+        {
+            let dev = device.as_ref().unwrap();
+            let opt = dev.allow_imperfect_clones(true);
+
+            // TRANSFER: read the real device's 18-byte device descriptor over EP0.
+            let t = dev.transfer(0, Setup::new(0x80, 0x06, 0x0100, 0x0000, 18), &[]);
+            let transfer_ok = matches!(&t, Ok(o)
+                if o.status == TransferStatus::Ok && o.data().len() >= 2 && o.data()[1] == 0x01);
+            check(
+                "developer: transfer",
+                opt.is_ok() && transfer_ok,
+                format!(
+                    "EP0 GET_DESCRIPTOR(Device) -> {:?} ({} B)",
+                    t.as_ref().map(|o| o.status),
+                    t.as_ref().map(|o| o.data().len()).unwrap_or(0)
+                ),
+            );
+
+            // RAW: a null report on the clone's interrupt-IN endpoint, then the opt-in gate.
+            let raw_on = dev.raw(0x81, &[0, 0, 0, 0]).is_ok();
+            let _ = dev.allow_imperfect_clones(false);
+            let raw_gated = matches!(
+                dev.raw(0x81, &[0, 0, 0, 0]),
+                Err(medius::Error::ImperfectRequired)
+            );
+            let _ = dev.allow_imperfect_clones(true);
+            check(
+                "developer: raw",
+                raw_on && raw_gated,
+                format!("sent when allowed={raw_on}, refused with opt-in off={raw_gated}"),
+            );
+
+            // REWRITE: a no-op PASS rule on the emit wire; read it back, then clear.
+            let rule = RewriteRule::new(
+                RewriteClass::Emit,
+                0x81,
+                Direction::Both,
+                RewriteAction::Pass,
+            );
+            let set_ok = dev.set_rewrite(&rule).is_ok();
+            let q = dev.query_rewrite();
+            let present =
+                matches!(&q, Ok(tab) if tab.entries.iter().any(|e| e.class == RewriteClass::Emit));
+            let generation = q.as_ref().map(|tab| tab.generation).unwrap_or(0);
+            let entry_ok = dev
+                .query_rewrite_entry(0)
+                .map(|r| r.action == RewriteAction::Pass)
+                .unwrap_or(false);
+            let health_on = dev.query_health().map(|h| h.rewrite_on).unwrap_or(false);
+            let clear_ok = dev.clear_rewrite().is_ok();
+            let cleared = matches!(dev.query_rewrite(), Ok(tab) if tab.entries.is_empty());
+            check(
+                "developer: rewrite",
+                set_ok && present && entry_ok && health_on && clear_ok && cleared,
+                format!(
+                    "set={set_ok}, present={present} gen={generation}, entry={entry_ok}, \
+                     health.rewrite_on={health_on}, clear={clear_ok}, cleared={cleared}"
+                ),
+            );
+
+            // PATCH: store a device-descriptor patch (unapplied), read it back, then clear.
+            let patch = Patch::new(PatchSection::Device, 12, vec![0x00, 0x01]);
+            let pset_ok = dev.set_patch(&patch).is_ok();
+            let ps = dev.query_patches();
+            let ppresent = matches!(&ps, Ok(s)
+                if s.entries.iter().any(|e| e.section == PatchSection::Device) && s.pending);
+            let pentry_ok = dev
+                .query_patch_entry(0)
+                .map(|p| p.section == PatchSection::Device && p.bytes == vec![0x00, 0x01])
+                .unwrap_or(false);
+            let pclear_ok = dev.clear_patch().is_ok(); // re-presents the clone
+            check(
+                "developer: patch",
+                pset_ok && ppresent && pentry_ok && pclear_ok,
+                format!(
+                    "set={pset_ok}, present+pending={ppresent}, entry={pentry_ok}, clear={pclear_ok}"
+                ),
+            );
+
+            let _ = dev.allow_imperfect_clones(false);
+            let _ = dev.reset();
         }
 
         {
