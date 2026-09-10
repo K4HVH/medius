@@ -51,8 +51,8 @@ pub(crate) struct LinkInner {
     desired: Arc<Mutex<DesiredState>>,
     events: Arc<Mutex<CatchReg>>,
     catch_gen: Arc<AtomicU64>,
-    // Serialises a whole subscribe/unsubscribe sequence so concurrent callers can't commit masks
-    // out of order and leave the box streaming a mask that disagrees with the registry.
+    // Serialises a subscribe/unsubscribe sequence, or a rewrite-table mutation and its send, against
+    // the keepalive/reconnect re-assertion so neither commits out of order and strands the box.
     catch_lock: Arc<Mutex<()>>,
     counters: Arc<Counters>,
     stop: Arc<AtomicBool>,
@@ -214,6 +214,12 @@ impl Link {
 
     pub(crate) fn desired(&self) -> &Mutex<DesiredState> {
         &self.inner.desired
+    }
+
+    // Held across a rewrite-table mutation and its send so a keepalive/reconnect re-assert can't
+    // interleave and strand the box holding a rule DesiredState dropped (the lock the catch path uses).
+    pub(crate) fn reassert_guard(&self) -> parking_lot::MutexGuard<'_, ()> {
+        self.inner.catch_lock.lock()
     }
 
     pub(crate) fn updates_rx(&self) -> &flume::Receiver<Vec<u8>> {

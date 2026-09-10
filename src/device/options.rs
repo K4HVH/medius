@@ -38,8 +38,32 @@ pub(crate) fn emit_pace_wire(pace: EmitPace) -> (u8, u16) {
 
 impl Device {
     /// `OPTION(IMPERFECT)`: opt into cloning an over-capacity device (one interface left dead) or back to faithful-only; persisted in NVS.
+    ///
+    /// Turning the opt-in off clears the box's rewrite table, so the held rules are dropped to match
+    /// (restored if the frame never goes out); otherwise the keepalive re-asserts them the moment the
+    /// opt-in comes back on. Toggling the opt-in off concurrently with a `set_rewrite` on another thread
+    /// is not ordered: the rule may reach the box after the opt-off and be refused.
     pub fn allow_imperfect_clones(&self, allow: bool) -> Result<()> {
-        self.link.send(FrameType::Option, &imperfect_payload(allow))
+        if !allow {
+            // Serialised against the keepalive/reconnect re-assert like the rewrite mutators, and rolled
+            // back on a failed send so DesiredState and the box stay in step.
+            let _serial = self.link.reassert_guard();
+            let held = {
+                let mut d = self.link.desired().lock();
+                let held = d.held_rewrites();
+                d.clear_rewrites();
+                held
+            };
+            let sent = self.link.send(FrameType::Option, &imperfect_payload(false));
+            if sent.is_err() {
+                let mut d = self.link.desired().lock();
+                for r in held {
+                    d.apply_rewrite(r);
+                }
+            }
+            return sent;
+        }
+        self.link.send(FrameType::Option, &imperfect_payload(true))
     }
 
     /// `OPTION(MOVE_RIDE)`: injected motion rides a native motion report seen within `window` (else dropped)

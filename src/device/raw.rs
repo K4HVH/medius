@@ -83,6 +83,11 @@ impl Device {
     }
 
     /// [`transfer`](Device::transfer) with an explicit reply timeout.
+    ///
+    /// The box gives up on a control transfer after its own ~800 ms window, so a `timeout` shorter than
+    /// that abandons the wait before a slow device would answer and, only if 256 further transfers to the
+    /// same `ep` then wrap the sequence number inside that window, could let a late answer correlate to a
+    /// later transfer. Keep it at or above the box window; [`DEFAULT_TRANSFER_TIMEOUT`] does.
     pub fn transfer_timeout(
         &self,
         ep: u8,

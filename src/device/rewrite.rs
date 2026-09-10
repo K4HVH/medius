@@ -4,7 +4,7 @@ use crate::protocol::command::rewrite_payload;
 use crate::protocol::opcode::{Q_REWRITE, Q_REWRITE_ENTRY};
 use crate::protocol::{FrameType, Resp, parse_resp};
 use crate::types::rewrite::{REWRITE_CLEAR_ID, rewrite_entry_from_payload};
-use crate::types::{Direction, RewriteClass, RewriteRule, RewriteTable};
+use crate::types::{Direction, RewriteAction, RewriteClass, RewriteRule, RewriteTable};
 
 use super::Device;
 
@@ -35,8 +35,10 @@ impl Device {
     /// query path. Records the rule for reconnect-replay, then rolls back if the frame never went out.
     pub(crate) fn set_rewrite_send(&self, rule: &RewriteRule) -> Result<()> {
         let stored = to_stored(rule);
-        // Recorded before the write so a reconnect racing it still replays the rule, and rolled back
-        // when the frame never went out (the lock pattern).
+        // Serialise the DesiredState write and its send against the keepalive/reconnect re-assert so a
+        // concurrent remove/clear can't interleave; recorded before the write so a reconnect racing it
+        // still replays the rule, and rolled back when the frame never went out (the lock pattern).
+        let _serial = self.link.reassert_guard();
         let undo = self.link.desired().lock().apply_rewrite(stored);
         let sent = self.link.send(
             FrameType::Rewrite,
@@ -68,6 +70,9 @@ impl Device {
             });
         }
         let key = to_stored(rule).key();
+        // Serialise the removal and its send against the re-assert, or a keepalive tick could re-send a
+        // stale add after the remove and leave the rule live on the box.
+        let _serial = self.link.reassert_guard();
         let undo = self.link.desired().lock().remove_rewrite(key);
         let sent = self.link.send(
             FrameType::Rewrite,
@@ -92,8 +97,16 @@ impl Device {
     /// `REWRITE` clear (§3.14): drop the whole rewrite table (the `class 0xFF, id 0xFFFF, state 0`
     /// blanket). Always clears the crate's held rules, whatever the opt-in.
     pub fn clear_rewrite(&self) -> Result<()> {
-        self.link.desired().lock().clear_rewrites();
-        self.link.send(
+        // Serialise the clear and its send against the re-assert, and snapshot the rules first so a
+        // failed send restores them (the box still holds them), keeping DesiredState in step.
+        let _serial = self.link.reassert_guard();
+        let held = {
+            let mut d = self.link.desired().lock();
+            let held = d.held_rewrites();
+            d.clear_rewrites();
+            held
+        };
+        let sent = self.link.send(
             FrameType::Rewrite,
             &rewrite_payload(
                 RewriteClass::Any.as_u8(),
@@ -106,7 +119,14 @@ impl Device {
                 &[],
                 &[],
             ),
-        )
+        );
+        if sent.is_err() {
+            let mut d = self.link.desired().lock();
+            for r in held {
+                d.apply_rewrite(r);
+            }
+        }
+        sent
     }
 
     /// `QUERY(REWRITE)` → [`RewriteTable`] (§4.17): the whole table's summary (flags, generation, and a
@@ -161,6 +181,33 @@ pub(crate) fn validate_rule(rule: &RewriteRule) -> Result<()> {
         return Err(Error::RewriteActionClass {
             action: rule.action,
             class: rule.class,
+        });
+    }
+    // Mirror the box's head-cap admission (rewrite_tab.h): a report surface holds 64 bytes and a
+    // control image 8+2048, so a rule whose payload cannot land is refused there. Reject it here
+    // rather than hold a rule DesiredState keeps but the box drops.
+    const HEAD_REPORT: usize = 64;
+    const HEAD_CONTROL: usize = 8 + 2048;
+    let plen = rule.payload.len();
+    let off = rule.offset as usize;
+    let report_cap = if rule.class == RewriteClass::Control {
+        HEAD_CONTROL
+    } else {
+        HEAD_REPORT
+    };
+    let (over, cap) = match rule.action {
+        RewriteAction::Patch | RewriteAction::ReplyPatch => (off + plen > report_cap, report_cap),
+        RewriteAction::Replace => (plen > report_cap, report_cap),
+        RewriteAction::Answer | RewriteAction::ReplyReplace => (plen > HEAD_CONTROL, HEAD_CONTROL),
+        _ => (false, 0),
+    };
+    if over {
+        return Err(Error::RewritePayloadTooLarge {
+            action: rule.action,
+            class: rule.class,
+            len: plen,
+            offset: off,
+            cap,
         });
     }
     Ok(())

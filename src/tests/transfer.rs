@@ -117,4 +117,19 @@ mod mock_roundtrip {
         assert_eq!(reply.status, TransferStatus::Stall);
         assert!(!reply.is_ok());
     }
+
+    #[test]
+    fn transfer_non_ok_status_carries_no_data() {
+        // The box sets in_len = 0 unless status == 0 (usbdev_transfer). A stall scripted with data must
+        // come back with the data dropped, not passed through: no non-OK transfer ever carries bytes.
+        let mock = MockBox::new()
+            .with_imperfect(true)
+            .with_transfer_reply(0xFD, &[0x12, 0x01, 0x00, 0x02]);
+        let device = Device::with_mock(mock);
+        let reply = device
+            .transfer(0, Setup::new(0x80, 0x06, 0x0100, 0x0000, 18), &[])
+            .unwrap();
+        assert_eq!(reply.status, TransferStatus::Stall);
+        assert!(reply.data().is_empty(), "a non-OK transfer carries no data");
+    }
 }
