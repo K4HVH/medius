@@ -19,6 +19,7 @@ pub const INJ_MEDIA: u8 = 2;
 /// `MOVE` motion byte: the relative-axis field kind.
 pub const INJ_MOTION_CURSOR: u8 = 0;
 pub const INJ_MOTION_WHEEL: u8 = 1;
+pub const INJ_MOTION_PAN: u8 = 2;
 /// `MOVE` flags byte: the per-command movement-riding override (§3.1).
 pub const MV_F_NOW: u8 = 0x01;
 pub const MV_F_FLUSH: u8 = 0x02;
@@ -130,7 +131,11 @@ pub const BTN_RIGHT: u8 = 1;
 pub const BTN_MIDDLE: u8 = 2;
 pub const BTN_SIDE1: u8 = 3;
 pub const BTN_SIDE2: u8 = 4;
+/// Count of *named* buttons; ids past it are numeric and drive up to the clone's declared count.
 pub const BTN_COUNT: u8 = 5;
+/// Ceiling on injectable/lockable/catchable buttons: the widest owned devices declare sixteen in one
+/// run, and a device past this caps here. Mirrors `MAX_BUTTONS` in the firmware.
+pub const MAX_BUTTONS: u8 = 16;
 
 /// Clear our injected press; defer to physical state.
 pub const ACT_SOFTREL: u8 = 0;
@@ -266,6 +271,8 @@ pub const LOCK_ID_ALL: u16 = 0xFFFF;
 pub const LOCK_AXIS_X: u16 = 0;
 pub const LOCK_AXIS_Y: u16 = 1;
 pub const LOCK_AXIS_WHEEL: u16 = 2;
+/// AC Pan (horizontal scroll): a first-class relative axis, peer of the wheel.
+pub const LOCK_AXIS_PAN: u16 = 3;
 /// `LOCK` direction byte: both / positive-or-press / negative-or-release, then the two measured
 /// against the bearing rather than a fixed sign (§3.12).
 pub const LOCK_DIR_BOTH: u8 = 0;
@@ -306,6 +313,8 @@ pub const CAP_Y: u8 = 0x02;
 pub const CAP_WHEEL: u8 = 0x04;
 /// `CAPS` axis flag: the mouse report sits behind a HID report ID (§4.4).
 pub const CAP_REPORT_ID: u8 = 0x08;
+/// `CAPS` axis flag: AC Pan (horizontal scroll) present (§4.4).
+pub const CAP_PAN: u8 = 0x10;
 
 /// `RATE` flag: estimator window full (same source as [`H_RATE_CONFIDENT`], §4.5).
 pub const RATE_CONFIDENT: u8 = 0x01;
@@ -342,7 +351,7 @@ pub enum FrameType {
     Lock = 0x0A,
     /// `CATCH`: subscribe to the physical-input event stream (PC→box).
     Catch = 0x0B,
-    /// `MOTION_EVENT`: one unsolicited relative-axis catch event (dx/dy/dz); `SEQ` rolling (box→PC).
+    /// `MOTION_EVENT`: one unsolicited relative-axis catch event (dx/dy/dz/dpan); `SEQ` rolling (box→PC).
     MotionEvent = 0x0C,
     /// `USAGE_EVENT`: one unsolicited held-usage snapshot (class-tagged button/key/media); box→PC.
     UsageEvent = 0x0F,

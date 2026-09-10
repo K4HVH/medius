@@ -20,7 +20,7 @@ pub enum CatchClass {
     Key = CATCH_CLS_KEY,
     /// A media usage; `id` is the 16-bit Consumer usage.
     Media = CATCH_CLS_MEDIA,
-    /// A relative axis; `id` is X, Y or wheel.
+    /// A relative axis; `id` is X, Y, wheel or pan.
     Axis = CATCH_CLS_AXIS,
     /// Raw HID input report bytes; `id` is the interface number. Covers interfaces the semantic model
     /// does not parse, which produce no other event.
@@ -284,7 +284,7 @@ impl CatchFilter {
         CatchFilter::blanket(CatchClass::from(class))
     }
 
-    /// Every relative axis: X, Y and the wheel.
+    /// Every relative axis: X, Y, the wheel and AC Pan.
     pub fn watch_axes() -> CatchFilter {
         CatchFilter::blanket(CatchClass::Axis)
     }

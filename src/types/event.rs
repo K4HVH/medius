@@ -19,12 +19,14 @@ pub struct MotionEvent {
     pub dy: i16,
     /// Wheel delta this report (up positive).
     pub dz: i16,
+    /// AC Pan (horizontal-scroll) delta this report (right positive).
+    pub pan: i16,
 }
 
 impl MotionEvent {
-    /// Decode a `MOTION_EVENT` payload (§4.10): `[ts u32][clk u8][dx i16][dy i16][dz i16]`.
+    /// Decode a `MOTION_EVENT` payload (§4.10): `[ts u32][clk u8][dx i16][dy i16][dz i16][dpan i16]`.
     pub(crate) fn from_payload(p: &[u8]) -> Option<MotionEvent> {
-        if p.len() < EVENT_HDR + 6 {
+        if p.len() < EVENT_HDR + 8 {
             return None;
         }
         Some(MotionEvent {
@@ -33,15 +35,17 @@ impl MotionEvent {
             dx: i16::from_le_bytes([p[5], p[6]]),
             dy: i16::from_le_bytes([p[7], p[8]]),
             dz: i16::from_le_bytes([p[9], p[10]]),
+            pan: i16::from_le_bytes([p[11], p[12]]),
         })
     }
 
     /// Every axis and delta this report carries, moved or not.
-    pub fn all_axes(&self) -> [(Axis, i16); 3] {
+    pub fn all_axes(&self) -> [(Axis, i16); 4] {
         [
             (Axis::X, self.dx),
             (Axis::Y, self.dy),
             (Axis::Wheel, self.dz),
+            (Axis::Pan, self.pan),
         ]
     }
 

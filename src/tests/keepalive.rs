@@ -26,7 +26,7 @@ fn keepalive_reasserts_catch_while_subscribed() {
 fn keepalive_fires_while_a_button_is_held() {
     let mock = MockBox::new();
     let device = Device::with_mock(mock.clone());
-    device.press(Button::Left).unwrap();
+    device.press(Button::LEFT).unwrap();
     mock.clear_recorded();
     std::thread::sleep(PAST_ONE_CADENCE);
     assert!(
@@ -55,7 +55,7 @@ fn keepalive_is_silent_while_idle() {
 fn keepalive_stops_after_the_device_is_dropped() {
     let mock = MockBox::new();
     let device = Device::with_mock(mock.clone());
-    device.press(Button::Left).unwrap();
+    device.press(Button::LEFT).unwrap();
     std::thread::sleep(PAST_ONE_CADENCE);
     drop(device);
     mock.clear_recorded();

@@ -42,8 +42,8 @@ fn main() -> medius::Result<()> {
 
     device.move_rel(40, 0)?;
 
-    device.press(Button::Left)?;
-    device.release(Button::Left)?;
+    device.press(Button::LEFT)?;
+    device.release(Button::LEFT)?;
 
     device.reset()?;
 

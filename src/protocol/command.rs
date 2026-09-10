@@ -1,6 +1,6 @@
 use super::opcode::{
-    INJ_MOTION_CURSOR, INJ_MOTION_WHEEL, OPT_BEARING, OPT_EMIT, OPT_IMPERFECT, OPT_MOVE_RIDE,
-    OPT_NAME, OPT_RENDER, OPT_SPREAD, PATCH_APPLY, PATCH_CLEAR,
+    INJ_MOTION_CURSOR, INJ_MOTION_PAN, INJ_MOTION_WHEEL, OPT_BEARING, OPT_EMIT, OPT_IMPERFECT,
+    OPT_MOVE_RIDE, OPT_NAME, OPT_RENDER, OPT_SPREAD, PATCH_APPLY, PATCH_CLEAR,
 };
 use crate::types::Setup;
 
@@ -15,6 +15,12 @@ pub fn move_cursor_payload(dx: i16, dy: i16, flags: u8) -> [u8; 6] {
 pub fn move_wheel_payload(dz: i16, flags: u8) -> [u8; 4] {
     let d = dz.to_le_bytes();
     [INJ_MOTION_WHEEL, d[0], d[1], flags]
+}
+
+/// `MOVE` AC Pan (§3.1): `[motion=2][dpan i16 LE][flags u8]`, no clamp (firmware paces across frames with carry).
+pub fn move_pan_payload(dpan: i16, flags: u8) -> [u8; 4] {
+    let d = dpan.to_le_bytes();
+    [INJ_MOTION_PAN, d[0], d[1], flags]
 }
 
 /// `INJECT` (§3.2): `[class u8][id u16 LE][action u8]`; class 0 button / 1 key / 2 media; tri-state action.

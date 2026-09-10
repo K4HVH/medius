@@ -133,8 +133,8 @@ fn watching_an_input_is_written_like_locking_it() {
         (CatchClass::Key.as_u8(), 0x04)
     );
     assert_eq!(
-        CatchFilter::watch(Button::Left).wire(),
-        (CatchClass::Button.as_u8(), Button::Left.as_id() as u16)
+        CatchFilter::watch(Button::LEFT).wire(),
+        (CatchClass::Button.as_u8(), Button::LEFT.as_id() as u16)
     );
     assert_eq!(
         CatchFilter::watch_axis(Axis::Wheel).wire(),
@@ -199,27 +199,37 @@ fn a_wildcard_class_carrying_a_real_id_addresses_nothing() {
 
 #[test]
 fn motion_event_decodes_with_its_clock_domain() {
-    // [ts u32][clk u8][dx][dy][dz]: clk sits between ts and the axes, so every field after it
-    // shifted by one when the domain byte was added.
+    // [ts u32][clk u8][dx][dy][dz][dpan]: clk sits between ts and the axes, and dpan is the fourth
+    // axis after the wheel. Hand-laid so a shift in any field's offset turns the asserts below red.
     let p = [
-        0x04, 0x03, 0x02, 0x01, 0, 0x2C, 0x01, 0xCE, 0xFF, 0xFF, 0xFF,
+        0x04, 0x03, 0x02, 0x01, 0, 0x2C, 0x01, 0xCE, 0xFF, 0xFF, 0xFF, 0x07, 0x00,
     ];
     let m = MotionEvent::from_payload(&p).unwrap();
     assert_eq!(m.ts_us, 0x0102_0304);
     assert_eq!(m.clock, ClockDomain::HostChip);
-    assert_eq!((m.dx, m.dy, m.dz), (300, -50, -1));
-    assert!(MotionEvent::from_payload(&p[..10]).is_none());
-    // axes() names only what moved; all_axes() names all three whatever they are.
+    assert_eq!((m.dx, m.dy, m.dz, m.pan), (300, -50, -1, 7));
+    // One byte short of the four-axis frame decodes to nothing.
+    assert!(MotionEvent::from_payload(&p[..12]).is_none());
+    // axes() names only what moved; all_axes() names all four whatever they are.
     let moved: Vec<_> = m.axes().collect();
-    assert_eq!(moved, [(Axis::X, 300), (Axis::Y, -50), (Axis::Wheel, -1)]);
+    assert_eq!(
+        moved,
+        [
+            (Axis::X, 300),
+            (Axis::Y, -50),
+            (Axis::Wheel, -1),
+            (Axis::Pan, 7)
+        ]
+    );
     let still = MotionEvent {
         dx: 0,
         dy: 0,
         dz: 4,
+        pan: 0,
         ..m
     };
     assert_eq!(still.axes().collect::<Vec<_>>(), [(Axis::Wheel, 4)]);
-    assert_eq!(still.all_axes().len(), 3);
+    assert_eq!(still.all_axes().len(), 4);
 }
 
 #[test]
@@ -230,7 +240,7 @@ fn usage_snapshot_decodes_with_its_clock_domain() {
     assert_eq!(s.clock, ClockDomain::HostChip);
     assert_eq!(s.usages.len(), 2);
     assert_eq!(s.class, Class::Button);
-    assert!(s.is_held(Button::Left));
+    assert!(s.is_held(Button::LEFT));
     assert!(s.is_held(Key::new(0x04)));
 }
 
@@ -393,7 +403,7 @@ fn bus_event_decodes_its_kind() {
 fn a_catch_event_answers_class_id_and_direction_uniformly() {
     use crate::types::CatchEvent;
     let motion = CatchEvent::Motion(
-        MotionEvent::from_payload(&[0, 0, 0, 0, 0, 1, 0, 0xFF, 0xFF, 0, 0]).unwrap(),
+        MotionEvent::from_payload(&[0, 0, 0, 0, 0, 1, 0, 0xFF, 0xFF, 0, 0, 0, 0]).unwrap(),
     );
     assert_eq!(motion.class(), CatchClass::Axis);
     assert_eq!(motion.id(), None);
@@ -685,13 +695,13 @@ mod with_mock {
         let dev = Device::with_mock(mock.clone());
         let s = dev.catch_events([CatchFilter::everything()]).unwrap();
 
-        mock.push_motion(0, 1_000, 5, -7, 1);
+        mock.push_motion(0, 1_000, 5, -7, 1, 0);
         mock.push_usages(
             1,
             2_000,
             Class::Button,
             Direction::PRESS,
-            &[Usage::from(Button::Side1)],
+            &[Usage::from(Button::SIDE1)],
         );
         mock.push_traffic(
             2,
@@ -710,7 +720,7 @@ mod with_mock {
             other => panic!("expected motion, got {other:?}"),
         }
         match s.recv().unwrap() {
-            CatchEvent::Usages(u) => assert!(u.is_held(Button::Side1)),
+            CatchEvent::Usages(u) => assert!(u.is_held(Button::SIDE1)),
             other => panic!("expected usages, got {other:?}"),
         }
         match s.recv().unwrap() {
@@ -729,7 +739,7 @@ mod with_mock {
         let dev = Device::with_mock(mock.clone());
         let s = dev.catch_events([CatchFilter::everything()]).unwrap();
         for i in 0..3u8 {
-            mock.push_motion(i, 100 + i as u32, i as i16 + 1, 0, 0);
+            mock.push_motion(i, 100 + i as u32, i as i16 + 1, 0, 0, 0);
         }
         let dx: Vec<i16> = (&s)
             .into_iter()
@@ -747,7 +757,7 @@ mod with_mock {
         let mock = MockBox::new();
         let dev = Device::with_mock(mock.clone());
         let s = dev.catch_events([CatchFilter::everything()]).unwrap();
-        mock.push_motion(0, 111, 1, 0, 0);
+        mock.push_motion(0, 111, 1, 0, 0, 0);
         mock.push_traffic(
             1,
             222,
@@ -1029,7 +1039,7 @@ mod with_mock {
         let mock = MockBox::new();
         let dev = Device::with_mock(mock.clone());
         let s = dev
-            .catch_events([CatchFilter::watch(Button::Left)])
+            .catch_events([CatchFilter::watch(Button::LEFT)])
             .unwrap();
         let next = |what: &str| match s.recv_timeout(Duration::from_secs(1)) {
             Some(CatchEvent::Usages(u)) => u,
@@ -1040,9 +1050,9 @@ mod with_mock {
             1_000,
             Class::Button,
             Direction::PRESS,
-            &[Usage::from(Button::Left)],
+            &[Usage::from(Button::LEFT)],
         );
-        assert!(next("the press").is_held(Button::Left));
+        assert!(next("the press").is_held(Button::LEFT));
 
         // Left released while another subscriber's Side1 is still held. The box lists only Side1 --
         // and that snapshot IS how this subscriber learns Left came up.
@@ -1051,9 +1061,9 @@ mod with_mock {
             2_000,
             Class::Button,
             Direction::RELEASE,
-            &[Usage::from(Button::Side1)],
+            &[Usage::from(Button::SIDE1)],
         );
-        assert!(!next("the release").is_held(Button::Left));
+        assert!(!next("the release").is_held(Button::LEFT));
 
         // A different class still is not its business. Asserted after an event that MUST arrive, so
         // this cannot pass merely by outrunning the reader thread.
@@ -1104,13 +1114,59 @@ mod with_mock {
         let s = dev
             .catch_events([CatchFilter::watch_axis(Axis::Wheel)])
             .unwrap();
-        mock.push_motion(0, 1_000, 40, -9, 0); // X and Y only
+        mock.push_motion(0, 1_000, 40, -9, 0, 0); // X and Y only
         assert!(s.try_recv().is_none());
-        mock.push_motion(1, 2_000, 0, 0, 1);
+        mock.push_motion(1, 2_000, 0, 0, 1, 0);
         match s.recv().unwrap() {
             CatchEvent::Motion(m) => assert_eq!(m.dz, 1),
             other => panic!("expected motion, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn an_ac_pan_motion_reaches_a_pan_subscriber_and_not_the_wheel() {
+        let mock = MockBox::new();
+        let dev = Device::with_mock(mock.clone());
+        let pan = dev
+            .catch_events([CatchFilter::watch_axis(Axis::Pan)])
+            .unwrap();
+        let wheel = dev
+            .catch_events([CatchFilter::watch_axis(Axis::Wheel)])
+            .unwrap();
+        // A report that scrolled sideways only: wheel dz = 0, pan = 5.
+        mock.push_motion(0, 1_000, 0, 0, 0, 5);
+        match pan.recv_timeout(Duration::from_secs(1)) {
+            Some(CatchEvent::Motion(m)) => {
+                assert_eq!(m.pan, 5);
+                assert_eq!(m.axes().collect::<Vec<_>>(), [(Axis::Pan, 5)]);
+            }
+            other => panic!("expected pan motion, got {other:?}"),
+        }
+        assert!(wheel.try_recv().is_none());
+    }
+
+    #[test]
+    fn a_button_past_five_is_a_catchable_address() {
+        // The subscription wire is (class=button, id=8) unchanged; the id is no longer capped.
+        assert_eq!(CatchFilter::watch(Button::new(8)).wire(), (0, 8));
+
+        let mock = MockBox::new();
+        let dev = Device::with_mock(mock.clone());
+        let mut s = dev
+            .input_events([CatchFilter::watch(Button::new(8))])
+            .unwrap();
+        mock.push_usages(
+            0,
+            1_000,
+            Class::Button,
+            Direction::PRESS,
+            &[Usage::from(Button::new(8))],
+        );
+        mock.push_usages(1, 2_000, Class::Button, Direction::RELEASE, &[]);
+        let down = s.recv_timeout(Duration::from_secs(1)).unwrap();
+        assert_eq!(down.input, Input::Press(Usage::new(Class::Button, 8)));
+        let up = s.recv_timeout(Duration::from_secs(1)).unwrap();
+        assert_eq!(up.input, Input::Release(Usage::new(Class::Button, 8)));
     }
 
     #[test]
@@ -1124,9 +1180,9 @@ mod with_mock {
                 [CatchFilter::watch_axis(Axis::Wheel).with_direction(Direction::Positive)],
             )
             .unwrap();
-        mock.push_motion(0, 1_000, 0, 0, -1);
+        mock.push_motion(0, 1_000, 0, 0, -1, 0);
         assert!(up.try_recv().is_none());
-        mock.push_motion(1, 2_000, 0, 0, 3);
+        mock.push_motion(1, 2_000, 0, 0, 3, 0);
         assert!(matches!(up.recv().unwrap(), CatchEvent::Motion(m) if m.dz == 3));
     }
 
@@ -1247,7 +1303,7 @@ mod with_mock {
         let dev = Device::with_mock(mock.clone());
         let s = dev.catch_events([CatchFilter::everything()]).unwrap();
         for i in 0..TOTAL {
-            mock.push_motion(i as u8, 0, i as i16, 0, 0);
+            mock.push_motion(i as u8, 0, i as i16, 0, 0, 0);
         }
         // The reader delivers on its own thread, so wait for the count rather than assuming it has
         // caught up: asserting immediately makes this pass or fail on scheduling.
@@ -1269,8 +1325,8 @@ mod with_mock {
         let mock = MockBox::new();
         let dev = Device::with_mock(mock.clone());
         let s = dev.catch_events([CatchFilter::everything()]).unwrap();
-        mock.push_motion(0, u32::MAX - 500, 1, 0, 0);
-        mock.push_motion(1, 500, 1, 0, 0);
+        mock.push_motion(0, u32::MAX - 500, 1, 0, 0, 0);
+        mock.push_motion(1, 500, 1, 0, 0, 0);
         let first = s.recv().unwrap().ts_us();
         let second = s.recv().unwrap().ts_us();
         assert_eq!(first, u32::MAX - 500);
@@ -1289,7 +1345,7 @@ mod with_mock {
         mock.push_usages(1, 2_000, Class::Key, Direction::PRESS, &[a, b]);
         mock.push_usages(2, 3_000, Class::Key, Direction::RELEASE, &[b]);
         mock.push_usages(3, 4_000, Class::Key, Direction::RELEASE, &[]);
-        mock.push_motion(4, 5_000, 3, -4, 0);
+        mock.push_motion(4, 5_000, 3, -4, 0, 0);
 
         let next = |s: &mut crate::InputStream| s.recv_timeout(Duration::from_secs(1)).unwrap();
         assert_eq!(next(&mut s).input, Input::Press(a));
@@ -1303,7 +1359,8 @@ mod with_mock {
             Input::Motion {
                 dx: 3,
                 dy: -4,
-                dz: 0
+                dz: 0,
+                pan: 0
             }
         );
     }
@@ -1315,8 +1372,8 @@ mod with_mock {
         let mock = MockBox::new();
         let dev = Device::with_mock(mock.clone());
         let mut s = dev.input_events(CatchFilter::all_input()).unwrap();
-        let a = Usage::from(Button::Left);
-        let b = Usage::from(Button::Side1);
+        let a = Usage::from(Button::LEFT);
+        let b = Usage::from(Button::SIDE1);
         mock.push_usages(0, 1_000, Class::Button, Direction::PRESS, &[a]);
         mock.push_usages(1, 2_000, Class::Button, Direction::PRESS, &[b]);
         let next = |s: &mut crate::InputStream| s.recv_timeout(Duration::from_secs(1)).unwrap();
@@ -1370,7 +1427,7 @@ mod with_mock {
         let dev = Device::with_mock(mock.clone());
         let mut s = dev.input_events(CatchFilter::all_input()).unwrap();
         let a = Usage::from(Key::new(0x04));
-        let button = Usage::from(Button::Left);
+        let button = Usage::from(Button::LEFT);
 
         mock.push_usages(0, 1_000, Class::Key, Direction::PRESS, &[a, a]);
         assert_eq!(
@@ -1398,15 +1455,16 @@ mod with_mock {
         let mock = MockBox::new();
         let dev = Device::with_mock(mock.clone());
         let mut s = dev.input_events(CatchFilter::all_input()).unwrap();
-        mock.push_motion(0, 1_000, 0, 0, 0);
+        mock.push_motion(0, 1_000, 0, 0, 0, 0);
         assert!(s.recv_timeout(Duration::from_millis(150)).is_none());
-        mock.push_motion(1, 2_000, 0, 0, -2);
+        mock.push_motion(1, 2_000, 0, 0, -2, 0);
         assert_eq!(
             s.recv_timeout(Duration::from_secs(1)).unwrap().input,
             Input::Motion {
                 dx: 0,
                 dy: 0,
-                dz: -2
+                dz: -2,
+                pan: 0
             }
         );
     }
@@ -1438,7 +1496,7 @@ mod with_mock {
         let mock = MockBox::new();
         let dev = Device::with_mock(mock.clone());
         let mut s = dev.input_events(CatchFilter::all_input()).unwrap();
-        let btn = Usage::from(Button::Left);
+        let btn = Usage::from(Button::LEFT);
         let key = Usage::from(Key::new(0x04));
         mock.push_usages(0, 1_000, Class::Button, Direction::PRESS, &[btn]);
         mock.push_usages(1, 2_000, Class::Key, Direction::PRESS, &[key]);
@@ -1474,7 +1532,7 @@ mod timeline {
     use std::time::Instant;
 
     fn motion_at(ts_us: u32) -> CatchEvent {
-        let mut p = vec![0u8; 11];
+        let mut p = vec![0u8; 13];
         p[..4].copy_from_slice(&ts_us.to_le_bytes());
         p[5] = 1; // dx = 1, so the report moved something
         CatchEvent::Motion(MotionEvent::from_payload(&p).unwrap())
@@ -1533,7 +1591,7 @@ mod timeline {
         assert_eq!(raw.host.duration_since(a.host), Duration::from_millis(1));
         assert_eq!(t.samples(ClockDomain::HostChip), 2);
         // The underlying frame types work directly as well, on the same unwrapped domain.
-        let mut p = vec![0u8; 11];
+        let mut p = vec![0u8; 13];
         p[..4].copy_from_slice(&7_000u32.to_le_bytes());
         let m = MotionEvent::from_payload(&p).unwrap();
         assert_eq!(t.box_us(&m), 7_000);

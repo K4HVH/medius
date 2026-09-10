@@ -11,38 +11,38 @@ fn default_is_idle() {
 #[test]
 fn press_is_held_and_non_idle() {
     let mut d = DesiredState::default();
-    d.apply(Button::Left.into(), Action::Press);
+    d.apply(Button::LEFT.into(), Action::Press);
     assert!(!d.is_idle());
     assert_eq!(
         d.held().collect::<Vec<_>>(),
-        vec![(Usage::from(Button::Left), Action::Press)]
+        vec![(Usage::from(Button::LEFT), Action::Press)]
     );
 }
 
 #[test]
 fn force_release_is_held() {
     let mut d = DesiredState::default();
-    d.apply(Button::Right.into(), Action::ForceRelease);
+    d.apply(Button::RIGHT.into(), Action::ForceRelease);
     assert!(!d.is_idle());
     assert_eq!(
         d.held().collect::<Vec<_>>(),
-        vec![(Usage::from(Button::Right), Action::ForceRelease)]
+        vec![(Usage::from(Button::RIGHT), Action::ForceRelease)]
     );
 }
 
 #[test]
 fn soft_release_clears_the_override() {
     let mut d = DesiredState::default();
-    d.apply(Button::Middle.into(), Action::Press);
-    d.apply(Button::Middle.into(), Action::SoftRelease);
+    d.apply(Button::MIDDLE.into(), Action::Press);
+    d.apply(Button::MIDDLE.into(), Action::SoftRelease);
     assert!(d.is_idle());
 }
 
 #[test]
 fn clear_resets_all() {
     let mut d = DesiredState::default();
-    d.apply(Button::Left.into(), Action::Press);
-    d.apply(Button::Side2.into(), Action::ForceRelease);
+    d.apply(Button::LEFT.into(), Action::Press);
+    d.apply(Button::SIDE2.into(), Action::ForceRelease);
     assert!(!d.is_idle());
     d.clear();
     assert!(d.is_idle());
@@ -52,13 +52,13 @@ fn clear_resets_all() {
 #[test]
 fn held_preserves_identity_in_class_then_id_order() {
     let mut d = DesiredState::default();
-    d.apply(Button::Left.into(), Action::Press);
-    d.apply(Button::Side1.into(), Action::ForceRelease);
+    d.apply(Button::LEFT.into(), Action::Press);
+    d.apply(Button::SIDE1.into(), Action::ForceRelease);
     assert_eq!(
         d.held().collect::<Vec<_>>(),
         vec![
-            (Usage::from(Button::Left), Action::Press),
-            (Usage::from(Button::Side1), Action::ForceRelease),
+            (Usage::from(Button::LEFT), Action::Press),
+            (Usage::from(Button::SIDE1), Action::ForceRelease),
         ]
     );
 }
@@ -106,12 +106,12 @@ fn media_soft_release_clears_the_override() {
 fn one_store_holds_every_class_and_orders_by_class_then_id() {
     let mut d = DesiredState::default();
     d.apply(MediaKey::VOLUME_UP.into(), Action::Press);
-    d.apply(Button::Left.into(), Action::Press);
+    d.apply(Button::LEFT.into(), Action::Press);
     d.apply(Key::A.into(), Action::Press);
     assert_eq!(
         d.held().map(|(u, _)| u).collect::<Vec<_>>(),
         vec![
-            Usage::from(Button::Left),
+            Usage::from(Button::LEFT),
             Usage::from(Key::A),
             Usage::from(MediaKey::VOLUME_UP),
         ]
@@ -210,12 +210,38 @@ fn a_one_bit_class_holds_what_the_box_will_hold() {
 fn a_button_blanket_expands_the_way_the_box_expands_it() {
     let mut d = DesiredState::default();
     d.apply_lock((LOCK_CLS_BTN, LOCK_ID_ALL, LOCK_DIR_BOTH), LOCK_SCALE_BLOCK);
+    // Before any CAPS read the only count known is the five named buttons.
     assert_eq!(d.held_locks().len(), 5);
     // Releasing one button afterwards must not be undone by a replay of the blanket.
     d.apply_lock((LOCK_CLS_BTN, 0, LOCK_DIR_BOTH), LOCK_SCALE_PASS);
     let held = d.held_locks();
     assert_eq!(held.len(), 4);
     assert!(!held.iter().any(|&((_, id, _), _)| id == 0));
+}
+
+#[test]
+fn a_button_blanket_expands_onto_the_declared_count() {
+    // Once CAPS reports a wide button count, the blanket expands onto every declared button, so a
+    // reconnect re-asserts a lock on a button past the five named ones.
+    let mut d = DesiredState::default();
+    d.note_declared_buttons(16);
+    d.apply_lock((LOCK_CLS_BTN, LOCK_ID_ALL, LOCK_DIR_BOTH), LOCK_SCALE_BLOCK);
+    let ids: Vec<u16> = d.held_locks().iter().map(|&((_, id, _), _)| id).collect();
+    assert_eq!(ids, (0..16).collect::<Vec<u16>>());
+    assert!(
+        d.held_locks()
+            .iter()
+            .any(|&((cls, id, _), _)| cls == LOCK_CLS_BTN && id == 8)
+    );
+}
+
+#[test]
+fn a_button_blanket_caps_at_the_box_ceiling() {
+    // A device declaring more buttons than the box can drive still expands onto only the ceiling.
+    let mut d = DesiredState::default();
+    d.note_declared_buttons(40);
+    d.apply_lock((LOCK_CLS_BTN, LOCK_ID_ALL, LOCK_DIR_BOTH), LOCK_SCALE_BLOCK);
+    assert_eq!(d.held_locks().len(), 16);
 }
 
 #[test]
