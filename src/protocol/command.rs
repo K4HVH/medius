@@ -167,6 +167,27 @@ pub fn patch_payload(section: u8, cfg: u8, index: u8, offset: u16, bytes: &[u8])
     v
 }
 
+/// `TRANSFORM` (§3.15): `[op u8][sclass u8][sid u16 LE][dclass u8][did u16 LE][scale i16 LE][state u8]`.
+/// `state` 1 adds/overwrites the entry keyed by `(sclass, sid, dclass, did)`, 0 removes it; the whole
+/// table clears with `sclass = dclass = 0xFF`, both ids `0xFFFF`, `state = 0`.
+#[allow(clippy::too_many_arguments)]
+pub fn transform_payload(
+    op: u8,
+    sclass: u8,
+    sid: u16,
+    dclass: u8,
+    did: u16,
+    scale: i16,
+    state: u8,
+) -> [u8; 10] {
+    let sid = sid.to_le_bytes();
+    let did = did.to_le_bytes();
+    let scale = scale.to_le_bytes();
+    [
+        op, sclass, sid[0], sid[1], dclass, did[0], did[1], scale[0], scale[1], state,
+    ]
+}
+
 /// `PATCH` APPLY (§3.14): the single `section = 0xFE` byte; re-present the clone with the stored set.
 pub fn patch_apply_payload() -> [u8; 1] {
     [PATCH_APPLY]

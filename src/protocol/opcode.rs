@@ -260,6 +260,27 @@ pub const PATCH_MAX_ENTRIES: usize = 16;
 /// The most `match`/`mask` bytes one rewrite rule compares (`REWRITE_MATCH_MAX`).
 pub const REWRITE_MATCH_MAX: usize = 16;
 
+// `TRANSFORM` op byte (§3.15, `CTRL_XF_*`): a field operation on the semantic path. `sclass`/`dclass`
+// reuse the input classes ([`CATCH_CLS_AXIS`]/`_BTN`/`_KEY`/`_MEDIA`). Shared wire values with the
+// firmware `transform_tab.h`.
+/// Move a source field into a destination (axis→axis or button→button in one report, or button→key /
+/// button→media across classes).
+pub const TF_REMAP: u8 = 0;
+/// Exchange two axes (read both, write both).
+pub const TF_SWAP: u8 = 1;
+/// Negate one axis (source == destination); the scale is ignored.
+pub const TF_INVERT: u8 = 2;
+/// Weigh one axis (source == destination) by the signed scale. The highest op: the box refuses a byte
+/// above it (`CTRL_XF_OP_COUNT` is `TF_SCALE + 1`).
+pub const TF_SCALE: u8 = 3;
+
+/// Field-transform table summary: `QUERY [Q_TRANSFORMS]` → `RESP(TRANSFORMS)` (flags + list) (§3.15).
+pub const Q_TRANSFORMS: u8 = 16;
+/// Entries the box's transform table holds (`CTRL_TRANSFORM_MAXN`); past it an entry is refused and `RESP(TRANSFORMS).table_full` says so.
+pub const TRANSFORM_MAX_ENTRIES: usize = 8;
+/// `RESP(TRANSFORMS).flags` bit 0 (`CTRL_TRANSFORM_F_FULL`): the table is full.
+pub const TF_F_FULL: u8 = 0x01;
+
 /// `LOCK` class byte (§3.8): momentary usages share `INJECT`'s space, plus a relative-axis class.
 pub const LOCK_CLS_BTN: u8 = 0;
 pub const LOCK_CLS_KEY: u8 = 1;
@@ -381,6 +402,8 @@ pub enum FrameType {
     Rewrite = 0x1C,
     /// `PATCH`: store/apply/clear a descriptor patch, fire-and-forget (PC→box, §3.14).
     Patch = 0x1D,
+    /// `TRANSFORM`: add/overwrite/remove one field transform, fire-and-forget (PC→box, §3.15).
+    Transform = 0x1E,
 }
 
 /// Error returned when a byte does not name a known [`FrameType`].
@@ -425,6 +448,7 @@ impl TryFrom<u8> for FrameType {
             0x1B => FrameType::TransferResp,
             0x1C => FrameType::Rewrite,
             0x1D => FrameType::Patch,
+            0x1E => FrameType::Transform,
             other => return Err(UnknownFrameType(other)),
         })
     }

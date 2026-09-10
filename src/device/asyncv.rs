@@ -5,7 +5,7 @@ use crate::link::Link;
 use crate::protocol::opcode::{
     OPT_BEARING, OPT_EMIT, OPT_IMPERFECT, OPT_MOVE_RIDE, OPT_RENDER, OPT_SPREAD, Q_CAPS, Q_CATCH,
     Q_CLIP, Q_DEVICE_INFO, Q_FIRMWARE, Q_HEALTH, Q_LOCKS, Q_PATCH_ENTRY, Q_PATCHES, Q_RATE,
-    Q_REWRITE, Q_REWRITE_ENTRY, Q_STATS, Q_VERSION,
+    Q_REWRITE, Q_REWRITE_ENTRY, Q_STATS, Q_TRANSFORMS, Q_VERSION,
 };
 use crate::protocol::{Resp, parse_resp};
 use crate::types::{
@@ -14,7 +14,8 @@ use crate::types::{
     EmitPaceStatus, FirmwareInfo, Health, ImperfectStatus, LedMode, LedTarget, LockTarget, Locks,
     Motion, MoveTiming, Patch, PatchSet, PendingMotion, Rate, RebootTarget, RenderMode,
     RenderStatus, RewriteRule, RewriteTable, Setup, SpreadStatus, Stats, TransferOutcome,
-    TransferStatus, UpdateProgress, UpdateTarget, Usage, Version,
+    TransferStatus, Transform, TransformField, Transforms, UpdateProgress, UpdateTarget, Usage,
+    Version,
 };
 
 use super::Device;
@@ -642,6 +643,57 @@ impl AsyncDevice {
             .query_indexed_async(Q_PATCH_ENTRY, index, self.link.query_timeout_default())
             .await?;
         crate::types::patch::patch_entry_from_payload(&payload).ok_or(Error::NoReply)
+    }
+
+    /// `TRANSFORM`: install one field transform (ungated). Instant; see [`Device::transform`].
+    pub fn transform(&self, t: &Transform) -> Result<()> {
+        self.dev().transform(t)
+    }
+
+    /// `TRANSFORM` remove: drop one transform by key. Instant; see [`Device::untransform`].
+    pub fn untransform(&self, t: &Transform) -> Result<()> {
+        self.dev().untransform(t)
+    }
+
+    /// `TRANSFORM` clear: drop the whole transform table. Instant; see [`Device::clear_transforms`].
+    pub fn clear_transforms(&self) -> Result<()> {
+        self.dev().clear_transforms()
+    }
+
+    /// `TRANSFORM`: invert an axis. Instant; see [`Device::invert`].
+    pub fn invert(&self, axis: Axis) -> Result<()> {
+        self.dev().invert(axis)
+    }
+
+    /// `TRANSFORM`: weigh an axis by a signed percent. Instant; see [`Device::scale_transform`].
+    pub fn scale_transform(&self, axis: Axis, percent: i16) -> Result<()> {
+        self.dev().scale_transform(axis, percent)
+    }
+
+    /// `TRANSFORM`: exchange two axes. Instant; see [`Device::swap`].
+    pub fn swap(&self, a: Axis, b: Axis) -> Result<()> {
+        self.dev().swap(a, b)
+    }
+
+    /// `TRANSFORM`: remap a source field into a destination. Instant; see [`Device::remap`].
+    pub fn remap(
+        &self,
+        source: impl Into<TransformField>,
+        dest: impl Into<TransformField>,
+    ) -> Result<()> {
+        self.dev().remap(source, dest)
+    }
+
+    /// `QUERY(TRANSFORMS)`: the transform-table summary. See [`Device::query_transforms`].
+    pub async fn query_transforms(&self) -> Result<Transforms> {
+        let payload = self
+            .link
+            .query_async(Q_TRANSFORMS, self.link.query_timeout_default())
+            .await?;
+        match parse_resp(&payload) {
+            Some(Resp::Transforms(t)) => Ok(t),
+            _ => Err(Error::NoReply),
+        }
     }
 
     /// Buffered-clip playback over the async view (§3.11); see [`Device::clip`].

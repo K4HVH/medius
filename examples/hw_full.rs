@@ -22,7 +22,8 @@ mod linux {
         Action, Axis, BearingMode, Blanket, Button, CatchClass, CatchFilter, Class, ClipAction,
         ClipBuilder, ClipState, ClipTrigger, Device, Direction, Edge, EmitPace, Input, Key,
         LedMode, LedTarget, MediaKey, Patch, PatchSection, RebootTarget, RenderMode, RewriteAction,
-        RewriteClass, RewriteRule, Setup, Timeline, TrafficClass, TransferStatus,
+        RewriteClass, RewriteRule, Setup, Timeline, TrafficClass, TransferStatus, Transform,
+        TransformOp,
     };
     use medius::{BEARING_WINDOW_DEFAULT, PROTO_VER};
 
@@ -1926,6 +1927,25 @@ mod linux {
                 pset_ok && ppresent && pentry_ok && pclear_ok,
                 format!(
                     "set={pset_ok}, present+pending={ppresent}, entry={pentry_ok}, clear={pclear_ok}"
+                ),
+            );
+
+            // TRANSFORM (§3.15): invert Y (faithful, ungated — no opt-in needed), read it back, then
+            // clear. Y is present on any mouse, so the box holds the entry rather than refusing it.
+            let tset_ok = dev.invert(Axis::Y).is_ok();
+            let tq = dev.query_transforms();
+            let tpresent = matches!(&tq, Ok(t)
+                if t.entries.iter().any(|e| e.op == TransformOp::Invert
+                    && e.source == Transform::invert(Axis::Y).source));
+            let thealth_on = dev.query_health().map(|h| h.transform_on).unwrap_or(false);
+            let tclear_ok = dev.clear_transforms().is_ok();
+            let tcleared = matches!(dev.query_transforms(), Ok(t) if t.entries.is_empty());
+            check(
+                "developer: transform",
+                tset_ok && tpresent && thealth_on && tclear_ok && tcleared,
+                format!(
+                    "invert(Y) set={tset_ok}, present={tpresent}, health.transform_on={thealth_on}, \
+                     clear={tclear_ok}, cleared={tcleared}"
                 ),
             );
 

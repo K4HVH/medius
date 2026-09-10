@@ -5,7 +5,9 @@ use std::time::{Duration, Instant};
 use parking_lot::Mutex;
 
 use crate::error::{Error, Result};
-use crate::protocol::command::{catch_payload, inject_payload, lock_payload, rewrite_payload};
+use crate::protocol::command::{
+    catch_payload, inject_payload, lock_payload, rewrite_payload, transform_payload,
+};
 use crate::protocol::opcode::{Q_CAPS, Q_VERSION};
 use crate::protocol::{FrameDecoder, FrameType, Resp, encode, parse_resp};
 use crate::transport::Transport;
@@ -178,13 +180,14 @@ fn reconnect(ctx: &ReconnectCtx) -> Result<()> {
 
 fn reapply_held(ctx: &ReconnectCtx) -> Result<()> {
     let _serial = ctx.catch_lock.lock();
-    let (held, held_locks, catch, rewrites) = {
+    let (held, held_locks, catch, rewrites, transforms) = {
         let d = ctx.desired.lock();
         (
             d.held().collect::<Vec<_>>(),
             d.held_locks(),
             d.catch(),
             d.held_rewrites(),
+            d.held_transforms(),
         )
     };
     for (usage, action) in held {
@@ -250,6 +253,20 @@ fn reapply_held(ctx: &ReconnectCtx) -> Result<()> {
                 &r.mask,
                 &r.payload,
             ),
+        )?;
+    }
+    // Re-assert the transform table for the same reason (§3.15): the box clears it past the silence
+    // window or on a re-clone, and each goes out as state 1 (add/overwrite), idempotent if the drop was
+    // short. A refused entry (its field gone on the swapped-in device) is simply absent from the box.
+    for t in transforms {
+        let seq = ctx.seq.fetch_add(1, Ordering::Relaxed);
+        write_frame(
+            &ctx.transport,
+            &ctx.write_lock,
+            &ctx.counters,
+            seq,
+            FrameType::Transform,
+            &transform_payload(t.op, t.sclass, t.sid, t.dclass, t.did, t.scale, 1),
         )?;
     }
     Ok(())
