@@ -128,6 +128,36 @@ pub(crate) struct RewriteUndo {
     prior: Option<StoredRewrite>,
 }
 
+/// A field transform the host wants held, in its wire fields, so a reconnect re-sends it byte-for-byte.
+/// Transforms are session state on the same lifecycle as locks and rewrites (§3.15).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct StoredTransform {
+    pub(crate) op: u8,
+    pub(crate) sclass: u8,
+    pub(crate) sid: u16,
+    pub(crate) dclass: u8,
+    pub(crate) did: u16,
+    pub(crate) scale: i16,
+}
+
+/// The `(sclass, sid, dclass, did)` key the box files a transform under; two entries that differ in any
+/// of these are separate rows, and setting one whose key exists overwrites its op and scale.
+pub(crate) type TransformWireKey = (u8, u16, u8, u16);
+
+impl StoredTransform {
+    pub(crate) fn key(&self) -> TransformWireKey {
+        (self.sclass, self.sid, self.dclass, self.did)
+    }
+}
+
+/// What [`DesiredState::apply_transform`]/[`remove_transform`](DesiredState::remove_transform) changed,
+/// enough to put it back when the frame never went out.
+#[derive(Debug)]
+pub(crate) struct TransformUndo {
+    key: TransformWireKey,
+    prior: Option<StoredTransform>,
+}
+
 /// PC-owned injection + subscription state, re-asserted after a reconnect so held usages and open catches survive a control-link blip.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub(crate) struct DesiredState {
@@ -144,6 +174,11 @@ pub(crate) struct DesiredState {
     // The rewrite-rule table the box should be holding, keyed by wire key so a re-set is exact and
     // idempotent. Re-asserted on reconnect and by the keepalive, exactly like `catch`.
     rewrites: BTreeMap<RewriteWireKey, StoredRewrite>,
+    // The field-transform table the box should be holding, keyed by (sclass, sid, dclass, did) so a
+    // re-set is exact and idempotent. Session state re-asserted on reconnect and by the keepalive,
+    // exactly like `rewrites`; the box carries no transform generation counter, so there is nothing to
+    // track here but the entries themselves.
+    transforms: BTreeMap<TransformWireKey, StoredTransform>,
     // The clone's declared button count, cached from `RESP(CAPS)`: the handshake reads it, and a
     // reconnect re-reads it. A button blanket is held UNEXPANDED and expanded onto this many rows at
     // reassert time, so a wide-button lock set before the caller's own `caps()` still re-asserts every
@@ -316,6 +351,42 @@ impl DesiredState {
         self.rewrites.values().cloned().collect()
     }
 
+    /// Record a field transform (add or overwrite) for reconnect-replay, returning the prior state so
+    /// the device layer can roll it back if the frame never went out (the [`apply_rewrite`] pattern).
+    pub(crate) fn apply_transform(&mut self, entry: StoredTransform) -> TransformUndo {
+        let key = entry.key();
+        let prior = self.transforms.insert(key, entry);
+        TransformUndo { key, prior }
+    }
+
+    /// Record a transform removal, returning the prior state for the same rollback path.
+    pub(crate) fn remove_transform(&mut self, key: TransformWireKey) -> TransformUndo {
+        let prior = self.transforms.remove(&key);
+        TransformUndo { key, prior }
+    }
+
+    /// Put back what an `apply_transform`/`remove_transform` changed, for a frame that never went out.
+    pub(crate) fn restore_transform(&mut self, undo: TransformUndo) {
+        match undo.prior {
+            Some(entry) => {
+                self.transforms.insert(undo.key, entry);
+            }
+            None => {
+                self.transforms.remove(&undo.key);
+            }
+        }
+    }
+
+    /// Drop every held transform (the whole-table clear).
+    pub(crate) fn clear_transforms(&mut self) {
+        self.transforms.clear();
+    }
+
+    /// Every held transform, for the reconnect and keepalive re-assertion.
+    pub(crate) fn held_transforms(&self) -> Vec<StoredTransform> {
+        self.transforms.values().cloned().collect()
+    }
+
     pub(crate) fn clear(&mut self) {
         // Catch teardown is handled by Link::catch_disconnect_all (drops the EventStream senders); catch
         // otherwise clears firmware-side on the same lifecycle as injection.
@@ -325,6 +396,9 @@ impl DesiredState {
         // `RESET` clears the box's rewrite table too (§3.14), so drop the local copy or the keepalive
         // would re-assert rules the reset was meant to remove. Patches are not session state and stay.
         self.rewrites.clear();
+        // `RESET` clears the box's transform table too (§3.15, the injection-adjacent lifecycle), so
+        // drop the local copy for the same reason.
+        self.transforms.clear();
     }
 
     /// The catch subscription table the box should be holding (re-asserted on reconnect).
@@ -336,12 +410,14 @@ impl DesiredState {
         self.catch.clone()
     }
 
-    /// Idle = nothing for the keepalive to hold alive; a catch subscription or a rewrite rule counts.
+    /// Idle = nothing for the keepalive to hold alive; a catch subscription, a rewrite rule or a
+    /// transform counts.
     pub(crate) fn is_idle(&self) -> bool {
         self.catch.is_empty()
             && self.overrides.is_empty()
             && self.locks.is_empty()
             && self.rewrites.is_empty()
+            && self.transforms.is_empty()
     }
 
     /// Every held momentary override, as `(Usage, Action)`, for the reconnect reapply.

@@ -63,6 +63,22 @@ pub enum Error {
         cap: usize,
     },
 
+    #[error(
+        "a {op:?} transform cannot address {src:?} → {dst:?}: invert and scale are one axis, swap is \
+         two axes, and remap is axis→axis, button→button, button→key or button→media"
+    )]
+    TransformOpFields {
+        op: crate::types::TransformOp,
+        src: crate::types::TransformField,
+        dst: crate::types::TransformField,
+    },
+
+    #[error(
+        "an invert ignores its scale, so a scale of 0 (which would block the source) is contradictory \
+         and refused; leave the scale non-zero"
+    )]
+    TransformInvertZeroScale,
+
     #[error("{class:?} arrives decoded and carries no packet, so a capture on it does nothing")]
     CaptureNotApplicable { class: CatchClass },
 

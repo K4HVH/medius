@@ -13,6 +13,10 @@ use crate::protocol::opcode::{
     Q_FIRMWARE, RATE_CONFIDENT,
 };
 use crate::protocol::opcode::{
+    CATCH_CLS_AXIS, CATCH_CLS_BTN, CATCH_CLS_KEY, CATCH_CLS_MEDIA, Q_TRANSFORMS, TF_F_FULL,
+    TF_INVERT, TF_REMAP, TF_SCALE, TF_SWAP, TRANSFORM_MAX_ENTRIES,
+};
+use crate::protocol::opcode::{
     CLIP_CFG_F_FINALIZED, CLIP_CFG_F_LOOP, CLIP_CFG_F_RETAIN, CLIP_CFG_F_RIDE, CLIP_TRIG_MAX,
     CLK_RATE_NONE, PATCH_APPLY, PATCH_CLEAR, PATCH_MAX_ENTRIES, Q_PATCH_ENTRY, Q_PATCHES,
     Q_REWRITE, Q_REWRITE_ENTRY, REWRITE_MATCH_MAX, REWRITE_MAX_ENTRIES,
@@ -71,6 +75,11 @@ struct State {
     patches: Vec<MockPatch>,
     patch_applied: bool,
     patch_refused: bool,
+    // The field-transform table the TRANSFORM frames build, modelled the way the box holds it (keyed
+    // rows in installation order, a full flag). Ungated: unlike rewrites it is not cleared when the
+    // imperfect opt-in goes off, because a transform is faithful and never needed it.
+    transforms: Vec<MockTransform>,
+    transform_full: bool,
     // The canned answer to a TRANSFER (status, IN data). The box answers 0xFC when the opt-in is off.
     transfer_reply: (u8, Vec<u8>),
     recorded: Vec<DecodedFrame>,
@@ -101,6 +110,24 @@ impl MockRewrite {
             self.match_bytes.clone(),
             self.mask.clone(),
         )
+    }
+}
+
+// One transform-table row the mock holds, in wire fields.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct MockTransform {
+    op: u8,
+    sclass: u8,
+    sid: u16,
+    dclass: u8,
+    did: u16,
+    scale: i16,
+}
+
+impl MockTransform {
+    // The (sclass, sid, dclass, did) key two rows collide on.
+    fn key(&self) -> (u8, u16, u8, u16) {
+        (self.sclass, self.sid, self.dclass, self.did)
     }
 }
 
@@ -177,6 +204,8 @@ impl Default for State {
             patches: Vec::new(),
             patch_applied: false,
             patch_refused: false,
+            transforms: Vec::new(),
+            transform_full: false,
             transfer_reply: (0x00, Vec::new()),
             recorded: Vec::new(),
             respond: true,
@@ -515,6 +544,86 @@ impl State {
                 });
                 self.rewrite_gen = self.rewrite_gen.wrapping_add(1);
             }
+        }
+    }
+
+    // Apply a TRANSFORM frame (§3.15), modelled on transform_tab_set. Ungated: a transform is faithful,
+    // so unlike REWRITE this runs whatever the imperfect opt-in. The refusals mirror the firmware: an
+    // op at or above the count, a class pair the op cannot take, a scale of 0 on an INVERT, a field
+    // neither map declares, and the eight-entry ceiling (which sets the full flag).
+    fn apply_transform_frame(&mut self, p: &[u8]) {
+        if p.len() < 10 {
+            return;
+        }
+        let op = p[0];
+        let sclass = p[1];
+        let sid = u16::from_le_bytes([p[2], p[3]]);
+        let dclass = p[4];
+        let did = u16::from_le_bytes([p[5], p[6]]);
+        let scale = i16::from_le_bytes([p[7], p[8]]);
+        let state = p[9];
+        // The all-0xFF state-0 blanket clears the table.
+        if state == 0 && sclass == 0xFF && dclass == 0xFF && sid == 0xFFFF && did == 0xFFFF {
+            self.transforms.clear();
+            self.transform_full = false;
+            return;
+        }
+        let key = (sclass, sid, dclass, did);
+        let pos = self.transforms.iter().position(|t| t.key() == key);
+        if state == 0 {
+            if let Some(i) = pos {
+                self.transforms.remove(i);
+            }
+            return;
+        }
+        // state 1: add or overwrite, after the same admissibility gauntlet the box runs.
+        if op > TF_SCALE
+            || !transform_pair_ok(op, sclass, sid, dclass, did)
+            || (op == TF_INVERT && scale == 0)
+            || !self.transform_field_present(sclass, sid)
+            || !self.transform_field_present(dclass, did)
+        {
+            return;
+        }
+        match pos {
+            Some(i) => {
+                // The key matches: only the op and scale change, keeping the row's position.
+                self.transforms[i].op = op;
+                self.transforms[i].scale = scale;
+            }
+            None => {
+                if self.transforms.len() >= TRANSFORM_MAX_ENTRIES {
+                    self.transform_full = true;
+                    return;
+                }
+                self.transforms.push(MockTransform {
+                    op,
+                    sclass,
+                    sid,
+                    dclass,
+                    did,
+                    scale,
+                });
+            }
+        }
+    }
+
+    // Whether the bound clone declares this field, mirroring transform_field_present over RESP(CAPS):
+    // an axis is present when its flag is set, a button when its id is under the declared count and the
+    // box's ceiling, a key when a keyboard collection is bound, media when a consumer collection is.
+    fn transform_field_present(&self, cls: u8, id: u16) -> bool {
+        match cls {
+            CATCH_CLS_AXIS => match id {
+                0 => self.caps.mouse.has_x,
+                1 => self.caps.mouse.has_y,
+                2 => self.caps.mouse.has_wheel,
+                3 => self.caps.mouse.pan,
+                _ => false,
+            },
+            CATCH_CLS_BTN => id < self.caps.mouse.n_buttons as u16 && id < MAX_BUTTONS as u16,
+            CATCH_CLS_KEY => self.caps.keyboard.n_keys > 0,
+            CATCH_CLS_MEDIA => self.caps.keyboard.has_consumer,
+            _ => false,
         }
     }
 
@@ -940,6 +1049,40 @@ fn clip_status_payload(c: &ClipStatus, cfg: &ClipSettings) -> Vec<u8> {
     p
 }
 
+// Which (op, class pair) a transform can take, mirroring transform_pair_ok in the firmware.
+fn transform_pair_ok(op: u8, sc: u8, si: u16, dc: u8, di: u16) -> bool {
+    match op {
+        TF_INVERT | TF_SCALE => sc == CATCH_CLS_AXIS && dc == CATCH_CLS_AXIS && si == di,
+        TF_SWAP => sc == CATCH_CLS_AXIS && dc == CATCH_CLS_AXIS,
+        TF_REMAP => {
+            (sc == CATCH_CLS_AXIS && dc == CATCH_CLS_AXIS)
+                || (sc == CATCH_CLS_BTN && dc == CATCH_CLS_BTN)
+                || (sc == CATCH_CLS_BTN && dc == CATCH_CLS_KEY)
+                || (sc == CATCH_CLS_BTN && dc == CATCH_CLS_MEDIA)
+        }
+        _ => false,
+    }
+}
+
+// RESP(TRANSFORMS): [16][flags][n] then n × [op][sclass][sid u16][dclass][did u16][scale i16]. No state
+// byte per entry: a readback row is always a live one, hardcoded state 1 when it rebuilds.
+fn transforms_resp_payload(st: &State) -> Vec<u8> {
+    let mut p = vec![
+        Q_TRANSFORMS,
+        if st.transform_full { TF_F_FULL } else { 0x00 },
+        st.transforms.len() as u8,
+    ];
+    for t in &st.transforms {
+        p.push(t.op);
+        p.push(t.sclass);
+        p.extend_from_slice(&t.sid.to_le_bytes());
+        p.push(t.dclass);
+        p.extend_from_slice(&t.did.to_le_bytes());
+        p.extend_from_slice(&t.scale.to_le_bytes());
+    }
+    p
+}
+
 // RESP(REWRITE): [12][flags][gen][n] then n × [cls][id u16][dir][action][mlen][off u16][plen u16][hits u16].
 fn rewrite_resp_payload(st: &State) -> Vec<u8> {
     let mut p = vec![
@@ -1200,6 +1343,7 @@ impl MockBox {
                 FrameType::Option => st.apply_option_frame(payload),
                 FrameType::Rewrite => st.apply_rewrite_frame(payload),
                 FrameType::Patch => st.apply_patch_frame(payload),
+                FrameType::Transform => st.apply_transform_frame(payload),
                 // RESET clears every lock along with the injection, as input_reset does. The bearing
                 // option is NVS-backed and survives it. The rewrite table clears too (§3.14).
                 FrameType::Reset => {
@@ -1209,6 +1353,9 @@ impl MockBox {
                         st.rewrite_gen = st.rewrite_gen.wrapping_add(1);
                     }
                     st.rewrite_full = false;
+                    // The transform table clears on RESET too (§3.15); the patch store does not.
+                    st.transforms.clear();
+                    st.transform_full = false;
                 }
                 _ => {}
             }
@@ -1286,10 +1433,11 @@ impl MockBox {
                         Some(0) => encode(FrameType::Resp, seq, &version_payload(&st.version))
                             .expect("resp fits"),
                         Some(1) => {
-                            // HEALTH is a u16 LE (proto 7); rewrite_on/patch_on also reflect live state.
+                            // HEALTH is a u16 LE (proto 7); rewrite_on/patch_on/transform_on reflect live state.
                             let mut h = st.health;
                             h.rewrite_on |= !st.rewrites.is_empty();
                             h.patch_on |= st.patch_applied;
+                            h.transform_on |= !st.transforms.is_empty();
                             let f = h.to_flags().to_le_bytes();
                             encode(FrameType::Resp, seq, &[1, f[0], f[1]]).expect("resp fits")
                         }
@@ -1390,6 +1538,8 @@ impl MockBox {
                             &patch_entry_resp_payload(&st, payload.get(1).copied().unwrap_or(0)),
                         )
                         .expect("resp fits"),
+                        Some(16) => encode(FrameType::Resp, seq, &transforms_resp_payload(&st))
+                            .expect("resp fits"),
                         _ => Vec::new(),
                     }
                 } else {

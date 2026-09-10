@@ -470,3 +470,77 @@ fn reset_clears_rewrites_too() {
     assert!(d.held_rewrites().is_empty());
     assert!(d.is_idle());
 }
+
+// --- field transforms (§3.15): session state re-asserted like locks/rewrites ---
+
+use crate::link::reconcile::StoredTransform;
+
+fn stored_xf(sclass: u8, sid: u16, dclass: u8, did: u16) -> StoredTransform {
+    StoredTransform {
+        op: 2, // Invert
+        sclass,
+        sid,
+        dclass,
+        did,
+        scale: 100,
+    }
+}
+
+#[test]
+fn transform_is_held_and_non_idle() {
+    let mut d = DesiredState::default();
+    d.apply_transform(stored_xf(3, 1, 3, 1));
+    assert!(!d.is_idle());
+    assert_eq!(d.held_transforms().len(), 1);
+}
+
+#[test]
+fn transform_overwrite_keeps_one_row() {
+    let mut d = DesiredState::default();
+    d.apply_transform(stored_xf(3, 1, 3, 1));
+    let mut r = stored_xf(3, 1, 3, 1);
+    r.op = 3; // same key (source, dest), new op
+    r.scale = 200;
+    d.apply_transform(r);
+    let held = d.held_transforms();
+    assert_eq!(held.len(), 1);
+    assert_eq!((held[0].op, held[0].scale), (3, 200));
+}
+
+#[test]
+fn transform_remove_and_restore() {
+    let mut d = DesiredState::default();
+    d.apply_transform(stored_xf(3, 1, 3, 1));
+    let key = stored_xf(3, 1, 3, 1).key();
+    let undo = d.remove_transform(key);
+    assert!(d.held_transforms().is_empty());
+    d.restore_transform(undo); // a send that never went out is rolled back
+    assert_eq!(d.held_transforms().len(), 1);
+}
+
+#[test]
+fn transform_apply_undo_puts_it_back() {
+    let mut d = DesiredState::default();
+    let undo = d.apply_transform(stored_xf(3, 1, 3, 1));
+    d.restore_transform(undo);
+    assert!(d.held_transforms().is_empty());
+    assert!(d.is_idle());
+}
+
+#[test]
+fn clear_transforms_empties_the_table() {
+    let mut d = DesiredState::default();
+    d.apply_transform(stored_xf(3, 0, 3, 0));
+    d.apply_transform(stored_xf(3, 1, 3, 1));
+    d.clear_transforms();
+    assert!(d.held_transforms().is_empty());
+}
+
+#[test]
+fn reset_clears_transforms_too() {
+    let mut d = DesiredState::default();
+    d.apply_transform(stored_xf(3, 1, 3, 1));
+    d.clear(); // the RESET path
+    assert!(d.held_transforms().is_empty());
+    assert!(d.is_idle());
+}

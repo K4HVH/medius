@@ -6,7 +6,7 @@ use std::time::Duration;
 use parking_lot::Mutex;
 
 use crate::protocol::FrameType;
-use crate::protocol::command::{catch_payload, query_payload, rewrite_payload};
+use crate::protocol::command::{catch_payload, query_payload, rewrite_payload, transform_payload};
 use crate::protocol::opcode::Q_HEALTH;
 
 use super::counters::Counters;
@@ -46,9 +46,14 @@ fn keepalive_loop(ctx: KeepaliveCtx) {
             return;
         }
         let _serial = ctx.catch_lock.lock();
-        let (idle, catch, rewrites) = {
+        let (idle, catch, rewrites, transforms) = {
             let d = ctx.desired.lock();
-            (d.is_idle(), d.catch(), d.held_rewrites())
+            (
+                d.is_idle(),
+                d.catch(),
+                d.held_rewrites(),
+                d.held_transforms(),
+            )
         };
         if idle {
             continue;
@@ -94,6 +99,20 @@ fn keepalive_loop(ctx: KeepaliveCtx) {
                         &r.mask,
                         &r.payload,
                     ),
+                );
+            }
+            sent_any = true;
+        }
+        if !transforms.is_empty() {
+            for t in transforms {
+                let seq = ctx.seq.fetch_add(1, Ordering::Relaxed);
+                let _ = write_frame(
+                    &ctx.transport,
+                    &ctx.write_lock,
+                    &ctx.counters,
+                    seq,
+                    FrameType::Transform,
+                    &transform_payload(t.op, t.sclass, t.sid, t.dclass, t.did, t.scale, 1),
                 );
             }
             sent_any = true;

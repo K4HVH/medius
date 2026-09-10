@@ -29,6 +29,7 @@ pub(crate) mod rewrite;
 mod spread;
 mod stats;
 pub(crate) mod transfer;
+pub(crate) mod transform;
 mod update;
 mod usage;
 mod version;
@@ -70,6 +71,9 @@ pub use rewrite::{
 pub use spread::SpreadStatus;
 pub use stats::Stats;
 pub use transfer::{Setup, TransferOutcome, TransferStatus};
+pub use transform::{
+    Transform, TransformField, TransformKey, TransformOp, TransformState, Transforms,
+};
 pub use update::{
     ChipFirmware, FirmwareInfo, ImageState, UpdateProgress, UpdateStatus, UpdateTarget,
 };

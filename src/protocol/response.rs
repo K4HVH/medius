@@ -5,12 +5,12 @@ use std::time::Duration;
 use super::opcode::{
     OPT_BEARING, OPT_EMIT, OPT_IMPERFECT, OPT_MOVE_RIDE, OPT_RENDER, OPT_SPREAD, Q_CAPS, Q_CATCH,
     Q_CLIP, Q_DEVICE_INFO, Q_FIRMWARE, Q_HEALTH, Q_LOCKS, Q_OPTIONS, Q_PATCHES, Q_RATE, Q_REWRITE,
-    Q_STATS, Q_VERSION,
+    Q_STATS, Q_TRANSFORMS, Q_VERSION,
 };
 use crate::types::{
     Bearing, Caps, CatchState, ClipStatus, DeviceInfo, EmitPaceStatus, FirmwareInfo, Health,
     ImperfectStatus, Locks, LogLevel, LogLine, PatchSet, Rate, RenderStatus, RewriteTable,
-    SpreadStatus, Stats, Version,
+    SpreadStatus, Stats, Transforms, Version,
 };
 
 /// A decoded `RESP` (§4.1), keyed by the `what` selector at `payload[0]`.
@@ -43,6 +43,8 @@ pub enum Resp {
     Rewrite(RewriteTable),
     /// `RESP(PATCHES)`: the descriptor-patch set summary (§4.17).
     Patches(PatchSet),
+    /// `RESP(TRANSFORMS)`: the field-transform table summary (§4.18).
+    Transforms(Transforms),
 }
 
 /// Parse a `RESP` payload (§4.1): `[what u8][data..]`.
@@ -85,6 +87,7 @@ pub fn parse_resp(payload: &[u8]) -> Option<Resp> {
         Q_FIRMWARE => FirmwareInfo::from_payload(payload).map(Resp::Firmware),
         Q_REWRITE => RewriteTable::from_payload(payload).map(Resp::Rewrite),
         Q_PATCHES => PatchSet::from_payload(payload).map(Resp::Patches),
+        Q_TRANSFORMS => Transforms::from_payload(payload).map(Resp::Transforms),
         Q_OPTIONS => {
             let id = *payload.get(1)?;
             match id {
