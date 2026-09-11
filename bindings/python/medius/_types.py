@@ -1359,7 +1359,7 @@ def imperfect_to_c(i) -> "_native.MediusImperfectStatus":
     )
 
 
-# The developer layer (§3.14). Over-capacity byte fields raise here rather than reach ctypes, which
+# The advanced control layer (§3.14). Over-capacity byte fields raise here rather than reach ctypes, which
 # would truncate silently; the crate-level refusals (mask length, action/class, payload size, relative
 # direction) are values that DO marshal and come back as their own status.
 def _fixed_bytes(dst, src: bytes, cap: int, what: str) -> int:

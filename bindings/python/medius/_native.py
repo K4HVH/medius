@@ -243,7 +243,7 @@ class MediusImperfectStatus(ctypes.Structure):
     _fields_ = [("allowed", u8), ("over_capacity", u8), ("clone_imperfect", u8)]
 
 
-# The developer layer (§3.14): control transfers, rewrite rules and descriptor patches. Each mirror
+# The advanced control layer (§3.14): control transfers, rewrite rules and descriptor patches. Each mirror
 # is checked field-for-field against medius.h by test_ctypes_structs_match_the_c_header.
 class MediusSetup(ctypes.Structure):
     _fields_ = [

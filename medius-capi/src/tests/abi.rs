@@ -2130,7 +2130,7 @@ fn a_bad_update_target_is_refused_rather_than_sent() {
     );
 }
 
-// --- Developer layer (§3.14): raw injection, control transfers, rewrite rules, descriptor patches ---
+// --- Advanced control layer (§3.14): raw injection, control transfers, rewrite rules, descriptor patches ---
 
 fn allowed_status() -> MediusImperfectStatus {
     MediusImperfectStatus {
@@ -2169,7 +2169,7 @@ fn assert_parity_imperfect(native: impl FnOnce(&Device), capi: impl FnOnce(*mut 
     let got = unsafe { capi_frames_imperfect(capi) };
     assert_eq!(
         want, got,
-        "C ABI developer-layer frames differ from the native crate"
+        "C ABI advanced control layer frames differ from the native crate"
     );
 }
 

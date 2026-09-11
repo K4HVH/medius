@@ -480,7 +480,7 @@ class Device:
         check(_native.lib.medius_device_counters(self._handle, ctypes.byref(out)))
         return counters_from_c(out)
 
-    # The developer layer (§3.14): raw injection, control transfers, rewrite rules and descriptor
+    # The advanced control layer (§3.14): raw injection, control transfers, rewrite rules and descriptor
     # patches. Admitted by the imperfect-clone opt-in (`allow_imperfect_clones`).
 
     def raw(self, ep: int, direction: Direction, data: bytes) -> None:
@@ -579,7 +579,7 @@ class Device:
         )
         return patch_from_c(out)
 
-    # Field transforms (§3.15): a faithful field operation on the semantic path. Unlike the developer
+    # Field transforms (§3.15): a faithful field operation on the semantic path. Unlike the advanced control
     # layer above, a transform needs no imperfect-clone opt-in.
 
     def transform(self, t: Transform) -> None:

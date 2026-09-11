@@ -50,7 +50,7 @@
 // The most `match`/`mask` bytes one rewrite rule compares (the firmware `REWRITE_MATCH_MAX`).
 #define MEDIUS_MAX_REWRITE_MATCH 16
 
-// The largest developer-layer byte payload the control link carries in one frame (`MAX_PAYLOAD`):
+// The largest advanced control layer byte payload the control link carries in one frame (`MAX_PAYLOAD`):
 // the bound on a `medius_device_raw` write, a rewrite rule's payload, a descriptor patch's bytes,
 // and a control transfer's data stage.
 #define MEDIUS_MAX_DEV_PAYLOAD 512
@@ -146,7 +146,7 @@ enum MediusStatus
     MEDIUS_STATUS_ERR_RESERVED_ID = 18,
     // `MEDIUS_DIRECTION_WITH` / `_AGAINST` on something with no bearing to measure them against.
     MEDIUS_STATUS_ERR_RELATIVE_DIRECTION = 19,
-    // A developer-layer call with the imperfect-clone opt-in off, which gates the whole layer.
+    // An advanced control layer call with the imperfect-clone opt-in off, which gates the whole layer.
     MEDIUS_STATUS_ERR_IMPERFECT_REQUIRED = 20,
     // A rewrite rule whose `match` and `mask` are different lengths.
     MEDIUS_STATUS_ERR_REWRITE_MASK_LENGTH = 21,

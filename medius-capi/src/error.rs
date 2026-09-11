@@ -38,7 +38,7 @@ pub enum MediusStatus {
     ErrReservedId = 18,
     /// `MEDIUS_DIRECTION_WITH` / `_AGAINST` on something with no bearing to measure them against.
     ErrRelativeDirection = 19,
-    /// A developer-layer call with the imperfect-clone opt-in off, which gates the whole layer.
+    /// An advanced control layer call with the imperfect-clone opt-in off, which gates the whole layer.
     ErrImperfectRequired = 20,
     /// A rewrite rule whose `match` and `mask` are different lengths.
     ErrRewriteMaskLength = 21,

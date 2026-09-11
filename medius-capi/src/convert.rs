@@ -595,7 +595,7 @@ impl From<ImperfectStatus> for MediusImperfectStatus {
     }
 }
 
-// The developer layer (§3.14): raw injection, control transfers, rewrite rules and descriptor
+// The advanced control layer (§3.14): raw injection, control transfers, rewrite rules and descriptor
 // patches. The class/action/direction/section enums cross the boundary as bytes, mapped back through
 // the crate's own `from_u8`, so a byte no variant names becomes `None` and is refused rather than
 // materialised as an enum. The variable-length fields follow the catch-event convention: a fixed max

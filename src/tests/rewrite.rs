@@ -329,7 +329,7 @@ mod mock_roundtrip {
 
     #[test]
     fn imperfect_status_scripts_the_gate() {
-        // A mock configured over-capacity but opt-in-on still admits the developer layer.
+        // A mock configured over-capacity but opt-in-on still admits the advanced control layer.
         let mock = MockBox::new().with_imperfect_status(ImperfectStatus {
             allowed: true,
             over_capacity: true,

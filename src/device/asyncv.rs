@@ -532,7 +532,7 @@ impl AsyncDevice {
         }
     }
 
-    // The developer layer (§3.14). The gated setters read the opt-in on the async query path rather
+    // The advanced control layer (§3.14). The gated setters read the opt-in on the async query path rather
     // than blocking the executor on the sync one, then hand off to the send-only core they share with
     // the sync `Device`.
     async fn require_imperfect(&self) -> Result<()> {

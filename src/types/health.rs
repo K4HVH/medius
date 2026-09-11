@@ -8,7 +8,7 @@ use crate::protocol::opcode::{
 /// The decoded `RESP(HEALTH)` flags word.
 ///
 /// `HEALTH` is a `u16` LE from `CTRL_PROTO_VER 7` (§4.2): bits 0-7 are the original byte and the
-/// v3.4.0 developer layer opened the high byte. [`from_flags`](Self::from_flags) and
+/// v3.4.0 advanced control layer opened the high byte. [`from_flags`](Self::from_flags) and
 /// [`to_flags`](Self::to_flags) carry the whole word.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Health {

@@ -30,7 +30,7 @@ pub const MEDIUS_MAX_PATCH_ENTRIES: usize = 16;
 pub const MEDIUS_MAX_TRANSFORM_ENTRIES: usize = 8;
 /// The most `match`/`mask` bytes one rewrite rule compares (the firmware `REWRITE_MATCH_MAX`).
 pub const MEDIUS_MAX_REWRITE_MATCH: usize = 16;
-/// The largest developer-layer byte payload the control link carries in one frame (`MAX_PAYLOAD`):
+/// The largest advanced control layer byte payload the control link carries in one frame (`MAX_PAYLOAD`):
 /// the bound on a `medius_device_raw` write, a rewrite rule's payload, a descriptor patch's bytes,
 /// and a control transfer's data stage.
 pub const MEDIUS_MAX_DEV_PAYLOAD: usize = 512;
@@ -235,7 +235,7 @@ pub enum MediusFrameType {
     ClipTrigger = 0x15,
     Update = 0x17,
     UpdateResp = 0x18,
-    // v3.4.0 developer layer (§3.14) and field transforms (§3.15); these frame-type values back the
+    // v3.4.0 advanced control layer (§3.14) and field transforms (§3.15); these frame-type values back the
     // mock's recorded-frame introspection.
     Raw = 0x19,
     Transfer = 0x1A,
@@ -648,7 +648,7 @@ pub struct MediusImperfectStatus {
     pub clone_imperfect: u8,
 }
 
-// The developer layer (§3.14): raw injection, control transfers, rewrite rules and descriptor
+// The advanced control layer (§3.14): raw injection, control transfers, rewrite rules and descriptor
 // patches. Admitted by the imperfect-clone opt-in; see `medius_device_allow_imperfect_clones`.
 
 /// A traffic class a rewrite rule addresses (§3.14). Crosses the ABI as the `class` byte of a
