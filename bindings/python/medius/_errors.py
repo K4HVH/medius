@@ -92,7 +92,7 @@ class RelativeDirectionError(MediusError):
 
 
 class ImperfectRequiredError(MediusError):
-    """A developer-layer call with the imperfect-clone opt-in off, which gates the whole layer."""
+    """An advanced control layer call with the imperfect-clone opt-in off, which gates the whole layer."""
 
 
 class RewriteMaskLengthError(MediusError):

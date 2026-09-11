@@ -9,7 +9,7 @@ pub const SOF: u8 = 0xA5;
 pub const MAX_PAYLOAD: usize = 512;
 
 /// Protocol version in `RESP(VERSION)` (§4.1); the handshake requires this exact value. Bumped to 7
-/// for the v3.4.0 developer layer (`RAW`/`TRANSFER`/`REWRITE`/`PATCH`) and the `u16` `HEALTH` flags.
+/// for the v3.4.0 advanced control layer (`RAW`/`TRANSFER`/`REWRITE`/`PATCH`) and the `u16` `HEALTH` flags.
 pub const PROTO_VER: u8 = 7;
 
 /// `INJECT` class byte: the momentary-usage field kind.
@@ -162,7 +162,7 @@ pub const H_CATCH_ON: u8 = 0x40;
 pub const H_KBD_ATT: u8 = 0x80;
 
 // `HEALTH` became a `u16` LE in `CTRL_PROTO_VER 7` (§4.2). Bits 0-7 kept their meaning; the v3.4.0
-// developer layer opened the high byte, so these three are `u16`. [`Health`](crate::Health) decodes
+// advanced control layer opened the high byte, so these three are `u16`. [`Health`](crate::Health) decodes
 // the whole word.
 /// The rewrite-rule table (§3.14) is non-empty (v3.4.0).
 pub const H_REWRITE_ON: u16 = 0x0100;

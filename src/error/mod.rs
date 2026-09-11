@@ -35,7 +35,7 @@ pub enum Error {
     EmptySubscription,
 
     #[error(
-        "the developer layer (§3.14) is gated on the imperfect-clone opt-in, which the box reports \
+        "the advanced control layer (§3.14) is gated on the imperfect-clone opt-in, which the box reports \
          off; call allow_imperfect_clones(true) first"
     )]
     ImperfectRequired,

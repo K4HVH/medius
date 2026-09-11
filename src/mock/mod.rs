@@ -1665,7 +1665,7 @@ impl MockBox {
         self.state.lock().imperfect = imperfect;
     }
 
-    /// Enable or disable the imperfect-clone opt-in the developer layer (§3.14) is gated on (builder
+    /// Enable or disable the imperfect-clone opt-in the advanced control layer (§3.14) is gated on (builder
     /// style). A shorthand for scripting [`ImperfectStatus::allowed`] before a `raw`/`transfer`/`rewrite`.
     pub fn with_imperfect(self, allow: bool) -> Self {
         {

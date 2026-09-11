@@ -1848,7 +1848,7 @@ mod linux {
             );
         }
 
-        // Developer layer (§3.14): raw injection, control transfers, rewrite rules, descriptor
+        // Advanced control layer (§3.14): raw injection, control transfers, rewrite rules, descriptor
         // patches. Runs after the motion checks because clear_patch re-presents the clone (one
         // replug), which recreates the evdev node this suite grabbed.
         {
@@ -1860,7 +1860,7 @@ mod linux {
             let transfer_ok = matches!(&t, Ok(o)
                 if o.status == TransferStatus::Ok && o.data().len() >= 2 && o.data()[1] == 0x01);
             check(
-                "developer: transfer",
+                "advanced control: transfer",
                 opt.is_ok() && transfer_ok,
                 format!(
                     "EP0 GET_DESCRIPTOR(Device) -> {:?} ({} B)",
@@ -1878,7 +1878,7 @@ mod linux {
             );
             let _ = dev.allow_imperfect_clones(true);
             check(
-                "developer: raw",
+                "advanced control: raw",
                 raw_on && raw_gated,
                 format!("sent when allowed={raw_on}, refused with opt-in off={raw_gated}"),
             );
@@ -1898,7 +1898,7 @@ mod linux {
             let clear_ok = dev.clear_rewrite().is_ok();
             let cleared = matches!(dev.query_rewrite(), Ok(tab) if tab.entries.is_empty());
             check(
-                "developer: rewrite",
+                "advanced control: rewrite",
                 set_ok && present && entry_ok && health_on && clear_ok && cleared,
                 format!(
                     "set={set_ok}, present={present} gen={generation}, entry={entry_ok}, \
@@ -1918,7 +1918,7 @@ mod linux {
                 .unwrap_or(false);
             let pclear_ok = dev.clear_patch().is_ok(); // re-presents the clone
             check(
-                "developer: patch",
+                "advanced control: patch",
                 pset_ok && ppresent && pentry_ok && pclear_ok,
                 format!(
                     "set={pset_ok}, present+pending={ppresent}, entry={pentry_ok}, clear={pclear_ok}"
@@ -1936,7 +1936,7 @@ mod linux {
             let tclear_ok = dev.clear_transforms().is_ok();
             let tcleared = matches!(dev.query_transforms(), Ok(t) if t.entries.is_empty());
             check(
-                "developer: transform",
+                "transforms: field transform",
                 tset_ok && tpresent && thealth_on && tclear_ok && tcleared,
                 format!(
                     "invert(Y) set={tset_ok}, present={tpresent}, health.transform_on={thealth_on}, \

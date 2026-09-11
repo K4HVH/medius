@@ -775,7 +775,7 @@ pub unsafe extern "C" fn medius_device_query_patch_entry(
     query(dev, out, |d| d.query_patch_entry(index))
 }
 
-// Field transforms (§3.15): a faithful field operation on the semantic path. Unlike the developer
+// Field transforms (§3.15): a faithful field operation on the semantic path. Unlike the advanced control
 // layer above, a transform is not gated on the imperfect-clone opt-in.
 
 fn with_transform(

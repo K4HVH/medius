@@ -14,7 +14,7 @@ pub const DEFAULT_TRANSFER_TIMEOUT: Duration = Duration::from_millis(1500);
 
 impl Device {
     /// Return [`Error::ImperfectRequired`] unless the box reports the imperfect-clone opt-in on. The
-    /// developer layer (§3.14) is admitted by that opt-in and nothing else; a frame sent with it off is
+    /// advanced control layer (§3.14) is admitted by that opt-in and nothing else; a frame sent with it off is
     /// silently dropped box-side, so the crate reads the state first and turns that into a real error.
     pub(crate) fn require_imperfect(&self) -> Result<()> {
         if self.query_imperfect()?.allowed {
