@@ -1402,7 +1402,7 @@ def test_mock_and_stream_enum_parameters_are_checked():
         stream.close()
 
 
-# --- Developer layer (§3.14): raw injection, control transfers, rewrite rules, descriptor patches ---
+# --- Advanced control layer (§3.14): raw injection, control transfers, rewrite rules, descriptor patches ---
 
 
 def _allowed():
