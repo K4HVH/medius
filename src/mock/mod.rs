@@ -5,18 +5,24 @@ use std::sync::Arc;
 use parking_lot::Mutex;
 
 use crate::protocol::opcode::{
-    BTN_COUNT, CAP_REPORT_ID, CAP_WHEEL, CAP_X, CAP_Y, CAPS_CD_KBD, CAPS_CD_MOUSE, DI_HAS_BOS,
-    DI_HAS_SERIAL, KBC_CONSUMER, KBC_NKRO, KBC_REPORT_ID, KBC_SYSTEM, LOCK_AXIS_WHEEL,
-    LOCK_CLS_AXIS, LOCK_CLS_BTN, LOCK_CLS_KEY, LOCK_CLS_MEDIA, LOCK_DIR_AGAINST, LOCK_DIR_BOTH,
-    LOCK_DIR_NEG, LOCK_DIR_POS, LOCK_DIR_WITH, LOCK_ID_ALL, LOCK_SCALE_BLOCK, LOCK_SCALE_PASS,
+    CAP_PAN, CAP_REPORT_ID, CAP_WHEEL, CAP_X, CAP_Y, CAPS_CD_KBD, CAPS_CD_MOUSE, DI_HAS_BOS,
+    DI_HAS_SERIAL, KBC_CONSUMER, KBC_NKRO, KBC_REPORT_ID, KBC_SYSTEM, LOCK_AXIS_PAN, LOCK_CLS_AXIS,
+    LOCK_CLS_BTN, LOCK_CLS_KEY, LOCK_CLS_MEDIA, LOCK_DIR_AGAINST, LOCK_DIR_BOTH, LOCK_DIR_NEG,
+    LOCK_DIR_POS, LOCK_DIR_WITH, LOCK_ID_ALL, LOCK_SCALE_BLOCK, LOCK_SCALE_PASS, MAX_BUTTONS,
     OPT_BEARING, OPT_EMIT, OPT_IMPERFECT, OPT_MOVE_RIDE, OPT_NAME, OPT_RENDER, OPT_SPREAD,
     Q_FIRMWARE, RATE_CONFIDENT,
 };
 use crate::protocol::opcode::{
+    CATCH_CLS_AXIS, CATCH_CLS_BTN, CATCH_CLS_KEY, CATCH_CLS_MEDIA, Q_TRANSFORMS, TF_F_FULL,
+    TF_INVERT, TF_REMAP, TF_SCALE, TF_SWAP, TRANSFORM_MAX_ENTRIES,
+};
+use crate::protocol::opcode::{
     CLIP_CFG_F_FINALIZED, CLIP_CFG_F_LOOP, CLIP_CFG_F_RETAIN, CLIP_CFG_F_RIDE, CLIP_TRIG_MAX,
-    CLK_RATE_NONE,
+    CLK_RATE_NONE, PATCH_APPLY, PATCH_CLEAR, PATCH_MAX_ENTRIES, Q_PATCH_ENTRY, Q_PATCHES,
+    Q_REWRITE, Q_REWRITE_ENTRY, REWRITE_MATCH_MAX, REWRITE_MAX_ENTRIES,
 };
 use crate::protocol::{DecodedFrame, FrameType, encode};
+use crate::types::PatchSection;
 use sha2::{Digest, Sha256};
 
 use crate::transport::mock::MockTransport;
@@ -59,8 +65,86 @@ struct State {
     advertised_hz: u16,
     clip: ClipStatus,
     clip_settings: ClipSettings,
+    // The rewrite table the REWRITE frames build, modelled the way the box holds it (keyed rows, a
+    // monotonic gen, a full flag) so the mock answers RESP(REWRITE)/RESP(REWRITE_ENTRY) like a box.
+    rewrites: Vec<MockRewrite>,
+    rewrite_gen: u8,
+    rewrite_full: bool,
+    // The patch store the PATCH frames build, plus its apply state. `pending` and `full` are not held
+    // here: patches_resp_payload derives them from the store the way usbdev_pack_patches does.
+    patches: Vec<MockPatch>,
+    patch_applied: bool,
+    patch_refused: bool,
+    // The field-transform table the TRANSFORM frames build, modelled the way the box holds it (keyed
+    // rows in installation order, a full flag). Ungated: unlike rewrites it is not cleared when the
+    // imperfect opt-in goes off, because a transform is faithful and never needed it.
+    transforms: Vec<MockTransform>,
+    transform_full: bool,
+    // The canned answer to a TRANSFER (status, IN data). The box answers 0xFC when the opt-in is off.
+    transfer_reply: (u8, Vec<u8>),
     recorded: Vec<DecodedFrame>,
     respond: bool,
+}
+
+// One rewrite-table row the mock holds, in wire fields plus a live hit counter.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct MockRewrite {
+    class: u8,
+    id: u16,
+    dir: u8,
+    action: u8,
+    offset: u16,
+    match_bytes: Vec<u8>,
+    mask: Vec<u8>,
+    payload: Vec<u8>,
+    hits: u16,
+}
+
+impl MockRewrite {
+    // The (class, id, dir, match, mask) key two rows collide on.
+    fn key(&self) -> (u8, u16, u8, Vec<u8>, Vec<u8>) {
+        (
+            self.class,
+            self.id,
+            self.dir,
+            self.match_bytes.clone(),
+            self.mask.clone(),
+        )
+    }
+}
+
+// One transform-table row the mock holds, in wire fields.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct MockTransform {
+    op: u8,
+    sclass: u8,
+    sid: u16,
+    dclass: u8,
+    did: u16,
+    scale: i16,
+}
+
+impl MockTransform {
+    // The (sclass, sid, dclass, did) key two rows collide on.
+    fn key(&self) -> (u8, u16, u8, u16) {
+        (self.sclass, self.sid, self.dclass, self.did)
+    }
+}
+
+// One stored descriptor patch the mock holds.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct MockPatch {
+    section: u8,
+    cfg: u8,
+    index: u8,
+    offset: u16,
+    bytes: Vec<u8>,
+}
+
+impl MockPatch {
+    fn key(&self) -> (u8, u8, u8, u16) {
+        (self.section, self.cfg, self.index, self.offset)
+    }
 }
 
 impl Default for State {
@@ -78,7 +162,20 @@ impl Default for State {
             },
             health: Health::from_flags(0),
             device_info: DeviceInfo::default(),
-            caps: Caps::default(),
+            // A plain five-button mouse by default, so the lock table's button cap agrees with the
+            // count `RESP(CAPS)` reports; a test wanting buttons past five or AC Pan sets its own caps.
+            caps: Caps {
+                mouse: MouseCaps {
+                    n_buttons: 5,
+                    has_x: true,
+                    has_y: true,
+                    has_wheel: true,
+                    pan: false,
+                    has_report_id: false,
+                    n_hid: 1,
+                },
+                ..Caps::default()
+            },
             rate: Rate::from_payload(&[4, 0, 0, 0, 0, 0]).unwrap(),
             stats: Stats::from_payload(&[5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
                 .unwrap(),
@@ -101,6 +198,15 @@ impl Default for State {
             advertised_hz: 0,
             clip: ClipStatus::default(),
             clip_settings: ClipSettings::default(),
+            rewrites: Vec::new(),
+            rewrite_gen: 0,
+            rewrite_full: false,
+            patches: Vec::new(),
+            patch_applied: false,
+            patch_refused: false,
+            transforms: Vec::new(),
+            transform_full: false,
+            transfer_reply: (0x00, Vec::new()),
             recorded: Vec::new(),
             respond: true,
         }
@@ -108,10 +214,10 @@ impl Default for State {
 }
 
 // The box's lock table, modelled the way the firmware holds it so the mock answers `RESP(LOCKS)` the
-// way a box would rather than echoing what the host sent. Mouse rows are X, Y, wheel then the five
+// way a box would rather than echoing what the host sent. Mouse rows are X, Y, wheel, pan then the
 // buttons; slots are POS, NEG, WITH, AGAINST.
-const LOCK_TGT_BTN_BASE: usize = 3;
-const LOCK_TGT_COUNT: usize = 8;
+const LOCK_TGT_BTN_BASE: usize = 4; // CTRL_LOCK_TGT_BTN_BASE: 4 axes (X, Y, wheel, pan) precede the buttons
+const LOCK_TGT_COUNT: usize = LOCK_TGT_BTN_BASE + MAX_BUTTONS as usize; // 4 axes + 16 buttons
 const LOCK_SLOT_WITH: usize = 2;
 const SLOT_DIRS: [u8; 4] = [LOCK_DIR_POS, LOCK_DIR_NEG, LOCK_DIR_WITH, LOCK_DIR_AGAINST];
 // CTRL_RESP_LOCKS_MAXN and INPUT_MEDIA_MAX: past either the box drops silently.
@@ -194,24 +300,27 @@ impl LockTable {
         }
     }
 
-    pub(crate) fn apply(&mut self, class: u8, id: u16, dir: u8, scale: u8) {
+    // `n_buttons` is the clone's declared button count: a button blanket writes that many rows and a
+    // button id past it is dropped, exactly as the firmware caps at `nbtn`.
+    pub(crate) fn apply(&mut self, class: u8, id: u16, dir: u8, scale: u8, n_buttons: u8) {
         let on = scale < LOCK_SCALE_PASS;
         match class {
             LOCK_CLS_AXIS => {
                 if id == LOCK_ID_ALL {
-                    for t in 0..=LOCK_AXIS_WHEEL as usize {
+                    for t in 0..=LOCK_AXIS_PAN as usize {
                         self.set_mouse(t, dir, scale);
                     }
-                } else if id <= LOCK_AXIS_WHEEL {
+                } else if id <= LOCK_AXIS_PAN {
                     self.set_mouse(id as usize, dir, scale);
                 }
             }
             LOCK_CLS_BTN => {
+                let nbtn = (n_buttons as usize).min(MAX_BUTTONS as usize);
                 if id == LOCK_ID_ALL {
-                    for b in 0..BTN_COUNT as usize {
+                    for b in 0..nbtn {
                         self.set_mouse(LOCK_TGT_BTN_BASE + b, dir, scale);
                     }
-                } else if id < BTN_COUNT as u16 {
+                } else if (id as usize) < nbtn {
                     self.set_mouse(LOCK_TGT_BTN_BASE + id as usize, dir, scale);
                 }
             }
@@ -293,7 +402,8 @@ impl LockTable {
                     LockTarget::Axis(match t {
                         0 => Axis::X,
                         1 => Axis::Y,
-                        _ => Axis::Wheel,
+                        2 => Axis::Wheel,
+                        _ => Axis::Pan,
                     })
                 } else {
                     LockTarget::Usage(Usage::new(Class::Button, (t - LOCK_TGT_BTN_BASE) as u16))
@@ -343,8 +453,240 @@ impl State {
         if p.len() < 5 {
             return;
         }
-        self.table
-            .apply(p[0], u16::from_le_bytes([p[1], p[2]]), p[3], p[4]);
+        let n_buttons = self.caps.mouse.n_buttons;
+        self.table.apply(
+            p[0],
+            u16::from_le_bytes([p[1], p[2]]),
+            p[3],
+            p[4],
+            n_buttons,
+        );
+    }
+
+    // Apply a REWRITE frame the way the box would: keyed add/overwrite/remove, a monotonic gen, a
+    // whole-table clear, and the caps that raise `full`. Dropped whole while the opt-in is off.
+    fn apply_rewrite_frame(&mut self, p: &[u8]) {
+        if !self.imperfect.allowed {
+            return; // the box drops a REWRITE frame with the opt-in off
+        }
+        if p.len() < 9 {
+            return;
+        }
+        let cls = p[0];
+        let id = u16::from_le_bytes([p[1], p[2]]);
+        let dir = p[3];
+        let state = p[4];
+        let action = p[5];
+        let offset = u16::from_le_bytes([p[6], p[7]]);
+        let mlen = p[8] as usize;
+        // The ANY/ANY state-0 blanket clears the table, keeping gen monotonic across the clear.
+        if state == 0 && cls == 0xFF && id == 0xFFFF {
+            if !self.rewrites.is_empty() {
+                self.rewrites.clear();
+                self.rewrite_gen = self.rewrite_gen.wrapping_add(1);
+            }
+            self.rewrite_full = false;
+            return;
+        }
+        if mlen > REWRITE_MATCH_MAX || p.len() < 9 + 2 * mlen {
+            return; // the box refuses an over-long or truncated match
+        }
+        let match_bytes = p[9..9 + mlen].to_vec();
+        let mask = p[9 + mlen..9 + 2 * mlen].to_vec();
+        let payload = p[9 + 2 * mlen..].to_vec();
+        let key = (cls, id, dir, match_bytes.clone(), mask.clone());
+        let pos = self.rewrites.iter().position(|r| r.key() == key);
+        if state == 0 {
+            if let Some(i) = pos {
+                self.rewrites.remove(i);
+                self.rewrite_gen = self.rewrite_gen.wrapping_add(1);
+            }
+            return;
+        }
+        match pos {
+            Some(i) => {
+                // An identical re-set does not bump gen (§3.14); the box's keepalive relies on it.
+                let same = self.rewrites[i].action == action
+                    && self.rewrites[i].offset == offset
+                    && self.rewrites[i].payload == payload;
+                if same {
+                    return;
+                }
+                let hits = self.rewrites[i].hits;
+                self.rewrites[i] = MockRewrite {
+                    class: cls,
+                    id,
+                    dir,
+                    action,
+                    offset,
+                    match_bytes,
+                    mask,
+                    payload,
+                    hits,
+                };
+                self.rewrite_gen = self.rewrite_gen.wrapping_add(1);
+            }
+            None => {
+                if self.rewrites.len() >= REWRITE_MAX_ENTRIES {
+                    self.rewrite_full = true;
+                    return;
+                }
+                self.rewrites.push(MockRewrite {
+                    class: cls,
+                    id,
+                    dir,
+                    action,
+                    offset,
+                    match_bytes,
+                    mask,
+                    payload,
+                    hits: 0,
+                });
+                self.rewrite_gen = self.rewrite_gen.wrapping_add(1);
+            }
+        }
+    }
+
+    // Apply a TRANSFORM frame (§3.15), modelled on transform_tab_set. Ungated: a transform is faithful,
+    // so unlike REWRITE this runs whatever the imperfect opt-in. The refusals mirror the firmware: an
+    // op at or above the count, a class pair the op cannot take, a scale of 0 on an INVERT, a field
+    // neither map declares, and the eight-entry ceiling (which sets the full flag).
+    fn apply_transform_frame(&mut self, p: &[u8]) {
+        if p.len() < 10 {
+            return;
+        }
+        let op = p[0];
+        let sclass = p[1];
+        let sid = u16::from_le_bytes([p[2], p[3]]);
+        let dclass = p[4];
+        let did = u16::from_le_bytes([p[5], p[6]]);
+        let scale = i16::from_le_bytes([p[7], p[8]]);
+        let state = p[9];
+        // The all-0xFF state-0 blanket clears the table.
+        if state == 0 && sclass == 0xFF && dclass == 0xFF && sid == 0xFFFF && did == 0xFFFF {
+            self.transforms.clear();
+            self.transform_full = false;
+            return;
+        }
+        let key = (sclass, sid, dclass, did);
+        let pos = self.transforms.iter().position(|t| t.key() == key);
+        if state == 0 {
+            if let Some(i) = pos {
+                self.transforms.remove(i);
+            }
+            return;
+        }
+        // state 1: add or overwrite, after the same admissibility gauntlet the box runs.
+        if op > TF_SCALE
+            || !transform_pair_ok(op, sclass, sid, dclass, did)
+            || (op == TF_INVERT && scale == 0)
+            || !self.transform_field_present(sclass, sid)
+            || !self.transform_field_present(dclass, did)
+        {
+            return;
+        }
+        match pos {
+            Some(i) => {
+                // The key matches: only the op and scale change, keeping the row's position.
+                self.transforms[i].op = op;
+                self.transforms[i].scale = scale;
+            }
+            None => {
+                if self.transforms.len() >= TRANSFORM_MAX_ENTRIES {
+                    self.transform_full = true;
+                    return;
+                }
+                self.transforms.push(MockTransform {
+                    op,
+                    sclass,
+                    sid,
+                    dclass,
+                    did,
+                    scale,
+                });
+            }
+        }
+    }
+
+    // Whether the bound clone declares this field, mirroring transform_field_present over RESP(CAPS):
+    // an axis is present when its flag is set, a button when its id is under the declared count and the
+    // box's ceiling, a key when a keyboard collection is bound, media when a consumer collection is.
+    fn transform_field_present(&self, cls: u8, id: u16) -> bool {
+        match cls {
+            CATCH_CLS_AXIS => match id {
+                0 => self.caps.mouse.has_x,
+                1 => self.caps.mouse.has_y,
+                2 => self.caps.mouse.has_wheel,
+                3 => self.caps.mouse.pan,
+                _ => false,
+            },
+            CATCH_CLS_BTN => id < self.caps.mouse.n_buttons as u16 && id < MAX_BUTTONS as u16,
+            CATCH_CLS_KEY => self.caps.keyboard.n_keys > 0,
+            CATCH_CLS_MEDIA => self.caps.keyboard.has_consumer,
+            _ => false,
+        }
+    }
+
+    // Apply a PATCH frame: APPLY (only under the opt-in), CLEAR, or a keyed store (kept whatever the
+    // opt-in, as the box does; empty bytes removes the patch at that key).
+    fn apply_patch_frame(&mut self, p: &[u8]) {
+        let Some(&section) = p.first() else {
+            return;
+        };
+        match section {
+            PATCH_APPLY => {
+                if self.imperfect.allowed {
+                    self.patch_applied = true;
+                    self.patch_refused = false;
+                }
+                return;
+            }
+            PATCH_CLEAR => {
+                self.patches.clear();
+                self.patch_applied = false;
+                self.patch_refused = false;
+                return;
+            }
+            _ => {}
+        }
+        if p.len() < 5 || PatchSection::from_u8(section).is_none() {
+            return;
+        }
+        let cfg = p[1];
+        let index = p[2];
+        let offset = u16::from_le_bytes([p[3], p[4]]);
+        let bytes = p[5..].to_vec();
+        let key = (section, cfg, index, offset);
+        let pos = self.patches.iter().position(|q| q.key() == key);
+        if bytes.is_empty() {
+            if let Some(i) = pos {
+                self.patches.remove(i);
+            }
+            return;
+        }
+        match pos {
+            Some(i) => {
+                self.patches[i] = MockPatch {
+                    section,
+                    cfg,
+                    index,
+                    offset,
+                    bytes,
+                }
+            }
+            None => {
+                if self.patches.len() >= PATCH_MAX_ENTRIES {
+                    return; // the box refuses a store past PATCH_MAX; full is derived from the count
+                }
+                self.patches.push(MockPatch {
+                    section,
+                    cfg,
+                    index,
+                    offset,
+                    bytes,
+                });
+            }
+        }
     }
 
     fn apply_option_frame(&mut self, p: &[u8]) {
@@ -352,7 +694,20 @@ impl State {
             return;
         }
         match (p.first().copied(), &p[1..]) {
-            (Some(OPT_IMPERFECT), [allow, ..]) => self.imperfect.allowed = *allow != 0,
+            (Some(OPT_IMPERFECT), [allow, ..]) => {
+                self.imperfect.allowed = *allow != 0;
+                if !self.imperfect.allowed {
+                    // Opt-off clears the rewrite table (usbdev_set_imperfect_allowed) so nothing in this
+                    // layer rewrites while the clone is faithful-only; gen stays monotonic across the clear.
+                    if !self.rewrites.is_empty() {
+                        self.rewrites.clear();
+                        self.rewrite_gen = self.rewrite_gen.wrapping_add(1);
+                    }
+                    self.rewrite_full = false;
+                    // The clone re-presents without the opt-in, so a stored set stops being shown.
+                    self.patch_applied = false;
+                }
+            }
             (Some(OPT_MOVE_RIDE), [lo, hi, ..]) => {
                 self.move_ride_ms = u16::from_le_bytes([*lo, *hi])
             }
@@ -444,6 +799,9 @@ fn caps_payload(c: Caps) -> Vec<u8> {
     }
     if c.mouse.has_wheel {
         axis |= CAP_WHEEL;
+    }
+    if c.mouse.pan {
+        axis |= CAP_PAN;
     }
     if c.mouse.has_report_id {
         axis |= CAP_REPORT_ID;
@@ -691,14 +1049,129 @@ fn clip_status_payload(c: &ClipStatus, cfg: &ClipSettings) -> Vec<u8> {
     p
 }
 
-fn motion_event_payload(ts_us: u32, dx: i16, dy: i16, dz: i16) -> Vec<u8> {
-    let mut p = Vec::with_capacity(11);
+// Which (op, class pair) a transform can take, mirroring transform_pair_ok in the firmware.
+fn transform_pair_ok(op: u8, sc: u8, si: u16, dc: u8, di: u16) -> bool {
+    match op {
+        TF_INVERT | TF_SCALE => sc == CATCH_CLS_AXIS && dc == CATCH_CLS_AXIS && si == di,
+        TF_SWAP => sc == CATCH_CLS_AXIS && dc == CATCH_CLS_AXIS,
+        TF_REMAP => {
+            (sc == CATCH_CLS_AXIS && dc == CATCH_CLS_AXIS)
+                || (sc == CATCH_CLS_BTN && dc == CATCH_CLS_BTN)
+                || (sc == CATCH_CLS_BTN && dc == CATCH_CLS_KEY)
+                || (sc == CATCH_CLS_BTN && dc == CATCH_CLS_MEDIA)
+        }
+        _ => false,
+    }
+}
+
+// RESP(TRANSFORMS): [16][flags][n] then n × [op][sclass][sid u16][dclass][did u16][scale i16]. No state
+// byte per entry: a readback row is always a live one, hardcoded state 1 when it rebuilds.
+fn transforms_resp_payload(st: &State) -> Vec<u8> {
+    let mut p = vec![
+        Q_TRANSFORMS,
+        if st.transform_full { TF_F_FULL } else { 0x00 },
+        st.transforms.len() as u8,
+    ];
+    for t in &st.transforms {
+        p.push(t.op);
+        p.push(t.sclass);
+        p.extend_from_slice(&t.sid.to_le_bytes());
+        p.push(t.dclass);
+        p.extend_from_slice(&t.did.to_le_bytes());
+        p.extend_from_slice(&t.scale.to_le_bytes());
+    }
+    p
+}
+
+// RESP(REWRITE): [12][flags][gen][n] then n × [cls][id u16][dir][action][mlen][off u16][plen u16][hits u16].
+fn rewrite_resp_payload(st: &State) -> Vec<u8> {
+    let mut p = vec![
+        Q_REWRITE,
+        if st.rewrite_full { 0x01 } else { 0x00 },
+        st.rewrite_gen,
+        st.rewrites.len() as u8,
+    ];
+    for r in &st.rewrites {
+        p.push(r.class);
+        p.extend_from_slice(&r.id.to_le_bytes());
+        p.push(r.dir);
+        p.push(r.action);
+        p.push(r.match_bytes.len() as u8);
+        p.extend_from_slice(&r.offset.to_le_bytes());
+        p.extend_from_slice(&(r.payload.len() as u16).to_le_bytes());
+        p.extend_from_slice(&r.hits.to_le_bytes());
+    }
+    p
+}
+
+// RESP(REWRITE_ENTRY): [13][index] then the rule in the REWRITE command's shape with state = 1.
+fn rewrite_entry_resp_payload(st: &State, index: u8) -> Vec<u8> {
+    let mut p = vec![Q_REWRITE_ENTRY, index];
+    if let Some(r) = st.rewrites.get(index as usize) {
+        p.push(r.class);
+        p.extend_from_slice(&r.id.to_le_bytes());
+        p.push(r.dir);
+        p.push(1); // state
+        p.push(r.action);
+        p.extend_from_slice(&r.offset.to_le_bytes());
+        p.push(r.match_bytes.len() as u8);
+        p.extend_from_slice(&r.match_bytes);
+        p.extend_from_slice(&r.mask);
+        p.extend_from_slice(&r.payload);
+    }
+    p
+}
+
+// RESP(PATCHES): [14][flags][n] then n × [section][cfg][index][offset u16][len u16].
+fn patches_resp_payload(st: &State) -> Vec<u8> {
+    // pending and full are derived at pack time exactly as usbdev_pack_patches does, not held stickily:
+    // pending = (n && !applied), mutually exclusive with applied; full = (n >= PATCH_MAX).
+    let mut flags = 0u8;
+    if st.patch_applied {
+        flags |= 0x01;
+    }
+    if !st.patches.is_empty() && !st.patch_applied {
+        flags |= 0x02;
+    }
+    if st.patch_refused {
+        flags |= 0x04;
+    }
+    if st.patches.len() >= PATCH_MAX_ENTRIES {
+        flags |= 0x08;
+    }
+    let mut p = vec![Q_PATCHES, flags, st.patches.len() as u8];
+    for q in &st.patches {
+        p.push(q.section);
+        p.push(q.cfg);
+        p.push(q.index);
+        p.extend_from_slice(&q.offset.to_le_bytes());
+        p.extend_from_slice(&(q.bytes.len() as u16).to_le_bytes());
+    }
+    p
+}
+
+// RESP(PATCH_ENTRY): [15][index] then [section][cfg][index][offset u16][bytes].
+fn patch_entry_resp_payload(st: &State, index: u8) -> Vec<u8> {
+    let mut p = vec![Q_PATCH_ENTRY, index];
+    if let Some(q) = st.patches.get(index as usize) {
+        p.push(q.section);
+        p.push(q.cfg);
+        p.push(q.index);
+        p.extend_from_slice(&q.offset.to_le_bytes());
+        p.extend_from_slice(&q.bytes);
+    }
+    p
+}
+
+fn motion_event_payload(ts_us: u32, dx: i16, dy: i16, dz: i16, dpan: i16) -> Vec<u8> {
+    let mut p = Vec::with_capacity(13);
     p.extend_from_slice(&ts_us.to_le_bytes());
     p.push(0); // clk: a motion event only exists for a real device's report
 
     p.extend_from_slice(&dx.to_le_bytes());
     p.extend_from_slice(&dy.to_le_bytes());
     p.extend_from_slice(&dz.to_le_bytes());
+    p.extend_from_slice(&dpan.to_le_bytes());
     p
 }
 
@@ -868,9 +1341,22 @@ impl MockBox {
             match ty {
                 FrameType::Lock => st.apply_lock_frame(payload),
                 FrameType::Option => st.apply_option_frame(payload),
+                FrameType::Rewrite => st.apply_rewrite_frame(payload),
+                FrameType::Patch => st.apply_patch_frame(payload),
+                FrameType::Transform => st.apply_transform_frame(payload),
                 // RESET clears every lock along with the injection, as input_reset does. The bearing
-                // option is NVS-backed and survives it.
-                FrameType::Reset => st.table = LockTable::default(),
+                // option is NVS-backed and survives it. The rewrite table clears too (§3.14).
+                FrameType::Reset => {
+                    st.table = LockTable::default();
+                    if !st.rewrites.is_empty() {
+                        st.rewrites.clear();
+                        st.rewrite_gen = st.rewrite_gen.wrapping_add(1);
+                    }
+                    st.rewrite_full = false;
+                    // The transform table clears on RESET too (§3.15); the patch store does not.
+                    st.transforms.clear();
+                    st.transform_full = false;
+                }
                 _ => {}
             }
             let out: Vec<u8> = 'reply: {
@@ -924,12 +1410,37 @@ impl MockBox {
                         None => Vec::new(),
                     };
                 }
+                if ty == FrameType::Transfer && st.respond {
+                    // TRANSFER_RESP [ep][status][IN data], SEQ echoes. The box answers 0xFC (refused)
+                    // while the opt-in is off; otherwise the canned reply the test scripted.
+                    let ep = payload.first().copied().unwrap_or(0);
+                    let (status, mut data) = if st.imperfect.allowed {
+                        st.transfer_reply.clone()
+                    } else {
+                        (0xFC, Vec::new())
+                    };
+                    // The box sets in_len = 0 unless status == 0 (usbdev_transfer): a non-OK answer
+                    // carries no IN data, so drop any the test scripted alongside a failing status.
+                    if status != 0 {
+                        data.clear();
+                    }
+                    let mut p = vec![ep, status];
+                    p.extend_from_slice(&data);
+                    break 'reply encode(FrameType::TransferResp, seq, &p).expect("resp fits");
+                }
                 if ty == FrameType::Query && st.respond {
                     match payload.first().copied() {
                         Some(0) => encode(FrameType::Resp, seq, &version_payload(&st.version))
                             .expect("resp fits"),
-                        Some(1) => encode(FrameType::Resp, seq, &[1, st.health.to_flags()])
-                            .expect("resp fits"),
+                        Some(1) => {
+                            // HEALTH is a u16 LE (proto 7); rewrite_on/patch_on/transform_on reflect live state.
+                            let mut h = st.health;
+                            h.rewrite_on |= !st.rewrites.is_empty();
+                            h.patch_on |= st.patch_applied;
+                            h.transform_on |= !st.transforms.is_empty();
+                            let f = h.to_flags().to_le_bytes();
+                            encode(FrameType::Resp, seq, &[1, f[0], f[1]]).expect("resp fits")
+                        }
                         Some(2) => {
                             encode(FrameType::Resp, seq, &device_info_payload(&st.device_info))
                                 .expect("resp fits")
@@ -1011,6 +1522,24 @@ impl MockBox {
                             &clip_status_payload(&st.clip, &st.clip_settings),
                         )
                         .expect("resp fits"),
+                        Some(12) => encode(FrameType::Resp, seq, &rewrite_resp_payload(&st))
+                            .expect("resp fits"),
+                        Some(13) => encode(
+                            FrameType::Resp,
+                            seq,
+                            &rewrite_entry_resp_payload(&st, payload.get(1).copied().unwrap_or(0)),
+                        )
+                        .expect("resp fits"),
+                        Some(14) => encode(FrameType::Resp, seq, &patches_resp_payload(&st))
+                            .expect("resp fits"),
+                        Some(15) => encode(
+                            FrameType::Resp,
+                            seq,
+                            &patch_entry_resp_payload(&st, payload.get(1).copied().unwrap_or(0)),
+                        )
+                        .expect("resp fits"),
+                        Some(16) => encode(FrameType::Resp, seq, &transforms_resp_payload(&st))
+                            .expect("resp fits"),
                         _ => Vec::new(),
                     }
                 } else {
@@ -1134,6 +1663,31 @@ impl MockBox {
     /// Update the configured [`ImperfectStatus`] in place (e.g. to simulate an over-capacity device).
     pub fn set_imperfect_status(&self, imperfect: ImperfectStatus) {
         self.state.lock().imperfect = imperfect;
+    }
+
+    /// Enable or disable the imperfect-clone opt-in the advanced control layer (§3.14) is gated on (builder
+    /// style). A shorthand for scripting [`ImperfectStatus::allowed`] before a `raw`/`transfer`/`rewrite`.
+    pub fn with_imperfect(self, allow: bool) -> Self {
+        {
+            let mut st = self.state.lock();
+            st.imperfect.allowed = allow;
+        }
+        self
+    }
+
+    /// Set the canned `(status, IN data)` a `TRANSFER` is answered with while the opt-in is on
+    /// (builder style). With the opt-in off the mock answers `0xFC` (refused) regardless.
+    pub fn with_transfer_reply(self, status: u8, data: &[u8]) -> Self {
+        {
+            let mut st = self.state.lock();
+            st.transfer_reply = (status, data.to_vec());
+        }
+        self
+    }
+
+    /// Set the canned `TRANSFER` reply after construction.
+    pub fn set_transfer_reply(&self, status: u8, data: &[u8]) {
+        self.state.lock().transfer_reply = (status, data.to_vec());
     }
 
     /// Update the configured movement-riding window in place; `None` = off.
@@ -1273,11 +1827,12 @@ impl MockBox {
 
     /// Push a `MOTION_EVENT` as if the box emitted it; surfaces as [`CatchEvent::Motion`](crate::CatchEvent).
     /// `ts_us` is the raw wire timestamp, so a test can drive the `u32` wrap and the clock-restart case.
-    pub fn push_motion(&self, seq: u8, ts_us: u32, dx: i16, dy: i16, dz: i16) {
+    /// The four axes are X, Y, wheel and AC Pan (`dpan`).
+    pub fn push_motion(&self, seq: u8, ts_us: u32, dx: i16, dy: i16, dz: i16, dpan: i16) {
         self.transport.push_frame(
             FrameType::MotionEvent,
             seq,
-            &motion_event_payload(ts_us, dx, dy, dz),
+            &motion_event_payload(ts_us, dx, dy, dz, dpan),
         );
     }
 

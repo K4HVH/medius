@@ -279,10 +279,10 @@ use medius::{Capture, CatchEvent, CatchFilter, TrafficClass};
 
 let events = device.catch_events([
     CatchFilter::everything().with_capture(Capture::First(16)),
-    CatchFilter::traffic(TrafficClass::VendorInterrupt, 0x83),   // this endpoint, whole packets
+    CatchFilter::traffic(TrafficClass::VendorInterrupt, 3),   // this endpoint, whole packets
 ])?;
 while let Ok(CatchEvent::Traffic(t)) = events.recv() {
-    println!("{:?} 0x{:02X} {} bytes", t.class, t.id, t.true_len);
+    println!("{:?} ep {} {} bytes", t.class, t.id, t.true_len);
 }
 ```
 

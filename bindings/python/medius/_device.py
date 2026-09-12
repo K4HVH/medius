@@ -7,8 +7,8 @@ import time
 from typing import Optional, Sequence, Union
 
 from . import _native
-from ._enums import (Action, BearingMode, Blanket, EmitMode, RenderMode, LedMode, LedTarget, Direction,
-                     MoveTiming, PendingMotion, RebootTarget, Status, UpdateTarget)
+from ._enums import (Action, Axis, BearingMode, Blanket, EmitMode, RenderMode, LedMode, LedTarget,
+                     Direction, MoveTiming, PendingMotion, RebootTarget, Status, UpdateTarget)
 from ._errors import InvalidArgError, MediusError, check
 from ._clip import ClipHandle
 from ._streams import EventStream, InputStream, LogStream
@@ -16,6 +16,7 @@ from ._types import (
     Bearing,
     FirmwareInfo,
     firmware_info_from_c,
+    _as_lock_target,
     _enum,
     _i16,
     _u8,
@@ -31,6 +32,14 @@ from ._types import (
     SpreadStatus,
     Health,
     ImperfectStatus,
+    Patch,
+    PatchSet,
+    RewriteRule,
+    RewriteTable,
+    Setup,
+    TransferOutcome,
+    Transform,
+    Transforms,
     Usage,
     Locks,
     LockTarget,
@@ -50,8 +59,18 @@ from ._types import (
     health_from_c,
     imperfect_from_c,
     locks_from_c,
+    patch_from_c,
+    patch_set_from_c,
+    patch_to_c,
     rate_from_c,
+    rewrite_rule_from_c,
+    rewrite_rule_to_c,
+    rewrite_table_from_c,
+    setup_to_c,
     stats_from_c,
+    transfer_outcome_from_c,
+    transform_to_c,
+    transforms_from_c,
     version_from_c,
 )
 
@@ -62,6 +81,14 @@ def _require_mock():
             "the loaded medius_capi library was built without the mock feature "
             "(rebuild with --features mock)"
         )
+
+
+def _bytes_buf(data: bytes):
+    """A ``(c_uint8 * n)`` buffer copied from `data`, and its length, for a ``POINTER(u8)`` argument.
+    An empty payload is a real zero-length buffer the C side never reads (it maps len 0 to an empty
+    slice)."""
+    raw = bytes(data)
+    return (ctypes.c_uint8 * len(raw)).from_buffer_copy(raw), len(raw)
 
 
 class Device:
@@ -139,6 +166,14 @@ class Device:
     def wheel_now(self, delta):
         """A wheel move that bypasses movement riding."""
         check(_native.lib.medius_device_wheel_now(self._handle, _i16(delta, "delta")))
+
+    def pan(self, delta):
+        """An AC Pan (horizontal-scroll) move; full `i16`, no clamp."""
+        check(_native.lib.medius_device_pan(self._handle, _i16(delta, "delta")))
+
+    def pan_now(self, delta):
+        """An AC Pan move that bypasses movement riding."""
+        check(_native.lib.medius_device_pan_now(self._handle, _i16(delta, "delta")))
 
     def flush_motion(self):
         """Emit the motion held for a ride now, ignoring the ride window."""
@@ -444,6 +479,166 @@ class Device:
         out = _native.MediusCountersSnapshot()
         check(_native.lib.medius_device_counters(self._handle, ctypes.byref(out)))
         return counters_from_c(out)
+
+    # The advanced control layer (§3.14): raw injection, control transfers, rewrite rules and descriptor
+    # patches. Admitted by the imperfect-clone opt-in (`allow_imperfect_clones`).
+
+    def raw(self, ep: int, direction: Direction, data: bytes) -> None:
+        """`RAW` (§3.14): put `data` verbatim on cloned endpoint number `ep` in `direction`, fire-and-forget.
+
+        `ep` is the bare endpoint number (0 to 15). `Direction.IN` emits toward the game PC;
+        `Direction.OUT` relays to the real device. Only those two address one: `Direction.BOTH` raises
+        `RawDirectionError` and the bearing-relative pair raises `RelativeDirectionError`. Needs the
+        imperfect-clone opt-in, or it raises `ImperfectRequiredError`.
+        """
+        direction = _enum(direction, Direction, "direction")
+        buf, n = _bytes_buf(data)
+        check(_native.lib.medius_device_raw(self._handle, _u8(ep, "ep"), int(direction), buf, n))
+
+    def transfer(self, ep: int, setup: Setup, out: bytes = b"") -> TransferOutcome:
+        """`TRANSFER` (§3.14): run one control transfer against the real device and return its answer.
+
+        `ep` is 0 for EP0 or a control endpoint the device declares; `out` is the OUT data stage
+        (empty for an IN transfer). A `TransferOutcome.status` other than `TransferStatus.OK` is a real
+        protocol outcome returned rather than raised; the box answers `REFUSED` while the opt-in is off.
+        """
+        buf, n = _bytes_buf(out)
+        outcome = _native.MediusTransferOutcome()
+        check(
+            _native.lib.medius_device_transfer(
+                self._handle, _u8(ep, "ep"), setup_to_c(setup), buf, n, ctypes.byref(outcome)
+            )
+        )
+        return transfer_outcome_from_c(outcome)
+
+    def set_rewrite(self, rule: RewriteRule) -> None:
+        """`REWRITE` (§3.14): install (add or overwrite) one rewrite rule. Needs the opt-in.
+
+        `match_bytes` and `mask` must be the same length (`RewriteMaskLengthError`), the action must be
+        valid for the class (`RewriteActionClassError`), the direction must not be bearing-relative
+        (`RelativeDirectionError`), and the payload must fit the box's head
+        (`RewritePayloadTooLargeError`). `query_rewrite` confirms what the box holds.
+        """
+        c = rewrite_rule_to_c(rule)
+        check(_native.lib.medius_device_set_rewrite(self._handle, ctypes.byref(c)))
+
+    def remove_rewrite(self, rule: RewriteRule) -> None:
+        """`REWRITE` remove (§3.14): drop the rule keyed by `rule`'s
+        ``(rewrite_class, id, direction, match_bytes, mask)``; its action and payload are ignored."""
+        c = rewrite_rule_to_c(rule)
+        check(_native.lib.medius_device_remove_rewrite(self._handle, ctypes.byref(c)))
+
+    def clear_rewrite(self) -> None:
+        """`REWRITE` clear (§3.14): drop the whole rewrite table. Always clears the held rules."""
+        check(_native.lib.medius_device_clear_rewrite(self._handle))
+
+    def query_rewrite(self) -> RewriteTable:
+        """`QUERY(REWRITE)` (§4.17): the whole table's summary, a row per rule without its bytes."""
+        out = _native.MediusRewriteTable()
+        check(_native.lib.medius_device_query_rewrite(self._handle, ctypes.byref(out)))
+        return rewrite_table_from_c(out)
+
+    def query_rewrite_entry(self, index: int) -> RewriteRule:
+        """`QUERY(REWRITE_ENTRY, index)` (§4.17): one rule in full, in the shape `set_rewrite` takes."""
+        out = _native.MediusRewriteRule()
+        check(
+            _native.lib.medius_device_query_rewrite_entry(
+                self._handle, _u8(index, "index"), ctypes.byref(out)
+            )
+        )
+        return rewrite_rule_from_c(out)
+
+    def set_patch(self, patch: Patch) -> None:
+        """`PATCH` (§3.14): store one descriptor patch. A patch with empty `bytes` removes the patch at
+        its key. Storing is not gated on the opt-in; it takes effect once `apply_patch` re-presents the
+        clone under the opt-in."""
+        c = patch_to_c(patch)
+        check(_native.lib.medius_device_set_patch(self._handle, ctypes.byref(c)))
+
+    def apply_patch(self) -> None:
+        """`PATCH` APPLY (§3.14): re-present the clone with the stored patch set. Needs the opt-in."""
+        check(_native.lib.medius_device_apply_patch(self._handle))
+
+    def clear_patch(self) -> None:
+        """`PATCH` CLEAR (§3.14): drop every patch for this device and re-present the clone unpatched."""
+        check(_native.lib.medius_device_clear_patch(self._handle))
+
+    def query_patches(self) -> PatchSet:
+        """`QUERY(PATCHES)` (§4.17): the stored patch set and its apply state, a row per patch."""
+        out = _native.MediusPatchSet()
+        check(_native.lib.medius_device_query_patches(self._handle, ctypes.byref(out)))
+        return patch_set_from_c(out)
+
+    def query_patch_entry(self, index: int) -> Patch:
+        """`QUERY(PATCH_ENTRY, index)` (§4.17): one patch in full, in the shape `set_patch` takes."""
+        out = _native.MediusPatch()
+        check(
+            _native.lib.medius_device_query_patch_entry(
+                self._handle, _u8(index, "index"), ctypes.byref(out)
+            )
+        )
+        return patch_from_c(out)
+
+    # Field transforms (§3.15): a faithful field operation on the semantic path. Unlike the advanced control
+    # layer above, a transform needs no imperfect-clone opt-in.
+
+    def transform(self, t: Transform) -> None:
+        """`TRANSFORM` (§3.15): install (add or overwrite) one field transform.
+
+        A transform negates, scales, swaps or remaps a field the clone already declares, so it is
+        faithful and needs no `allow_imperfect_clones`. An entry is keyed by its `(source, dest)`. A
+        combination the op cannot address raises `TransformOpFieldsError`, and a `scale` of 0 on an
+        invert raises `TransformInvertZeroScaleError`. `query_transforms` confirms what the box holds.
+        """
+        c = transform_to_c(t)
+        check(_native.lib.medius_device_transform(self._handle, ctypes.byref(c)))
+
+    def untransform(self, t: Transform) -> None:
+        """`TRANSFORM` remove (§3.15): drop the transform keyed by `t`'s `(source, dest)`; its op and
+        scale are ignored. A no-op on the box if no such entry is held."""
+        c = transform_to_c(t)
+        check(_native.lib.medius_device_untransform(self._handle, ctypes.byref(c)))
+
+    def clear_transforms(self) -> None:
+        """`TRANSFORM` clear (§3.15): drop the whole transform table."""
+        check(_native.lib.medius_device_clear_transforms(self._handle))
+
+    def invert(self, axis: Axis) -> None:
+        """Invert an axis on the wire: convenience for a `transform` of `Transform.invert`."""
+        check(_native.lib.medius_device_invert(self._handle, int(_enum(axis, Axis, "axis"))))
+
+    def scale_transform(self, axis: Axis, percent: int) -> None:
+        """Weigh an axis by a signed percent (`200` doubles, `-50` halves and flips): convenience for a
+        `transform` of `Transform.scale_axis`. Named `scale_transform` because `scale` is the LOCK
+        weigh, a different operation."""
+        check(
+            _native.lib.medius_device_scale_transform(
+                self._handle, int(_enum(axis, Axis, "axis")), _i16(percent, "percent")
+            )
+        )
+
+    def swap(self, a: Axis, b: Axis) -> None:
+        """Exchange two axes on the wire: convenience for a `transform` of `Transform.swap`."""
+        check(
+            _native.lib.medius_device_swap(
+                self._handle, int(_enum(a, Axis, "a")), int(_enum(b, Axis, "b"))
+            )
+        )
+
+    def remap(self, source, dest) -> None:
+        """Remap a source field into a destination: convenience for a `transform` of `Transform.remap`.
+        `source` and `dest` are a `LockTarget`, an `Axis`, or a usage (`Usage`/`Button`/`Key`/
+        `MediaKey`)."""
+        s = _as_lock_target(source)
+        d = _as_lock_target(dest)
+        check(_native.lib.medius_device_remap(self._handle, s._c, d._c))
+
+    def query_transforms(self) -> Transforms:
+        """`QUERY(TRANSFORMS)` (§4.18): the whole transform table, a row per entry in the shape
+        `transform` takes, so a read entry replays as a set."""
+        out = _native.MediusTransforms()
+        check(_native.lib.medius_device_query_transforms(self._handle, ctypes.byref(out)))
+        return transforms_from_c(out)
 
     def clip(self) -> ClipHandle:
         """A handle to this box's buffered-clip playback (§3.11)."""

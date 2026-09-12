@@ -11,38 +11,38 @@ fn default_is_idle() {
 #[test]
 fn press_is_held_and_non_idle() {
     let mut d = DesiredState::default();
-    d.apply(Button::Left.into(), Action::Press);
+    d.apply(Button::LEFT.into(), Action::Press);
     assert!(!d.is_idle());
     assert_eq!(
         d.held().collect::<Vec<_>>(),
-        vec![(Usage::from(Button::Left), Action::Press)]
+        vec![(Usage::from(Button::LEFT), Action::Press)]
     );
 }
 
 #[test]
 fn force_release_is_held() {
     let mut d = DesiredState::default();
-    d.apply(Button::Right.into(), Action::ForceRelease);
+    d.apply(Button::RIGHT.into(), Action::ForceRelease);
     assert!(!d.is_idle());
     assert_eq!(
         d.held().collect::<Vec<_>>(),
-        vec![(Usage::from(Button::Right), Action::ForceRelease)]
+        vec![(Usage::from(Button::RIGHT), Action::ForceRelease)]
     );
 }
 
 #[test]
 fn soft_release_clears_the_override() {
     let mut d = DesiredState::default();
-    d.apply(Button::Middle.into(), Action::Press);
-    d.apply(Button::Middle.into(), Action::SoftRelease);
+    d.apply(Button::MIDDLE.into(), Action::Press);
+    d.apply(Button::MIDDLE.into(), Action::SoftRelease);
     assert!(d.is_idle());
 }
 
 #[test]
 fn clear_resets_all() {
     let mut d = DesiredState::default();
-    d.apply(Button::Left.into(), Action::Press);
-    d.apply(Button::Side2.into(), Action::ForceRelease);
+    d.apply(Button::LEFT.into(), Action::Press);
+    d.apply(Button::SIDE2.into(), Action::ForceRelease);
     assert!(!d.is_idle());
     d.clear();
     assert!(d.is_idle());
@@ -52,13 +52,13 @@ fn clear_resets_all() {
 #[test]
 fn held_preserves_identity_in_class_then_id_order() {
     let mut d = DesiredState::default();
-    d.apply(Button::Left.into(), Action::Press);
-    d.apply(Button::Side1.into(), Action::ForceRelease);
+    d.apply(Button::LEFT.into(), Action::Press);
+    d.apply(Button::SIDE1.into(), Action::ForceRelease);
     assert_eq!(
         d.held().collect::<Vec<_>>(),
         vec![
-            (Usage::from(Button::Left), Action::Press),
-            (Usage::from(Button::Side1), Action::ForceRelease),
+            (Usage::from(Button::LEFT), Action::Press),
+            (Usage::from(Button::SIDE1), Action::ForceRelease),
         ]
     );
 }
@@ -106,12 +106,12 @@ fn media_soft_release_clears_the_override() {
 fn one_store_holds_every_class_and_orders_by_class_then_id() {
     let mut d = DesiredState::default();
     d.apply(MediaKey::VOLUME_UP.into(), Action::Press);
-    d.apply(Button::Left.into(), Action::Press);
+    d.apply(Button::LEFT.into(), Action::Press);
     d.apply(Key::A.into(), Action::Press);
     assert_eq!(
         d.held().map(|(u, _)| u).collect::<Vec<_>>(),
         vec![
-            Usage::from(Button::Left),
+            Usage::from(Button::LEFT),
             Usage::from(Key::A),
             Usage::from(MediaKey::VOLUME_UP),
         ]
@@ -207,15 +207,75 @@ fn a_one_bit_class_holds_what_the_box_will_hold() {
 }
 
 #[test]
-fn a_button_blanket_expands_the_way_the_box_expands_it() {
+fn a_button_blanket_widens_to_the_declared_count_when_caps_arrives() {
     let mut d = DesiredState::default();
     d.apply_lock((LOCK_CLS_BTN, LOCK_ID_ALL, LOCK_DIR_BOTH), LOCK_SCALE_BLOCK);
+    // Before any CAPS read the blanket expands onto the five named buttons.
     assert_eq!(d.held_locks().len(), 5);
+    // The blanket is held unexpanded, so once CAPS reports a wider device the SAME blanket re-expands
+    // onto every declared button: a reconnect that re-read CAPS re-asserts the wide buttons instead of
+    // the frozen five. Materialising at apply time (the old behaviour) could not do this.
+    d.note_declared_buttons(8);
+    let ids: Vec<u16> = d.held_locks().iter().map(|&((_, id, _), _)| id).collect();
+    assert_eq!(ids, (0..8).collect::<Vec<u16>>());
     // Releasing one button afterwards must not be undone by a replay of the blanket.
     d.apply_lock((LOCK_CLS_BTN, 0, LOCK_DIR_BOTH), LOCK_SCALE_PASS);
     let held = d.held_locks();
-    assert_eq!(held.len(), 4);
+    assert_eq!(held.len(), 7);
     assert!(!held.iter().any(|&((_, id, _), _)| id == 0));
+}
+
+#[test]
+fn a_button_blanket_re_expands_when_the_declared_count_changes() {
+    // A device swapped in during a reconnect blip re-reads CAPS, and the held blanket then re-asserts
+    // onto the new count, wider or narrower, because it was never materialised at the old one.
+    let mut d = DesiredState::default();
+    d.note_declared_buttons(8);
+    d.apply_lock((LOCK_CLS_BTN, LOCK_ID_ALL, LOCK_DIR_BOTH), LOCK_SCALE_BLOCK);
+    assert_eq!(d.held_locks().len(), 8);
+    d.note_declared_buttons(12);
+    assert_eq!(d.held_locks().len(), 12);
+    d.note_declared_buttons(4);
+    assert_eq!(d.held_locks().len(), 4);
+}
+
+#[test]
+fn an_undone_button_release_restores_the_blanket() {
+    // The single-button write that bursts the blanket rolls back cleanly when its frame never went out,
+    // leaving the blanket as it was rather than the materialised rows the burst created.
+    let mut d = DesiredState::default();
+    d.note_declared_buttons(8);
+    d.apply_lock((LOCK_CLS_BTN, LOCK_ID_ALL, LOCK_DIR_BOTH), LOCK_SCALE_BLOCK);
+    let before = d.held_locks();
+    let undo = d.apply_lock((LOCK_CLS_BTN, 0, LOCK_DIR_BOTH), LOCK_SCALE_PASS);
+    assert_eq!(d.held_locks().len(), 7); // burst to eight, minus the released button
+    d.restore_lock(undo);
+    assert_eq!(d.held_locks(), before);
+}
+
+#[test]
+fn a_button_blanket_expands_onto_the_declared_count() {
+    // Once CAPS reports a wide button count, the blanket expands onto every declared button, so a
+    // reconnect re-asserts a lock on a button past the five named ones.
+    let mut d = DesiredState::default();
+    d.note_declared_buttons(16);
+    d.apply_lock((LOCK_CLS_BTN, LOCK_ID_ALL, LOCK_DIR_BOTH), LOCK_SCALE_BLOCK);
+    let ids: Vec<u16> = d.held_locks().iter().map(|&((_, id, _), _)| id).collect();
+    assert_eq!(ids, (0..16).collect::<Vec<u16>>());
+    assert!(
+        d.held_locks()
+            .iter()
+            .any(|&((cls, id, _), _)| cls == LOCK_CLS_BTN && id == 8)
+    );
+}
+
+#[test]
+fn a_button_blanket_caps_at_the_box_ceiling() {
+    // A device declaring more buttons than the box can drive still expands onto only the ceiling.
+    let mut d = DesiredState::default();
+    d.note_declared_buttons(40);
+    d.apply_lock((LOCK_CLS_BTN, LOCK_ID_ALL, LOCK_DIR_BOTH), LOCK_SCALE_BLOCK);
+    assert_eq!(d.held_locks().len(), 16);
 }
 
 #[test]
@@ -334,4 +394,153 @@ fn a_row_of_another_class_never_disturbs_the_media_order() {
     d.apply_lock((LOCK_CLS_BTN, 3, LOCK_DIR_POS), LOCK_SCALE_BLOCK);
     d.apply_lock((LOCK_CLS_BTN, 3, LOCK_DIR_POS), LOCK_SCALE_PASS);
     assert_eq!(media_ids(&d), vec![3, 0xEA]);
+}
+
+// --- rewrite rules (§3.14): session state re-asserted like locks/catch ---
+
+use crate::link::reconcile::StoredRewrite;
+
+fn stored(class: u8, id: u16) -> StoredRewrite {
+    StoredRewrite {
+        class,
+        id,
+        direction: 0,
+        action: 1,
+        offset: 0,
+        match_bytes: vec![],
+        mask: vec![],
+        payload: vec![],
+    }
+}
+
+#[test]
+fn rewrite_rule_is_held_and_non_idle() {
+    let mut d = DesiredState::default();
+    d.apply_rewrite(stored(9, 1));
+    assert!(!d.is_idle());
+    assert_eq!(d.held_rewrites().len(), 1);
+}
+
+#[test]
+fn rewrite_overwrite_keeps_one_row() {
+    let mut d = DesiredState::default();
+    d.apply_rewrite(stored(9, 1));
+    let mut r = stored(9, 1);
+    r.action = 3; // same key, new action
+    d.apply_rewrite(r);
+    let held = d.held_rewrites();
+    assert_eq!(held.len(), 1);
+    assert_eq!(held[0].action, 3);
+}
+
+#[test]
+fn rewrite_remove_and_restore() {
+    let mut d = DesiredState::default();
+    d.apply_rewrite(stored(9, 1));
+    let key = stored(9, 1).key();
+    let undo = d.remove_rewrite(key);
+    assert!(d.held_rewrites().is_empty());
+    d.restore_rewrite(undo); // a send that never went out is rolled back
+    assert_eq!(d.held_rewrites().len(), 1);
+}
+
+#[test]
+fn rewrite_apply_undo_puts_it_back() {
+    let mut d = DesiredState::default();
+    let undo = d.apply_rewrite(stored(9, 1));
+    d.restore_rewrite(undo);
+    assert!(d.held_rewrites().is_empty());
+    assert!(d.is_idle());
+}
+
+#[test]
+fn clear_rewrites_empties_the_table() {
+    let mut d = DesiredState::default();
+    d.apply_rewrite(stored(9, 1));
+    d.apply_rewrite(stored(4, 0));
+    d.clear_rewrites();
+    assert!(d.held_rewrites().is_empty());
+}
+
+#[test]
+fn reset_clears_rewrites_too() {
+    let mut d = DesiredState::default();
+    d.apply_rewrite(stored(9, 1));
+    d.clear(); // the RESET path
+    assert!(d.held_rewrites().is_empty());
+    assert!(d.is_idle());
+}
+
+// --- field transforms (§3.15): session state re-asserted like locks/rewrites ---
+
+use crate::link::reconcile::StoredTransform;
+
+fn stored_xf(sclass: u8, sid: u16, dclass: u8, did: u16) -> StoredTransform {
+    StoredTransform {
+        op: 2, // Invert
+        sclass,
+        sid,
+        dclass,
+        did,
+        scale: 100,
+    }
+}
+
+#[test]
+fn transform_is_held_and_non_idle() {
+    let mut d = DesiredState::default();
+    d.apply_transform(stored_xf(3, 1, 3, 1));
+    assert!(!d.is_idle());
+    assert_eq!(d.held_transforms().len(), 1);
+}
+
+#[test]
+fn transform_overwrite_keeps_one_row() {
+    let mut d = DesiredState::default();
+    d.apply_transform(stored_xf(3, 1, 3, 1));
+    let mut r = stored_xf(3, 1, 3, 1);
+    r.op = 3; // same key (source, dest), new op
+    r.scale = 200;
+    d.apply_transform(r);
+    let held = d.held_transforms();
+    assert_eq!(held.len(), 1);
+    assert_eq!((held[0].op, held[0].scale), (3, 200));
+}
+
+#[test]
+fn transform_remove_and_restore() {
+    let mut d = DesiredState::default();
+    d.apply_transform(stored_xf(3, 1, 3, 1));
+    let key = stored_xf(3, 1, 3, 1).key();
+    let undo = d.remove_transform(key);
+    assert!(d.held_transforms().is_empty());
+    d.restore_transform(undo); // a send that never went out is rolled back
+    assert_eq!(d.held_transforms().len(), 1);
+}
+
+#[test]
+fn transform_apply_undo_puts_it_back() {
+    let mut d = DesiredState::default();
+    let undo = d.apply_transform(stored_xf(3, 1, 3, 1));
+    d.restore_transform(undo);
+    assert!(d.held_transforms().is_empty());
+    assert!(d.is_idle());
+}
+
+#[test]
+fn clear_transforms_empties_the_table() {
+    let mut d = DesiredState::default();
+    d.apply_transform(stored_xf(3, 0, 3, 0));
+    d.apply_transform(stored_xf(3, 1, 3, 1));
+    d.clear_transforms();
+    assert!(d.held_transforms().is_empty());
+}
+
+#[test]
+fn reset_clears_transforms_too() {
+    let mut d = DesiredState::default();
+    d.apply_transform(stored_xf(3, 1, 3, 1));
+    d.clear(); // the RESET path
+    assert!(d.held_transforms().is_empty());
+    assert!(d.is_idle());
 }

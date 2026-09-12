@@ -62,6 +62,7 @@ from medius import (
     LockEntry,
     Locks,
     LockTarget,
+    LockTargetKind,
     DeviceInfo,
     DeviceKind,
     LogLevel,
@@ -79,6 +80,29 @@ from medius import (
     TrafficEvent,
     UsageSnapshot,
     Version,
+    Patch,
+    PatchEntry,
+    PatchSet,
+    PatchSection,
+    RewriteRule,
+    RewriteEntry,
+    RewriteTable,
+    RewriteClass,
+    RewriteAction,
+    Setup,
+    TransferOutcome,
+    TransferStatus,
+    Transform,
+    Transforms,
+    TransformOp,
+    ImperfectRequiredError,
+    RawDirectionError,
+    RelativeDirectionError,
+    RewriteMaskLengthError,
+    RewriteActionClassError,
+    RewritePayloadTooLargeError,
+    TransformOpFieldsError,
+    TransformInvertZeroScaleError,
 )
 
 
@@ -89,7 +113,7 @@ def test_mock_feature_present():
 def test_meta_functions():
     # These are a hand-written mirror of the C structs, so a bumped ABI means they are stale until
     # someone re-reads the header. Pin it rather than accept anything newer.
-    assert medius.abi_version() == 6
+    assert medius.abi_version() == 7
     assert medius.version_string()
     assert medius.default_query_timeout_ms() > 0
     assert medius.default_keepalive_cadence_ms() > 0
@@ -172,7 +196,7 @@ def test_move_riding_override_frames_carry_their_flags():
 
 def test_caps_roundtrip():
     caps = Caps(
-        mouse=MouseCaps(n_buttons=5, has_x=True, has_y=True, has_wheel=True, has_report_id=False, n_hid=2),
+        mouse=MouseCaps(n_buttons=5, has_x=True, has_y=True, has_wheel=True, pan=True, has_report_id=False, n_hid=2),
         keyboard=KbdCaps(n_keys=6, nkro=False, has_consumer=True, has_system=False, has_report_id=True),
         mouse_change_driven=False,
         kbd_change_driven=True,
@@ -536,7 +560,7 @@ def test_catch_state_roundtrip():
         entries=[
             CatchEntry(CatchFilter.everything().with_capture(16), dropped=3),
             CatchEntry(
-                CatchFilter.traffic(TrafficClass.VENDOR_BULK, 0x83).with_direction(
+                CatchFilter.traffic(TrafficClass.VENDOR_BULK, 3).with_direction(
                     Direction.POSITIVE
                 ),
                 dropped=7,
@@ -548,7 +572,7 @@ def test_catch_state_roundtrip():
     assert got.clock.error_bound_us == 45
     assert [e.dropped for e in got.entries] == [3, 7]
     assert got.entries[1].filter.catch_class == CatchClass.VENDOR_BULK
-    assert got.entries[1].filter.id == 0x83
+    assert got.entries[1].filter.id == 3
 
 
 def test_catch_state_clock_age_none_is_not_a_zero_age():
@@ -746,7 +770,7 @@ def test_counters_readable():
 def test_catch_delivers_motion_event():
     with MockBox() as mock, Device.with_mock(mock) as d:
         with d.catch_events(CatchFilter.everything()) as stream:
-            mock.push_motion(1, 7_000, MotionEvent(dx=12, dy=-34, dz=1))
+            mock.push_motion(1, 7_000, MotionEvent(dx=12, dy=-34, dz=1, pan=2))
             ev = stream.recv_timeout(2000)
             assert ev is not None
             assert ev.kind == CatchEventKind.MOTION
@@ -754,6 +778,7 @@ def test_catch_delivers_motion_event():
             assert ev.motion.dx == 12
             assert ev.motion.dy == -34
             assert ev.motion.dz == 1
+            assert ev.motion.pan == 2
 
 
 def test_catch_delivers_usage_event_for_a_key():
@@ -809,14 +834,14 @@ def test_traffic_event_true_len_above_the_capture_is_truncation():
     # them, so it has to survive the wire.
     cut = TrafficEvent(
         catch_class=CatchClass.VENDOR_BULK,
-        id=0x83,
+        id=3,
         direction=Direction.POSITIVE,
         flags=0x03,
         true_len=512,
         bytes=bytes(range(16)),
     )
     with MockBox() as mock, Device.with_mock(mock) as d:
-        with d.catch_events(CatchFilter.traffic(TrafficClass.VENDOR_BULK, 0x83).with_capture(16)) as s:
+        with d.catch_events(CatchFilter.traffic(TrafficClass.VENDOR_BULK, 3).with_capture(16)) as s:
             ev = _push_and_recv(mock, s, cut)
     assert ev.traffic.true_len == 512
     assert len(ev.traffic.bytes) == 16
@@ -824,7 +849,7 @@ def test_traffic_event_true_len_above_the_capture_is_truncation():
     assert ev.traffic.bulk_end_of_transfer()
     assert ev.traffic.bulk_zlp()
 
-    whole = TrafficEvent(CatchClass.VENDOR_BULK, 0x83, Direction.POSITIVE, 0, 16, bytes(16))
+    whole = TrafficEvent(CatchClass.VENDOR_BULK, 3, Direction.POSITIVE, 0, 16, bytes(16))
     assert not whole.truncated()
 
 
@@ -1241,7 +1266,7 @@ def test_the_filter_constructors_address_inputs_like_lock_does():
         CatchClass.AXIS,
     ]
     # Capture is not part of a filter's address; direction is.
-    bulk = CatchFilter.traffic(TrafficClass.VENDOR_BULK, 0x83)
+    bulk = CatchFilter.traffic(TrafficClass.VENDOR_BULK, 3)
     assert bulk.same_address(bulk.with_capture(16))
     assert not bulk.same_address(bulk.outbound())
     assert bulk != bulk.with_capture(16)
@@ -1311,7 +1336,7 @@ def test_every_enum_parameter_is_checked_before_it_reaches_the_boundary():
         with pytest.raises(ValueError):
             d.move_rel(70_000, 0)
         with pytest.raises(ValueError):
-            Usage.button(200)
+            Usage.button(300)
         with pytest.raises(ValueError):
             Usage.key(300)
         with pytest.raises(ValueError):
@@ -1375,3 +1400,363 @@ def test_mock_and_stream_enum_parameters_are_checked():
         with pytest.raises(ValueError):
             stream.held(200)
         stream.close()
+
+
+# --- Advanced control layer (§3.14): raw injection, control transfers, rewrite rules, descriptor patches ---
+
+
+def _allowed():
+    return ImperfectStatus(allowed=True, over_capacity=False, clone_imperfect=False)
+
+
+def test_dev_layer_health_bits_roundtrip():
+    health = Health(
+        link_up=True,
+        mouse_attached=False,
+        clone_configured=False,
+        injection_active=False,
+        rate_confident=False,
+        lock_on=False,
+        catch_on=False,
+        kbd_attached=False,
+        rewrite_on=True,
+        patch_on=False,
+        transform_on=True,
+    )
+    with MockBox() as mock:
+        mock.set_health(health)
+        with Device.with_mock(mock) as d:
+            got = d.query_health()
+    assert got.rewrite_on is True
+    assert got.patch_on is False
+    assert got.transform_on is True
+    assert got == health
+
+
+def test_dev_layer_frames_carry_their_type():
+    with MockBox() as mock:
+        mock.set_imperfect_status(_allowed())
+        with Device.with_mock(mock) as d:
+            d.raw(1, Direction.IN, b"\x00\x01\x02\x03")
+            d.set_rewrite(RewriteRule(RewriteClass.EMIT, 1, Direction.IN, RewriteAction.DROP))
+            d.set_patch(Patch(PatchSection.DEVICE, 0, 0, 8, b"\x34\x12"))
+            d.transfer(0, Setup(0x80, 0x06, 0x0100, 0, 18))
+        assert mock.saw(FrameType.RAW)
+        assert mock.saw(FrameType.REWRITE)
+        assert mock.saw(FrameType.PATCH)
+        assert mock.saw(FrameType.TRANSFER)
+
+
+def test_raw_reaches_the_wire_verbatim():
+    with MockBox() as mock:
+        mock.set_imperfect_status(_allowed())
+        with Device.with_mock(mock) as d:
+            d.raw(1, Direction.IN, b"\x00\x01\x00\x00")
+        frame = next(
+            mock.recorded_frame(i)
+            for i in range(mock.recorded())
+            if mock.recorded_frame(i).type == FrameType.RAW
+        )
+    # RAW payload is [ep_num][dir][bytes...]: endpoint 1, IN, then the report.
+    assert bytes(frame.payload) == b"\x01\x01\x00\x01\x00\x00"
+
+
+def test_gated_dev_layer_calls_need_the_opt_in():
+    with MockBox() as mock, Device.with_mock(mock) as d:
+        with pytest.raises(ImperfectRequiredError):
+            d.raw(1, Direction.IN, b"\x00\x01")
+        with pytest.raises(ImperfectRequiredError):
+            d.set_rewrite(RewriteRule(RewriteClass.EMIT, 1, Direction.IN, RewriteAction.DROP))
+        with pytest.raises(ImperfectRequiredError):
+            d.apply_patch()
+
+
+def test_raw_rejects_a_direction_that_is_not_a_flow():
+    with MockBox() as mock:
+        mock.set_imperfect_status(_allowed())
+        with Device.with_mock(mock) as d:
+            # Both names two flows at once; the bearing-relative pair has no bearing here.
+            with pytest.raises(RawDirectionError):
+                d.raw(1, Direction.BOTH, b"\x00")
+            with pytest.raises(RelativeDirectionError):
+                d.raw(1, Direction.WITH, b"\x00")
+
+
+def test_transfer_roundtrips_the_answer():
+    reply = bytes([0x12, 0x01, 0x10, 0x02])
+    with MockBox() as mock:
+        mock.set_imperfect_status(_allowed())
+        mock.set_transfer_reply(TransferStatus.OK, reply)
+        with Device.with_mock(mock) as d:
+            out = d.transfer(0, Setup(0x80, 0x06, 0x0100, 0, 18))
+    assert isinstance(out, TransferOutcome)
+    assert out.status == TransferStatus.OK
+    assert out.is_ok
+    assert out.data == reply
+
+
+def test_transfer_is_refused_without_the_opt_in():
+    with MockBox() as mock, Device.with_mock(mock) as d:
+        out = d.transfer(0, Setup(0x80, 0x06, 0x0100, 0, 18))
+    assert out.status == TransferStatus.REFUSED
+    assert not out.is_ok
+    assert out.data == b""
+
+
+def test_a_non_ok_transfer_carries_no_data():
+    # The box zeroes the IN length unless the status is OK, so a stall scripted with bytes drops them.
+    with MockBox() as mock:
+        mock.set_imperfect_status(_allowed())
+        mock.set_transfer_reply(TransferStatus.STALL, b"\x12\x01\x00\x02")
+        with Device.with_mock(mock) as d:
+            out = d.transfer(0, Setup(0x80, 0x06, 0x0100, 0, 18))
+    assert out.status == TransferStatus.STALL
+    assert out.data == b""
+
+
+def test_rewrite_survives_the_query_roundtrip():
+    payload = bytes([0xAB] * 40)
+    with MockBox() as mock:
+        mock.set_imperfect_status(_allowed())
+        with Device.with_mock(mock) as d:
+            d.set_rewrite(
+                RewriteRule(
+                    RewriteClass.CONTROL,
+                    0,
+                    Direction.BOTH,
+                    RewriteAction.REPLY_PATCH,
+                    offset=258,
+                    match_bytes=bytes([0x80, 0x06]),
+                    mask=bytes([0xFF, 0xFF]),
+                    payload=payload,
+                )
+            )
+            table = d.query_rewrite()
+            assert isinstance(table, RewriteTable)
+            assert len(table.entries) == 1
+            entry = table.entries[0]
+            assert isinstance(entry, RewriteEntry)
+            assert entry.rewrite_class == RewriteClass.CONTROL
+            assert entry.action == RewriteAction.REPLY_PATCH
+            assert entry.offset == 258
+            assert entry.payload_len == 40
+
+            read = d.query_rewrite_entry(0)
+            assert read.rewrite_class == RewriteClass.CONTROL
+            assert read.direction == Direction.BOTH
+            assert read.action == RewriteAction.REPLY_PATCH
+            assert read.offset == 258
+            assert read.match_bytes == bytes([0x80, 0x06])
+            assert read.mask == bytes([0xFF, 0xFF])
+            assert read.payload == payload
+
+
+def test_clear_rewrite_empties_the_table():
+    with MockBox() as mock:
+        mock.set_imperfect_status(_allowed())
+        with Device.with_mock(mock) as d:
+            d.set_rewrite(RewriteRule(RewriteClass.EMIT, 1, Direction.IN, RewriteAction.DROP))
+            assert len(d.query_rewrite().entries) == 1
+            d.clear_rewrite()
+            assert d.query_rewrite().entries == []
+
+
+def test_rewrite_validation_errors_have_their_own_exception():
+    with MockBox() as mock:
+        mock.set_imperfect_status(_allowed())
+        with Device.with_mock(mock) as d:
+            with pytest.raises(RewriteMaskLengthError):
+                d.set_rewrite(
+                    RewriteRule(
+                        RewriteClass.EMIT,
+                        1,
+                        Direction.IN,
+                        RewriteAction.DROP,
+                        match_bytes=b"\x01\x02",
+                        mask=b"\xFF",
+                    )
+                )
+            with pytest.raises(RewriteActionClassError):
+                d.set_rewrite(RewriteRule(RewriteClass.CONTROL, 0, Direction.BOTH, RewriteAction.DROP))
+            with pytest.raises(RelativeDirectionError):
+                d.set_rewrite(RewriteRule(RewriteClass.EMIT, 1, Direction.WITH, RewriteAction.DROP))
+            with pytest.raises(RewritePayloadTooLargeError):
+                d.set_rewrite(
+                    RewriteRule(
+                        RewriteClass.EMIT,
+                        1,
+                        Direction.IN,
+                        RewriteAction.REPLACE,
+                        payload=bytes(100),
+                    )
+                )
+
+
+def test_over_capacity_bytes_are_refused_before_ctypes():
+    # The C struct holds a fixed 16 match bytes and 512 payload bytes; over that raises here rather than
+    # letting ctypes truncate a rule to a wrong-length one that the box would silently misapply.
+    with MockBox() as mock:
+        mock.set_imperfect_status(_allowed())
+        with Device.with_mock(mock) as d:
+            with pytest.raises(ValueError):
+                d.set_rewrite(
+                    RewriteRule(
+                        RewriteClass.EMIT,
+                        1,
+                        Direction.IN,
+                        RewriteAction.DROP,
+                        match_bytes=bytes(17),
+                        mask=bytes(17),
+                    )
+                )
+            with pytest.raises(ValueError):
+                d.set_patch(Patch(PatchSection.DEVICE, 0, 0, 0, bytes(513)))
+
+
+def test_patch_survives_the_query_roundtrip():
+    data = bytes([0xCD] * 40)
+    with MockBox() as mock, Device.with_mock(mock) as d:
+        # set_patch is not gated on the opt-in; the box always stores it.
+        d.set_patch(Patch(PatchSection.REPORT, 1, 2, 258, data))
+        pset = d.query_patches()
+        assert isinstance(pset, PatchSet)
+        assert len(pset.entries) == 1
+        entry = pset.entries[0]
+        assert isinstance(entry, PatchEntry)
+        assert entry.section == PatchSection.REPORT
+        assert (entry.cfg, entry.index, entry.offset, entry.len) == (1, 2, 258, 40)
+
+        read = d.query_patch_entry(0)
+        assert read.section == PatchSection.REPORT
+        assert (read.cfg, read.index, read.offset) == (1, 2, 258)
+        assert read.bytes == data
+
+
+def test_apply_and_clear_patch_reach_the_wire():
+    with MockBox() as mock:
+        mock.set_imperfect_status(_allowed())
+        with Device.with_mock(mock) as d:
+            d.set_patch(Patch(PatchSection.DEVICE, 0, 0, 8, b"\x34\x12"))
+            assert d.query_patches().pending is True
+            d.apply_patch()
+            assert d.query_patches().applied is True
+            d.clear_patch()
+            assert d.query_patches().entries == []
+
+
+def test_an_empty_patch_removes_the_stored_one():
+    with MockBox() as mock, Device.with_mock(mock) as d:
+        d.set_patch(Patch(PatchSection.DEVICE, 0, 0, 8, b"\x34\x12"))
+        assert len(d.query_patches().entries) == 1
+        d.set_patch(Patch(PatchSection.DEVICE, 0, 0, 8, b""))
+        assert d.query_patches().entries == []
+
+
+def test_pan_frames_carry_the_motion_tag():
+    with MockBox() as mock, Device.with_mock(mock) as d:
+        d.pan(3)
+        d.pan_now(-2)
+        d.move_axis(Motion.pan(4), MoveTiming.NOW, PendingMotion.KEEP)
+        sent = [mock.recorded_frame(i) for i in range(3)]
+    payloads = [bytes(f.payload) for f in sent]
+    assert all(f.type == FrameType.MOVE for f in sent)
+    # MOVE AC Pan: [motion=2][dpan i16 LE][flags]. Ride/Keep is 0x00, Now is 0x01.
+    assert payloads == [
+        bytes([2, 3, 0, 0x00]),
+        bytes([2, 0xFE, 0xFF, 0x01]),
+        bytes([2, 4, 0, 0x01]),
+    ]
+
+
+def test_buttons_past_five_address_by_id():
+    # Button is an open id, not just the five named ones, so any u8 addresses one.
+    u = Usage.button(7)
+    assert u.kind == Class.BUTTON
+    assert u.id == 7
+    with MockBox() as mock, Device.with_mock(mock) as d:
+        d.press(Usage.button(7))
+        d.lock(LockTarget.button(9), Direction.PRESS)
+        frame = mock.recorded_frame(0)
+    # INJECT: [class=0][id u16 LE][action=press(1)].
+    assert frame.type == FrameType.INJECT
+    assert bytes(frame.payload) == bytes([0, 7, 0, 1])
+
+
+def test_transform_verbs_reach_the_wire_ungated():
+    # A transform is faithful, so it needs no imperfect-clone opt-in (unlike the rewrite/patch layer).
+    with MockBox() as mock, Device.with_mock(mock) as d:
+        d.invert(Axis.Y)
+        d.scale_transform(Axis.WHEEL, 200)
+        d.swap(Axis.X, Axis.Y)
+        d.remap(Axis.X, Axis.WHEEL)
+        d.transform(Transform.scale_axis(Axis.Y, 175))
+        d.untransform(Transform.scale_axis(Axis.Y, 175))
+        d.clear_transforms()
+        assert mock.saw(FrameType.TRANSFORM)
+        # Seven verbs, one TRANSFORM frame each.
+        types = [mock.recorded_frame(i).type for i in range(mock.recorded())]
+        assert types.count(FrameType.TRANSFORM) == 7
+
+
+def test_a_transform_survives_the_query_roundtrip():
+    with MockBox() as mock, Device.with_mock(mock) as d:
+        d.invert(Axis.Y)
+        d.scale_transform(Axis.WHEEL, 200)
+        d.swap(Axis.X, Axis.Y)
+        got = d.query_transforms()
+    assert isinstance(got, Transforms)
+    assert got.table_full is False
+    assert len(got.entries) == 3
+    assert got.entries[0].op == TransformOp.INVERT
+    assert got.entries[0].source.kind == LockTargetKind.Y
+    assert got.entries[0].dest.kind == LockTargetKind.Y
+    assert got.entries[1].op == TransformOp.SCALE
+    assert got.entries[1].source.kind == LockTargetKind.WHEEL
+    assert got.entries[1].scale == 200
+    assert got.entries[2].op == TransformOp.SWAP
+    assert got.entries[2].source.kind == LockTargetKind.X
+    assert got.entries[2].dest.kind == LockTargetKind.Y
+
+
+def test_a_pan_axis_transform_is_first_class():
+    with MockBox() as mock:
+        mock.set_mouse_caps(
+            MouseCaps(
+                n_buttons=5,
+                has_x=True,
+                has_y=True,
+                has_wheel=True,
+                pan=True,
+                has_report_id=False,
+                n_hid=1,
+            )
+        )
+        with Device.with_mock(mock) as d:
+            assert d.caps().mouse.pan is True
+            d.invert(Axis.PAN)
+            got = d.query_transforms()
+    assert len(got.entries) == 1
+    assert got.entries[0].op == TransformOp.INVERT
+    assert got.entries[0].source.kind == LockTargetKind.PAN
+
+
+def test_transform_validation_errors_have_their_own_exception():
+    with MockBox() as mock, Device.with_mock(mock) as d:
+        # Remap cannot move an axis into a usage.
+        with pytest.raises(TransformOpFieldsError):
+            d.transform(
+                Transform(TransformOp.REMAP, LockTarget.x(), LockTarget.button(Button.LEFT), 100)
+            )
+        # An invert ignores its scale, so a scale of 0 is contradictory and refused.
+        with pytest.raises(TransformInvertZeroScaleError):
+            d.transform(Transform(TransformOp.INVERT, LockTarget.y(), LockTarget.y(), 0))
+
+
+def test_input_event_carries_pan():
+    with MockBox() as mock, Device.with_mock(mock) as d:
+        with d.input_events(CatchFilter.all_input()) as s:
+            mock.push_motion(1, 4_000, MotionEvent(dx=3, dy=-4, dz=0, pan=5))
+            ev = s.recv_timeout(2000)
+    assert ev is not None
+    assert ev.kind == InputKind.MOTION
+    assert (ev.dx, ev.dy, ev.dz, ev.pan) == (3, -4, 0, 5)

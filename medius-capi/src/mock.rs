@@ -164,6 +164,25 @@ pub unsafe extern "C" fn medius_mock_set_imperfect_status(
     });
 }
 
+/// Set the canned `(status, IN data)` the mock answers a `TRANSFER` with while the opt-in is on; with
+/// it off the mock answers `REFUSED` regardless. A non-OK status carries no data, as the box does.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn medius_mock_set_transfer_reply(
+    mock: *mut MediusMockBox,
+    status: u8,
+    data: *const u8,
+    len: usize,
+) {
+    with_mock(mock, |m| {
+        let slice = if data.is_null() || len == 0 {
+            &[][..]
+        } else {
+            unsafe { std::slice::from_raw_parts(data, len) }
+        };
+        m.set_transfer_reply(status, slice);
+    });
+}
+
 /// Set the movement-riding window the mock answers to a query; `enabled == false` means off.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_mock_set_movement_riding(
@@ -325,7 +344,7 @@ pub unsafe extern "C" fn medius_mock_push_motion(
     event: MediusMotionEvent,
 ) {
     with_mock(mock, |m| {
-        m.push_motion(seq, ts_us, event.dx, event.dy, event.dz)
+        m.push_motion(seq, ts_us, event.dx, event.dy, event.dz, event.pan)
     });
 }
 

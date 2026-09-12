@@ -207,7 +207,7 @@ fn a_traffic_packet_past_the_wire_cap_still_arrives() {
         1_000,
         ClockDomain::DeviceChip,
         CatchClass::Emit,
-        0x81,
+        1,
         Direction::IN,
         0,
         600,

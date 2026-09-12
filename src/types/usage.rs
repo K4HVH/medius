@@ -1,7 +1,7 @@
 //! The unified input vocabulary: a momentary [`Usage`] (`(class, id)`) and a relative [`Axis`].
 
 use crate::protocol::opcode::{
-    INJ_BTN, INJ_KEY, INJ_MEDIA, LOCK_AXIS_WHEEL, LOCK_AXIS_X, LOCK_AXIS_Y,
+    INJ_BTN, INJ_KEY, INJ_MEDIA, LOCK_AXIS_PAN, LOCK_AXIS_WHEEL, LOCK_AXIS_X, LOCK_AXIS_Y,
 };
 use crate::types::{Button, Key, MediaKey};
 
@@ -99,13 +99,29 @@ pub enum Axis {
     X = LOCK_AXIS_X,
     /// The Y cursor axis.
     Y = LOCK_AXIS_Y,
-    /// The wheel.
+    /// The wheel (vertical scroll).
     Wheel = LOCK_AXIS_WHEEL,
+    /// AC Pan (horizontal scroll): signed and detented like the wheel, a full peer of it.
+    Pan = LOCK_AXIS_PAN,
 }
 
 impl Axis {
-    /// The wire axis id (0=X, 1=Y, 2=wheel).
+    /// Every relative axis, in wire-id order: X, Y, wheel, pan.
+    pub const ALL: [Axis; 4] = [Axis::X, Axis::Y, Axis::Wheel, Axis::Pan];
+
+    /// The wire axis id (0=X, 1=Y, 2=wheel, 3=pan).
     pub fn as_u16(self) -> u16 {
         self as u16
+    }
+
+    /// Map a wire axis id to an [`Axis`], or `None` for an id no axis names. Total over `u16`.
+    pub fn from_u16(id: u16) -> Option<Axis> {
+        Some(match id {
+            LOCK_AXIS_X => Axis::X,
+            LOCK_AXIS_Y => Axis::Y,
+            LOCK_AXIS_WHEEL => Axis::Wheel,
+            LOCK_AXIS_PAN => Axis::Pan,
+            _ => return None,
+        })
     }
 }

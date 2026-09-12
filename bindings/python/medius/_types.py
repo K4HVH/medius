@@ -14,6 +14,7 @@ from ._enums import (
     BEARING_WINDOW_DEFAULT_MS,
     BearingMode,
     Blanket,
+    LOCK_SCALE_PASS,
     BusEventKind,
     CatchClass,
     CatchEventKind,
@@ -30,7 +31,12 @@ from ._enums import (
     InputKind,
     LockTargetKind,
     LogLevel,
+    PatchSection,
+    RewriteAction,
+    RewriteClass,
     TrafficClass,
+    TransferStatus,
+    TransformOp,
     Button,
     Key,
     MediaKey,
@@ -103,6 +109,19 @@ def _as_usage(usage) -> "Usage":
     )
 
 
+def _as_lock_target(field) -> "LockTarget":
+    """A `LockTarget`, an `Axis`, or a usage (`Usage`/`Button`/`Key`/`MediaKey`), as a `LockTarget`.
+
+    This is the transform field space: a relative axis, or a momentary usage, addressed the same way a
+    lock target is.
+    """
+    if isinstance(field, LockTarget):
+        return field
+    if isinstance(field, Axis):
+        return LockTarget.axis(field)
+    return LockTarget.usage(_as_usage(field))
+
+
 def _cstr(buf) -> str:
     raw = bytes(buf)
     return raw.split(b"\x00", 1)[0].decode("utf-8", "replace")
@@ -159,6 +178,12 @@ class Health:
     lock_on: bool
     catch_on: bool
     kbd_attached: bool
+    #: The rewrite-rule table (§3.14) is non-empty (v3.4.0).
+    rewrite_on: bool = False
+    #: A descriptor-patch set (§3.14) is applied to the clone (v3.4.0).
+    patch_on: bool = False
+    #: A field transform is active (v3.4.0).
+    transform_on: bool = False
 
 
 @dataclass
@@ -179,6 +204,8 @@ class MouseCaps:
     has_x: bool
     has_y: bool
     has_wheel: bool
+    #: AC Pan (horizontal scroll) present.
+    pan: bool
     has_report_id: bool
     n_hid: int
 
@@ -335,6 +362,181 @@ class ImperfectStatus:
     clone_imperfect: bool
 
 
+@dataclass
+class Setup:
+    """A USB control-transfer setup packet (§9.3): the eight ``<BBHHH>`` little-endian bytes.
+
+    ``length`` is the data-stage length: bytes to read for an IN request, the length of the OUT data
+    passed to `Device.transfer` otherwise.
+    """
+
+    request_type: int
+    request: int
+    value: int
+    index: int
+    length: int
+
+
+@dataclass
+class TransferOutcome:
+    """The real device's answer to `Device.transfer`: its status and any IN data.
+
+    ``status`` is a `TransferStatus` for a value the ABI names, or the raw wire byte for one it does
+    not. A status other than `TransferStatus.OK` is a real protocol outcome, not a link error, and a
+    non-OK answer carries no data.
+    """
+
+    status: "TransferStatus | int"
+    data: bytes = b""
+
+    @property
+    def is_ok(self) -> bool:
+        return self.status == TransferStatus.OK
+
+
+@dataclass
+class RewriteRule:
+    """A rewrite rule (§3.14), keyed by ``(rewrite_class, id, direction, match_bytes, mask)``.
+
+    ``match_bytes`` and ``mask`` are the masked head compare and must be the same length (an empty
+    match matches every packet on the address); ``payload`` is the bytes an action that carries one
+    supplies; ``offset`` is where a ``PATCH``/``REPLY_PATCH`` writes.
+    """
+
+    rewrite_class: RewriteClass
+    id: int
+    direction: Direction
+    action: RewriteAction
+    offset: int = 0
+    match_bytes: bytes = b""
+    mask: bytes = b""
+    payload: bytes = b""
+
+
+@dataclass
+class RewriteEntry:
+    """One row of a decoded RESP(REWRITE) (§4.17): a rule's address, action and live counters, without
+    its match/mask/payload bytes."""
+
+    rewrite_class: RewriteClass
+    id: int
+    direction: Direction
+    action: RewriteAction
+    match_len: int
+    offset: int
+    payload_len: int
+    hits: int
+
+
+@dataclass
+class RewriteTable:
+    """Decoded RESP(REWRITE) (§4.17): the rewrite table's summary in installation order.
+
+    ``generation`` bumps only on a change that alters the table; the crate replays rules on reconnect,
+    so the field is exposed for a host running its own reconcile.
+    """
+
+    table_full: bool = False
+    generation: int = 0
+    entries: List[RewriteEntry] = field(default_factory=list)
+
+
+@dataclass
+class Patch:
+    """A descriptor patch (§3.14), keyed by ``(section, cfg, index, offset)``.
+
+    ``bytes`` overwrites the descriptor from ``offset``; an empty ``bytes`` removes the patch at that
+    key. A patch never changes a descriptor's byte count.
+    """
+
+    section: PatchSection
+    cfg: int
+    index: int
+    offset: int
+    bytes: bytes = b""
+
+
+@dataclass
+class PatchEntry:
+    """One row of a decoded RESP(PATCHES) (§4.17): a stored patch's key and length, without its bytes."""
+
+    section: PatchSection
+    cfg: int
+    index: int
+    offset: int
+    len: int
+
+
+@dataclass
+class PatchSet:
+    """Decoded RESP(PATCHES) (§4.17): the stored patch set plus its apply state."""
+
+    applied: bool = False
+    pending: bool = False
+    refused: bool = False
+    table_full: bool = False
+    entries: List[PatchEntry] = field(default_factory=list)
+
+
+@dataclass
+class Transform:
+    """One field transform (§3.15), keyed by ``(source, dest)``.
+
+    A transform negates, scales, swaps or remaps a field the clone already declares, on the semantic
+    path where locks, riding and rendering run, so every emitted report stays one the real device
+    could produce. Unlike the rewrite/raw/patch layer it is faithful and needs no imperfect-clone
+    opt-in. ``source`` and ``dest`` are `LockTarget`\\ s (an axis, or a momentary usage). The signed
+    ``scale`` is a percent carrying a sign: ``-100`` inverts, ``100`` is identity, ``200`` doubles,
+    ``-50`` halves and flips, ``0`` blocks the source; ``INVERT`` ignores it.
+
+    Build one with `invert`, `scale_axis`, `swap`, `remap`, or the constructor for the general case.
+    """
+
+    op: TransformOp
+    source: "LockTarget"
+    dest: "LockTarget"
+    scale: int = LOCK_SCALE_PASS
+
+    @classmethod
+    def invert(cls, axis) -> "Transform":
+        """Invert an axis: emit the report the device produces when moved the other way."""
+        t = LockTarget.axis(axis)
+        return cls(TransformOp.INVERT, t, t, LOCK_SCALE_PASS)
+
+    @classmethod
+    def scale_axis(cls, axis, percent: int) -> "Transform":
+        """Weigh an axis by a signed percent (``200`` doubles, ``-50`` halves and flips)."""
+        t = LockTarget.axis(axis)
+        return cls(TransformOp.SCALE, t, t, percent)
+
+    @classmethod
+    def swap(cls, a, b) -> "Transform":
+        """Exchange two axes atomically (read both, then write both)."""
+        return cls(TransformOp.SWAP, LockTarget.axis(a), LockTarget.axis(b), LOCK_SCALE_PASS)
+
+    @classmethod
+    def remap(cls, source, dest) -> "Transform":
+        """Move a source field's contribution into a destination, clearing the source. ``source`` and
+        ``dest`` are a `LockTarget`, an `Axis`, or a usage (`Usage`/`Button`/`Key`/`MediaKey`)."""
+        return cls(TransformOp.REMAP, _as_lock_target(source), _as_lock_target(dest), LOCK_SCALE_PASS)
+
+    def with_scale(self, scale: int) -> "Transform":
+        """This transform with a different signed scale, for a scaled `swap` or `remap`."""
+        return Transform(self.op, self.source, self.dest, scale)
+
+
+@dataclass
+class Transforms:
+    """Decoded RESP(TRANSFORMS) (§4.18): the whole transform table, in installation order.
+
+    Each entry is what you would send to reproduce it; ``table_full`` flags that the eight-entry
+    ceiling refused a further entry.
+    """
+
+    table_full: bool = False
+    entries: List[Transform] = field(default_factory=list)
+
+
 @dataclass(frozen=True)
 class Bearing:
     """The configured bearing: what `Direction.WITH` and `Direction.AGAINST` are measured against.
@@ -427,6 +629,8 @@ class MotionEvent:
     dx: int
     dy: int
     dz: int
+    #: AC Pan (horizontal-scroll) delta this report (right positive).
+    pan: int = 0
 
 
 @dataclass
@@ -574,7 +778,9 @@ class Usage:
 
     @classmethod
     def button(cls, button) -> "Usage":
-        return cls(_native.lib.medius_usage_button(int(_enum(button, Button, "button"))))
+        # Any 0-based id addresses a button, not just the five named ones: the box drives it up to the
+        # clone's declared button count, so this takes a `Button` or a raw `u8`.
+        return cls(_native.lib.medius_usage_button(_u8(button, "button")))
 
     @classmethod
     def key(cls, key) -> "Usage":
@@ -621,6 +827,10 @@ class Motion:
     def wheel(cls, delta) -> "Motion":
         return cls(_native.lib.medius_motion_wheel(_i16(delta, "delta")))
 
+    @classmethod
+    def pan(cls, delta) -> "Motion":
+        return cls(_native.lib.medius_motion_pan(_i16(delta, "delta")))
+
 
 class LockTarget:
     """A lock target: an axis (`LockTarget.x/y/wheel`) or a momentary usage (`LockTarget.usage`)."""
@@ -639,6 +849,15 @@ class LockTarget:
     @classmethod
     def wheel(cls) -> "LockTarget":
         return cls(_native.lib.medius_lock_target_axis(int(LockTargetKind.WHEEL)))
+
+    @classmethod
+    def pan(cls) -> "LockTarget":
+        return cls(_native.lib.medius_lock_target_axis(int(LockTargetKind.PAN)))
+
+    @classmethod
+    def axis(cls, axis) -> "LockTarget":
+        """An axis target from an `Axis`. The four axis kinds share the `Axis` wire values."""
+        return cls(_native.lib.medius_lock_target_axis(int(_enum(axis, Axis, "axis"))))
 
     @classmethod
     def usage(cls, usage: "Usage") -> "LockTarget":
@@ -698,7 +917,7 @@ class CatchFilter:
         CatchFilter.all_input()                       # buttons, keys, media, axes
 
         CatchFilter.traffic_class(TrafficClass.HID_IN)
-        CatchFilter.traffic(TrafficClass.VENDOR_BULK, 0x83).with_capture(16)
+        CatchFilter.traffic(TrafficClass.VENDOR_BULK, 3).with_capture(16)
         CatchFilter.everything().with_capture(16)
 
     The box resolves each event to its most specific matching entry: an exact `(class, id)` outranks
@@ -858,6 +1077,8 @@ class InputEvent:
     dy: int = 0
     #: Wheel delta this report (up positive); 0 unless `kind` is `MOTION`.
     dz: int = 0
+    #: AC Pan (horizontal-scroll) delta this report (right positive); 0 unless `kind` is `MOTION`.
+    pan: int = 0
 
     @property
     def is_press(self) -> bool:
@@ -885,7 +1106,9 @@ def input_event_from_c(c) -> InputEvent:
     usage = None
     if kind != InputKind.MOTION:
         usage = Usage(_native.MediusUsage(kind=c.usage.kind, id=c.usage.id))
-    return InputEvent(kind, int(c.ts_us), ClockDomain(c.clock), usage, int(c.dx), int(c.dy), int(c.dz))
+    return InputEvent(
+        kind, int(c.ts_us), ClockDomain(c.clock), usage, int(c.dx), int(c.dy), int(c.dz), int(c.pan)
+    )
 
 
 def _chip_firmware_from_c(c) -> ChipFirmware:
@@ -934,6 +1157,9 @@ def health_from_c(c) -> Health:
         bool(c.lock_on),
         bool(c.catch_on),
         bool(c.kbd_attached),
+        bool(c.rewrite_on),
+        bool(c.patch_on),
+        bool(c.transform_on),
     )
 
 
@@ -947,6 +1173,9 @@ def health_to_c(h) -> "_native.MediusHealth":
         int(h.lock_on),
         int(h.catch_on),
         int(h.kbd_attached),
+        int(h.rewrite_on),
+        int(h.patch_on),
+        int(h.transform_on),
     )
 
 
@@ -994,13 +1223,25 @@ def box_from_c(c) -> BoxInfo:
 
 def mouse_caps_from_c(c) -> MouseCaps:
     return MouseCaps(
-        c.n_buttons, bool(c.has_x), bool(c.has_y), bool(c.has_wheel), bool(c.has_report_id), c.n_hid
+        c.n_buttons,
+        bool(c.has_x),
+        bool(c.has_y),
+        bool(c.has_wheel),
+        bool(c.pan),
+        bool(c.has_report_id),
+        c.n_hid,
     )
 
 
 def mouse_caps_to_c(m) -> "_native.MediusMouseCaps":
     return _native.MediusMouseCaps(
-        m.n_buttons, int(m.has_x), int(m.has_y), int(m.has_wheel), int(m.has_report_id), m.n_hid
+        m.n_buttons,
+        int(m.has_x),
+        int(m.has_y),
+        int(m.has_wheel),
+        int(m.pan),
+        int(m.has_report_id),
+        m.n_hid,
     )
 
 
@@ -1116,6 +1357,143 @@ def imperfect_to_c(i) -> "_native.MediusImperfectStatus":
     return _native.MediusImperfectStatus(
         int(i.allowed), int(i.over_capacity), int(i.clone_imperfect)
     )
+
+
+# The advanced control layer (§3.14). Over-capacity byte fields raise here rather than reach ctypes, which
+# would truncate silently; the crate-level refusals (mask length, action/class, payload size, relative
+# direction) are values that DO marshal and come back as their own status.
+def _fixed_bytes(dst, src: bytes, cap: int, what: str) -> int:
+    if len(src) > cap:
+        raise ValueError(f"{what} is {len(src)} bytes, over the {cap}-byte ABI limit")
+    for i, byte in enumerate(src):
+        dst[i] = byte
+    return len(src)
+
+
+def setup_to_c(s) -> "_native.MediusSetup":
+    return _native.MediusSetup(
+        _u8(s.request_type, "request_type"),
+        _u8(s.request, "request"),
+        _u16(s.value, "value"),
+        _u16(s.index, "index"),
+        _u16(s.length, "length"),
+    )
+
+
+def transfer_outcome_from_c(c) -> TransferOutcome:
+    n = min(int(c.len), _native.MEDIUS_MAX_DEV_PAYLOAD)
+    try:
+        status = TransferStatus(c.status)
+    except ValueError:
+        status = int(c.status)
+    return TransferOutcome(status, bytes(c.data[:n]))
+
+
+def rewrite_rule_to_c(r) -> "_native.MediusRewriteRule":
+    c = _native.MediusRewriteRule()
+    c.class_ = int(_enum(r.rewrite_class, RewriteClass, "rewrite_class"))
+    c.id = _u16(r.id, "id")
+    c.direction = int(_enum(r.direction, Direction, "direction"))
+    c.action = int(_enum(r.action, RewriteAction, "action"))
+    c.offset = _u16(r.offset, "offset")
+    c.match_len = _fixed_bytes(
+        c.match_bytes, bytes(r.match_bytes), _native.MEDIUS_MAX_REWRITE_MATCH, "match_bytes"
+    )
+    c.mask_len = _fixed_bytes(c.mask, bytes(r.mask), _native.MEDIUS_MAX_REWRITE_MATCH, "mask")
+    c.payload_len = _fixed_bytes(
+        c.payload, bytes(r.payload), _native.MEDIUS_MAX_DEV_PAYLOAD, "payload"
+    )
+    return c
+
+
+def rewrite_rule_from_c(c) -> RewriteRule:
+    ml = min(int(c.match_len), _native.MEDIUS_MAX_REWRITE_MATCH)
+    msl = min(int(c.mask_len), _native.MEDIUS_MAX_REWRITE_MATCH)
+    pl = min(int(c.payload_len), _native.MEDIUS_MAX_DEV_PAYLOAD)
+    return RewriteRule(
+        RewriteClass(c.class_),
+        int(c.id),
+        Direction(c.direction),
+        RewriteAction(c.action),
+        int(c.offset),
+        bytes(c.match_bytes[:ml]),
+        bytes(c.mask[:msl]),
+        bytes(c.payload[:pl]),
+    )
+
+
+def rewrite_entry_from_c(c) -> RewriteEntry:
+    return RewriteEntry(
+        RewriteClass(c.class_),
+        int(c.id),
+        Direction(c.direction),
+        RewriteAction(c.action),
+        int(c.match_len),
+        int(c.offset),
+        int(c.payload_len),
+        int(c.hits),
+    )
+
+
+def rewrite_table_from_c(c) -> RewriteTable:
+    n = min(int(c.n), _native.MEDIUS_MAX_REWRITE_ENTRIES)
+    entries = [rewrite_entry_from_c(c.entries[i]) for i in range(n)]
+    return RewriteTable(bool(c.table_full), int(c.generation), entries)
+
+
+def patch_to_c(p) -> "_native.MediusPatch":
+    c = _native.MediusPatch()
+    c.section = int(_enum(p.section, PatchSection, "section"))
+    c.cfg = _u8(p.cfg, "cfg")
+    c.index = _u8(p.index, "index")
+    c.offset = _u16(p.offset, "offset")
+    c.len = _fixed_bytes(c.bytes, bytes(p.bytes), _native.MEDIUS_MAX_DEV_PAYLOAD, "bytes")
+    return c
+
+
+def patch_from_c(c) -> Patch:
+    n = min(int(c.len), _native.MEDIUS_MAX_DEV_PAYLOAD)
+    return Patch(
+        PatchSection(c.section), int(c.cfg), int(c.index), int(c.offset), bytes(c.bytes[:n])
+    )
+
+
+def patch_entry_from_c(c) -> PatchEntry:
+    return PatchEntry(
+        PatchSection(c.section), int(c.cfg), int(c.index), int(c.offset), int(c.len)
+    )
+
+
+def patch_set_from_c(c) -> PatchSet:
+    n = min(int(c.n), _native.MEDIUS_MAX_PATCH_ENTRIES)
+    entries = [patch_entry_from_c(c.entries[i]) for i in range(n)]
+    return PatchSet(
+        bool(c.applied), bool(c.pending), bool(c.refused), bool(c.table_full), entries
+    )
+
+
+def transform_to_c(t) -> "_native.MediusTransform":
+    c = _native.MediusTransform()
+    c.op = int(_enum(t.op, TransformOp, "op"))
+    c.source = _as_lock_target(t.source)._c
+    c.dest = _as_lock_target(t.dest)._c
+    c.scale = _i16(t.scale, "scale")
+    return c
+
+
+def transform_from_c(c) -> Transform:
+    return Transform(
+        TransformOp(c.op),
+        lock_target_from_c(c.source),
+        lock_target_from_c(c.dest),
+        int(c.scale),
+    )
+
+
+def transforms_from_c(c) -> Transforms:
+    n = min(int(c.n), _native.MEDIUS_MAX_TRANSFORM_ENTRIES)
+    entries = [transform_from_c(c.entries[i]) for i in range(n)]
+    return Transforms(bool(c.table_full), entries)
 
 
 def emit_pace_status_from_c(c) -> EmitPaceStatus:
@@ -1329,7 +1707,7 @@ def locks_to_c(locks) -> "_native.MediusLocks":
 
 
 def motion_event_to_c(e) -> "_native.MediusMotionEvent":
-    return _native.MediusMotionEvent(e.dx, e.dy, e.dz)
+    return _native.MediusMotionEvent(e.dx, e.dy, e.dz, e.pan)
 
 
 def usage_snapshot_to_c(s) -> "_native.MediusUsageEvent":
@@ -1374,7 +1752,7 @@ def decode_catch_event(c) -> CatchEvent:
     clock = ClockDomain(c.clock)
     if kind == CatchEventKind.MOTION:
         m = c.data.motion
-        return CatchEvent(kind, MotionEvent(m.dx, m.dy, m.dz), c.ts_us, clock)
+        return CatchEvent(kind, MotionEvent(m.dx, m.dy, m.dz, m.pan), c.ts_us, clock)
     if kind == CatchEventKind.TRAFFIC:
         return CatchEvent(kind, traffic_event_from_c(c.data.traffic), c.ts_us, clock)
     u = c.data.usages

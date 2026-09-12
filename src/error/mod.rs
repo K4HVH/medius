@@ -34,6 +34,51 @@ pub enum Error {
     #[error("a catch subscription needs at least one filter")]
     EmptySubscription,
 
+    #[error(
+        "the advanced control layer (§3.14) is gated on the imperfect-clone opt-in, which the box reports \
+         off; call allow_imperfect_clones(true) first"
+    )]
+    ImperfectRequired,
+
+    #[error(
+        "a rewrite rule's match and mask must be the same length (match {match_len}, mask {mask_len})"
+    )]
+    RewriteMaskLength { match_len: usize, mask_len: usize },
+
+    #[error("{action:?} is not a valid action for a {class:?} rewrite rule")]
+    RewriteActionClass {
+        action: crate::types::RewriteAction,
+        class: crate::types::RewriteClass,
+    },
+
+    #[error(
+        "a {action:?} rewrite payload of {len} bytes at offset {offset} exceeds the {cap}-byte head \
+         the box holds for a {class:?} rule"
+    )]
+    RewritePayloadTooLarge {
+        action: crate::types::RewriteAction,
+        class: crate::types::RewriteClass,
+        len: usize,
+        offset: usize,
+        cap: usize,
+    },
+
+    #[error(
+        "a {op:?} transform cannot address {src:?} → {dst:?}: invert and scale are one axis, swap is \
+         two axes, and remap is axis→axis, button→button, button→key or button→media"
+    )]
+    TransformOpFields {
+        op: crate::types::TransformOp,
+        src: crate::types::TransformField,
+        dst: crate::types::TransformField,
+    },
+
+    #[error(
+        "an invert ignores its scale, so a scale of 0 (which would block the source) is contradictory \
+         and refused; leave the scale non-zero"
+    )]
+    TransformInvertZeroScale,
+
     #[error("{class:?} arrives decoded and carries no packet, so a capture on it does nothing")]
     CaptureNotApplicable { class: CatchClass },
 
@@ -53,6 +98,12 @@ pub enum Error {
         direction: crate::types::Direction,
         what: &'static str,
     },
+
+    #[error(
+        "a raw injection puts bytes on one cloned endpoint flow, so it needs Direction::IN or \
+         Direction::OUT; {direction:?} names neither"
+    )]
+    RawDirection { direction: crate::types::Direction },
 
     #[error(
         "id 0x{id:04X} is the blanket sentinel on the wire, so an exact {class:?} subscription to it \

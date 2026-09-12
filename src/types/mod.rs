@@ -20,12 +20,16 @@ pub(crate) mod lock;
 mod log;
 mod media;
 mod mouse_caps;
+pub(crate) mod patch;
 mod port;
 mod rate;
 mod reboot;
 mod render;
+pub(crate) mod rewrite;
 mod spread;
 mod stats;
+pub(crate) mod transfer;
+pub(crate) mod transform;
 mod update;
 mod usage;
 mod version;
@@ -56,12 +60,20 @@ pub use lock::{Blanket, LockEntry, LockScope, LockTarget, Locks};
 pub use log::{LogLevel, LogLine};
 pub use media::MediaKey;
 pub use mouse_caps::MouseCaps;
+pub use patch::{Patch, PatchEntry, PatchKey, PatchSection, PatchSet};
 pub use port::PortInfo;
 pub use rate::Rate;
 pub use reboot::RebootTarget;
 pub use render::{RenderMode, RenderStatus};
+pub use rewrite::{
+    RewriteAction, RewriteClass, RewriteEntry, RewriteKey, RewriteRule, RewriteTable,
+};
 pub use spread::SpreadStatus;
 pub use stats::Stats;
+pub use transfer::{Setup, TransferOutcome, TransferStatus};
+pub use transform::{
+    Transform, TransformField, TransformKey, TransformOp, TransformState, Transforms,
+};
 pub use update::{
     ChipFirmware, FirmwareInfo, ImageState, UpdateProgress, UpdateStatus, UpdateTarget,
 };

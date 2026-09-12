@@ -38,6 +38,20 @@ pub enum MediusStatus {
     ErrReservedId = 18,
     /// `MEDIUS_DIRECTION_WITH` / `_AGAINST` on something with no bearing to measure them against.
     ErrRelativeDirection = 19,
+    /// An advanced control layer call with the imperfect-clone opt-in off, which gates the whole layer.
+    ErrImperfectRequired = 20,
+    /// A rewrite rule whose `match` and `mask` are different lengths.
+    ErrRewriteMaskLength = 21,
+    /// A rewrite action that is not valid for its class (a report-only or control-only action misused).
+    ErrRewriteActionClass = 22,
+    /// A rewrite payload larger than the head the box holds for its class.
+    ErrRewritePayloadTooLarge = 23,
+    /// A transform op that cannot address its `source`/`dest` pair.
+    ErrTransformOpFields = 24,
+    /// A scale of 0 on an invert, which ignores its scale (so 0 would block the field it must pass).
+    ErrTransformInvertZeroScale = 25,
+    /// A raw injection direction other than `MEDIUS_DIRECTION_POSITIVE` (IN) or `MEDIUS_DIRECTION_NEGATIVE` (OUT).
+    ErrRawDirection = 26,
 }
 
 #[derive(Default)]
@@ -83,6 +97,13 @@ fn status_for(err: &Error) -> MediusStatus {
         Error::HalfEdgeInputFilter => MediusStatus::ErrHalfEdgeInputFilter,
         Error::ReservedId { .. } => MediusStatus::ErrReservedId,
         Error::RelativeDirection { .. } => MediusStatus::ErrRelativeDirection,
+        Error::RawDirection { .. } => MediusStatus::ErrRawDirection,
+        Error::ImperfectRequired => MediusStatus::ErrImperfectRequired,
+        Error::RewriteMaskLength { .. } => MediusStatus::ErrRewriteMaskLength,
+        Error::RewriteActionClass { .. } => MediusStatus::ErrRewriteActionClass,
+        Error::RewritePayloadTooLarge { .. } => MediusStatus::ErrRewritePayloadTooLarge,
+        Error::TransformOpFields { .. } => MediusStatus::ErrTransformOpFields,
+        Error::TransformInvertZeroScale => MediusStatus::ErrTransformInvertZeroScale,
         Error::Update { .. } => MediusStatus::ErrUpdate,
         _ => MediusStatus::ErrUnknown,
     }

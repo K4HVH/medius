@@ -1,6 +1,6 @@
 use crate::error::Result;
 use crate::protocol::FrameType;
-use crate::protocol::command::{move_cursor_payload, move_wheel_payload};
+use crate::protocol::command::{move_cursor_payload, move_pan_payload, move_wheel_payload};
 use crate::types::{Motion, MoveTiming, PendingMotion};
 
 use super::Device;
@@ -33,6 +33,16 @@ impl Device {
     /// `MOVE` (wheel) that bypasses movement riding.
     pub fn wheel_now(&self, delta: i16) -> Result<()> {
         self.move_axis(Motion::Wheel(delta), MoveTiming::Now, PendingMotion::Keep)
+    }
+
+    /// `MOVE` (AC Pan): horizontal scroll; full `i16`, no clamp.
+    pub fn pan(&self, delta: i16) -> Result<()> {
+        self.move_axis(Motion::Pan(delta), MoveTiming::Ride, PendingMotion::Keep)
+    }
+
+    /// `MOVE` (AC Pan) that bypasses movement riding.
+    pub fn pan_now(&self, delta: i16) -> Result<()> {
+        self.move_axis(Motion::Pan(delta), MoveTiming::Now, PendingMotion::Keep)
     }
 
     /// `MOVE` (zero delta, `FLUSH`): emit the motion held for a ride now, ignoring the ride window.
@@ -70,6 +80,9 @@ impl Device {
             Motion::Wheel(dz) => self
                 .link
                 .send(FrameType::Move, &move_wheel_payload(dz, flags)),
+            Motion::Pan(dpan) => self
+                .link
+                .send(FrameType::Move, &move_pan_payload(dpan, flags)),
         }
     }
 }

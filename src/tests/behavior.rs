@@ -122,10 +122,10 @@ fn device_is_send_and_sync() {
 fn reapply_re_emits_only_held_overrides() {
     let mock = MockBox::new();
     let device = Device::with_mock(mock.clone());
-    device.press(Button::Left).unwrap();
-    device.force_release(Button::Side1).unwrap();
-    device.press(Button::Middle).unwrap();
-    device.release(Button::Middle).unwrap();
+    device.press(Button::LEFT).unwrap();
+    device.force_release(Button::SIDE1).unwrap();
+    device.press(Button::MIDDLE).unwrap();
+    device.release(Button::MIDDLE).unwrap();
     mock.clear_recorded();
 
     device.reapply().unwrap();
@@ -241,7 +241,7 @@ fn releasing_one_button_of_a_blanket_is_not_undone_by_a_reapply() {
     let mock = MockBox::new();
     let device = Device::with_mock(mock.clone());
     device.lock_all(Blanket::Buttons, Direction::Both).unwrap();
-    device.unlock(Button::Left, Direction::Both).unwrap();
+    device.unlock(Button::LEFT, Direction::Both).unwrap();
     mock.clear_recorded();
 
     device.reapply().unwrap();
@@ -257,12 +257,74 @@ fn releasing_one_button_of_a_blanket_is_not_undone_by_a_reapply() {
 }
 
 #[test]
+fn a_button_blanket_over_a_wide_mouse_reasserts_the_wide_buttons_on_reconnect() {
+    use crate::types::MouseCaps;
+    use crate::{Blanket, Direction};
+    let mock = MockBox::new().with_mouse_caps(MouseCaps {
+        n_buttons: 16,
+        has_x: true,
+        has_y: true,
+        has_wheel: true,
+        pan: false,
+        has_report_id: false,
+        n_hid: 1,
+    });
+    let device = Device::with_mock(mock.clone());
+    // Reading CAPS caches the declared count; the blanket then expands onto every declared button.
+    assert_eq!(device.caps().unwrap().mouse.n_buttons, 16);
+    device.lock_all(Blanket::Buttons, Direction::Both).unwrap();
+    mock.clear_recorded();
+
+    device.reapply().unwrap();
+    let ids: Vec<u16> = mock
+        .recorded_frames()
+        .iter()
+        .filter(|f| f.ty == FrameType::Lock)
+        .map(|f| u16::from_le_bytes([f.payload[1], f.payload[2]]))
+        .collect();
+    // Every declared button comes back, button 8 among them, not just the five named ones.
+    assert_eq!(ids, (0..16).collect::<Vec<u16>>());
+    drop(device);
+}
+
+#[test]
+fn a_button_blanket_set_before_any_caps_call_reasserts_the_wide_buttons() {
+    use crate::types::MouseCaps;
+    use crate::{Blanket, Direction};
+    let mock = MockBox::new().with_mouse_caps(MouseCaps {
+        n_buttons: 8,
+        has_x: true,
+        has_y: true,
+        has_wheel: true,
+        pan: false,
+        has_report_id: false,
+        n_hid: 1,
+    });
+    // open_mock runs the handshake, which reads CAPS, so the declared count is cached before the caller
+    // takes any lock. No explicit caps() call here: this is the path the bug narrowed to five buttons.
+    let device = Device::open_mock(mock.clone()).unwrap();
+    device.lock_all(Blanket::Buttons, Direction::Both).unwrap();
+    mock.clear_recorded();
+
+    // A reconnect replays the held state; every declared button comes back, not just the named five.
+    device.reapply().unwrap();
+    let ids: Vec<u16> = mock
+        .recorded_frames()
+        .iter()
+        .filter(|f| f.ty == FrameType::Lock)
+        .map(|f| u16::from_le_bytes([f.payload[1], f.payload[2]]))
+        .collect();
+    assert_eq!(ids, (0..8).collect::<Vec<u16>>());
+    drop(device);
+}
+
+#[test]
 fn a_scale_a_one_bit_class_cannot_hold_is_not_held_here_either() {
     use crate::{Button, Direction};
     let mock = MockBox::new();
     let device = Device::with_mock(mock.clone());
     device
-        .scale(Button::Left, Direction::Positive, 150)
+        .scale(Button::LEFT, Direction::Positive, 150)
         .unwrap();
     mock.clear_recorded();
 

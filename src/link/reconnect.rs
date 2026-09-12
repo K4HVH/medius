@@ -5,8 +5,10 @@ use std::time::{Duration, Instant};
 use parking_lot::Mutex;
 
 use crate::error::{Error, Result};
-use crate::protocol::command::{catch_payload, inject_payload, lock_payload};
-use crate::protocol::opcode::Q_VERSION;
+use crate::protocol::command::{
+    catch_payload, inject_payload, lock_payload, rewrite_payload, transform_payload,
+};
+use crate::protocol::opcode::{Q_CAPS, Q_VERSION};
 use crate::protocol::{FrameDecoder, FrameType, Resp, encode, parse_resp};
 use crate::transport::Transport;
 use crate::types::Version;
@@ -81,6 +83,39 @@ fn probe_version(transport: &dyn Transport) -> Option<Version> {
     found
 }
 
+// Reads the reopened clone's declared button count off the local handle before it is swapped in, so
+// the read never races the reader thread (which is on the disconnected slot here, exactly as it is
+// during `probe_version`). `None` for a box that does not answer or reports no buttons; a wide-button
+// blanket then keeps whatever count the handshake or a prior reconnect cached.
+fn probe_caps(transport: &dyn Transport) -> Option<u8> {
+    let frame = encode(FrameType::Query, 0, &[Q_CAPS]).ok()?;
+    let mut decoder = FrameDecoder::new();
+    let start = Instant::now();
+    let mut last_query: Option<Instant> = None;
+    let mut found = None;
+    let mut rx = [0u8; 256];
+    while found.is_none() && start.elapsed() < PROBE_DEADLINE {
+        if last_query.is_none_or(|t| t.elapsed() >= PROBE_QUERY_GAP) {
+            if transport.write_all(&frame).is_err() {
+                return None;
+            }
+            last_query = Some(Instant::now());
+        }
+        match transport.read(&mut rx) {
+            Ok(0) => {}
+            Ok(n) => decoder.feed(&rx[..n], |f| {
+                if f.ty == FrameType::Resp
+                    && let Some(Resp::Caps(c)) = parse_resp(&f.payload)
+                {
+                    found = Some(c.mouse.n_buttons);
+                }
+            }),
+            Err(_) => return None,
+        }
+    }
+    found.filter(|&n| n > 0)
+}
+
 fn reconnect(ctx: &ReconnectCtx) -> Result<()> {
     let _guard = ctx.reconnect_lock.lock();
     let identity = ctx.identity.lock().clone();
@@ -121,6 +156,12 @@ fn reconnect(ctx: &ReconnectCtx) -> Result<()> {
                 _ => continue,
             }
         }
+        // Refresh the declared button count off the reopened clone before the replay, so a wide-button
+        // blanket re-asserts onto the count the box reports now and a device swapped in during the blip
+        // re-asserts onto the new device's count.
+        if let Some(n) = probe_caps(&serial) {
+            ctx.desired.lock().note_declared_buttons(n);
+        }
         ctx.transport.swap(Arc::new(serial));
         ctx.held_updates.lock().clear();
         while ctx.updates_rx.try_recv().is_ok() {}
@@ -139,9 +180,15 @@ fn reconnect(ctx: &ReconnectCtx) -> Result<()> {
 
 fn reapply_held(ctx: &ReconnectCtx) -> Result<()> {
     let _serial = ctx.catch_lock.lock();
-    let (held, held_locks, catch) = {
+    let (held, held_locks, catch, rewrites, transforms) = {
         let d = ctx.desired.lock();
-        (d.held().collect::<Vec<_>>(), d.held_locks(), d.catch())
+        (
+            d.held().collect::<Vec<_>>(),
+            d.held_locks(),
+            d.catch(),
+            d.held_rewrites(),
+            d.held_transforms(),
+        )
     };
     for (usage, action) in held {
         let (class, id) = usage.class_id();
@@ -182,6 +229,44 @@ fn reapply_held(ctx: &ReconnectCtx) -> Result<()> {
             seq,
             FrameType::Catch,
             &catch_payload(class, id, f.direction().as_u8(), 1, f.capture().as_u8()),
+        )?;
+    }
+    // Re-assert the rewrite table: a drop past the firmware silence window, or a re-clone, clears it
+    // box-side, so without this the rules stay dead. Each goes out as state 1 (add/overwrite), which
+    // is idempotent if the drop was short.
+    for r in rewrites {
+        let seq = ctx.seq.fetch_add(1, Ordering::Relaxed);
+        write_frame(
+            &ctx.transport,
+            &ctx.write_lock,
+            &ctx.counters,
+            seq,
+            FrameType::Rewrite,
+            &rewrite_payload(
+                r.class,
+                r.id,
+                r.direction,
+                1,
+                r.action,
+                r.offset,
+                &r.match_bytes,
+                &r.mask,
+                &r.payload,
+            ),
+        )?;
+    }
+    // Re-assert the transform table for the same reason (§3.15): the box clears it past the silence
+    // window or on a re-clone, and each goes out as state 1 (add/overwrite), idempotent if the drop was
+    // short. A refused entry (its field gone on the swapped-in device) is simply absent from the box.
+    for t in transforms {
+        let seq = ctx.seq.fetch_add(1, Ordering::Relaxed);
+        write_frame(
+            &ctx.transport,
+            &ctx.write_lock,
+            &ctx.counters,
+            seq,
+            FrameType::Transform,
+            &transform_payload(t.op, t.sclass, t.sid, t.dclass, t.did, t.scale, 1),
         )?;
     }
     Ok(())

@@ -20,21 +20,25 @@ pub enum CatchClass {
     Key = CATCH_CLS_KEY,
     /// A media usage; `id` is the 16-bit Consumer usage.
     Media = CATCH_CLS_MEDIA,
-    /// A relative axis; `id` is X, Y or wheel.
+    /// A relative axis; `id` is X, Y, wheel or pan.
     Axis = CATCH_CLS_AXIS,
     /// Raw HID input report bytes; `id` is the interface number. Covers interfaces the semantic model
     /// does not parse, which produce no other event.
     HidIn = CATCH_CLS_HID_IN,
-    /// Interrupt-OUT report bytes the PC wrote; `id` is the endpoint address.
+    /// Interrupt-OUT report bytes the PC wrote; `id` is the endpoint number, `direction`
+    /// [`OUT`](Direction::OUT).
     HidOut = CATCH_CLS_HID_OUT,
-    /// Interrupt traffic on a vendor interface; `id` is the endpoint address.
+    /// Interrupt traffic on a vendor interface; `id` is the endpoint number, `direction`
+    /// [`IN`](Direction::IN) or [`OUT`](Direction::OUT).
     VendorInterrupt = CATCH_CLS_VEND_INTR,
-    /// Bulk traffic on a vendor interface; `id` is the endpoint address. The one class that can
+    /// Bulk traffic on a vendor interface; `id` is the endpoint number, `direction`
+    /// [`IN`](Direction::IN) or [`OUT`](Direction::OUT). The one class that can
     /// saturate the control link on its own, and the first dropped when it cannot keep up.
     VendorBulk = CATCH_CLS_VEND_BULK,
     /// A proxied control transaction; `id` is the endpoint number (0 = EP0).
     Control = CATCH_CLS_CONTROL,
-    /// The bytes the clone put on the wire; `id` is the endpoint address.
+    /// The bytes the clone put on the wire; `id` is the endpoint number, `direction`
+    /// [`IN`](Direction::IN).
     Emit = CATCH_CLS_EMIT,
     /// Bus lifecycle; a bus event has no id.
     Bus = CATCH_CLS_BUS,
@@ -106,15 +110,19 @@ pub enum DirectionMeaning {
 pub enum TrafficClass {
     /// Raw HID input report bytes; `id` is the interface number.
     HidIn = CATCH_CLS_HID_IN,
-    /// Interrupt-OUT report bytes the PC wrote; `id` is the endpoint address.
+    /// Interrupt-OUT report bytes the PC wrote; `id` is the endpoint number, `direction`
+    /// [`OUT`](Direction::OUT).
     HidOut = CATCH_CLS_HID_OUT,
-    /// Interrupt traffic on a vendor interface; `id` is the endpoint address.
+    /// Interrupt traffic on a vendor interface; `id` is the endpoint number, `direction`
+    /// [`IN`](Direction::IN) or [`OUT`](Direction::OUT).
     VendorInterrupt = CATCH_CLS_VEND_INTR,
-    /// Bulk traffic on a vendor interface; `id` is the endpoint address.
+    /// Bulk traffic on a vendor interface; `id` is the endpoint number, `direction`
+    /// [`IN`](Direction::IN) or [`OUT`](Direction::OUT).
     VendorBulk = CATCH_CLS_VEND_BULK,
     /// A proxied control transaction; `id` is the endpoint number (0 = EP0).
     Control = CATCH_CLS_CONTROL,
-    /// The bytes the clone put on the wire; `id` is the endpoint address.
+    /// The bytes the clone put on the wire; `id` is the endpoint number, `direction`
+    /// [`IN`](Direction::IN).
     Emit = CATCH_CLS_EMIT,
     /// Bus lifecycle; a bus event has no id.
     Bus = CATCH_CLS_BUS,
@@ -252,7 +260,7 @@ pub(crate) struct FilterKey {
 /// CatchFilter::all_input();                      // buttons, keys, media, axes
 ///
 /// CatchFilter::traffic_class(TrafficClass::HidIn);
-/// CatchFilter::traffic(TrafficClass::VendorBulk, 0x83).with_capture(Capture::First(16));
+/// CatchFilter::traffic(TrafficClass::VendorBulk, 3).with_capture(Capture::First(16));
 /// CatchFilter::everything().with_capture(Capture::First(16));
 /// ```
 ///
@@ -284,7 +292,7 @@ impl CatchFilter {
         CatchFilter::blanket(CatchClass::from(class))
     }
 
-    /// Every relative axis: X, Y and the wheel.
+    /// Every relative axis: X, Y, the wheel and AC Pan.
     pub fn watch_axes() -> CatchFilter {
         CatchFilter::blanket(CatchClass::Axis)
     }

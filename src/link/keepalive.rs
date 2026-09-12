@@ -6,7 +6,7 @@ use std::time::Duration;
 use parking_lot::Mutex;
 
 use crate::protocol::FrameType;
-use crate::protocol::command::{catch_payload, query_payload};
+use crate::protocol::command::{catch_payload, query_payload, rewrite_payload, transform_payload};
 use crate::protocol::opcode::Q_HEALTH;
 
 use super::counters::Counters;
@@ -46,17 +46,24 @@ fn keepalive_loop(ctx: KeepaliveCtx) {
             return;
         }
         let _serial = ctx.catch_lock.lock();
-        let (idle, catch) = {
+        let (idle, catch, rewrites, transforms) = {
             let d = ctx.desired.lock();
-            (d.is_idle(), d.catch())
+            (
+                d.is_idle(),
+                d.catch(),
+                d.held_rewrites(),
+                d.held_transforms(),
+            )
         };
         if idle {
             continue;
         }
-        // Both frames feed the firmware silence timer (§5.4) to keep a held override/subscription
-        // alive. Re-sending the CATCH entries (not a bare QUERY) also restores the table if a device
-        // blip cleared it box-side. Only subscribes go out, never an unsubscribe: a blanket clear and
-        // re-add here would punch a hole in the stream on every cadence.
+        // Any frame feeds the firmware silence timer (§5.4) to hold a held override/lock/subscription
+        // /rewrite alive. Re-sending the CATCH and REWRITE entries (not a bare QUERY) also rebuilds
+        // those tables if a device blip or re-clone cleared them box-side. Only add/overwrite goes
+        // out, never a remove: a blanket clear and re-add here would punch a hole on every cadence.
+        // A rewrite re-set the box already holds byte-for-byte is a no-op there and does not bump gen.
+        let mut sent_any = false;
         if !catch.is_empty() {
             for f in catch.values() {
                 let seq = ctx.seq.fetch_add(1, Ordering::Relaxed);
@@ -70,6 +77,47 @@ fn keepalive_loop(ctx: KeepaliveCtx) {
                     &catch_payload(class, id, f.direction().as_u8(), 1, f.capture().as_u8()),
                 );
             }
+            sent_any = true;
+        }
+        if !rewrites.is_empty() {
+            for r in rewrites {
+                let seq = ctx.seq.fetch_add(1, Ordering::Relaxed);
+                let _ = write_frame(
+                    &ctx.transport,
+                    &ctx.write_lock,
+                    &ctx.counters,
+                    seq,
+                    FrameType::Rewrite,
+                    &rewrite_payload(
+                        r.class,
+                        r.id,
+                        r.direction,
+                        1,
+                        r.action,
+                        r.offset,
+                        &r.match_bytes,
+                        &r.mask,
+                        &r.payload,
+                    ),
+                );
+            }
+            sent_any = true;
+        }
+        if !transforms.is_empty() {
+            for t in transforms {
+                let seq = ctx.seq.fetch_add(1, Ordering::Relaxed);
+                let _ = write_frame(
+                    &ctx.transport,
+                    &ctx.write_lock,
+                    &ctx.counters,
+                    seq,
+                    FrameType::Transform,
+                    &transform_payload(t.op, t.sclass, t.sid, t.dclass, t.did, t.scale, 1),
+                );
+            }
+            sent_any = true;
+        }
+        if sent_any {
             continue;
         }
         let seq = ctx.seq.fetch_add(1, Ordering::Relaxed);

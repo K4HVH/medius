@@ -91,6 +91,34 @@ class RelativeDirectionError(MediusError):
     """`Direction.WITH` / `AGAINST` on something with no bearing to measure them against."""
 
 
+class ImperfectRequiredError(MediusError):
+    """An advanced control layer call with the imperfect-clone opt-in off, which gates the whole layer."""
+
+
+class RewriteMaskLengthError(MediusError):
+    """A rewrite rule whose `match` and `mask` are different lengths."""
+
+
+class RewriteActionClassError(MediusError):
+    """A rewrite action that is not valid for its class (a report-only or control-only action misused)."""
+
+
+class RewritePayloadTooLargeError(MediusError):
+    """A rewrite payload larger than the head the box holds for its class."""
+
+
+class TransformOpFieldsError(MediusError):
+    """A transform op that cannot address its `source`/`dest` pair."""
+
+
+class TransformInvertZeroScaleError(MediusError):
+    """A scale of 0 on an invert, which ignores its scale (so 0 would block the field it must pass)."""
+
+
+class RawDirectionError(MediusError):
+    """A raw injection direction that is neither `Direction.IN` nor `Direction.OUT`."""
+
+
 _STATUS_EXC = {
     Status.ERR_IO: IoError,
     Status.ERR_NOT_FOUND: NotFoundError,
@@ -110,6 +138,13 @@ _STATUS_EXC = {
     Status.ERR_HALF_EDGE_INPUT_FILTER: HalfEdgeInputFilterError,
     Status.ERR_RESERVED_ID: ReservedIdError,
     Status.ERR_RELATIVE_DIRECTION: RelativeDirectionError,
+    Status.ERR_IMPERFECT_REQUIRED: ImperfectRequiredError,
+    Status.ERR_REWRITE_MASK_LENGTH: RewriteMaskLengthError,
+    Status.ERR_REWRITE_ACTION_CLASS: RewriteActionClassError,
+    Status.ERR_REWRITE_PAYLOAD_TOO_LARGE: RewritePayloadTooLargeError,
+    Status.ERR_TRANSFORM_OP_FIELDS: TransformOpFieldsError,
+    Status.ERR_TRANSFORM_INVERT_ZERO_SCALE: TransformInvertZeroScaleError,
+    Status.ERR_RAW_DIRECTION: RawDirectionError,
 }
 
 

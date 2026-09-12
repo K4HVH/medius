@@ -9,8 +9,10 @@ use medius::{
     ClockEstimate, CountersSnapshot, DeviceInfo, DeviceKind, Direction, EmitPace, EmitPaceStatus,
     FirmwareInfo, Health, ImageState, ImperfectStatus, Input, InputEvent, KbdCaps, Key, LedMode,
     LedTarget, LockEntry, LockScope, LockTarget, Locks, LogLevel, LogLine, MediaKey, Motion,
-    MouseCaps, MoveTiming, PendingMotion, PortInfo, Rate, RebootTarget, RenderMode, RenderStatus,
-    SpreadStatus, Stats, Usage, Version,
+    MouseCaps, MoveTiming, Patch, PatchEntry, PatchSection, PatchSet, PendingMotion, PortInfo,
+    Rate, RebootTarget, RenderMode, RenderStatus, RewriteAction, RewriteClass, RewriteEntry,
+    RewriteRule, RewriteTable, Setup, SpreadStatus, Stats, TransferOutcome, Transform,
+    TransformField, TransformOp, Transforms, Usage, Version,
 };
 
 use crate::ctypes::*;
@@ -121,6 +123,7 @@ pub(crate) fn axis_from_c(v: u8) -> Option<Axis> {
         0 => Axis::X,
         1 => Axis::Y,
         2 => Axis::Wheel,
+        3 => Axis::Pan,
         _ => return None,
     })
 }
@@ -189,6 +192,7 @@ pub(crate) fn motion_from_c(v: MediusMotion) -> Option<Motion> {
     Some(match v.kind {
         0 => Motion::Cursor { dx: v.dx, dy: v.dy },
         1 => Motion::Wheel(v.wheel),
+        2 => Motion::Pan(v.pan),
         _ => return None,
     })
 }
@@ -232,22 +236,23 @@ impl From<MediusLogLevel> for LogLevel {
 }
 
 // `MediusLockTarget` to [`LockTarget`]; `None` for a `kind` no constant names or a `Usage` target
-// with an out-of-range button id.
+// whose id does not fit its class.
 pub(crate) fn lock_target_to_medius(v: MediusLockTarget) -> Option<LockTarget> {
     Some(match v.kind {
         0 => LockTarget::Axis(Axis::X),
         1 => LockTarget::Axis(Axis::Y),
         2 => LockTarget::Axis(Axis::Wheel),
-        3 => LockTarget::Usage(input_to_medius(v.usage)?),
+        3 => LockTarget::Axis(Axis::Pan),
+        4 => LockTarget::Usage(input_to_medius(v.usage)?),
         _ => return None,
     })
 }
 
-// `MediusUsage` to a [`Usage`]; `None` for a `kind` no constant names, or a button/key id out of
-// range for its class.
+// `MediusUsage` to a [`Usage`]; `None` for a `kind` no constant names, or a button/key id past a
+// `u8` (any button id fits a button, so only a value above 255 is refused).
 pub(crate) fn input_to_medius(v: MediusUsage) -> Option<Usage> {
     Some(match Class::from_u8(v.kind)? {
-        Class::Button => Usage::from(Button::from_id(u8::try_from(v.id).ok()?)?),
+        Class::Button => Usage::from(Button::from_id(u8::try_from(v.id).ok()?)),
         Class::Key => Usage::from(Key::new(u8::try_from(v.id).ok()?)),
         Class::Media => Usage::from(MediaKey::new(v.id)),
     })
@@ -262,13 +267,22 @@ pub(crate) fn usage_to_c(u: Usage) -> MediusUsage {
 
 fn lock_target_to_c(t: LockTarget) -> MediusLockTarget {
     match t {
-        LockTarget::Axis(Axis::X) => axis_target(MediusLockTargetKind::X),
-        LockTarget::Axis(Axis::Y) => axis_target(MediusLockTargetKind::Y),
-        LockTarget::Axis(Axis::Wheel) => axis_target(MediusLockTargetKind::Wheel),
+        LockTarget::Axis(a) => axis_target(axis_lock_kind(a)),
         LockTarget::Usage(u) => MediusLockTarget {
             kind: MediusLockTargetKind::Usage as u8,
             usage: usage_to_c(u),
         },
+    }
+}
+
+/// The `MediusLockTargetKind` that names an axis. The four axis kinds share the `MediusAxis` values,
+/// so this is total over [`Axis`].
+fn axis_lock_kind(a: Axis) -> MediusLockTargetKind {
+    match a {
+        Axis::X => MediusLockTargetKind::X,
+        Axis::Y => MediusLockTargetKind::Y,
+        Axis::Wheel => MediusLockTargetKind::Wheel,
+        Axis::Pan => MediusLockTargetKind::Pan,
     }
 }
 
@@ -353,6 +367,9 @@ impl From<Health> for MediusHealth {
             lock_on: b(h.lock_on),
             catch_on: b(h.catch_on),
             kbd_attached: b(h.kbd_attached),
+            rewrite_on: b(h.rewrite_on),
+            patch_on: b(h.patch_on),
+            transform_on: b(h.transform_on),
         }
     }
 }
@@ -364,6 +381,7 @@ impl From<MouseCaps> for MediusMouseCaps {
             has_x: b(c.has_x),
             has_y: b(c.has_y),
             has_wheel: b(c.has_wheel),
+            pan: b(c.pan),
             has_report_id: b(c.has_report_id),
             n_hid: c.n_hid,
         }
@@ -505,10 +523,10 @@ pub(crate) fn catch_filter_from_c(f: MediusCatchFilter) -> Option<CatchFilter> {
 // a C caller reading `dx` on a press must see 0, not whatever was on the stack.
 pub(crate) fn input_event_to_c(e: InputEvent) -> MediusInputEvent {
     let blank = blank_usage();
-    let (kind, usage, dx, dy, dz) = match e.input {
-        Input::Press(u) => (MediusInputKind::Press, usage_to_c(u), 0, 0, 0),
-        Input::Release(u) => (MediusInputKind::Release, usage_to_c(u), 0, 0, 0),
-        Input::Motion { dx, dy, dz } => (MediusInputKind::Motion, blank, dx, dy, dz),
+    let (kind, usage, dx, dy, dz, pan) = match e.input {
+        Input::Press(u) => (MediusInputKind::Press, usage_to_c(u), 0, 0, 0, 0),
+        Input::Release(u) => (MediusInputKind::Release, usage_to_c(u), 0, 0, 0, 0),
+        Input::Motion { dx, dy, dz, pan } => (MediusInputKind::Motion, blank, dx, dy, dz, pan),
     };
     MediusInputEvent {
         kind,
@@ -518,6 +536,7 @@ pub(crate) fn input_event_to_c(e: InputEvent) -> MediusInputEvent {
         dx,
         dy,
         dz,
+        pan,
     }
 }
 
@@ -572,6 +591,244 @@ impl From<ImperfectStatus> for MediusImperfectStatus {
             allowed: b(s.allowed),
             over_capacity: b(s.over_capacity),
             clone_imperfect: b(s.clone_imperfect),
+        }
+    }
+}
+
+// The advanced control layer (§3.14): raw injection, control transfers, rewrite rules and descriptor
+// patches. The class/action/direction/section enums cross the boundary as bytes, mapped back through
+// the crate's own `from_u8`, so a byte no variant names becomes `None` and is refused rather than
+// materialised as an enum. The variable-length fields follow the catch-event convention: a fixed max
+// array plus a length, truncated at the array's capacity.
+
+/// A [`Setup`] from its C mirror. Every field is raw, so this never fails.
+pub(crate) fn setup_from_c(c: MediusSetup) -> Setup {
+    Setup {
+        request_type: c.request_type,
+        request: c.request,
+        value: c.value,
+        index: c.index,
+        length: c.length,
+    }
+}
+
+impl From<TransferOutcome> for MediusTransferOutcome {
+    fn from(o: TransferOutcome) -> Self {
+        let mut data = [0u8; MEDIUS_MAX_DEV_PAYLOAD];
+        let n = o.data.len().min(MEDIUS_MAX_DEV_PAYLOAD);
+        data[..n].copy_from_slice(&o.data[..n]);
+        MediusTransferOutcome {
+            status: o.status.as_u8(),
+            len: n as u16,
+            data,
+        }
+    }
+}
+
+// A `MediusRewriteRule` to a [`RewriteRule`]; `None` for a class, action or direction byte no
+// constant names. `match_len` and `mask_len` are kept separate so an unequal pair still reaches the
+// crate, which refuses it with `RewriteMaskLength` rather than this layer papering over it.
+pub(crate) fn rewrite_rule_from_c(c: &MediusRewriteRule) -> Option<RewriteRule> {
+    let ml = (c.match_len as usize).min(MEDIUS_MAX_REWRITE_MATCH);
+    let msl = (c.mask_len as usize).min(MEDIUS_MAX_REWRITE_MATCH);
+    let pl = (c.payload_len as usize).min(MEDIUS_MAX_DEV_PAYLOAD);
+    Some(RewriteRule {
+        class: RewriteClass::from_u8(c.class)?,
+        id: c.id,
+        direction: Direction::from_u8(c.direction)?,
+        action: RewriteAction::from_u8(c.action)?,
+        offset: c.offset,
+        match_bytes: c.match_bytes[..ml].to_vec(),
+        mask: c.mask[..msl].to_vec(),
+        payload: c.payload[..pl].to_vec(),
+    })
+}
+
+impl From<RewriteRule> for MediusRewriteRule {
+    fn from(r: RewriteRule) -> Self {
+        let mut match_bytes = [0u8; MEDIUS_MAX_REWRITE_MATCH];
+        let ml = r.match_bytes.len().min(MEDIUS_MAX_REWRITE_MATCH);
+        match_bytes[..ml].copy_from_slice(&r.match_bytes[..ml]);
+        let mut mask = [0u8; MEDIUS_MAX_REWRITE_MATCH];
+        let msl = r.mask.len().min(MEDIUS_MAX_REWRITE_MATCH);
+        mask[..msl].copy_from_slice(&r.mask[..msl]);
+        let mut payload = [0u8; MEDIUS_MAX_DEV_PAYLOAD];
+        let pl = r.payload.len().min(MEDIUS_MAX_DEV_PAYLOAD);
+        payload[..pl].copy_from_slice(&r.payload[..pl]);
+        MediusRewriteRule {
+            class: r.class.as_u8(),
+            id: r.id,
+            direction: r.direction.as_u8(),
+            action: r.action.as_u8(),
+            offset: r.offset,
+            match_len: ml as u16,
+            mask_len: msl as u16,
+            payload_len: pl as u16,
+            match_bytes,
+            mask,
+            payload,
+        }
+    }
+}
+
+fn rewrite_entry_to_c(e: &RewriteEntry) -> MediusRewriteEntry {
+    MediusRewriteEntry {
+        class: e.class.as_u8(),
+        id: e.id,
+        direction: e.direction.as_u8(),
+        action: e.action.as_u8(),
+        match_len: e.match_len,
+        offset: e.offset,
+        payload_len: e.payload_len,
+        hits: e.hits,
+    }
+}
+
+impl From<RewriteTable> for MediusRewriteTable {
+    fn from(t: RewriteTable) -> Self {
+        let blank = MediusRewriteEntry {
+            class: 0,
+            id: 0,
+            direction: 0,
+            action: 0,
+            match_len: 0,
+            offset: 0,
+            payload_len: 0,
+            hits: 0,
+        };
+        let mut entries = [blank; MEDIUS_MAX_REWRITE_ENTRIES];
+        let n = t.entries.len().min(MEDIUS_MAX_REWRITE_ENTRIES);
+        for (slot, e) in entries.iter_mut().zip(t.entries.iter()).take(n) {
+            *slot = rewrite_entry_to_c(e);
+        }
+        MediusRewriteTable {
+            table_full: b(t.table_full),
+            generation: t.generation,
+            n: n as u16,
+            entries,
+        }
+    }
+}
+
+// A `MediusPatch` to a [`Patch`]; `None` for a section byte no constant names (the `APPLY`/`CLEAR`
+// engine verbs are not sections and decode to `None`).
+pub(crate) fn patch_from_c(c: &MediusPatch) -> Option<Patch> {
+    let n = (c.len as usize).min(MEDIUS_MAX_DEV_PAYLOAD);
+    Some(Patch {
+        section: PatchSection::from_u8(c.section)?,
+        cfg: c.cfg,
+        index: c.index,
+        offset: c.offset,
+        bytes: c.bytes[..n].to_vec(),
+    })
+}
+
+impl From<Patch> for MediusPatch {
+    fn from(p: Patch) -> Self {
+        let mut bytes = [0u8; MEDIUS_MAX_DEV_PAYLOAD];
+        let n = p.bytes.len().min(MEDIUS_MAX_DEV_PAYLOAD);
+        bytes[..n].copy_from_slice(&p.bytes[..n]);
+        MediusPatch {
+            section: p.section.as_u8(),
+            cfg: p.cfg,
+            index: p.index,
+            offset: p.offset,
+            len: n as u16,
+            bytes,
+        }
+    }
+}
+
+fn patch_entry_to_c(e: &PatchEntry) -> MediusPatchEntry {
+    MediusPatchEntry {
+        section: e.section.as_u8(),
+        cfg: e.cfg,
+        index: e.index,
+        offset: e.offset,
+        len: e.len,
+    }
+}
+
+impl From<PatchSet> for MediusPatchSet {
+    fn from(s: PatchSet) -> Self {
+        let blank = MediusPatchEntry {
+            section: 0,
+            cfg: 0,
+            index: 0,
+            offset: 0,
+            len: 0,
+        };
+        let mut entries = [blank; MEDIUS_MAX_PATCH_ENTRIES];
+        let n = s.entries.len().min(MEDIUS_MAX_PATCH_ENTRIES);
+        for (slot, e) in entries.iter_mut().zip(s.entries.iter()).take(n) {
+            *slot = patch_entry_to_c(e);
+        }
+        MediusPatchSet {
+            applied: b(s.applied),
+            pending: b(s.pending),
+            refused: b(s.refused),
+            table_full: b(s.table_full),
+            n: n as u16,
+            entries,
+        }
+    }
+}
+
+// A `MediusLockTarget` to a [`TransformField`]; the transform field space is the lock-target space,
+// so this reuses [`lock_target_to_medius`] and is `None` for the same reasons it is.
+pub(crate) fn transform_field_from_c(v: MediusLockTarget) -> Option<TransformField> {
+    Some(match lock_target_to_medius(v)? {
+        LockTarget::Axis(a) => TransformField::Axis(a),
+        LockTarget::Usage(u) => TransformField::Usage(u),
+    })
+}
+
+/// A [`TransformField`] to a `MediusLockTarget`, reusing [`lock_target_to_c`].
+fn transform_field_to_c(f: TransformField) -> MediusLockTarget {
+    lock_target_to_c(match f {
+        TransformField::Axis(a) => LockTarget::Axis(a),
+        TransformField::Usage(u) => LockTarget::Usage(u),
+    })
+}
+
+// A `MediusTransform` to a [`Transform`]; `None` for an op, source or dest byte no constant names.
+// The device-dependent and structural refusals (an op a class pair cannot take, a zero-scale invert)
+// are the crate's, made when the transform is sent.
+pub(crate) fn transform_from_c(c: &MediusTransform) -> Option<Transform> {
+    Some(Transform {
+        op: TransformOp::from_u8(c.op)?,
+        source: transform_field_from_c(c.source)?,
+        dest: transform_field_from_c(c.dest)?,
+        scale: c.scale,
+    })
+}
+
+fn transform_to_c(t: &Transform) -> MediusTransform {
+    MediusTransform {
+        op: t.op.as_u8(),
+        source: transform_field_to_c(t.source),
+        dest: transform_field_to_c(t.dest),
+        scale: t.scale,
+    }
+}
+
+impl From<Transforms> for MediusTransforms {
+    fn from(t: Transforms) -> Self {
+        let blank = MediusTransform {
+            op: 0,
+            source: axis_target(MediusLockTargetKind::X),
+            dest: axis_target(MediusLockTargetKind::X),
+            scale: 0,
+        };
+        let mut entries = [blank; MEDIUS_MAX_TRANSFORM_ENTRIES];
+        let n = t.entries.len().min(MEDIUS_MAX_TRANSFORM_ENTRIES);
+        for (slot, e) in entries.iter_mut().zip(t.entries.iter()).take(n) {
+            *slot = transform_to_c(e);
+        }
+        MediusTransforms {
+            table_full: b(t.table_full),
+            n: n as u16,
+            entries,
         }
     }
 }
@@ -796,6 +1053,7 @@ impl From<CatchEvent> for MediusCatchEvent {
                         dx: m.dx,
                         dy: m.dy,
                         dz: m.dz,
+                        pan: m.pan,
                     },
                 },
             },
@@ -884,6 +1142,9 @@ impl From<MediusHealth> for Health {
             lock_on: nz(h.lock_on),
             catch_on: nz(h.catch_on),
             kbd_attached: nz(h.kbd_attached),
+            rewrite_on: nz(h.rewrite_on),
+            patch_on: nz(h.patch_on),
+            transform_on: nz(h.transform_on),
         }
     }
 }
@@ -895,6 +1156,7 @@ impl From<MediusMouseCaps> for MouseCaps {
             has_x: nz(c.has_x),
             has_y: nz(c.has_y),
             has_wheel: nz(c.has_wheel),
+            pan: nz(c.pan),
             has_report_id: nz(c.has_report_id),
             n_hid: c.n_hid,
         }
@@ -1053,6 +1315,12 @@ impl From<medius::FrameType> for MediusFrameType {
             F::ClipTrigger => MediusFrameType::ClipTrigger,
             F::Update => MediusFrameType::Update,
             F::UpdateResp => MediusFrameType::UpdateResp,
+            F::Raw => MediusFrameType::Raw,
+            F::Transfer => MediusFrameType::Transfer,
+            F::TransferResp => MediusFrameType::TransferResp,
+            F::Rewrite => MediusFrameType::Rewrite,
+            F::Patch => MediusFrameType::Patch,
+            F::Transform => MediusFrameType::Transform,
         }
     }
 }

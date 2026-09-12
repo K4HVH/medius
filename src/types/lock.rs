@@ -1,8 +1,6 @@
 //! `LOCK` control vocabulary (§3.8): what a lock addresses, its edge, blanket groups, and decoded locks.
 
-use crate::protocol::opcode::{
-    LOCK_AXIS_WHEEL, LOCK_AXIS_X, LOCK_AXIS_Y, LOCK_CLS_AXIS, LOCK_SCALE_BLOCK, LOCK_SCALE_PASS,
-};
+use crate::protocol::opcode::{LOCK_CLS_AXIS, LOCK_SCALE_BLOCK, LOCK_SCALE_PASS};
 use crate::types::{Axis, Class, Direction, Usage};
 
 /// A whole-group blanket: the cursor aim (X+Y), the wheel, every mouse button, every key, or every media usage.
@@ -197,13 +195,7 @@ impl Locks {
 
 fn decode_scope(cls: u8, id: u16) -> Option<LockScope> {
     if cls == LOCK_CLS_AXIS {
-        let axis = match id {
-            LOCK_AXIS_X => Axis::X,
-            LOCK_AXIS_Y => Axis::Y,
-            LOCK_AXIS_WHEEL => Axis::Wheel,
-            _ => return None,
-        };
-        Some(LockScope::Target(LockTarget::Axis(axis)))
+        Some(LockScope::Target(LockTarget::Axis(Axis::from_u16(id)?)))
     } else if id == crate::protocol::opcode::LOCK_ID_ALL {
         Some(LockScope::Blanket(Class::from_u8(cls)?))
     } else {

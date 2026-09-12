@@ -4,15 +4,18 @@ use crate::error::{Error, Result};
 use crate::link::Link;
 use crate::protocol::opcode::{
     OPT_BEARING, OPT_EMIT, OPT_IMPERFECT, OPT_MOVE_RIDE, OPT_RENDER, OPT_SPREAD, Q_CAPS, Q_CATCH,
-    Q_CLIP, Q_DEVICE_INFO, Q_FIRMWARE, Q_HEALTH, Q_LOCKS, Q_RATE, Q_STATS, Q_VERSION,
+    Q_CLIP, Q_DEVICE_INFO, Q_FIRMWARE, Q_HEALTH, Q_LOCKS, Q_PATCH_ENTRY, Q_PATCHES, Q_RATE,
+    Q_REWRITE, Q_REWRITE_ENTRY, Q_STATS, Q_TRANSFORMS, Q_VERSION,
 };
 use crate::protocol::{Resp, parse_resp};
 use crate::types::{
     Action, Axis, Bearing, BearingMode, Blanket, Caps, CatchFilter, CatchState, ClipBuilder,
     ClipSettings, ClipStatus, ClipTrigger, CountersSnapshot, DeviceInfo, Direction, Edge, EmitPace,
     EmitPaceStatus, FirmwareInfo, Health, ImperfectStatus, LedMode, LedTarget, LockTarget, Locks,
-    Motion, MoveTiming, PendingMotion, Rate, RebootTarget, RenderMode, RenderStatus, SpreadStatus,
-    Stats, UpdateProgress, UpdateTarget, Usage, Version,
+    Motion, MoveTiming, Patch, PatchSet, PendingMotion, Rate, RebootTarget, RenderMode,
+    RenderStatus, RewriteRule, RewriteTable, Setup, SpreadStatus, Stats, TransferOutcome,
+    TransferStatus, Transform, TransformField, Transforms, UpdateProgress, UpdateTarget, Usage,
+    Version,
 };
 
 use super::Device;
@@ -21,6 +24,7 @@ use super::clip::ClipHandle;
 use super::discover::BoxInfo;
 use super::input::InputStream;
 use super::logs::LogStream;
+use super::raw::DEFAULT_TRANSFER_TIMEOUT;
 
 /// An async view over a [`Device`]: the same `Link` core, with `async` queries.
 #[derive(Clone, Debug)]
@@ -73,6 +77,16 @@ impl AsyncDevice {
         self.dev().wheel_now(delta)
     }
 
+    /// `MOVE` (AC Pan): horizontal scroll. Instant; see [`Device::pan`].
+    pub fn pan(&self, delta: i16) -> Result<()> {
+        self.dev().pan(delta)
+    }
+
+    /// `MOVE` (AC Pan) bypassing movement riding. Instant; see [`Device::pan_now`].
+    pub fn pan_now(&self, delta: i16) -> Result<()> {
+        self.dev().pan_now(delta)
+    }
+
     /// Emit the motion held for a ride now. Instant; see [`Device::flush_motion`].
     pub fn flush_motion(&self) -> Result<()> {
         self.dev().flush_motion()
@@ -83,7 +97,7 @@ impl AsyncDevice {
         self.dev().discard_motion()
     }
 
-    /// `MOVE`: field-generic relative axis (cursor or wheel). Instant; see [`Device::move_axis`].
+    /// `MOVE`: field-generic relative axis (cursor, wheel, or AC Pan). Instant; see [`Device::move_axis`].
     pub fn move_axis(
         &self,
         motion: Motion,
@@ -383,7 +397,15 @@ impl AsyncDevice {
             .query_async(Q_CAPS, self.link.query_timeout_default())
             .await?;
         match parse_resp(&payload) {
-            Some(Resp::Caps(c)) => Ok(c),
+            Some(Resp::Caps(c)) => {
+                // Cache the declared button count, exactly as the sync path does, so a later button
+                // blanket expands onto every declared button.
+                self.link
+                    .desired()
+                    .lock()
+                    .note_declared_buttons(c.mouse.n_buttons);
+                Ok(c)
+            }
             _ => Err(Error::NoReply),
         }
     }
@@ -506,6 +528,171 @@ impl AsyncDevice {
             .await?;
         match parse_resp(&payload) {
             Some(Resp::Spread(s)) => Ok(s),
+            _ => Err(Error::NoReply),
+        }
+    }
+
+    // The advanced control layer (§3.14). The gated setters read the opt-in on the async query path rather
+    // than blocking the executor on the sync one, then hand off to the send-only core they share with
+    // the sync `Device`.
+    async fn require_imperfect(&self) -> Result<()> {
+        if self.query_imperfect().await?.allowed {
+            Ok(())
+        } else {
+            Err(Error::ImperfectRequired)
+        }
+    }
+
+    /// `RAW`: put raw bytes on a cloned endpoint number in a direction. See [`Device::raw`].
+    pub async fn raw(&self, ep: u8, direction: Direction, bytes: &[u8]) -> Result<()> {
+        crate::device::raw::validate_raw_direction(direction)?;
+        self.require_imperfect().await?;
+        self.dev().raw_frame(ep, direction, bytes)
+    }
+
+    /// `TRANSFER`: run one control transfer against the device. See [`Device::transfer`].
+    pub async fn transfer(&self, ep: u8, setup: Setup, out: &[u8]) -> Result<TransferOutcome> {
+        self.transfer_timeout(ep, setup, out, DEFAULT_TRANSFER_TIMEOUT)
+            .await
+    }
+
+    /// [`transfer`](Self::transfer) with an explicit reply timeout. See [`Device::transfer_timeout`].
+    pub async fn transfer_timeout(
+        &self,
+        ep: u8,
+        setup: Setup,
+        out: &[u8],
+        timeout: Duration,
+    ) -> Result<TransferOutcome> {
+        let (status, data) = self.link.transfer_async(ep, setup, out, timeout).await?;
+        Ok(TransferOutcome {
+            status: TransferStatus::from_u8(status),
+            data,
+        })
+    }
+
+    /// `REWRITE`: install one rewrite rule. See [`Device::set_rewrite`].
+    pub async fn set_rewrite(&self, rule: &RewriteRule) -> Result<()> {
+        crate::device::rewrite::validate_rule(rule)?;
+        self.require_imperfect().await?;
+        self.dev().set_rewrite_send(rule)
+    }
+
+    /// `REWRITE` remove: drop one rewrite rule by key. See [`Device::remove_rewrite`].
+    pub fn remove_rewrite(&self, rule: &RewriteRule) -> Result<()> {
+        self.dev().remove_rewrite(rule)
+    }
+
+    /// `REWRITE` clear: drop the whole rewrite table. See [`Device::clear_rewrite`].
+    pub fn clear_rewrite(&self) -> Result<()> {
+        self.dev().clear_rewrite()
+    }
+
+    /// `QUERY(REWRITE)`: the rewrite-table summary. See [`Device::query_rewrite`].
+    pub async fn query_rewrite(&self) -> Result<RewriteTable> {
+        let payload = self
+            .link
+            .query_async(Q_REWRITE, self.link.query_timeout_default())
+            .await?;
+        match parse_resp(&payload) {
+            Some(Resp::Rewrite(t)) => Ok(t),
+            _ => Err(Error::NoReply),
+        }
+    }
+
+    /// `QUERY(REWRITE_ENTRY)`: one rule in full. See [`Device::query_rewrite_entry`].
+    pub async fn query_rewrite_entry(&self, index: u8) -> Result<RewriteRule> {
+        let payload = self
+            .link
+            .query_indexed_async(Q_REWRITE_ENTRY, index, self.link.query_timeout_default())
+            .await?;
+        crate::types::rewrite::rewrite_entry_from_payload(&payload).ok_or(Error::NoReply)
+    }
+
+    /// `PATCH`: store one descriptor patch. See [`Device::set_patch`].
+    pub fn set_patch(&self, patch: &Patch) -> Result<()> {
+        self.dev().set_patch(patch)
+    }
+
+    /// `PATCH` APPLY: re-present the clone with the stored set. See [`Device::apply_patch`].
+    pub async fn apply_patch(&self) -> Result<()> {
+        self.require_imperfect().await?;
+        self.dev().apply_patch_send()
+    }
+
+    /// `PATCH` CLEAR: drop every patch and re-present. See [`Device::clear_patch`].
+    pub fn clear_patch(&self) -> Result<()> {
+        self.dev().clear_patch()
+    }
+
+    /// `QUERY(PATCHES)`: the descriptor-patch set summary. See [`Device::query_patches`].
+    pub async fn query_patches(&self) -> Result<PatchSet> {
+        let payload = self
+            .link
+            .query_async(Q_PATCHES, self.link.query_timeout_default())
+            .await?;
+        match parse_resp(&payload) {
+            Some(Resp::Patches(s)) => Ok(s),
+            _ => Err(Error::NoReply),
+        }
+    }
+
+    /// `QUERY(PATCH_ENTRY)`: one patch in full. See [`Device::query_patch_entry`].
+    pub async fn query_patch_entry(&self, index: u8) -> Result<Patch> {
+        let payload = self
+            .link
+            .query_indexed_async(Q_PATCH_ENTRY, index, self.link.query_timeout_default())
+            .await?;
+        crate::types::patch::patch_entry_from_payload(&payload).ok_or(Error::NoReply)
+    }
+
+    /// `TRANSFORM`: install one field transform (ungated). Instant; see [`Device::transform`].
+    pub fn transform(&self, t: &Transform) -> Result<()> {
+        self.dev().transform(t)
+    }
+
+    /// `TRANSFORM` remove: drop one transform by key. Instant; see [`Device::untransform`].
+    pub fn untransform(&self, t: &Transform) -> Result<()> {
+        self.dev().untransform(t)
+    }
+
+    /// `TRANSFORM` clear: drop the whole transform table. Instant; see [`Device::clear_transforms`].
+    pub fn clear_transforms(&self) -> Result<()> {
+        self.dev().clear_transforms()
+    }
+
+    /// `TRANSFORM`: invert an axis. Instant; see [`Device::invert`].
+    pub fn invert(&self, axis: Axis) -> Result<()> {
+        self.dev().invert(axis)
+    }
+
+    /// `TRANSFORM`: weigh an axis by a signed percent. Instant; see [`Device::scale_transform`].
+    pub fn scale_transform(&self, axis: Axis, percent: i16) -> Result<()> {
+        self.dev().scale_transform(axis, percent)
+    }
+
+    /// `TRANSFORM`: exchange two axes. Instant; see [`Device::swap`].
+    pub fn swap(&self, a: Axis, b: Axis) -> Result<()> {
+        self.dev().swap(a, b)
+    }
+
+    /// `TRANSFORM`: remap a source field into a destination. Instant; see [`Device::remap`].
+    pub fn remap(
+        &self,
+        source: impl Into<TransformField>,
+        dest: impl Into<TransformField>,
+    ) -> Result<()> {
+        self.dev().remap(source, dest)
+    }
+
+    /// `QUERY(TRANSFORMS)`: the transform-table summary. See [`Device::query_transforms`].
+    pub async fn query_transforms(&self) -> Result<Transforms> {
+        let payload = self
+            .link
+            .query_async(Q_TRANSFORMS, self.link.query_timeout_default())
+            .await?;
+        match parse_resp(&payload) {
+            Some(Resp::Transforms(t)) => Ok(t),
             _ => Err(Error::NoReply),
         }
     }

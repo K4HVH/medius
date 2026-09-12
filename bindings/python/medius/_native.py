@@ -18,6 +18,11 @@ MEDIUS_MAX_SERIAL = 128
 MEDIUS_MAX_NAME = 33
 MEDIUS_MAX_CATCH_ENTRIES = 32
 MEDIUS_MAX_TRAFFIC_BYTES = 180
+MEDIUS_MAX_REWRITE_ENTRIES = 16
+MEDIUS_MAX_PATCH_ENTRIES = 16
+MEDIUS_MAX_TRANSFORM_ENTRIES = 8
+MEDIUS_MAX_REWRITE_MATCH = 16
+MEDIUS_MAX_DEV_PAYLOAD = 512
 
 # The CATCH wildcards are sentinel values, not a separate flag byte.
 MEDIUS_CATCH_CLASS_ANY = 0xFF
@@ -50,7 +55,7 @@ class MediusPortInfo(ctypes.Structure):
 
 
 class MediusMotion(ctypes.Structure):
-    _fields_ = [("kind", u8), ("dx", i16), ("dy", i16), ("wheel", i16)]
+    _fields_ = [("kind", u8), ("dx", i16), ("dy", i16), ("wheel", i16), ("pan", i16)]
 
 
 class MediusUsage(ctypes.Structure):
@@ -119,6 +124,9 @@ class MediusHealth(ctypes.Structure):
         ("lock_on", u8),
         ("catch_on", u8),
         ("kbd_attached", u8),
+        ("rewrite_on", u8),
+        ("patch_on", u8),
+        ("transform_on", u8),
     ]
 
 
@@ -149,6 +157,7 @@ class MediusMouseCaps(ctypes.Structure):
         ("has_x", u8),
         ("has_y", u8),
         ("has_wheel", u8),
+        ("pan", u8),
         ("has_report_id", u8),
         ("n_hid", u8),
     ]
@@ -234,6 +243,113 @@ class MediusImperfectStatus(ctypes.Structure):
     _fields_ = [("allowed", u8), ("over_capacity", u8), ("clone_imperfect", u8)]
 
 
+# The advanced control layer (§3.14): control transfers, rewrite rules and descriptor patches. Each mirror
+# is checked field-for-field against medius.h by test_ctypes_structs_match_the_c_header.
+class MediusSetup(ctypes.Structure):
+    _fields_ = [
+        ("request_type", u8),
+        ("request", u8),
+        ("value", u16),
+        ("index", u16),
+        ("length", u16),
+    ]
+
+
+class MediusTransferOutcome(ctypes.Structure):
+    _fields_ = [
+        ("status", u8),
+        ("len", u16),
+        ("data", u8 * MEDIUS_MAX_DEV_PAYLOAD),
+    ]
+
+
+class MediusRewriteRule(ctypes.Structure):
+    _fields_ = [
+        ("class_", u8),
+        ("id", u16),
+        ("direction", u8),
+        ("action", u8),
+        ("offset", u16),
+        ("match_len", u16),
+        ("mask_len", u16),
+        ("payload_len", u16),
+        ("match_bytes", u8 * MEDIUS_MAX_REWRITE_MATCH),
+        ("mask", u8 * MEDIUS_MAX_REWRITE_MATCH),
+        ("payload", u8 * MEDIUS_MAX_DEV_PAYLOAD),
+    ]
+
+
+class MediusRewriteEntry(ctypes.Structure):
+    _fields_ = [
+        ("class_", u8),
+        ("id", u16),
+        ("direction", u8),
+        ("action", u8),
+        ("match_len", u8),
+        ("offset", u16),
+        ("payload_len", u16),
+        ("hits", u16),
+    ]
+
+
+class MediusRewriteTable(ctypes.Structure):
+    _fields_ = [
+        ("table_full", u8),
+        ("generation", u8),
+        ("n", u16),
+        ("entries", MediusRewriteEntry * MEDIUS_MAX_REWRITE_ENTRIES),
+    ]
+
+
+class MediusPatch(ctypes.Structure):
+    _fields_ = [
+        ("section", u8),
+        ("cfg", u8),
+        ("index", u8),
+        ("offset", u16),
+        ("len", u16),
+        ("bytes", u8 * MEDIUS_MAX_DEV_PAYLOAD),
+    ]
+
+
+class MediusPatchEntry(ctypes.Structure):
+    _fields_ = [
+        ("section", u8),
+        ("cfg", u8),
+        ("index", u8),
+        ("offset", u16),
+        ("len", u16),
+    ]
+
+
+class MediusPatchSet(ctypes.Structure):
+    _fields_ = [
+        ("applied", u8),
+        ("pending", u8),
+        ("refused", u8),
+        ("table_full", u8),
+        ("n", u16),
+        ("entries", MediusPatchEntry * MEDIUS_MAX_PATCH_ENTRIES),
+    ]
+
+
+class MediusTransform(ctypes.Structure):
+    _fields_ = [
+        ("op", u8),
+        ("source", MediusLockTarget),
+        ("dest", MediusLockTarget),
+        ("scale", i16),
+    ]
+
+
+class MediusTransforms(ctypes.Structure):
+    _fields_ = [
+        ("table_full", u8),
+        ("n", u16),
+        ("entries", MediusTransform * MEDIUS_MAX_TRANSFORM_ENTRIES),
+    ]
+
+
 class MediusBearing(ctypes.Structure):
     _fields_ = [("window_ms", u16), ("mode", u8)]
 
@@ -286,7 +402,7 @@ class MediusCountersSnapshot(ctypes.Structure):
 
 
 class MediusMotionEvent(ctypes.Structure):
-    _fields_ = [("dx", i16), ("dy", i16), ("dz", i16)]
+    _fields_ = [("dx", i16), ("dy", i16), ("dz", i16), ("pan", i16)]
 
 
 class MediusUsageEvent(ctypes.Structure):
@@ -338,6 +454,7 @@ class MediusInputEvent(ctypes.Structure):
         ("dx", i16),
         ("dy", i16),
         ("dz", i16),
+        ("pan", i16),
     ]
 
 
@@ -413,6 +530,8 @@ _decl("medius_device_move_rel", i32, [HANDLE, i16, i16])
 _decl("medius_device_wheel", i32, [HANDLE, i16])
 _decl("medius_device_move_rel_now", i32, [HANDLE, i16, i16])
 _decl("medius_device_wheel_now", i32, [HANDLE, i16])
+_decl("medius_device_pan", i32, [HANDLE, i16])
+_decl("medius_device_pan_now", i32, [HANDLE, i16])
 _decl("medius_device_flush_motion", i32, [HANDLE])
 _decl("medius_device_discard_motion", i32, [HANDLE])
 _decl("medius_device_move_axis", i32, [HANDLE, MediusMotion, u8, u8])
@@ -460,6 +579,31 @@ _decl("medius_device_query_render", i32, [HANDLE, ctypes.POINTER(MediusRenderSta
 _decl("medius_device_query_spread", i32, [HANDLE, ctypes.POINTER(MediusSpreadStatus)])
 _decl("medius_device_counters", i32, [HANDLE, ctypes.POINTER(MediusCountersSnapshot)])
 
+_decl("medius_device_raw", i32, [HANDLE, u8, u8, ctypes.POINTER(u8), usize])
+_decl(
+    "medius_device_transfer",
+    i32,
+    [HANDLE, u8, MediusSetup, ctypes.POINTER(u8), usize, ctypes.POINTER(MediusTransferOutcome)],
+)
+_decl("medius_device_set_rewrite", i32, [HANDLE, ctypes.POINTER(MediusRewriteRule)])
+_decl("medius_device_remove_rewrite", i32, [HANDLE, ctypes.POINTER(MediusRewriteRule)])
+_decl("medius_device_clear_rewrite", i32, [HANDLE])
+_decl("medius_device_query_rewrite", i32, [HANDLE, ctypes.POINTER(MediusRewriteTable)])
+_decl("medius_device_query_rewrite_entry", i32, [HANDLE, u8, ctypes.POINTER(MediusRewriteRule)])
+_decl("medius_device_set_patch", i32, [HANDLE, ctypes.POINTER(MediusPatch)])
+_decl("medius_device_apply_patch", i32, [HANDLE])
+_decl("medius_device_clear_patch", i32, [HANDLE])
+_decl("medius_device_query_patches", i32, [HANDLE, ctypes.POINTER(MediusPatchSet)])
+_decl("medius_device_query_patch_entry", i32, [HANDLE, u8, ctypes.POINTER(MediusPatch)])
+_decl("medius_device_transform", i32, [HANDLE, ctypes.POINTER(MediusTransform)])
+_decl("medius_device_untransform", i32, [HANDLE, ctypes.POINTER(MediusTransform)])
+_decl("medius_device_clear_transforms", i32, [HANDLE])
+_decl("medius_device_invert", i32, [HANDLE, u8])
+_decl("medius_device_scale_transform", i32, [HANDLE, u8, i16])
+_decl("medius_device_swap", i32, [HANDLE, u8, u8])
+_decl("medius_device_remap", i32, [HANDLE, MediusLockTarget, MediusLockTarget])
+_decl("medius_device_query_transforms", i32, [HANDLE, ctypes.POINTER(MediusTransforms)])
+
 _decl("medius_default_query_timeout_ms", u32, [])
 _decl("medius_default_keepalive_cadence_ms", u32, [])
 _decl("medius_abi_version", u32, [])
@@ -472,6 +616,7 @@ _decl("medius_usage_key", MediusUsage, [u8])
 _decl("medius_usage_media", MediusUsage, [u16])
 _decl("medius_motion_cursor", MediusMotion, [i16, i16])
 _decl("medius_motion_wheel", MediusMotion, [i16])
+_decl("medius_motion_pan", MediusMotion, [i16])
 _decl("medius_lock_target_axis", MediusLockTarget, [u8])
 _decl("medius_lock_target_usage", MediusLockTarget, [MediusUsage])
 _decl("medius_locks_is_locked", c_bool, [ctypes.POINTER(MediusLocks), MediusLockTarget, u8])
@@ -625,6 +770,7 @@ if HAS_MOCK:
     _decl("medius_mock_set_locks", None, [HANDLE, MediusLocks])
     _decl("medius_mock_set_catch_state", None, [HANDLE, MediusCatchState])
     _decl("medius_mock_set_imperfect_status", None, [HANDLE, MediusImperfectStatus])
+    _decl("medius_mock_set_transfer_reply", None, [HANDLE, u8, ctypes.POINTER(u8), usize])
     _decl("medius_mock_set_advertised_hz", None, [HANDLE, u16])
     _decl("medius_mock_set_movement_riding", None, [HANDLE, c_bool, u32])
     _decl("medius_mock_set_bearing", None, [HANDLE, u16, u8])

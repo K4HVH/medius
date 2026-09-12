@@ -44,6 +44,13 @@ class Status(IntEnum):
     ERR_HALF_EDGE_INPUT_FILTER = 17
     ERR_RESERVED_ID = 18
     ERR_RELATIVE_DIRECTION = 19
+    ERR_IMPERFECT_REQUIRED = 20
+    ERR_REWRITE_MASK_LENGTH = 21
+    ERR_REWRITE_ACTION_CLASS = 22
+    ERR_REWRITE_PAYLOAD_TOO_LARGE = 23
+    ERR_TRANSFORM_OP_FIELDS = 24
+    ERR_TRANSFORM_INVERT_ZERO_SCALE = 25
+    ERR_RAW_DIRECTION = 26
 
 
 class DeviceKind(IntEnum):
@@ -207,13 +214,16 @@ class Axis(IntEnum):
     X = 0
     Y = 1
     WHEEL = 2
+    #: AC Pan (horizontal scroll), a full peer of the wheel.
+    PAN = 3
 
 
 class LockTargetKind(IntEnum):
     X = 0
     Y = 1
     WHEEL = 2
-    USAGE = 3
+    PAN = 3
+    USAGE = 4
 
 
 class Blanket(IntEnum):
@@ -302,6 +312,82 @@ class ControlStatus(IntEnum):
     OTHER = 3
 
 
+class RewriteClass(IntEnum):
+    """A traffic class a rewrite rule addresses (§3.14).
+
+    These are the write-direction CATCH classes the box will rewrite; the parsed-input and bus classes
+    are not rewritable. `ANY` is the wire wildcard, matching every rewritable class at once.
+    """
+
+    HID_IN = 4
+    HID_OUT = 5
+    VENDOR_INTERRUPT = 6
+    VENDOR_BULK = 7
+    CONTROL = 8
+    EMIT = 9
+    ANY = 0xFF
+
+
+class RewriteAction(IntEnum):
+    """What the winning rewrite rule does to a matched packet (§3.14).
+
+    A report class may `PASS`, `DROP`, `PATCH` or `REPLACE`. The control class adds `ANSWER`, `STALL`,
+    `NAK` and the two reply rewrites, which the box refuses on any other class.
+    """
+
+    PASS = 0
+    DROP = 1
+    PATCH = 2
+    REPLACE = 3
+    ANSWER = 4
+    STALL = 5
+    NAK = 6
+    REPLY_PATCH = 7
+    REPLY_REPLACE = 8
+
+
+class PatchSection(IntEnum):
+    """Which descriptor a patch overwrites (§3.14)."""
+
+    DEVICE = 0
+    CONFIG = 1
+    REPORT = 2
+    STRING = 3
+    BOS = 4
+
+
+class TransferStatus(IntEnum):
+    """How a control transfer ended (§3.14).
+
+    A status other than `OK` is a real protocol outcome, not a link error. A wire byte no member names
+    is a status this build does not know, kept as its integer value rather than raising.
+    """
+
+    OK = 0x00
+    REFUSED = 0xFC
+    STALL = 0xFD
+    NAK = 0xFE
+    NO_DEVICE = 0xFF
+
+    @property
+    def is_ok(self) -> bool:
+        return self == TransferStatus.OK
+
+
+class TransformOp(IntEnum):
+    """The operation a `Transform` performs on its fields (§3.15).
+
+    `INVERT` and `SCALE` act on one axis (source == dest); `SWAP` exchanges two axes; `REMAP` moves a
+    source field into a destination (axis→axis or button→button in one report, or button→key /
+    button→media across classes).
+    """
+
+    REMAP = 0
+    SWAP = 1
+    INVERT = 2
+    SCALE = 3
+
+
 class BusEventKind(IntEnum):
     """What a `CatchClass.BUS` event describes."""
 
@@ -320,6 +406,8 @@ class BusEventKind(IntEnum):
 class MotionKind(IntEnum):
     CURSOR = 0
     WHEEL = 1
+    #: AC Pan (horizontal scroll).
+    PAN = 2
 
 
 class Class(IntEnum):
@@ -347,6 +435,14 @@ class FrameType(IntEnum):
     CLIP_CTRL = 19
     CLIP_SET = 20
     CLIP_TRIGGER = 21
+    UPDATE = 23
+    UPDATE_RESP = 24
+    RAW = 25
+    TRANSFER = 26
+    TRANSFER_RESP = 27
+    REWRITE = 28
+    PATCH = 29
+    TRANSFORM = 30
 
 
 class Key(IntEnum):
