@@ -23,7 +23,7 @@ pub const MEDIUS_MAX_CATCH_ENTRIES: usize = 32;
 pub const MEDIUS_MAX_TRAFFIC_BYTES: usize = 180;
 
 /// Largest number of rows in a decoded `RESP(REWRITE)` (the firmware `REWRITE_TAB_MAX`).
-pub const MEDIUS_MAX_REWRITE_ENTRIES: usize = 16;
+pub const MEDIUS_MAX_REWRITE_ENTRIES: usize = 32;
 /// Largest number of rows in a decoded `RESP(PATCHES)` (the firmware `PATCH_MAX`).
 pub const MEDIUS_MAX_PATCH_ENTRIES: usize = 16;
 /// Largest number of entries in a decoded `RESP(TRANSFORMS)` (the firmware `CTRL_TRANSFORM_MAXN`).

@@ -254,7 +254,7 @@ pub const PATCH_APPLY: u8 = 0xFE;
 pub const PATCH_CLEAR: u8 = 0xFF;
 
 /// Entries the box's rewrite table holds (`REWRITE_TAB_MAX`); past it a rule is refused and `RESP(REWRITE).table_full` says so.
-pub const REWRITE_MAX_ENTRIES: usize = 16;
+pub const REWRITE_MAX_ENTRIES: usize = 32;
 /// Entries the box's descriptor-patch store holds (`PATCH_MAX`); past it a patch is refused and `RESP(PATCHES).table_full` says so.
 pub const PATCH_MAX_ENTRIES: usize = 16;
 /// The most `match`/`mask` bytes one rewrite rule compares (`REWRITE_MATCH_MAX`).

@@ -39,7 +39,7 @@
 #define MEDIUS_MAX_TRAFFIC_BYTES 180
 
 // Largest number of rows in a decoded `RESP(REWRITE)` (the firmware `REWRITE_TAB_MAX`).
-#define MEDIUS_MAX_REWRITE_ENTRIES 16
+#define MEDIUS_MAX_REWRITE_ENTRIES 32
 
 // Largest number of rows in a decoded `RESP(PATCHES)` (the firmware `PATCH_MAX`).
 #define MEDIUS_MAX_PATCH_ENTRIES 16
