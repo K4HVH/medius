@@ -891,7 +891,7 @@ class Capture:
     """How much of each packet to keep. Traffic classes only.
 
     An input class carries no packet, so naming one together with a capture is refused rather than
-    ignored. It exists because the control link runs at 4 Mbaud and a vendor bulk pipe at whole
+    ignored. It exists because the control link runs at 6 Mbaud and a vendor bulk pipe at whole
     packets saturates it on its own. A ceiling request, not a guarantee: the box holds one entry per
     address and cuts once, so another subscriber naming it more widely raises yours too.
     """

@@ -271,7 +271,7 @@ for ev in device.input_events([CatchFilter::watch(Key::ESCAPE)])? {
 `CatchFilter::all_input()` for every class, or `watch_class` / `watch_axis` to narrow.
 
 For traffic, `catch_events` yields the raw frames. A `Capture` caps how much of each packet comes
-back, which matters because a vendor bulk pipe at whole packets saturates the 4 Mbaud control link on
+back, which matters because a vendor bulk pipe at whole packets saturates the 6 Mbaud control link on
 its own:
 
 ```rust
@@ -358,7 +358,7 @@ Four layers, `protocol → transport → link → device`, each depending only o
 | `link` | the live connection: the reader thread, SEQ-correlated queries, keepalive, and reconnect |
 | `device` | the typed API on top, where each command is one `link.send(...)` |
 
-`Device` takes `&self`, is `Send + Sync`, and clones cheaply. The link runs at a fixed 4 Mbaud in framed binary (no baud dance, no ASCII REPL), and queries correlate by SEQ rather than arrival order. If the host goes quiet for ~1 s the firmware clears all injection, so a crash never leaves a button stuck; a keepalive thread keeps an intentionally-held button alive. Tested on Linux and Windows.
+`Device` takes `&self`, is `Send + Sync`, and clones cheaply. The link runs at a fixed 6 Mbaud in framed binary (no baud dance, no ASCII REPL), and queries correlate by SEQ rather than arrival order. If the host goes quiet for ~1 s the firmware clears all injection, so a crash never leaves a button stuck; a keepalive thread keeps an intentionally-held button alive. Tested on Linux and Windows.
 
 ## Other languages
 
