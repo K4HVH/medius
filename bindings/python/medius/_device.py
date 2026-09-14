@@ -361,7 +361,7 @@ class Device:
         check(_native.lib.medius_device_firmware_info(self._handle, ctypes.byref(out)))
         return firmware_info_from_c(out)
 
-    def wait_firmware_confirmed(self, timeout: float = 45.0) -> FirmwareInfo:
+    def wait_firmware_confirmed(self, timeout: float = 55.0) -> FirmwareInfo:
         """Block until neither chip is still on probation; a chip on probation refuses an update."""
         deadline = time.monotonic() + timeout
         while True:
