@@ -156,7 +156,7 @@ class ClipHandle:
         check(_native.lib.medius_clip_set_retain(self._handle, 1 if on else 0))
 
     def set_ride(self, on: bool):
-        """Make the clip's motion wait to ride a native report (False = the box's own clock, the default)."""
+        """Make the clip's motion wait to ride a native report (False = the box's own clock, the default); only its wheel while rendering is on with a profile armed."""
         check(_native.lib.medius_clip_set_ride(self._handle, 1 if on else 0))
 
     def bind(self, trigger: ClipTrigger):

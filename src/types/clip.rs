@@ -201,7 +201,7 @@ pub struct ClipSettings {
     pub retain: bool,
     /// Whether a retained clip has been finalized (its end fixed).
     pub finalized: bool,
-    /// Whether the clip's motion waits to ride a native report (`false` = the box's own clock, the default).
+    /// Whether the clip's motion waits to ride a native report (`false` = the box's own clock, the default); only its wheel while rendering is on with a profile armed.
     pub ride: bool,
     /// The trigger binding set.
     pub triggers: Vec<ClipTrigger>,

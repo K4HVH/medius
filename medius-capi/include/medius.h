@@ -928,7 +928,7 @@ typedef struct MediusClipSettings {
     uint8_t loop_;
     uint8_t retain;
     uint8_t finalized;
-    // Whether the clip's motion waits to ride a native report (`medius_clip_set_ride`).
+    // Whether the clip's motion waits to ride a native report (`medius_clip_set_ride`); only its wheel while rendering is on with a profile armed.
     uint8_t ride;
     struct MediusClipTrigger triggers[MEDIUS_CLIP_TRIG_MAX];
     // The number of valid entries in `triggers`.
@@ -1754,8 +1754,9 @@ MediusStatus medius_clip_set_loop(struct MediusClip *clip, uint8_t on);
 MediusStatus medius_clip_set_retain(struct MediusClip *clip,
                                     uint8_t on);
 
-// Make the clip's motion wait to ride a native report (0 = the box's own clock, the default).
-MediusStatus medius_clip_set_ride(struct MediusClip *clip, uint8_t on);
+// Make the clip's motion wait to ride a native report (0 = the box's own clock, the default); only its wheel while rendering is on with a profile armed.
+MediusStatus medius_clip_set_ride(struct MediusClip *clip,
+                                  uint8_t on);
 
 // Add or overwrite a trigger binding. `trigger.edge` takes a `MEDIUS_EDGE_*` constant and
 // `trigger.action` a `MEDIUS_CLIP_ACTION_*` one; any other value is
