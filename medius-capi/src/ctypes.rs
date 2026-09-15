@@ -999,7 +999,7 @@ pub struct MediusClipSettings {
     pub loop_: u8,
     pub retain: u8,
     pub finalized: u8,
-    /// Whether the clip's motion waits to ride a native report (`medius_clip_set_ride`); only its wheel while rendering is on with a profile armed.
+    /// Whether the clip's motion waits to ride a native report (`medius_clip_set_ride`).
     pub ride: u8,
     pub triggers: [MediusClipTrigger; MEDIUS_CLIP_TRIG_MAX],
     /// The number of valid entries in `triggers`.
