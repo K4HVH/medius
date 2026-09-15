@@ -928,7 +928,7 @@ typedef struct MediusClipSettings {
     uint8_t loop_;
     uint8_t retain;
     uint8_t finalized;
-    // Whether the clip's motion waits to ride a native report (`medius_clip_set_ride`); only its wheel while rendering is on with a profile armed.
+    // Whether the clip's motion waits to ride a native report (`medius_clip_set_ride`).
     uint8_t ride;
     struct MediusClipTrigger triggers[MEDIUS_CLIP_TRIG_MAX];
     // The number of valid entries in `triggers`.
