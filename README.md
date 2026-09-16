@@ -172,7 +172,9 @@ Nothing is rendered until the box has learned a profile for the attached device.
 
 `lock` blocks the physical device on one input while injection still drives it. `scale` is the same
 command with the number exposed: a percent of the physical value the box keeps, so 0 is a lock, 100 is
-an unlock, and everything between is reachable. Above 100 amplifies.
+an unlock, and everything between is reachable. Above 100 amplifies, to 255. The percent is signed
+down to -255: a negative one weighs the physical value and reverses it, so `-100` on an axis is a plain
+inversion. Only an axis takes one.
 
 ```rust
 use medius::{Axis, Blanket, Direction};
@@ -209,7 +211,8 @@ projection put on that axis.
 
 Only an axis has a bearing, so `With`/`Against` on a button, key or media usage is
 `Error::RelativeDirection` rather than a frame the box would drop. A button, key, or media usage
-carries one bit: any scale under 100 locks it, any scale at or above 100 unlocks it. A media usage has
+carries one bit: any scale from zero to 100 locks it, any scale at or above 100 unlocks it, and a
+negative on one is `Error::LockScaleUsage` since there is nothing to reverse. A media usage has
 no edges at all (it is suppressed whole), so an edge on one is sent as `Both`, which is what
 `query_locks` reports. `lock_all(Blanket::Keys, ...)` does honour the edge: `Positive` blocks presses
 only, `Negative` releases only.

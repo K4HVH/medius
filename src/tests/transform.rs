@@ -324,6 +324,25 @@ mod mock_roundtrip {
     }
 
     #[test]
+    fn the_box_refuses_a_self_pair_on_its_own() {
+        // The crate refuses one too, so go around it with the raw send: a host that lost its guard must
+        // not be able to install a field onto itself, which would silently zero it.
+        let mock = MockBox::new();
+        let device = Device::with_mock(mock.clone());
+        device
+            .transform_send(&Transform::remap(Axis::X, Axis::X), 1)
+            .unwrap();
+        device
+            .transform_send(&Transform::swap(Axis::X, Axis::X), 1)
+            .unwrap();
+        assert!(mock.saw(FrameType::Transform), "both reached the wire");
+        assert!(
+            device.query_transforms().unwrap().entries.is_empty(),
+            "and the box held neither"
+        );
+    }
+
+    #[test]
     fn the_crate_refuses_a_set_past_the_ceiling_rather_than_holding_it_forever() {
         // Without this the host keeps an entry the box refused: the keepalive re-sends it every tick,
         // the state never reads idle, and after a reconnect the replay order decides which entries

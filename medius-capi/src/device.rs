@@ -430,12 +430,11 @@ fn with_blanket(
 /// above that amplifies to `MEDIUS_LOCK_SCALE_MAX` (2.55x). Lock and unlock are its two ends.
 ///
 /// The percent is signed, down to `MEDIUS_LOCK_SCALE_MIN`: a negative one weighs the physical value
-/// and reverses what it keeps, so `-100` on an axis is a plain inversion and `-50` keeps half of it the
-/// other way round. The slot is picked from the sign of the delta before the weigh, so a directional
-/// negative is well defined: `-100` on `MEDIUS_DIRECTION_POSITIVE` sends rightward motion left and
-/// leaves leftward motion alone. Only an axis takes one; a momentary usage carries one bit and has
-/// nothing to reverse, which is `MEDIUS_STATUS_ERR_LOCK_SCALE_USAGE`, and a magnitude outside
-/// `MEDIUS_LOCK_SCALE_MIN ..= MEDIUS_LOCK_SCALE_MAX` is `MEDIUS_STATUS_ERR_LOCK_SCALE_RANGE`.
+/// and reverses it, so `-100` is a plain inversion. The slot is picked from the sign of the delta
+/// before the weigh, so `-100` on `MEDIUS_DIRECTION_POSITIVE` turns what arrived rightward into
+/// leftward and leaves what arrived leftward alone. Only an axis takes one: a momentary usage carries
+/// one bit and has nothing to reverse, which is `MEDIUS_STATUS_ERR_LOCK_SCALE_USAGE`, and a magnitude
+/// outside the range is `MEDIUS_STATUS_ERR_LOCK_SCALE_RANGE`.
 ///
 /// A delta picks up at most two scales, its absolute direction's and its relative direction's, and
 /// they multiply. `MEDIUS_DIRECTION_BOTH` is the exception: it writes the scale to the two fixed

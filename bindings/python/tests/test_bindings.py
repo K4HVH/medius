@@ -1783,7 +1783,7 @@ def test_a_negative_lock_scale_reverses_and_is_refused_where_it_cannot():
         # A reversal is not a block: everything still arrives, the other way round.
         assert not locks.is_locked(x, Direction.BOTH)
         # One bit has nothing to reverse, and a magnitude past the bound is refused rather than
-        # silently weighed at it. Neither reaches the wire.
+        # applied at the bound with the readback echoing what was sent. Neither reaches the wire.
         before = mock.recorded()
         with pytest.raises(medius.LockScaleUsageError):
             d.scale(LockTarget.button(Button.LEFT), Direction.POSITIVE, -100)

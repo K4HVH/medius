@@ -204,13 +204,15 @@ impl Locks {
     /// The scale in effect on one target and direction: percent of the physical value kept, so
     /// [`LOCK_SCALE_PASS`] when nothing weighs it.
     ///
-    /// [`Direction::Both`] reports the lowest scale across any direction, where a reversing (negative)
-    /// one is lower than any pass. That is not what a delta meets: a delta picks up one fixed-direction
-    /// scale and one bearing-relative one, and the box multiplies them, so `Negative` 50 with `Against`
-    /// 40 lands at 20% while this returns 40. Ask by direction and multiply if you need the figure a
-    /// delta actually sees.
+    /// [`Direction::Both`] reports the least that survives across any direction, ranked by magnitude
+    /// so a block outranks a reversal of any size: `Positive` blocked with `Against` at `-50` reports
+    /// `0`, not `-50`. That is not what a delta meets: a delta picks up one fixed-direction scale and
+    /// one bearing-relative one, and the box multiplies them, so `Negative` 50 with `Against` 40 lands
+    /// at 20% while this returns 40. Ask by direction and multiply if you need the figure a delta
+    /// actually sees.
     ///
-    /// A covering blanket counts, and where several entries cover the same direction the lowest wins.
+    /// A covering blanket counts, and where several entries cover the same direction the least that
+    /// survives wins.
     pub fn scale_of(&self, target: impl Into<LockTarget>, dir: Direction) -> i16 {
         let target = target.into();
         let covers = |e: &LockEntry| match e.scope {
@@ -221,7 +223,9 @@ impl Locks {
             .iter()
             .filter(|e| covers(e) && (dir == Direction::Both || e.direction.admits(dir)))
             .map(|e| e.scale)
-            .min()
+            // By magnitude, not by value: a signed minimum would rank -50 below 0 and report a
+            // reversal over a block, when the block is what the delta actually meets.
+            .min_by_key(|s| (s.unsigned_abs(), *s))
             .unwrap_or(LOCK_SCALE_PASS)
     }
 }

@@ -39,7 +39,7 @@ pub fn led_payload(target: u8, mode: u8, level: u8) -> [u8; 3] {
     [target, mode, level]
 }
 
-/// `LOCK` (§3.8): `[class u8][usage u16 LE][direction u8][scale u8]`; scale 0 blocks, 100 passes, above 100 amplifies.
+/// `LOCK` (§3.8): `[class u8][usage u16 LE][direction u8][scale i16 LE]`; scale 0 blocks, 100 passes, above 100 amplifies.
 pub fn lock_payload(class: u8, usage: u16, direction: u8, scale: i16) -> [u8; 6] {
     let u = usage.to_le_bytes();
     let s = scale.to_le_bytes();

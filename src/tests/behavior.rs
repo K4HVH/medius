@@ -194,6 +194,31 @@ fn reapply_re_emits_a_scale_at_its_own_value() {
 }
 
 #[test]
+fn reapply_re_emits_a_reversal_at_its_own_sign() {
+    // A replay that clamped the scale to zero would put a BLOCK on the wire where the host holds a
+    // REVERSAL, and the box would agree with it: the row is what a reconnect rebuilds from.
+    use crate::{Axis, Direction};
+    let mock = MockBox::new();
+    let device = Device::with_mock(mock.clone());
+    device.scale(Axis::X, Direction::Both, -100).unwrap();
+    device.scale(Axis::Y, Direction::Against, -255).unwrap();
+    mock.clear_recorded();
+
+    device.reapply().unwrap();
+    let locks: Vec<Vec<u8>> = mock
+        .recorded_frames()
+        .iter()
+        .filter(|f| f.ty == FrameType::Lock)
+        .map(|f| f.payload.clone())
+        .collect();
+    assert_eq!(
+        locks,
+        vec![vec![3, 0, 0, 0, 0x9C, 0xFF], vec![3, 1, 0, 4, 0x01, 0xFF]]
+    );
+    drop(device);
+}
+
+#[test]
 fn unlocking_both_forgets_the_relative_scales_too() {
     use crate::{Axis, Direction};
     let mock = MockBox::new();

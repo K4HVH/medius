@@ -80,8 +80,9 @@ pub enum Error {
     },
 
     #[error(
-        "a {op:?} transform cannot address {src:?} → {dst:?}: a swap is two axes, and a remap is \
-         axis→axis, button→button, button→key or button→media"
+        "a {op:?} transform cannot address {src:?} → {dst:?}: a swap is two axes, a remap is \
+         axis→axis, button→button, button→key or button→media, and neither takes a field onto \
+         itself, since both move a value"
     )]
     TransformOpFields {
         op: crate::types::TransformOp,

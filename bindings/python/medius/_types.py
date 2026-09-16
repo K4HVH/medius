@@ -14,7 +14,6 @@ from ._enums import (
     BEARING_WINDOW_DEFAULT_MS,
     BearingMode,
     Blanket,
-    LOCK_SCALE_PASS,
     BusEventKind,
     CatchClass,
     CatchEventKind,
@@ -508,10 +507,6 @@ class Transform:
         """Move a source field's value into a destination, clearing the source. ``source`` and
         ``dest`` are a `LockTarget`, an `Axis`, or a usage (`Usage`/`Button`/`Key`/`MediaKey`)."""
         return cls(TransformOp.REMAP, _as_lock_target(source), _as_lock_target(dest))
-
-    def with_scale(self, scale: int) -> "Transform":
-        """This transform with a different signed scale, for a scaled `swap` or `remap`."""
-        return Transform(self.op, self.source, self.dest, scale)
 
 
 @dataclass

@@ -18,7 +18,7 @@ pub enum TransformOp {
 }
 
 // The op space is dense and `Swap` is the top of it, so the count has to be one past it. A box op
-// with no variant here decodes as `None` and silently drops that readback row.
+// with no variant here decodes as `None`, and that readback row is dropped with nothing marking it.
 const _: () = assert!(TF_SWAP + 1 == TF_OP_COUNT);
 
 impl TransformOp {

@@ -583,6 +583,114 @@ fn a_relative_direction_on_a_one_bit_class_writes_nothing_box_side() {
 
 #[cfg(feature = "mock")]
 #[test]
+fn the_signed_scale_is_bounded_and_axis_only() {
+    // Both refusals are the crate's, before the wire. Without them a magnitude past the bound is
+    // applied at the bound while the readback echoes what was sent, and a negative on a one-bit class
+    // names an operation the field cannot perform.
+    use crate::protocol::FrameType;
+    let mock = crate::MockBox::new();
+    let dev = crate::Device::with_mock(mock.clone());
+    for bad in [LOCK_SCALE_MAX + 1, LOCK_SCALE_MIN - 1, i16::MAX, i16::MIN] {
+        assert!(
+            matches!(
+                dev.scale(Axis::X, Direction::Both, bad),
+                Err(crate::Error::LockScaleRange { .. })
+            ),
+            "scale {bad} should be refused"
+        );
+    }
+    for t in [
+        crate::types::LockTarget::from(Button::LEFT),
+        crate::types::LockTarget::from(Key::A),
+        crate::types::LockTarget::from(crate::types::MediaKey::MUTE),
+    ] {
+        assert!(
+            matches!(
+                dev.scale(t, Direction::Both, -100),
+                Err(crate::Error::LockScaleUsage { .. })
+            ),
+            "a reversal on {t:?} should be refused"
+        );
+    }
+    assert!(!mock.saw(FrameType::Lock), "none of them reached the wire");
+    // The bounds themselves are accepted, and only an axis takes the negative one.
+    dev.scale(Axis::X, Direction::Both, LOCK_SCALE_MIN).unwrap();
+    dev.scale(Axis::Y, Direction::Both, LOCK_SCALE_MAX).unwrap();
+    assert_eq!(
+        dev.query_locks()
+            .unwrap()
+            .scale_of(Axis::X, Direction::Positive),
+        LOCK_SCALE_MIN
+    );
+}
+
+#[cfg(feature = "mock")]
+#[test]
+fn the_box_writes_nothing_at_all_for_a_reversal_on_a_one_bit_class() {
+    // The crate refuses one before the wire, so drive the modelled table directly: if the box merely
+    // truncated a negative to a block, a host that lost its guard would see a lock the box refused.
+    use crate::mock::LockTable;
+    use crate::protocol::opcode::{LOCK_CLS_BTN, LOCK_CLS_KEY, LOCK_CLS_MEDIA};
+    use crate::types::BearingMode;
+    let mut t = LockTable::default();
+    t.apply(LOCK_CLS_BTN, 0, LOCK_DIR_BOTH, -100, 5);
+    t.apply(LOCK_CLS_KEY, 0x04, LOCK_DIR_BOTH, -100, 5);
+    t.apply(LOCK_CLS_KEY, LOCK_ID_ALL, LOCK_DIR_POS, -100, 5);
+    t.apply(LOCK_CLS_MEDIA, 0xE9, LOCK_DIR_BOTH, -100, 5);
+    t.apply(LOCK_CLS_MEDIA, LOCK_ID_ALL, LOCK_DIR_BOTH, -100, 5);
+    assert_eq!(t.pack(BearingMode::PerAxis).entries().len(), 0);
+    // and the axis, which does take one, still lands
+    t.apply(LOCK_CLS_AXIS, 0, LOCK_DIR_BOTH, -100, 5);
+    assert_eq!(t.pack(BearingMode::PerAxis).entries().len(), 2);
+}
+
+#[test]
+fn scale_of_both_ranks_a_block_above_a_reversal() {
+    // A signed minimum would call -50 the lowest and report a reversal over a block, when the block is
+    // what a delta actually meets. Both is the least that SURVIVES, which is a magnitude.
+    let l = Locks::from_payload(&[
+        6,
+        2,
+        3,
+        0,
+        0,
+        LOCK_DIR_POS,
+        0,
+        0,
+        3,
+        0,
+        0,
+        LOCK_DIR_AGAINST,
+        0xCE,
+        0xFF,
+    ])
+    .unwrap();
+    assert_eq!(l.scale_of(Axis::X, Direction::Both), LOCK_SCALE_BLOCK);
+    assert_eq!(l.scale_of(Axis::X, Direction::Against), -50);
+    assert!(l.is_locked(Axis::X, Direction::Positive));
+    // and with nothing blocked, the reversal is still the least that survives against a wider pass
+    let l = Locks::from_payload(&[
+        6,
+        2,
+        3,
+        0,
+        0,
+        LOCK_DIR_POS,
+        130,
+        0,
+        3,
+        0,
+        0,
+        LOCK_DIR_AGAINST,
+        0x9C,
+        0xFF,
+    ])
+    .unwrap();
+    assert_eq!(l.scale_of(Axis::X, Direction::Both), -100);
+}
+
+#[cfg(feature = "mock")]
+#[test]
 fn a_reset_clears_the_lock_table() {
     let dev = crate::Device::with_mock(crate::MockBox::new());
     dev.lock(Axis::X, Direction::Both).unwrap();
@@ -702,7 +810,7 @@ fn a_released_media_slot_is_refilled_before_the_end() {
 fn a_locks_reply_past_the_entry_cap_still_answers() {
     // Locks::from_entries and MockBox::set_locks are both public and unbounded, but the box appends
     // at most CTRL_RESP_LOCKS_MAXN entries and always replies (ctrl_locks_append). 256 entries would
-    // encode a count byte of 0 over a payload no frame can carry, and 86 a payload four bytes too
+    // encode a count byte of 0 over a payload no frame can carry, and 86 a payload six bytes too
     // long: either way the caller waits out the query timeout instead of reading a short answer.
     use crate::types::{LockEntry, MediaKey};
     let mock = crate::MockBox::new();
