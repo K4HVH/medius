@@ -172,7 +172,9 @@ Nothing is rendered until the box has learned a profile for the attached device.
 
 `lock` blocks the physical device on one input while injection still drives it. `scale` is the same
 command with the number exposed: a percent of the physical value the box keeps, so 0 is a lock, 100 is
-an unlock, and everything between is reachable. Above 100 amplifies.
+an unlock, and everything between is reachable. Above 100 amplifies, to 255. The percent is signed
+down to -255: a negative one weighs the physical value and reverses it, so `-100` on an axis is a plain
+inversion. Only an axis takes one.
 
 ```rust
 use medius::{Axis, Blanket, Direction};
@@ -209,7 +211,8 @@ projection put on that axis.
 
 Only an axis has a bearing, so `With`/`Against` on a button, key or media usage is
 `Error::RelativeDirection` rather than a frame the box would drop. A button, key, or media usage
-carries one bit: any scale under 100 locks it, any scale at or above 100 unlocks it. A media usage has
+carries one bit: any scale from zero to 100 locks it, any scale at or above 100 unlocks it, and a
+negative on one is `Error::LockScaleUsage` since there is nothing to reverse. A media usage has
 no edges at all (it is suppressed whole), so an edge on one is sent as `Both`, which is what
 `query_locks` reports. `lock_all(Blanket::Keys, ...)` does honour the edge: `Positive` blocks presses
 only, `Negative` releases only.
@@ -271,7 +274,7 @@ for ev in device.input_events([CatchFilter::watch(Key::ESCAPE)])? {
 `CatchFilter::all_input()` for every class, or `watch_class` / `watch_axis` to narrow.
 
 For traffic, `catch_events` yields the raw frames. A `Capture` caps how much of each packet comes
-back, which matters because a vendor bulk pipe at whole packets saturates the 4 Mbaud control link on
+back, which matters because a vendor bulk pipe at whole packets saturates the 6 Mbaud control link on
 its own:
 
 ```rust
@@ -279,10 +282,10 @@ use medius::{Capture, CatchEvent, CatchFilter, TrafficClass};
 
 let events = device.catch_events([
     CatchFilter::everything().with_capture(Capture::First(16)),
-    CatchFilter::traffic(TrafficClass::VendorInterrupt, 0x83),   // this endpoint, whole packets
+    CatchFilter::traffic(TrafficClass::VendorInterrupt, 3),   // this endpoint, whole packets
 ])?;
 while let Ok(CatchEvent::Traffic(t)) = events.recv() {
-    println!("{:?} 0x{:02X} {} bytes", t.class, t.id, t.true_len);
+    println!("{:?} ep {} {} bytes", t.class, t.id, t.true_len);
 }
 ```
 
@@ -358,7 +361,7 @@ Four layers, `protocol → transport → link → device`, each depending only o
 | `link` | the live connection: the reader thread, SEQ-correlated queries, keepalive, and reconnect |
 | `device` | the typed API on top, where each command is one `link.send(...)` |
 
-`Device` takes `&self`, is `Send + Sync`, and clones cheaply. The link runs at a fixed 4 Mbaud in framed binary (no baud dance, no ASCII REPL), and queries correlate by SEQ rather than arrival order. If the host goes quiet for ~1 s the firmware clears all injection, so a crash never leaves a button stuck; a keepalive thread keeps an intentionally-held button alive. Tested on Linux and Windows.
+`Device` takes `&self`, is `Send + Sync`, and clones cheaply. The link runs at a fixed 6 Mbaud in framed binary (no baud dance, no ASCII REPL), and queries correlate by SEQ rather than arrival order. If the host goes quiet for ~1 s the firmware clears all injection, so a crash never leaves a button stuck; a keepalive thread keeps an intentionally-held button alive. Tested on Linux and Windows.
 
 ## Other languages
 

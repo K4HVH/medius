@@ -41,9 +41,14 @@ include = [
     "MediusLockTargetKind",
     "MediusMotionKind",
     "MediusMoveTiming",
+    "MediusPatchSection",
     "MediusPendingMotion",
     "MediusRebootTarget",
     "MediusRenderMode",
+    "MediusRewriteAction",
+    "MediusRewriteClass",
+    "MediusTransferStatus",
+    "MediusTransformOp",
 ]
 
 [enum]

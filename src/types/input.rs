@@ -17,6 +17,8 @@ pub enum Input {
         dy: i16,
         /// Wheel delta (up positive).
         dz: i16,
+        /// AC Pan (horizontal-scroll) delta (right positive).
+        pan: i16,
     },
 }
 
@@ -51,8 +53,13 @@ impl Input {
     /// The axes a motion report moved, with their deltas; empty for an edge.
     pub fn axes(self) -> impl Iterator<Item = (Axis, i16)> + use<> {
         let d = match self {
-            Input::Motion { dx, dy, dz } => [(Axis::X, dx), (Axis::Y, dy), (Axis::Wheel, dz)],
-            _ => [(Axis::X, 0), (Axis::Y, 0), (Axis::Wheel, 0)],
+            Input::Motion { dx, dy, dz, pan } => [
+                (Axis::X, dx),
+                (Axis::Y, dy),
+                (Axis::Wheel, dz),
+                (Axis::Pan, pan),
+            ],
+            _ => [(Axis::X, 0), (Axis::Y, 0), (Axis::Wheel, 0), (Axis::Pan, 0)],
         };
         d.into_iter().filter(|(_, v)| *v != 0)
     }

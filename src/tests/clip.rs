@@ -32,11 +32,11 @@ fn clip_builder_encodes_entries_to_the_firmware_wire() {
     assert_eq!(w.as_bytes(), &[0x02, 0x02, 0x00]);
 
     let mut p = ClipBuilder::new();
-    p.press(Button::Left);
+    p.press(Button::LEFT);
     assert_eq!(p.as_bytes(), &[0x04, 0x01, 0x00, 0x00, 0x00, 0x01]);
 
     let mut r = ClipBuilder::new();
-    r.release(Button::Right);
+    r.release(Button::RIGHT);
     assert_eq!(r.as_bytes(), &[0x04, 0x01, 0x00, 0x01, 0x00, 0x00]);
 
     let mut f = ClipBuilder::new();
@@ -45,8 +45,8 @@ fn clip_builder_encodes_entries_to_the_firmware_wire() {
         2,
         -1,
         &[
-            (Button::Left.into(), Action::Press),
-            (Button::Left.into(), Action::ForceRelease),
+            (Button::LEFT.into(), Action::Press),
+            (Button::LEFT.into(), Action::ForceRelease),
         ],
     );
     assert_eq!(
@@ -93,7 +93,7 @@ fn decode_clip_status_and_settings_from_one_frame() {
         0x01, 0x00, // overruns 1
         0x02, 0x00, // seq_gaps 2
         0x02, // held_n
-        0x00, 0x04, 0x00, // Button::Side2
+        0x00, 0x04, 0x00, // Button::SIDE2
         0x01, 0xE1, 0x00, // Key 0xE1
         0x05, // autolock Aim|Buttons
         0x0E, // flags retain|finalized|ride
@@ -114,7 +114,7 @@ fn decode_clip_status_and_settings_from_one_frame() {
             underruns: 3,
             overruns: 1,
             seq_gaps: 2,
-            held: vec![Usage::from(Button::Side2), Usage::from(Key::new(0xE1))],
+            held: vec![Usage::from(Button::SIDE2), Usage::from(Key::new(0xE1))],
         }
     );
     let cfg = ClipSettings::from_payload(&p).unwrap();
@@ -142,16 +142,16 @@ fn clip_status_held_is_field_generic() {
     // held is one class-tagged usage list: buttons, keys, and media reported the same way.
     let s = ClipStatus {
         held: vec![
-            Usage::from(Button::Left),
+            Usage::from(Button::LEFT),
             Usage::from(Key::new(0x04)),
             Usage::from(MediaKey::new(0x00E9)),
         ],
         ..Default::default()
     };
-    assert!(s.is_held(Button::Left));
+    assert!(s.is_held(Button::LEFT));
     assert!(s.is_held(Key::new(0x04)));
     assert!(s.is_held(MediaKey::new(0x00E9)));
-    assert!(!s.is_held(Button::Right));
+    assert!(!s.is_held(Button::RIGHT));
     assert!(!s.is_held(Key::new(0x05)));
 }
 
@@ -193,7 +193,7 @@ fn clip_command_frames_carry_the_right_bytes() {
         ClipAction::Start,
     ))
     .unwrap();
-    clip.bind(ClipTrigger::new(Button::Right, Edge::Release, ClipAction::Toggle).consume())
+    clip.bind(ClipTrigger::new(Button::RIGHT, Edge::Release, ClipAction::Toggle).consume())
         .unwrap();
     clip.unbind(Key::new(0x3A), Edge::Press).unwrap();
     clip.clear_triggers().unwrap();
@@ -226,7 +226,7 @@ fn clip_command_frames_carry_the_right_bytes() {
         by(FrameType::ClipTrigger),
         vec![
             vec![1, 0x3A, 0x00, 1, 0, 1],    // bind KEY 0x3A Press Start (present)
-            vec![0, 0x01, 0x00, 2, 5, 3],    // bind Button::Right Release Toggle (present|consume)
+            vec![0, 0x01, 0x00, 2, 5, 3],    // bind Button::RIGHT Release Toggle (present|consume)
             vec![1, 0x3A, 0x00, 1, 0, 0],    // unbind KEY 0x3A Press (present=0)
             vec![0xFF, 0xFF, 0xFF, 0, 0, 0], // clear-all sentinel
         ]
@@ -288,7 +288,7 @@ fn clip_status_and_config_roundtrip_through_the_mock() {
         overruns: 2,
         seq_gaps: 1,
         held: vec![
-            Usage::from(Button::Left),
+            Usage::from(Button::LEFT),
             Usage::from(MediaKey::new(0x00E9)),
         ],
     };
@@ -299,7 +299,7 @@ fn clip_status_and_config_roundtrip_through_the_mock() {
         finalized: false,
         ride: true,
         triggers: vec![
-            ClipTrigger::new(Button::Right, Edge::Both, ClipAction::Toggle),
+            ClipTrigger::new(Button::RIGHT, Edge::Both, ClipAction::Toggle),
             ClipTrigger::new(Key::new(0x3A), Edge::Release, ClipAction::Stop).consume(),
         ],
     };

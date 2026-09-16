@@ -42,10 +42,19 @@ impl Device {
     }
 
     /// Query the cloned device's semantic capabilities (§4.4).
+    ///
+    /// The declared button count is cached so a later button blanket lock expands onto every declared
+    /// button and a reconnect re-asserts a lock on a button past the five named ones.
     pub fn caps(&self) -> Result<Caps> {
         let payload = self.link.query(Q_CAPS)?;
         match parse_resp(&payload) {
-            Some(Resp::Caps(c)) => Ok(c),
+            Some(Resp::Caps(c)) => {
+                self.link
+                    .desired()
+                    .lock()
+                    .note_declared_buttons(c.mouse.n_buttons);
+                Ok(c)
+            }
             _ => Err(Error::NoReply),
         }
     }

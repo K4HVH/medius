@@ -122,10 +122,10 @@ fn device_is_send_and_sync() {
 fn reapply_re_emits_only_held_overrides() {
     let mock = MockBox::new();
     let device = Device::with_mock(mock.clone());
-    device.press(Button::Left).unwrap();
-    device.force_release(Button::Side1).unwrap();
-    device.press(Button::Middle).unwrap();
-    device.release(Button::Middle).unwrap();
+    device.press(Button::LEFT).unwrap();
+    device.force_release(Button::SIDE1).unwrap();
+    device.press(Button::MIDDLE).unwrap();
+    device.release(Button::MIDDLE).unwrap();
     mock.clear_recorded();
 
     device.reapply().unwrap();
@@ -161,7 +161,10 @@ fn reapply_re_emits_held_locks_but_not_released_ones() {
     // Only the two still-held locks, each re-asserted at the scale it was set to; key A is gone.
     // Ordered by the desired-set key (class,id,dir): the KEY blanket (1, 0xFFFF, both) before the
     // AXIS X+ (3, 0, pos).
-    assert_eq!(locks, vec![vec![1, 0xFF, 0xFF, 0, 0], vec![3, 0, 0, 1, 0]]);
+    assert_eq!(
+        locks,
+        vec![vec![1, 0xFF, 0xFF, 0, 0, 0], vec![3, 0, 0, 1, 0, 0]]
+    );
     drop(device);
 }
 
@@ -183,7 +186,35 @@ fn reapply_re_emits_a_scale_at_its_own_value() {
         .collect();
     // A weighing comes back weighing, not blocked: re-sending these as a blanket lock would turn a
     // 40% damp into a dead axis across a reconnect the user never saw.
-    assert_eq!(locks, vec![vec![3, 0, 0, 4, 40], vec![3, 1, 0, 3, 130]]);
+    assert_eq!(
+        locks,
+        vec![vec![3, 0, 0, 4, 40, 0], vec![3, 1, 0, 3, 130, 0]]
+    );
+    drop(device);
+}
+
+#[test]
+fn reapply_re_emits_a_reversal_at_its_own_sign() {
+    // A replay that clamped the scale to zero would put a BLOCK on the wire where the host holds a
+    // REVERSAL, and the box would agree with it: the row is what a reconnect rebuilds from.
+    use crate::{Axis, Direction};
+    let mock = MockBox::new();
+    let device = Device::with_mock(mock.clone());
+    device.scale(Axis::X, Direction::Both, -100).unwrap();
+    device.scale(Axis::Y, Direction::Against, -255).unwrap();
+    mock.clear_recorded();
+
+    device.reapply().unwrap();
+    let locks: Vec<Vec<u8>> = mock
+        .recorded_frames()
+        .iter()
+        .filter(|f| f.ty == FrameType::Lock)
+        .map(|f| f.payload.clone())
+        .collect();
+    assert_eq!(
+        locks,
+        vec![vec![3, 0, 0, 0, 0x9C, 0xFF], vec![3, 1, 0, 4, 0x01, 0xFF]]
+    );
     drop(device);
 }
 
@@ -231,7 +262,7 @@ fn releasing_one_sign_of_a_both_lock_is_not_undone_by_a_reapply() {
         .collect();
     // Both wrote two slots and the unlock cleared one of them, so only the positive sign is still
     // held. Re-sending the Both would re-block a direction the caller released.
-    assert_eq!(locks, vec![vec![3, 0, 0, 1, 0]]);
+    assert_eq!(locks, vec![vec![3, 0, 0, 1, 0, 0]]);
     drop(device);
 }
 
@@ -241,7 +272,7 @@ fn releasing_one_button_of_a_blanket_is_not_undone_by_a_reapply() {
     let mock = MockBox::new();
     let device = Device::with_mock(mock.clone());
     device.lock_all(Blanket::Buttons, Direction::Both).unwrap();
-    device.unlock(Button::Left, Direction::Both).unwrap();
+    device.unlock(Button::LEFT, Direction::Both).unwrap();
     mock.clear_recorded();
 
     device.reapply().unwrap();
@@ -257,12 +288,74 @@ fn releasing_one_button_of_a_blanket_is_not_undone_by_a_reapply() {
 }
 
 #[test]
+fn a_button_blanket_over_a_wide_mouse_reasserts_the_wide_buttons_on_reconnect() {
+    use crate::types::MouseCaps;
+    use crate::{Blanket, Direction};
+    let mock = MockBox::new().with_mouse_caps(MouseCaps {
+        n_buttons: 16,
+        has_x: true,
+        has_y: true,
+        has_wheel: true,
+        pan: false,
+        has_report_id: false,
+        n_hid: 1,
+    });
+    let device = Device::with_mock(mock.clone());
+    // Reading CAPS caches the declared count; the blanket then expands onto every declared button.
+    assert_eq!(device.caps().unwrap().mouse.n_buttons, 16);
+    device.lock_all(Blanket::Buttons, Direction::Both).unwrap();
+    mock.clear_recorded();
+
+    device.reapply().unwrap();
+    let ids: Vec<u16> = mock
+        .recorded_frames()
+        .iter()
+        .filter(|f| f.ty == FrameType::Lock)
+        .map(|f| u16::from_le_bytes([f.payload[1], f.payload[2]]))
+        .collect();
+    // Every declared button comes back, button 8 among them, not just the five named ones.
+    assert_eq!(ids, (0..16).collect::<Vec<u16>>());
+    drop(device);
+}
+
+#[test]
+fn a_button_blanket_set_before_any_caps_call_reasserts_the_wide_buttons() {
+    use crate::types::MouseCaps;
+    use crate::{Blanket, Direction};
+    let mock = MockBox::new().with_mouse_caps(MouseCaps {
+        n_buttons: 8,
+        has_x: true,
+        has_y: true,
+        has_wheel: true,
+        pan: false,
+        has_report_id: false,
+        n_hid: 1,
+    });
+    // open_mock runs the handshake, which reads CAPS, so the declared count is cached before the caller
+    // takes any lock. No explicit caps() call here: this is the path the bug narrowed to five buttons.
+    let device = Device::open_mock(mock.clone()).unwrap();
+    device.lock_all(Blanket::Buttons, Direction::Both).unwrap();
+    mock.clear_recorded();
+
+    // A reconnect replays the held state; every declared button comes back, not just the named five.
+    device.reapply().unwrap();
+    let ids: Vec<u16> = mock
+        .recorded_frames()
+        .iter()
+        .filter(|f| f.ty == FrameType::Lock)
+        .map(|f| u16::from_le_bytes([f.payload[1], f.payload[2]]))
+        .collect();
+    assert_eq!(ids, (0..8).collect::<Vec<u16>>());
+    drop(device);
+}
+
+#[test]
 fn a_scale_a_one_bit_class_cannot_hold_is_not_held_here_either() {
     use crate::{Button, Direction};
     let mock = MockBox::new();
     let device = Device::with_mock(mock.clone());
     device
-        .scale(Button::Left, Direction::Positive, 150)
+        .scale(Button::LEFT, Direction::Positive, 150)
         .unwrap();
     mock.clear_recorded();
 

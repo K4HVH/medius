@@ -10,7 +10,11 @@ mod led;
 mod lock;
 mod movement;
 mod options;
+mod patch;
+mod rewrite;
 mod robustness;
+mod transfer;
+mod transform;
 mod update;
 
 mod correlation;

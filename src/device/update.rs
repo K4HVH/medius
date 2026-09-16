@@ -20,8 +20,8 @@ pub(crate) const ACTIVATE_TIMEOUT: Duration = Duration::from_secs(60);
 /// How often a blocked receive wakes to check what another caller may have parked for it.
 const HELD_POLL: Duration = Duration::from_millis(50);
 
-/// A chip confirms the image it booted after about ten seconds of running.
-pub(crate) const CONFIRM_TIMEOUT: Duration = Duration::from_secs(45);
+/// Outlasts the mouse-side chip's 40 s probation, which is the longer of the two.
+pub(crate) const CONFIRM_TIMEOUT: Duration = Duration::from_secs(55);
 
 // The chunking and credit accounting for one staged image, with no transport in it. The sync and
 // async transfers both drive this, so the wire logic exists once and cannot drift between them.
@@ -121,7 +121,8 @@ impl Device {
     }
 
     /// Block until neither chip is still on probation. A chip that has not confirmed the image it
-    /// booted refuses to open another update, and confirming runs on a timer nobody can hurry.
+    /// booted refuses to open another update. The device chip confirms after ten seconds of running;
+    /// the mouse-side chip confirms only on a completed clock exchange over the inter-chip link.
     pub fn wait_firmware_confirmed(&self) -> Result<FirmwareInfo> {
         let deadline = Instant::now() + CONFIRM_TIMEOUT;
         loop {

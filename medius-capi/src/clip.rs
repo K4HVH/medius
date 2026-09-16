@@ -285,7 +285,7 @@ pub unsafe extern "C" fn medius_clip_set_retain(clip: *mut MediusClip, on: u8) -
     with_clip(clip, |c| c.set_retain(on != 0))
 }
 
-/// Make the clip's motion wait to ride a native report (0 = the box's own clock, the default).
+/// Make the clip's motion wait to ride a native report (0 = the box's own clock, the default); only its wheel while rendering is on with a profile armed.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_clip_set_ride(clip: *mut MediusClip, on: u8) -> MediusStatus {
     with_clip(clip, |c| c.set_ride(on != 0))
