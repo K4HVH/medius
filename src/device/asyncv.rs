@@ -14,7 +14,7 @@ use crate::types::{
     EmitPaceStatus, FirmwareInfo, Health, ImperfectStatus, LedMode, LedTarget, LockTarget, Locks,
     Motion, MoveTiming, Patch, PatchSet, PendingMotion, Rate, RebootTarget, RenderMode,
     RenderStatus, RewriteRule, RewriteTable, Setup, SpreadStatus, Stats, TransferOutcome,
-    TransferStatus, Transform, TransformField, Transforms, UpdateProgress, UpdateTarget, Usage,
+    TransferStatus, Transform, Transforms, UpdateProgress, UpdateTarget, Usage,
     Version,
 };
 
@@ -661,28 +661,28 @@ impl AsyncDevice {
         self.dev().clear_transforms()
     }
 
-    /// `TRANSFORM`: invert an axis. Instant; see [`Device::invert`].
-    pub fn invert(&self, axis: Axis) -> Result<()> {
-        self.dev().invert(axis)
+    /// `TRANSFORM`: negate an axis. Instant; see [`Device::transform_invert`].
+    pub fn transform_invert(&self, axis: Axis) -> Result<()> {
+        self.dev().transform_invert(axis)
     }
 
-    /// `TRANSFORM`: weigh an axis by a signed percent. Instant; see [`Device::scale_transform`].
-    pub fn scale_transform(&self, axis: Axis, percent: i16) -> Result<()> {
-        self.dev().scale_transform(axis, percent)
+    /// `TRANSFORM`: weigh an axis by a signed percent. Instant; see [`Device::transform_scale`].
+    pub fn transform_scale(&self, axis: Axis, percent: i16) -> Result<()> {
+        self.dev().transform_scale(axis, percent)
     }
 
-    /// `TRANSFORM`: exchange two axes. Instant; see [`Device::swap`].
-    pub fn swap(&self, a: Axis, b: Axis) -> Result<()> {
-        self.dev().swap(a, b)
+    /// `TRANSFORM`: exchange two axes. Instant; see [`Device::transform_swap`].
+    pub fn transform_swap(&self, a: Axis, b: Axis) -> Result<()> {
+        self.dev().transform_swap(a, b)
     }
 
-    /// `TRANSFORM`: remap a source field into a destination. Instant; see [`Device::remap`].
-    pub fn remap(
+    /// `TRANSFORM`: remap a source field into a destination. Instant; see [`Device::transform_remap`].
+    pub fn transform_remap(
         &self,
-        source: impl Into<TransformField>,
-        dest: impl Into<TransformField>,
+        source: impl Into<LockTarget>,
+        dest: impl Into<LockTarget>,
     ) -> Result<()> {
-        self.dev().remap(source, dest)
+        self.dev().transform_remap(source, dest)
     }
 
     /// `QUERY(TRANSFORMS)`: the transform-table summary. See [`Device::query_transforms`].

@@ -155,7 +155,7 @@ impl StoredTransform {
 #[derive(Debug)]
 pub(crate) struct TransformUndo {
     key: TransformWireKey,
-    prior: Option<StoredTransform>,
+    prior: Option<(usize, StoredTransform)>,
 }
 
 /// PC-owned injection + subscription state, re-asserted after a reconnect so held usages and open catches survive a control-link blip.
@@ -175,10 +175,10 @@ pub(crate) struct DesiredState {
     // idempotent. Re-asserted on reconnect and by the keepalive, exactly like `catch`.
     rewrites: BTreeMap<RewriteWireKey, StoredRewrite>,
     // The field-transform table the box should be holding, keyed by (sclass, sid, dclass, did) so a
-    // re-set is exact and idempotent. Session state re-asserted on reconnect and by the keepalive,
-    // exactly like `rewrites`; the box carries no transform generation counter, so there is nothing to
-    // track here but the entries themselves.
-    transforms: BTreeMap<TransformWireKey, StoredTransform>,
+    // Session state re-asserted on reconnect and by the keepalive. A VEC, not a map: the box applies
+    // transforms in installation order and two that write the same field do not commute, so replaying
+    // them in key order would rebuild a different pipeline than the one the host built.
+    transforms: Vec<StoredTransform>,
     // The clone's declared button count, cached from `RESP(CAPS)`: the handshake reads it, and a
     // reconnect re-reads it. A button blanket is held UNEXPANDED and expanded onto this many rows at
     // reassert time, so a wide-button lock set before the caller's own `caps()` still re-asserts every
@@ -351,29 +351,60 @@ impl DesiredState {
         self.rewrites.values().cloned().collect()
     }
 
+    /// Whether this key is already held, so a set is an overwrite rather than an insert.
+    pub(crate) fn holds_rewrite(&self, key: &RewriteWireKey) -> bool {
+        self.rewrites.contains_key(key)
+    }
+
+    /// How many rules are held, against the box's ceiling.
+    pub(crate) fn rewrite_count(&self) -> usize {
+        self.rewrites.len()
+    }
+
     /// Record a field transform (add or overwrite) for reconnect-replay, returning the prior state so
     /// the device layer can roll it back if the frame never went out (the [`apply_rewrite`] pattern).
+    /// An overwrite keeps the entry's position, which is what the box does.
     pub(crate) fn apply_transform(&mut self, entry: StoredTransform) -> TransformUndo {
         let key = entry.key();
-        let prior = self.transforms.insert(key, entry);
-        TransformUndo { key, prior }
+        match self.transforms.iter().position(|e| e.key() == key) {
+            Some(i) => {
+                let prior = core::mem::replace(&mut self.transforms[i], entry);
+                TransformUndo {
+                    key,
+                    prior: Some((i, prior)),
+                }
+            }
+            None => {
+                self.transforms.push(entry);
+                TransformUndo { key, prior: None }
+            }
+        }
     }
 
     /// Record a transform removal, returning the prior state for the same rollback path.
     pub(crate) fn remove_transform(&mut self, key: TransformWireKey) -> TransformUndo {
-        let prior = self.transforms.remove(&key);
-        TransformUndo { key, prior }
+        match self.transforms.iter().position(|e| e.key() == key) {
+            Some(i) => TransformUndo {
+                key,
+                prior: Some((i, self.transforms.remove(i))),
+            },
+            None => TransformUndo { key, prior: None },
+        }
     }
 
     /// Put back what an `apply_transform`/`remove_transform` changed, for a frame that never went out.
+    /// The entry returns to the position it held, or leaves if there was none.
     pub(crate) fn restore_transform(&mut self, undo: TransformUndo) {
         match undo.prior {
-            Some(entry) => {
-                self.transforms.insert(undo.key, entry);
+            Some((i, entry)) => {
+                if let Some(cur) = self.transforms.iter().position(|e| e.key() == undo.key) {
+                    self.transforms[cur] = entry;
+                } else {
+                    let at = i.min(self.transforms.len());
+                    self.transforms.insert(at, entry);
+                }
             }
-            None => {
-                self.transforms.remove(&undo.key);
-            }
+            None => self.transforms.retain(|e| e.key() != undo.key),
         }
     }
 
@@ -382,9 +413,19 @@ impl DesiredState {
         self.transforms.clear();
     }
 
-    /// Every held transform, for the reconnect and keepalive re-assertion.
+    /// Whether this key is already held, so a set is an overwrite rather than an insert.
+    pub(crate) fn holds_transform(&self, key: TransformWireKey) -> bool {
+        self.transforms.iter().any(|e| e.key() == key)
+    }
+
+    /// How many transforms are held, against the box's ceiling.
+    pub(crate) fn transform_count(&self) -> usize {
+        self.transforms.len()
+    }
+
+    /// Every held transform, in installation order, for the reconnect and keepalive re-assertion.
     pub(crate) fn held_transforms(&self) -> Vec<StoredTransform> {
-        self.transforms.values().cloned().collect()
+        self.transforms.clone()
     }
 
     pub(crate) fn clear(&mut self) {

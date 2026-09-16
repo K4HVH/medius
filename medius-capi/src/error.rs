@@ -46,12 +46,18 @@ pub enum MediusStatus {
     ErrRewriteActionClass = 22,
     /// A rewrite payload larger than the head the box holds for its class.
     ErrRewritePayloadTooLarge = 23,
+    /// A rewrite rule added to a table that already holds `MEDIUS_REWRITE_MAX_ENTRIES`.
+    ErrRewriteTableFull = 24,
     /// A transform op that cannot address its `source`/`dest` pair.
-    ErrTransformOpFields = 24,
-    /// A scale of 0 on an invert, which ignores its scale (so 0 would block the field it must pass).
-    ErrTransformInvertZeroScale = 25,
+    ErrTransformOpFields = 25,
+    /// A transform scale whose magnitude is past `MEDIUS_LOCK_SCALE_MAX`, the widest the box applies.
+    ErrTransformScaleRange = 26,
+    /// A transform percentage on a button, key or media source, which carries one bit rather than a magnitude.
+    ErrTransformUsageScale = 27,
+    /// A transform added to a table that already holds `MEDIUS_TRANSFORM_MAX_ENTRIES`.
+    ErrTransformTableFull = 28,
     /// A raw injection direction other than `MEDIUS_DIRECTION_POSITIVE` (IN) or `MEDIUS_DIRECTION_NEGATIVE` (OUT).
-    ErrRawDirection = 26,
+    ErrRawDirection = 29,
 }
 
 #[derive(Default)]
@@ -102,8 +108,11 @@ fn status_for(err: &Error) -> MediusStatus {
         Error::RewriteMaskLength { .. } => MediusStatus::ErrRewriteMaskLength,
         Error::RewriteActionClass { .. } => MediusStatus::ErrRewriteActionClass,
         Error::RewritePayloadTooLarge { .. } => MediusStatus::ErrRewritePayloadTooLarge,
+        Error::RewriteTableFull { .. } => MediusStatus::ErrRewriteTableFull,
         Error::TransformOpFields { .. } => MediusStatus::ErrTransformOpFields,
-        Error::TransformInvertZeroScale => MediusStatus::ErrTransformInvertZeroScale,
+        Error::TransformScaleRange { .. } => MediusStatus::ErrTransformScaleRange,
+        Error::TransformUsageScale { .. } => MediusStatus::ErrTransformUsageScale,
+        Error::TransformTableFull { .. } => MediusStatus::ErrTransformTableFull,
         Error::Update { .. } => MediusStatus::ErrUpdate,
         _ => MediusStatus::ErrUnknown,
     }

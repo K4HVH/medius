@@ -27,9 +27,21 @@ pub const MEDIUS_MAX_REWRITE_ENTRIES: usize = 32;
 /// Largest number of rows in a decoded `RESP(PATCHES)` (the firmware `PATCH_MAX`).
 pub const MEDIUS_MAX_PATCH_ENTRIES: usize = 16;
 /// Largest number of entries in a decoded `RESP(TRANSFORMS)` (the firmware `CTRL_TRANSFORM_MAXN`).
-pub const MEDIUS_MAX_TRANSFORM_ENTRIES: usize = 8;
+pub const MEDIUS_MAX_TRANSFORM_ENTRIES: usize = 32;
 /// The most `match`/`mask` bytes one rewrite rule compares (the firmware `REWRITE_MATCH_MAX`).
 pub const MEDIUS_MAX_REWRITE_MATCH: usize = 16;
+
+// These are literals because cbindgen constant-folds them into the header's `#define`s and cannot do
+// that across a crate boundary. The asserts are what keeps them from drifting: widening a table in the
+// crate and not here used to compile, and the Python ctypes mirror then sized its array off a stale
+// header.
+const _: () = {
+    assert!(MEDIUS_MAX_CATCH_ENTRIES == medius::CATCH_MAX_ENTRIES);
+    assert!(MEDIUS_MAX_REWRITE_ENTRIES == medius::REWRITE_MAX_ENTRIES);
+    assert!(MEDIUS_MAX_PATCH_ENTRIES == medius::PATCH_MAX_ENTRIES);
+    assert!(MEDIUS_MAX_TRANSFORM_ENTRIES == medius::TRANSFORM_MAX_ENTRIES);
+    assert!(MEDIUS_MAX_REWRITE_MATCH == medius::REWRITE_MATCH_MAX);
+};
 /// The largest advanced control layer byte payload the control link carries in one frame (`MAX_PAYLOAD`):
 /// the bound on a `medius_device_raw` write, a rewrite rule's payload, a descriptor patch's bytes,
 /// and a control transfer's data stage.
@@ -862,7 +874,7 @@ pub struct MediusPatchSet {
     pub entries: [MediusPatchEntry; MEDIUS_MAX_PATCH_ENTRIES],
 }
 
-// Field transforms (§3.15): a faithful field operation on the semantic path — negate, scale, swap or
+// Field transforms (§3.15): a faithful field operation on the semantic path: negate, scale, swap or
 // remap a field the clone already declares. Not gated on the imperfect-clone opt-in.
 
 /// The operation a `MediusTransform` performs on its fields (§3.15). Crosses the ABI as the `op` byte

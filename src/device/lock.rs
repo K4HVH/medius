@@ -70,7 +70,7 @@ impl Device {
         direction: Direction,
         scale: u8,
     ) -> Result<()> {
-        let (class, id) = target_class_id(target.into());
+        let (class, id) = LockTarget::class_id(target.into());
         self.send_lock(class, id, direction, scale)
     }
 
@@ -134,13 +134,6 @@ impl Device {
             Blanket::Keys => self.send_lock(LOCK_CLS_KEY, LOCK_ID_ALL, direction, scale),
             Blanket::Media => self.send_lock(LOCK_CLS_MEDIA, LOCK_ID_ALL, direction, scale),
         }
-    }
-}
-
-fn target_class_id(target: LockTarget) -> (u8, u16) {
-    match target {
-        LockTarget::Axis(a) => (LOCK_CLS_AXIS, a.as_u16()),
-        LockTarget::Usage(u) => u.class_id(),
     }
 }
 

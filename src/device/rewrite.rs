@@ -1,7 +1,7 @@
 use crate::error::{Error, Result};
 use crate::link::reconcile::StoredRewrite;
 use crate::protocol::command::rewrite_payload;
-use crate::protocol::opcode::{Q_REWRITE, Q_REWRITE_ENTRY};
+use crate::protocol::opcode::{Q_REWRITE, Q_REWRITE_ENTRY, REWRITE_MAX_ENTRIES};
 use crate::protocol::{FrameType, Resp, parse_resp};
 use crate::types::rewrite::{REWRITE_CLEAR_ID, rewrite_entry_from_payload};
 use crate::types::{Direction, RewriteAction, RewriteClass, RewriteRule, RewriteTable};
@@ -28,6 +28,14 @@ impl Device {
     pub fn set_rewrite(&self, rule: &RewriteRule) -> Result<()> {
         validate_rule(rule)?;
         self.require_imperfect()?;
+        {
+            let d = self.link.desired().lock();
+            if !d.holds_rewrite(&to_stored(rule).key()) && d.rewrite_count() >= REWRITE_MAX_ENTRIES {
+                return Err(Error::RewriteTableFull {
+                    limit: REWRITE_MAX_ENTRIES,
+                });
+            }
+        }
         self.set_rewrite_send(rule)
     }
 

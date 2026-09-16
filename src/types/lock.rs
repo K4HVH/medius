@@ -55,13 +55,44 @@ pub(crate) fn blanket_from_scope(scope: u8) -> Vec<Blanket> {
         .collect()
 }
 
-/// What a lock addresses: a relative axis or a momentary usage (button/key/media).
+/// One addressable input field: a relative axis or a momentary usage (button/key/media).
+///
+/// The box addresses a field the same way everywhere, so this is what a [`lock`](crate::Device::lock)
+/// weighs and what a [`Transform`](crate::Transform) reads and writes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum LockTarget {
-    /// A relative axis (X/Y/wheel), locked by sign.
+    /// A relative axis (X/Y/wheel/pan), locked by sign.
     Axis(Axis),
     /// A momentary usage (button/key/media), locked by press/release edge.
     Usage(Usage),
+}
+
+impl LockTarget {
+    /// The wire `(class, id)` this field encodes to.
+    pub fn class_id(self) -> (u8, u16) {
+        match self {
+            LockTarget::Axis(a) => (LOCK_CLS_AXIS, a.as_u16()),
+            LockTarget::Usage(u) => u.class_id(),
+        }
+    }
+
+    /// Map a wire `(class, id)` back to a [`LockTarget`], or `None` for a class no field names or an
+    /// axis id past the declared axes.
+    pub fn from_class_id(class: u8, id: u16) -> Option<LockTarget> {
+        if class == LOCK_CLS_AXIS {
+            Some(LockTarget::Axis(Axis::from_u16(id)?))
+        } else {
+            Some(LockTarget::Usage(Usage::new(Class::from_u8(class)?, id)))
+        }
+    }
+
+    /// The axis this field names, or `None` if it is a momentary usage.
+    pub fn as_axis(self) -> Option<Axis> {
+        match self {
+            LockTarget::Axis(a) => Some(a),
+            LockTarget::Usage(_) => None,
+        }
+    }
 }
 
 impl From<Axis> for LockTarget {

@@ -226,7 +226,7 @@ mod mock_roundtrip {
         let set = device.query_patches().unwrap();
         assert!(set.applied && !set.pending);
         // A store after the apply leaves applied standing (the box does not un-apply on a store), so the
-        // derived pending stays clear — the sticky-bools bug reported applied and pending both true.
+        // derived pending stays clear; the sticky-bools bug reported applied and pending both true.
         device
             .set_patch(&Patch::new(PatchSection::Device, 10, [0x56]))
             .unwrap();

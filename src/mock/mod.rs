@@ -14,7 +14,7 @@ use crate::protocol::opcode::{
 };
 use crate::protocol::opcode::{
     CATCH_CLS_AXIS, CATCH_CLS_BTN, CATCH_CLS_KEY, CATCH_CLS_MEDIA, Q_TRANSFORMS, TF_F_FULL,
-    TF_INVERT, TF_REMAP, TF_SCALE, TF_SWAP, TRANSFORM_MAX_ENTRIES,
+    TF_REMAP, TF_SCALE, TF_SWAP, TRANSFORM_MAX_ENTRIES,
 };
 use crate::protocol::opcode::{
     CLIP_CFG_F_FINALIZED, CLIP_CFG_F_LOOP, CLIP_CFG_F_RETAIN, CLIP_CFG_F_RIDE, CLIP_TRIG_MAX,
@@ -573,13 +573,14 @@ impl State {
         if state == 0 {
             if let Some(i) = pos {
                 self.transforms.remove(i);
+                self.transform_full = false;
             }
             return;
         }
         // state 1: add or overwrite, after the same admissibility gauntlet the box runs.
         if op > TF_SCALE
             || !transform_pair_ok(op, sclass, sid, dclass, did)
-            || (op == TF_INVERT && scale == 0)
+            || (sclass != CATCH_CLS_AXIS && scale != LOCK_SCALE_PASS as i16)
             || !self.transform_field_present(sclass, sid)
             || !self.transform_field_present(dclass, did)
         {
@@ -1052,8 +1053,8 @@ fn clip_status_payload(c: &ClipStatus, cfg: &ClipSettings) -> Vec<u8> {
 // Which (op, class pair) a transform can take, mirroring transform_pair_ok in the firmware.
 fn transform_pair_ok(op: u8, sc: u8, si: u16, dc: u8, di: u16) -> bool {
     match op {
-        TF_INVERT | TF_SCALE => sc == CATCH_CLS_AXIS && dc == CATCH_CLS_AXIS && si == di,
-        TF_SWAP => sc == CATCH_CLS_AXIS && dc == CATCH_CLS_AXIS,
+        TF_SCALE => sc == CATCH_CLS_AXIS && dc == CATCH_CLS_AXIS && si == di,
+        TF_SWAP => sc == CATCH_CLS_AXIS && dc == CATCH_CLS_AXIS && si != di,
         TF_REMAP => {
             (sc == CATCH_CLS_AXIS && dc == CATCH_CLS_AXIS)
                 || (sc == CATCH_CLS_BTN && dc == CATCH_CLS_BTN)

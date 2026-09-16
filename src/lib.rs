@@ -33,8 +33,8 @@ pub use link::{DEFAULT_KEEPALIVE_CADENCE, DEFAULT_QUERY_TIMEOUT};
 /// handshake; exposing it lets a caller say so in its own words before connecting.
 pub use protocol::PROTO_VER;
 pub use protocol::opcode::{
-    LOCK_SCALE_BLOCK, LOCK_SCALE_MAX, LOCK_SCALE_PASS, PATCH_MAX_ENTRIES, REWRITE_MATCH_MAX,
-    REWRITE_MAX_ENTRIES, TRANSFORM_MAX_ENTRIES,
+    CATCH_MAX_ENTRIES, LOCK_SCALE_BLOCK, LOCK_SCALE_MAX, LOCK_SCALE_PASS, PATCH_MAX_ENTRIES,
+    REWRITE_MATCH_MAX, REWRITE_MAX_ENTRIES, TRANSFORM_MAX_ENTRIES,
 };
 pub use protocol::{DecodedFrame, FrameType};
 pub use transport::scan::find_medius;
@@ -49,8 +49,8 @@ pub use types::{
     PatchSection, PatchSet, PendingMotion, PortInfo, Rate, RebootTarget, RenderMode, RenderStatus,
     RewriteAction, RewriteClass, RewriteEntry, RewriteKey, RewriteRule, RewriteTable, Setup,
     SpreadStatus, Stamped, Stats, Timeline, Timestamped, TrafficClass, TrafficEvent,
-    TransferOutcome, TransferStatus, Transform, TransformField, TransformKey, TransformOp,
-    TransformState, Transforms, UpdateProgress, UpdateStatus, UpdateTarget, Usage, UsageSnapshot,
+    TransferOutcome, TransferStatus, Transform, TransformKey, TransformOp, Transforms,
+    UpdateProgress, UpdateStatus, UpdateTarget, Usage, UsageSnapshot,
     Version,
 };
 

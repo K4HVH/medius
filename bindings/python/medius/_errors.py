@@ -107,12 +107,24 @@ class RewritePayloadTooLargeError(MediusError):
     """A rewrite payload larger than the head the box holds for its class."""
 
 
+class RewriteTableFullError(MediusError):
+    """A rewrite rule added to a table that already holds `REWRITE_MAX_ENTRIES`."""
+
+
 class TransformOpFieldsError(MediusError):
     """A transform op that cannot address its `source`/`dest` pair."""
 
 
-class TransformInvertZeroScaleError(MediusError):
-    """A scale of 0 on an invert, which ignores its scale (so 0 would block the field it must pass)."""
+class TransformScaleRangeError(MediusError):
+    """A transform scale whose magnitude is past `LOCK_SCALE_MAX`, the widest the box applies."""
+
+
+class TransformUsageScaleError(MediusError):
+    """A transform percentage on a button, key or media source, which carries one bit."""
+
+
+class TransformTableFullError(MediusError):
+    """A transform added to a table that already holds `TRANSFORM_MAX_ENTRIES`."""
 
 
 class RawDirectionError(MediusError):
@@ -142,8 +154,11 @@ _STATUS_EXC = {
     Status.ERR_REWRITE_MASK_LENGTH: RewriteMaskLengthError,
     Status.ERR_REWRITE_ACTION_CLASS: RewriteActionClassError,
     Status.ERR_REWRITE_PAYLOAD_TOO_LARGE: RewritePayloadTooLargeError,
+    Status.ERR_REWRITE_TABLE_FULL: RewriteTableFullError,
     Status.ERR_TRANSFORM_OP_FIELDS: TransformOpFieldsError,
-    Status.ERR_TRANSFORM_INVERT_ZERO_SCALE: TransformInvertZeroScaleError,
+    Status.ERR_TRANSFORM_SCALE_RANGE: TransformScaleRangeError,
+    Status.ERR_TRANSFORM_USAGE_SCALE: TransformUsageScaleError,
+    Status.ERR_TRANSFORM_TABLE_FULL: TransformTableFullError,
     Status.ERR_RAW_DIRECTION: RawDirectionError,
 }
 

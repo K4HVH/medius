@@ -1,72 +1,82 @@
 use crate::error::{Error, Result};
 use crate::link::reconcile::StoredTransform;
 use crate::protocol::command::transform_payload;
-use crate::protocol::opcode::Q_TRANSFORMS;
+use crate::protocol::opcode::{LOCK_SCALE_PASS, Q_TRANSFORMS, TRANSFORM_MAX_ENTRIES};
 use crate::protocol::{FrameType, Resp, parse_resp};
-use crate::types::{Axis, Transform, TransformField, TransformOp, TransformState, Transforms};
+use crate::types::transform::TRANSFORM_SCALE_MAX;
+use crate::types::{Axis, LockTarget, Transform, Transforms};
 
 use super::Device;
+
+const SET: u8 = 1;
+const REMOVE: u8 = 0;
 
 impl Device {
     /// `TRANSFORM` (§3.15): install (add or overwrite) one field transform.
     ///
     /// A transform negates, scales, swaps or remaps a field the clone's descriptor already declares, on
     /// the semantic path where locks, riding and rendering run. Every emitted report stays one the real
-    /// device could produce, so a transform is **faithful and needs no**
-    /// [`allow_imperfect_clones`](Device::allow_imperfect_clones), unlike the rewrite/raw/patch layer.
+    /// device could produce, so a transform needs no
+    /// [`allow_imperfect_clones`](Device::allow_imperfect_clones).
+    ///
     /// An entry is keyed by its `(source, dest)`; setting one whose key exists overwrites its op and
-    /// scale.
+    /// scale in place, keeping its position. Position is the state: entries apply in installation
+    /// order, and two that write the same field do not commute.
     ///
     /// Transforms are session state, re-asserted on reconnect and held alive by the keepalive exactly
     /// like a [`lock`](Device::lock), and cleared on control-PC silence, [`reset`](Device::reset), a
     /// device detach, a link drop or a re-clone.
     ///
-    /// The crate rejects the two refusals it can see structurally: an op a class pair cannot take
-    /// ([`Error::TransformOpFields`]) and a `scale` of `0` on an
-    /// [`Invert`](crate::TransformOp::Invert) ([`Error::TransformInvertZeroScale`]). The
-    /// device-dependent refusals (a field the clone does not declare, a cross-class remap with no
-    /// destination collection, the eight-entry table full) are the box's to make; delivery is
-    /// fire-and-forget and [`query_transforms`](Device::query_transforms) confirms what it holds (a
-    /// refused entry is simply absent).
+    /// Delivery is fire-and-forget; [`query_transforms`](Device::query_transforms) confirms what the
+    /// box holds, and an entry naming a field the clone does not declare is absent from it.
     ///
     /// ```no_run
     /// # use medius::{Axis, Device, Result, Transform};
     /// # fn main() -> Result<()> {
     /// let device = Device::find()?;
-    /// device.transform(&Transform::invert(Axis::Y))?;             // flip vertical motion on the wire
+    /// device.transform(&Transform::invert(Axis::Y))?;              // flip vertical motion on the wire
     /// device.transform(&Transform::scale_axis(Axis::Wheel, 200))?; // double the wheel's detents
     /// # Ok(()) }
     /// ```
     pub fn transform(&self, t: &Transform) -> Result<()> {
         validate_transform(t)?;
-        self.transform_send(t, TransformState::Set)
+        // One guard for the capacity read and the send: taking it twice would deadlock, and releasing
+        // it between them would let a concurrent set take the last slot.
+        let _serial = self.link.reassert_guard();
+        {
+            let d = self.link.desired().lock();
+            if !d.holds_transform(to_stored(t).key()) && d.transform_count() >= TRANSFORM_MAX_ENTRIES
+            {
+                return Err(Error::TransformTableFull {
+                    limit: TRANSFORM_MAX_ENTRIES,
+                });
+            }
+        }
+        self.transform_send_locked(t, SET)
     }
 
-    /// The `TRANSFORM` set/remove send with no pre-validation, so the ergonomic helpers and the async
-    /// wrapper share one core. Records the entry (or its removal) for reconnect-replay before the write,
-    /// then rolls back if the frame never went out (the lock/rewrite pattern).
-    pub(crate) fn transform_send(&self, t: &Transform, state: TransformState) -> Result<()> {
-        let stored = to_stored(t);
+    /// The `TRANSFORM` set/remove send, so the ergonomic helpers and the async wrapper share one core.
+    pub(crate) fn transform_send(&self, t: &Transform, state: u8) -> Result<()> {
         // Serialise the DesiredState write and its send against the keepalive/reconnect re-assert so a
         // concurrent remove/clear can't interleave.
         let _serial = self.link.reassert_guard();
-        let undo = match state {
-            TransformState::Set => self.link.desired().lock().apply_transform(stored),
-            TransformState::Remove => self.link.desired().lock().remove_transform(stored.key()),
+        self.transform_send_locked(t, state)
+    }
+
+    /// Records the entry (or its removal) for reconnect-replay before the write, then rolls back if the
+    /// frame never went out. The caller holds the re-assert guard.
+    fn transform_send_locked(&self, t: &Transform, state: u8) -> Result<()> {
+        let stored = to_stored(t);
+        let undo = if state == SET {
+            self.link.desired().lock().apply_transform(stored)
+        } else {
+            self.link.desired().lock().remove_transform(stored.key())
         };
         let (sclass, sid) = t.source.class_id();
         let (dclass, did) = t.dest.class_id();
         let sent = self.link.send(
             FrameType::Transform,
-            &transform_payload(
-                t.op.as_u8(),
-                sclass,
-                sid,
-                dclass,
-                did,
-                t.scale,
-                state.as_u8(),
-            ),
+            &transform_payload(t.op.as_u8(), sclass, sid, dclass, did, t.scale, state),
         );
         if sent.is_err() {
             self.link.desired().lock().restore_transform(undo);
@@ -77,7 +87,7 @@ impl Device {
     /// `TRANSFORM` remove (§3.15): drop the transform keyed by this entry's `(source, dest)`. The op
     /// and scale are ignored. A no-op on the box if no such entry is held.
     pub fn untransform(&self, t: &Transform) -> Result<()> {
-        self.transform_send(t, TransformState::Remove)
+        self.transform_send(t, REMOVE)
     }
 
     /// `TRANSFORM` clear (§3.15): drop the whole transform table (the `class 0xFF, id 0xFFFF, state 0`
@@ -95,7 +105,7 @@ impl Device {
         // The clear sentinel: op is ignored, both classes 0xFF, both ids 0xFFFF, state 0.
         let sent = self.link.send(
             FrameType::Transform,
-            &transform_payload(0, 0xFF, 0xFFFF, 0xFF, 0xFFFF, 0, 0),
+            &transform_payload(0, 0xFF, 0xFFFF, 0xFF, 0xFFFF, 0, REMOVE),
         );
         if sent.is_err() {
             let mut d = self.link.desired().lock();
@@ -106,37 +116,34 @@ impl Device {
         sent
     }
 
-    /// Invert an axis on the wire: convenience for [`transform`](Device::transform) of
-    /// [`Transform::invert`].
-    pub fn invert(&self, axis: Axis) -> Result<()> {
+    /// Negate an axis on the wire: [`transform`](Device::transform) of [`Transform::invert`].
+    pub fn transform_invert(&self, axis: Axis) -> Result<()> {
         self.transform(&Transform::invert(axis))
     }
 
-    /// Weigh an axis by a signed percent (`200` doubles, `-50` halves and flips): convenience for
-    /// [`transform`](Device::transform) of [`Transform::scale_axis`]. Named `scale_transform` because
-    /// [`scale_axis`](Device::scale_axis) is the `LOCK` weigh, a different operation.
-    pub fn scale_transform(&self, axis: Axis, percent: i16) -> Result<()> {
+    /// Weigh an axis by a signed percent (`200` doubles, `-50` halves and flips):
+    /// [`transform`](Device::transform) of [`Transform::scale_axis`].
+    pub fn transform_scale(&self, axis: Axis, percent: i16) -> Result<()> {
         self.transform(&Transform::scale_axis(axis, percent))
     }
 
-    /// Exchange two axes on the wire: convenience for [`transform`](Device::transform) of
-    /// [`Transform::swap`].
-    pub fn swap(&self, a: Axis, b: Axis) -> Result<()> {
+    /// Exchange two axes on the wire: [`transform`](Device::transform) of [`Transform::swap`].
+    pub fn transform_swap(&self, a: Axis, b: Axis) -> Result<()> {
         self.transform(&Transform::swap(a, b))
     }
 
-    /// Remap a source field into a destination: convenience for [`transform`](Device::transform) of
+    /// Move a source field into a destination: [`transform`](Device::transform) of
     /// [`Transform::remap`].
-    pub fn remap(
+    pub fn transform_remap(
         &self,
-        source: impl Into<TransformField>,
-        dest: impl Into<TransformField>,
+        source: impl Into<LockTarget>,
+        dest: impl Into<LockTarget>,
     ) -> Result<()> {
         self.transform(&Transform::remap(source, dest))
     }
 
     /// `QUERY(TRANSFORMS)` → [`Transforms`] (§4.18): the whole transform table, read back as the
-    /// entries that rebuild it, plus the table-full flag. A refused entry is absent.
+    /// entries that rebuild it, in the order the box applies them, plus the table-full flag.
     pub fn query_transforms(&self) -> Result<Transforms> {
         let payload = self.link.query(Q_TRANSFORMS)?;
         match parse_resp(&payload) {
@@ -159,10 +166,9 @@ pub(crate) fn to_stored(t: &Transform) -> StoredTransform {
     }
 }
 
-/// The structural refusals the crate can make before the wire, mirroring the box's `transform_tab_set`:
-/// an op a class pair cannot take, and a `scale` of 0 on an [`Invert`](TransformOp::Invert) (which
-/// ignores the scale, so 0 would block a field the op is not meant to). The device-dependent refusals
-/// stay the box's.
+/// The refusals the crate can make before the wire, mirroring the box's own `transform_tab_set`: an op
+/// a class pair cannot take, a scale magnitude past what the box applies, and a percentage on a source
+/// that carries a single bit. Which fields the clone declares stays the box's to answer.
 pub(crate) fn validate_transform(t: &Transform) -> Result<()> {
     if !t.op.admits(t.source, t.dest) {
         return Err(Error::TransformOpFields {
@@ -171,8 +177,18 @@ pub(crate) fn validate_transform(t: &Transform) -> Result<()> {
             dst: t.dest,
         });
     }
-    if t.op == TransformOp::Invert && t.scale == 0 {
-        return Err(Error::TransformInvertZeroScale);
+    if t.scale > TRANSFORM_SCALE_MAX || t.scale < -TRANSFORM_SCALE_MAX {
+        return Err(Error::TransformScaleRange {
+            scale: t.scale,
+            max: TRANSFORM_SCALE_MAX,
+        });
+    }
+    if t.source_is_usage() && t.scale != LOCK_SCALE_PASS as i16 {
+        return Err(Error::TransformUsageScale {
+            src: t.source,
+            scale: t.scale,
+            pass: LOCK_SCALE_PASS as i16,
+        });
     }
     Ok(())
 }

@@ -48,9 +48,12 @@ class Status(IntEnum):
     ERR_REWRITE_MASK_LENGTH = 21
     ERR_REWRITE_ACTION_CLASS = 22
     ERR_REWRITE_PAYLOAD_TOO_LARGE = 23
-    ERR_TRANSFORM_OP_FIELDS = 24
-    ERR_TRANSFORM_INVERT_ZERO_SCALE = 25
-    ERR_RAW_DIRECTION = 26
+    ERR_REWRITE_TABLE_FULL = 24
+    ERR_TRANSFORM_OP_FIELDS = 25
+    ERR_TRANSFORM_SCALE_RANGE = 26
+    ERR_TRANSFORM_USAGE_SCALE = 27
+    ERR_TRANSFORM_TABLE_FULL = 28
+    ERR_RAW_DIRECTION = 29
 
 
 class DeviceKind(IntEnum):
@@ -377,15 +380,14 @@ class TransferStatus(IntEnum):
 class TransformOp(IntEnum):
     """The operation a `Transform` performs on its fields (§3.15).
 
-    `INVERT` and `SCALE` act on one axis (source == dest); `SWAP` exchanges two axes; `REMAP` moves a
-    source field into a destination (axis→axis or button→button in one report, or button→key /
-    button→media across classes).
+    `SCALE` acts on one axis (source == dest) and a scale of -100 negates it; `SWAP` exchanges two
+    axes; `REMAP` moves a source field into a destination (axis→axis or button→button in one report,
+    or button→key / button→media across classes).
     """
 
     REMAP = 0
     SWAP = 1
-    INVERT = 2
-    SCALE = 3
+    SCALE = 2
 
 
 class BusEventKind(IntEnum):

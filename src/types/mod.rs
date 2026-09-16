@@ -72,7 +72,7 @@ pub use spread::SpreadStatus;
 pub use stats::Stats;
 pub use transfer::{Setup, TransferOutcome, TransferStatus};
 pub use transform::{
-    Transform, TransformField, TransformKey, TransformOp, TransformState, Transforms,
+    Transform, TransformKey, TransformOp, Transforms,
 };
 pub use update::{
     ChipFirmware, FirmwareInfo, ImageState, UpdateProgress, UpdateStatus, UpdateTarget,

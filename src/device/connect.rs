@@ -94,7 +94,7 @@ impl Device {
         // Read CAPS once the version is confirmed, so the declared button count is known before the
         // caller takes any lock: a button blanket set before their own caps() call then re-asserts
         // every declared button across a reconnect instead of narrowing to the five named ones.
-        // Best-effort and bounded like a handshake attempt — a box with no device bound reports zero,
+        // Best-effort and bounded like a handshake attempt: a box with no device bound reports zero,
         // which is left uncached so the count falls back to the named buttons until a real caps().
         if let Ok(payload) = self.link.query_timeout(Q_CAPS, HANDSHAKE_ATTEMPT_TIMEOUT)
             && let Some(Resp::Caps(caps)) = parse_resp(&payload)

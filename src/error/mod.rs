@@ -45,6 +45,9 @@ pub enum Error {
     )]
     RewriteMaskLength { match_len: usize, mask_len: usize },
 
+    #[error("the box holds {limit} rewrite rules and they are all in use; remove one first")]
+    RewriteTableFull { limit: usize },
+
     #[error("{action:?} is not a valid action for a {class:?} rewrite rule")]
     RewriteActionClass {
         action: crate::types::RewriteAction,
@@ -64,20 +67,33 @@ pub enum Error {
     },
 
     #[error(
-        "a {op:?} transform cannot address {src:?} → {dst:?}: invert and scale are one axis, swap is \
-         two axes, and remap is axis→axis, button→button, button→key or button→media"
+        "a {op:?} transform cannot address {src:?} → {dst:?}: a scale is one axis, a swap is two \
+         axes, and a remap is axis→axis, button→button, button→key or button→media"
     )]
     TransformOpFields {
         op: crate::types::TransformOp,
-        src: crate::types::TransformField,
-        dst: crate::types::TransformField,
+        src: crate::types::LockTarget,
+        dst: crate::types::LockTarget,
     },
 
     #[error(
-        "an invert ignores its scale, so a scale of 0 (which would block the source) is contradictory \
-         and refused; leave the scale non-zero"
+        "a transform scale is a percent bounded by ±{max}, which is the widest the box applies; \
+         {scale} would be silently weighed at that bound instead"
     )]
-    TransformInvertZeroScale,
+    TransformScaleRange { scale: i16, max: i16 },
+
+    #[error(
+        "a {src:?} source carries one bit, so a transform on it takes only a full pass ({pass}); \
+         {scale} names a percentage a single bit cannot hold"
+    )]
+    TransformUsageScale {
+        src: crate::types::LockTarget,
+        scale: i16,
+        pass: i16,
+    },
+
+    #[error("the box holds {limit} transforms and they are all in use; remove one first")]
+    TransformTableFull { limit: usize },
 
     #[error("{class:?} arrives decoded and carries no packet, so a capture on it does nothing")]
     CaptureNotApplicable { class: CatchClass },
