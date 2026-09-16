@@ -429,6 +429,14 @@ fn with_blanket(
 /// box keeps: `MEDIUS_LOCK_SCALE_BLOCK` blocks it, `MEDIUS_LOCK_SCALE_PASS` passes it untouched, and
 /// above that amplifies to `MEDIUS_LOCK_SCALE_MAX` (2.55x). Lock and unlock are its two ends.
 ///
+/// The percent is signed, down to `MEDIUS_LOCK_SCALE_MIN`: a negative one weighs the physical value
+/// and reverses what it keeps, so `-100` on an axis is a plain inversion and `-50` keeps half of it the
+/// other way round. The slot is picked from the sign of the delta before the weigh, so a directional
+/// negative is well defined: `-100` on `MEDIUS_DIRECTION_POSITIVE` sends rightward motion left and
+/// leaves leftward motion alone. Only an axis takes one; a momentary usage carries one bit and has
+/// nothing to reverse, which is `MEDIUS_STATUS_ERR_LOCK_SCALE_USAGE`, and a magnitude outside
+/// `MEDIUS_LOCK_SCALE_MIN ..= MEDIUS_LOCK_SCALE_MAX` is `MEDIUS_STATUS_ERR_LOCK_SCALE_RANGE`.
+///
 /// A delta picks up at most two scales, its absolute direction's and its relative direction's, and
 /// they multiply. `MEDIUS_DIRECTION_BOTH` is the exception: it writes the scale to the two fixed
 /// signs and a full pass to the relative pair, so a `Both` of 50 is 50% with or without a bearing
@@ -447,7 +455,7 @@ pub unsafe extern "C" fn medius_device_scale(
     dev: *mut MediusDevice,
     target: MediusLockTarget,
     dir: u8,
-    scale: u8,
+    scale: i16,
 ) -> MediusStatus {
     with_lock_target(dev, target, dir, |d, t, dir| d.scale(t, dir, scale))
 }
@@ -460,7 +468,7 @@ pub unsafe extern "C" fn medius_device_scale_all(
     dev: *mut MediusDevice,
     what: u8,
     dir: u8,
-    scale: u8,
+    scale: i16,
 ) -> MediusStatus {
     with_blanket(dev, what, dir, |d, what, dir| d.scale_all(what, dir, scale))
 }
@@ -798,14 +806,14 @@ fn with_transform(
 }
 
 /// `TRANSFORM` (§3.15): install (add or overwrite) one field transform, fire-and-forget. A transform
-/// negates, scales, swaps or remaps a field the clone already declares, so it is faithful and needs
-/// no imperfect-clone opt-in, unlike the rewrite/raw/patch layer. An entry is keyed by its
-/// `(source, dest)`, and entries apply in the order they were installed. `transform->op` takes a
-/// `MEDIUS_TRANSFORM_OP_*` constant, and `source`/`dest` a `MEDIUS_LOCK_TARGET_KIND_*` axis or usage.
-/// Refusals: a combination the op cannot address is `MEDIUS_STATUS_ERR_TRANSFORM_OP_FIELDS`, a `scale`
-/// magnitude past `MEDIUS_LOCK_SCALE_MAX` is `..._TRANSFORM_SCALE_RANGE`, a percentage on a usage
-/// source is `..._TRANSFORM_USAGE_SCALE`, and one past `MEDIUS_MAX_TRANSFORM_ENTRIES` is
-/// `..._TRANSFORM_TABLE_FULL`. `medius_device_query_transforms` confirms what the box holds.
+/// swaps or remaps a field the clone already declares, so it is faithful and needs no imperfect-clone
+/// opt-in, unlike the rewrite/raw/patch layer. It is structural only: how much of a field survives is
+/// `medius_device_scale`'s, which runs first. An entry is keyed by its `(source, dest)`, and entries
+/// apply in the order they were installed. `transform->op` takes a `MEDIUS_TRANSFORM_OP_*` constant,
+/// and `source`/`dest` a `MEDIUS_LOCK_TARGET_KIND_*` axis or usage. Refusals: a combination the op
+/// cannot address is `MEDIUS_STATUS_ERR_TRANSFORM_OP_FIELDS`, and one past
+/// `MEDIUS_MAX_TRANSFORM_ENTRIES` is `..._TRANSFORM_TABLE_FULL`. `medius_device_query_transforms`
+/// confirms what the box holds.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_device_transform(
     dev: *mut MediusDevice,
@@ -814,8 +822,8 @@ pub unsafe extern "C" fn medius_device_transform(
     with_transform(dev, transform, |d, t| d.transform(&t))
 }
 
-/// `TRANSFORM` remove (§3.15): drop the transform keyed by `transform`'s `(source, dest)`; its op and
-/// scale are ignored. A no-op on the box if no such entry is held.
+/// `TRANSFORM` remove (§3.15): drop the transform keyed by `transform`'s `(source, dest)`; its op is
+/// ignored. A no-op on the box if no such entry is held.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_device_untransform(
     dev: *mut MediusDevice,
@@ -830,35 +838,14 @@ pub unsafe extern "C" fn medius_device_clear_transforms(dev: *mut MediusDevice) 
     with_device(dev, |d| d.clear_transforms())
 }
 
-/// Invert an axis on the wire: convenience for a `medius_device_transform` of an invert. `axis` takes
-/// a `MEDIUS_AXIS_*` constant; any other value is `MEDIUS_STATUS_ERR_INVALID_ARG`.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn medius_device_transform_invert(dev: *mut MediusDevice, axis: u8) -> MediusStatus {
-    let Some(axis) = axis_from_c(axis) else {
-        return fail(MediusStatus::ErrInvalidArg, "invalid axis");
-    };
-    with_device(dev, |d| d.transform_invert(axis))
-}
-
-/// Weigh an axis by a signed percent (`200` doubles, `-50` halves and flips): convenience for a
-/// `medius_device_transform` of a scale. `axis` takes a `MEDIUS_AXIS_*` constant; any other value is
-/// `MEDIUS_STATUS_ERR_INVALID_ARG`.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn medius_device_transform_scale(
-    dev: *mut MediusDevice,
-    axis: u8,
-    percent: i16,
-) -> MediusStatus {
-    let Some(axis) = axis_from_c(axis) else {
-        return fail(MediusStatus::ErrInvalidArg, "invalid axis");
-    };
-    with_device(dev, |d| d.transform_scale(axis, percent))
-}
-
 /// Exchange two axes on the wire: convenience for a `medius_device_transform` of a swap. `a` and `b`
 /// take `MEDIUS_AXIS_*` constants; any other value is `MEDIUS_STATUS_ERR_INVALID_ARG`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn medius_device_transform_swap(dev: *mut MediusDevice, a: u8, b: u8) -> MediusStatus {
+pub unsafe extern "C" fn medius_device_transform_swap(
+    dev: *mut MediusDevice,
+    a: u8,
+    b: u8,
+) -> MediusStatus {
     let (Some(a), Some(b)) = (axis_from_c(a), axis_from_c(b)) else {
         return fail(MediusStatus::ErrInvalidArg, "invalid axis");
     };

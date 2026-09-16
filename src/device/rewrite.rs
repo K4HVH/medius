@@ -38,7 +38,8 @@ impl Device {
         let _serial = self.link.reassert_guard();
         {
             let d = self.link.desired().lock();
-            if !d.holds_rewrite(&to_stored(rule).key()) && d.rewrite_count() >= REWRITE_MAX_ENTRIES {
+            if !d.holds_rewrite(&to_stored(rule).key()) && d.rewrite_count() >= REWRITE_MAX_ENTRIES
+            {
                 return Err(Error::RewriteTableFull {
                     limit: REWRITE_MAX_ENTRIES,
                 });

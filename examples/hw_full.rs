@@ -811,6 +811,44 @@ mod linux {
         }
 
         {
+            // SCALE: the percent is signed, and the sign is the box's inversion. A u8 anywhere on the
+            // path turns -100 into 156 and the axis amplifies instead of reversing, which is why the
+            // number is read back off the box rather than trusted from the write. A directional
+            // negative is well defined: the slot comes from the sign of the delta before the weigh.
+            let dev = device.as_ref().unwrap();
+            let _ = dev.reset();
+            let _ = dev.scale(Axis::X, Direction::Both, -100);
+            let _ = dev.scale(Axis::Y, Direction::Positive, -50);
+            let neg = dev.query_locks();
+            let n_ok = neg
+                .as_ref()
+                .map(|l| {
+                    l.scale_of(Axis::X, Direction::Positive) == -100
+                        && l.scale_of(Axis::X, Direction::Negative) == -100
+                        && l.scale_of(Axis::Y, Direction::Positive) == -50
+                        && l.scale_of(Axis::Y, Direction::Negative) == medius::LOCK_SCALE_PASS
+                        && !l.is_locked(Axis::X, Direction::Both)
+                })
+                .unwrap_or(false);
+            // A momentary usage carries one bit and has nothing to reverse, and a magnitude past the
+            // bound is refused rather than silently weighed at it. Both are crate-side, before the wire.
+            let n_usage = matches!(
+                dev.scale(Button::LEFT, Direction::Positive, -100),
+                Err(medius::Error::LockScaleUsage { .. })
+            );
+            let n_range = matches!(
+                dev.scale(Axis::X, Direction::Both, -1000),
+                Err(medius::Error::LockScaleRange { .. })
+            );
+            check(
+                "scale: a negative percent reverses the axis",
+                n_ok && n_usage && n_range,
+                format!("stored={n_ok}, usage refused={n_usage}, range refused={n_range}"),
+            );
+            let _ = dev.reset();
+        }
+
+        {
             // SCALE: a Both-direction scale must mean the same number whether or not a bearing is
             // live, so the box stores it on the fixed pair only and leaves the relative pair passing.
             // The host sent one number for four slots; only the box can say which slots took it.
@@ -1925,13 +1963,14 @@ mod linux {
                 ),
             );
 
-            // TRANSFORM (§3.15): invert Y (faithful, ungated — no opt-in needed), read it back, then
-            // clear. Y is present on any mouse, so the box holds the entry rather than refusing it.
-            let tset_ok = dev.transform_invert(Axis::Y).is_ok();
+            // TRANSFORM (§3.15): swap X and Y (faithful, ungated — no opt-in needed), read it back,
+            // then clear. Both axes are on any mouse, so the box holds the entry rather than refusing
+            // it. A transform only MOVES a field; what survives the move is the scale's, above.
+            let tset_ok = dev.transform_swap(Axis::X, Axis::Y).is_ok();
             let tq = dev.query_transforms();
             let tpresent = matches!(&tq, Ok(t)
-                if t.entries.iter().any(|e| e.op == TransformOp::Scale
-                    && e.source == Transform::invert(Axis::Y).source));
+                if t.entries.iter().any(|e| e.op == TransformOp::Swap
+                    && *e == Transform::swap(Axis::X, Axis::Y)));
             let thealth_on = dev.query_health().map(|h| h.transform_on).unwrap_or(false);
             let tclear_ok = dev.clear_transforms().is_ok();
             let tcleared = matches!(dev.query_transforms(), Ok(t) if t.entries.is_empty());
@@ -1939,43 +1978,46 @@ mod linux {
                 "transforms: field transform",
                 tset_ok && tpresent && thealth_on && tclear_ok && tcleared,
                 format!(
-                    "invert(Y) set={tset_ok}, present={tpresent}, health.transform_on={thealth_on}, \
+                    "swap(X,Y) set={tset_ok}, present={tpresent}, health.transform_on={thealth_on}, \
                      clear={tclear_ok}, cleared={tcleared}"
                 ),
             );
 
-            // The other three verbs, and the order the box applies them in: a scale installed before a
-            // remap onto the same axis composes differently the other way round, so the readback order
-            // is state, not presentation.
+            // The other verb, and the order the box applies them in: two remaps writing the same axis
+            // compose differently the other way round, so the readback order is state, not
+            // presentation. The second installed sorts BELOW the first by wire key, so a table held in
+            // key order would come back swapped.
             let _ = dev.clear_transforms();
-            let ord_ok = dev.transform_scale(Axis::Y, 150).is_ok()
+            let ord_ok = dev.transform_remap(Axis::Wheel, Axis::Y).is_ok()
                 && dev.transform_remap(Axis::X, Axis::Y).is_ok();
             let ord = dev.query_transforms();
             let ord_right = matches!(&ord, Ok(t) if t.entries.len() == 2
-                && t.entries[0] == Transform::scale_axis(Axis::Y, 150)
+                && t.entries[0] == Transform::remap(Axis::Wheel, Axis::Y)
                 && t.entries[1] == Transform::remap(Axis::X, Axis::Y));
-            let swap_ok = dev.clear_transforms().is_ok() && dev.transform_swap(Axis::X, Axis::Y).is_ok();
-            let swap_present = matches!(dev.query_transforms(), Ok(t)
-                if t.entries.iter().any(|e| e.op == TransformOp::Swap));
+            // An overwrite keeps its row: same key, new op, still first.
+            let ow_ok = dev.transform_swap(Axis::Wheel, Axis::Y).is_ok();
+            let ow_right = matches!(dev.query_transforms(), Ok(t) if t.entries.len() == 2
+                && t.entries[0] == Transform::swap(Axis::Wheel, Axis::Y));
             let _ = dev.clear_transforms();
             check(
-                "transforms: scale, swap, remap and apply order",
-                ord_ok && ord_right && swap_ok && swap_present,
-                format!("set={ord_ok}, readback in install order={ord_right}, swap={swap_ok}/{swap_present}"),
+                "transforms: swap, remap, apply order and overwrite in place",
+                ord_ok && ord_right && ow_ok && ow_right,
+                format!(
+                    "set={ord_ok}, readback in install order={ord_right}, overwrite={ow_ok}/{ow_right}"
+                ),
             );
 
-            // The four refusals the crate makes before the wire. Each must be refused AND leave the
+            // The two refusals the crate makes before the wire. Each must be refused AND leave the
             // table alone, so a rejected call cannot half-apply.
-            let r_pair = dev.transform(&Transform::new(TransformOp::Swap, Axis::X, Axis::X, 100)).is_err();
-            let r_range = dev.transform(&Transform::scale_axis(Axis::X, 1000)).is_err();
-            let r_usage = dev
-                .transform(&Transform::remap(Button::SIDE1, Button::SIDE2).with_scale(50))
+            let r_pair = dev
+                .transform(&Transform::new(TransformOp::Swap, Axis::X, Button::SIDE1))
                 .is_err();
+            let r_self = dev.transform(&Transform::remap(Axis::X, Axis::X)).is_err();
             let r_clean = matches!(dev.query_transforms(), Ok(t) if t.entries.is_empty());
             check(
                 "transforms: refusals before the wire",
-                r_pair && r_range && r_usage && r_clean,
-                format!("pair={r_pair}, range={r_range}, usage-scale={r_usage}, table untouched={r_clean}"),
+                r_pair && r_self && r_clean,
+                format!("pair={r_pair}, field-onto-itself={r_self}, table untouched={r_clean}"),
             );
 
             let _ = dev.allow_imperfect_clones(false);

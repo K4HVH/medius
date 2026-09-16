@@ -99,12 +99,16 @@
 #define MEDIUS_CLOCK_RATE_NONE INT32_MIN
 
 // `LOCK` scale: percent of the physical value kept. 0 blocks, 100 passes it untouched, above 100
-// amplifies, to 255 (2.55x).
+// amplifies, to 255 (2.55x), and a negative one reverses what it keeps, to `MEDIUS_LOCK_SCALE_MIN`.
 #define MEDIUS_LOCK_SCALE_BLOCK 0
 
 #define MEDIUS_LOCK_SCALE_PASS 100
 
 #define MEDIUS_LOCK_SCALE_MAX 255
+
+// The most a `LOCK` scale can reverse by: `-100` is a plain inversion, `-50` keeps half of it the
+// other way round. Axes only; a momentary usage carries one bit and has nothing to reverse.
+#define MEDIUS_LOCK_SCALE_MIN -255
 
 // The bearing window the box holds before any host sets one, in ms.
 #define MEDIUS_BEARING_WINDOW_DEFAULT_MS 20
@@ -146,22 +150,23 @@ enum MediusStatus
     MEDIUS_STATUS_ERR_RESERVED_ID = 18,
     // `MEDIUS_DIRECTION_WITH` / `_AGAINST` on something with no bearing to measure them against.
     MEDIUS_STATUS_ERR_RELATIVE_DIRECTION = 19,
+    // A lock scale outside `MEDIUS_LOCK_SCALE_MIN ..= MEDIUS_LOCK_SCALE_MAX`.
+    MEDIUS_STATUS_ERR_LOCK_SCALE_RANGE = 20,
+    // A negative (reversing) lock scale on a button, key or media usage, which carries one bit and has
+    // nothing to reverse.
+    MEDIUS_STATUS_ERR_LOCK_SCALE_USAGE = 21,
     // An advanced control layer call with the imperfect-clone opt-in off, which gates the whole layer.
-    MEDIUS_STATUS_ERR_IMPERFECT_REQUIRED = 20,
+    MEDIUS_STATUS_ERR_IMPERFECT_REQUIRED = 22,
     // A rewrite rule whose `match` and `mask` are different lengths.
-    MEDIUS_STATUS_ERR_REWRITE_MASK_LENGTH = 21,
+    MEDIUS_STATUS_ERR_REWRITE_MASK_LENGTH = 23,
     // A rewrite action that is not valid for its class (a report-only or control-only action misused).
-    MEDIUS_STATUS_ERR_REWRITE_ACTION_CLASS = 22,
+    MEDIUS_STATUS_ERR_REWRITE_ACTION_CLASS = 24,
     // A rewrite payload larger than the head the box holds for its class.
-    MEDIUS_STATUS_ERR_REWRITE_PAYLOAD_TOO_LARGE = 23,
+    MEDIUS_STATUS_ERR_REWRITE_PAYLOAD_TOO_LARGE = 25,
     // A rewrite rule added to a table that already holds `MEDIUS_MAX_REWRITE_ENTRIES`.
-    MEDIUS_STATUS_ERR_REWRITE_TABLE_FULL = 24,
+    MEDIUS_STATUS_ERR_REWRITE_TABLE_FULL = 26,
     // A transform op that cannot address its `source`/`dest` pair.
-    MEDIUS_STATUS_ERR_TRANSFORM_OP_FIELDS = 25,
-    // A transform scale whose magnitude is past `MEDIUS_LOCK_SCALE_MAX`, the widest the box applies.
-    MEDIUS_STATUS_ERR_TRANSFORM_SCALE_RANGE = 26,
-    // A transform percentage on a button, key or media source, which carries one bit rather than a magnitude.
-    MEDIUS_STATUS_ERR_TRANSFORM_USAGE_SCALE = 27,
+    MEDIUS_STATUS_ERR_TRANSFORM_OP_FIELDS = 27,
     // A transform added to a table that already holds `MEDIUS_MAX_TRANSFORM_ENTRIES`.
     MEDIUS_STATUS_ERR_TRANSFORM_TABLE_FULL = 28,
     // A raw injection direction other than `MEDIUS_DIRECTION_POSITIVE` (IN) or `MEDIUS_DIRECTION_NEGATIVE` (OUT).
@@ -845,13 +850,10 @@ enum MediusTransformOp
   : uint8_t
 #endif // defined(__cplusplus) || __STDC_VERSION__ >= 202311L
  {
-    // Move a source field's contribution into a destination, clearing the source.
+    // Move a source field's value into a destination, clearing the source.
     MEDIUS_TRANSFORM_OP_REMAP = 0,
     // Exchange two axes: read both, then write both, so it is not two remaps.
     MEDIUS_TRANSFORM_OP_SWAP = 1,
-    // Weigh one axis by the signed scale. A scale of -100 negates it, exactly; there is no separate
-    // invert op.
-    MEDIUS_TRANSFORM_OP_SCALE = 2,
 };
 #ifndef __cplusplus
 #if __STDC_VERSION__ >= 202311L
@@ -1136,14 +1138,13 @@ typedef struct MediusPatchSet {
     struct MediusPatchEntry entries[MEDIUS_MAX_PATCH_ENTRIES];
 } MediusPatchSet;
 
-// One field transform (§3.15): an operation, the `source` field it reads, the `dest` field it
-// writes, and a signed scale.
+// One field transform (§3.15): an operation, the `source` field it reads and the `dest` field it
+// writes.
 //
 // `source` and `dest` reuse `MediusLockTarget` (an axis `kind`, or `Usage` with `usage` read): the
-// transform field space is the lock-target space. The **signed scale** is a percent carrying a sign:
-// `-100` inverts, `100` is identity, `200` doubles, `-50` halves and flips, `0` blocks the source.
-// `Invert` ignores it and the box refuses a `0`. The same shape `medius_device_query_transforms`
-// reads back, so a read entry replays as a set.
+// transform field space is the lock-target space. A transform is structural only: how much of a field
+// survives is `medius_device_scale`'s, whose percent is signed. The same shape
+// `medius_device_query_transforms` reads back, so a read entry replays as a set.
 typedef struct MediusTransform {
     // One of `MEDIUS_TRANSFORM_OP_*`. A byte rather than `MediusTransformOp`, so the boundary can
     // validate it before anything reads it as one; C++ renders the enum as `enum : uint8_t`, so
@@ -1151,10 +1152,8 @@ typedef struct MediusTransform {
     uint8_t op;
     // The field the transform reads.
     struct MediusLockTarget source;
-    // The field the transform writes (equal to `source` for invert and scale).
+    // The field the transform writes.
     struct MediusLockTarget dest;
-    // The signed percent (see the type docs). Ignored by `Invert`.
-    int16_t scale;
 } MediusTransform;
 
 // Decoded `RESP(TRANSFORMS)` (§4.18): the whole transform table in `entries[0..n]`, in installation
@@ -1266,14 +1265,14 @@ typedef struct MediusLockEntry {
     // as one; C++ renders the enum as `enum : uint8_t`, so assigning this to a `MediusDirection`
     // there needs a cast.
     uint8_t direction;
-    // Percent of the physical value kept: 0 blocks, 100 passes, above 100 amplifies. A momentary
-    // usage carries one bit, so the box stores the block or pass it amounts to and one never reports a
-    // value in between.
+    // Percent of the physical value kept: 0 blocks, 100 passes, above 100 amplifies, and a negative
+    // one reverses what it keeps. A momentary usage carries one bit, so the box stores the block or
+    // pass it amounts to and one never reports a value in between.
     //
-    // This is the figure the box applies, not the byte it was sent: in `MEDIUS_BEARING_MODE_VECTOR`
+    // This is the figure the box applies, not the number it was sent: in `MEDIUS_BEARING_MODE_VECTOR`
     // one relative scale governs both axes, the lower of X's and Y's, and both relative entries
     // carry that number.
-    uint8_t scale;
+    int16_t scale;
 } MediusLockEntry;
 
 // The active locks: `entries[0..n]`. Use `medius_locks_is_locked` to test a target/direction.
@@ -1890,6 +1889,14 @@ MediusStatus medius_device_force_release(struct MediusDevice *dev, struct Medius
 // box keeps: `MEDIUS_LOCK_SCALE_BLOCK` blocks it, `MEDIUS_LOCK_SCALE_PASS` passes it untouched, and
 // above that amplifies to `MEDIUS_LOCK_SCALE_MAX` (2.55x). Lock and unlock are its two ends.
 //
+// The percent is signed, down to `MEDIUS_LOCK_SCALE_MIN`: a negative one weighs the physical value
+// and reverses what it keeps, so `-100` on an axis is a plain inversion and `-50` keeps half of it the
+// other way round. The slot is picked from the sign of the delta before the weigh, so a directional
+// negative is well defined: `-100` on `MEDIUS_DIRECTION_POSITIVE` sends rightward motion left and
+// leaves leftward motion alone. Only an axis takes one; a momentary usage carries one bit and has
+// nothing to reverse, which is `MEDIUS_STATUS_ERR_LOCK_SCALE_USAGE`, and a magnitude outside
+// `MEDIUS_LOCK_SCALE_MIN ..= MEDIUS_LOCK_SCALE_MAX` is `MEDIUS_STATUS_ERR_LOCK_SCALE_RANGE`.
+//
 // A delta picks up at most two scales, its absolute direction's and its relative direction's, and
 // they multiply. `MEDIUS_DIRECTION_BOTH` is the exception: it writes the scale to the two fixed
 // signs and a full pass to the relative pair, so a `Both` of 50 is 50% with or without a bearing
@@ -1906,7 +1913,7 @@ MediusStatus medius_device_force_release(struct MediusDevice *dev, struct Medius
 MediusStatus medius_device_scale(struct MediusDevice *dev,
                                  struct MediusLockTarget target,
                                  uint8_t dir,
-                                 uint8_t scale);
+                                 int16_t scale);
 
 // Weigh a whole class blanket (cursor aim, wheel, all buttons, all keys, or all media). `what` takes
 // a `MEDIUS_BLANKET_*` constant and `dir` a `MEDIUS_DIRECTION_*` one; any other value is
@@ -1914,7 +1921,7 @@ MediusStatus medius_device_scale(struct MediusDevice *dev,
 MediusStatus medius_device_scale_all(struct MediusDevice *dev,
                                      uint8_t what,
                                      uint8_t dir,
-                                     uint8_t scale);
+                                     int16_t scale);
 
 // Lock a target (axis or usage) on an edge. A button, key, and media usage all lock the same way.
 // `dir` takes a `MEDIUS_DIRECTION_*` constant; any other value is `MEDIUS_STATUS_ERR_INVALID_ARG`.
@@ -2042,34 +2049,24 @@ MediusStatus medius_device_query_patch_entry(struct MediusDevice *dev,
                                              struct MediusPatch *out);
 
 // `TRANSFORM` (§3.15): install (add or overwrite) one field transform, fire-and-forget. A transform
-// negates, scales, swaps or remaps a field the clone already declares, so it is faithful and needs
-// no imperfect-clone opt-in, unlike the rewrite/raw/patch layer. An entry is keyed by its
-// `(source, dest)`, and entries apply in the order they were installed. `transform->op` takes a
-// `MEDIUS_TRANSFORM_OP_*` constant, and `source`/`dest` a `MEDIUS_LOCK_TARGET_KIND_*` axis or usage.
-// Refusals: a combination the op cannot address is `MEDIUS_STATUS_ERR_TRANSFORM_OP_FIELDS`, a `scale`
-// magnitude past `MEDIUS_LOCK_SCALE_MAX` is `..._TRANSFORM_SCALE_RANGE`, a percentage on a usage
-// source is `..._TRANSFORM_USAGE_SCALE`, and one past `MEDIUS_MAX_TRANSFORM_ENTRIES` is
-// `..._TRANSFORM_TABLE_FULL`. `medius_device_query_transforms` confirms what the box holds.
+// swaps or remaps a field the clone already declares, so it is faithful and needs no imperfect-clone
+// opt-in, unlike the rewrite/raw/patch layer. It is structural only: how much of a field survives is
+// `medius_device_scale`'s, which runs first. An entry is keyed by its `(source, dest)`, and entries
+// apply in the order they were installed. `transform->op` takes a `MEDIUS_TRANSFORM_OP_*` constant,
+// and `source`/`dest` a `MEDIUS_LOCK_TARGET_KIND_*` axis or usage. Refusals: a combination the op
+// cannot address is `MEDIUS_STATUS_ERR_TRANSFORM_OP_FIELDS`, and one past
+// `MEDIUS_MAX_TRANSFORM_ENTRIES` is `..._TRANSFORM_TABLE_FULL`. `medius_device_query_transforms`
+// confirms what the box holds.
 MediusStatus medius_device_transform(struct MediusDevice *dev,
                                      const struct MediusTransform *transform);
 
-// `TRANSFORM` remove (§3.15): drop the transform keyed by `transform`'s `(source, dest)`; its op and
-// scale are ignored. A no-op on the box if no such entry is held.
+// `TRANSFORM` remove (§3.15): drop the transform keyed by `transform`'s `(source, dest)`; its op is
+// ignored. A no-op on the box if no such entry is held.
 MediusStatus medius_device_untransform(struct MediusDevice *dev,
                                        const struct MediusTransform *transform);
 
 // `TRANSFORM` clear (§3.15): drop the whole transform table.
 MediusStatus medius_device_clear_transforms(struct MediusDevice *dev);
-
-// Invert an axis on the wire: convenience for a `medius_device_transform` of an invert. `axis` takes
-// a `MEDIUS_AXIS_*` constant; any other value is `MEDIUS_STATUS_ERR_INVALID_ARG`.
-MediusStatus medius_device_transform_invert(struct MediusDevice *dev,
-                                            uint8_t axis);
-
-// Weigh an axis by a signed percent (`200` doubles, `-50` halves and flips): convenience for a
-// `medius_device_transform` of a scale. `axis` takes a `MEDIUS_AXIS_*` constant; any other value is
-// `MEDIUS_STATUS_ERR_INVALID_ARG`.
-MediusStatus medius_device_transform_scale(struct MediusDevice *dev, uint8_t axis, int16_t percent);
 
 // Exchange two axes on the wire: convenience for a `medius_device_transform` of a swap. `a` and `b`
 // take `MEDIUS_AXIS_*` constants; any other value is `MEDIUS_STATUS_ERR_INVALID_ARG`.
@@ -2234,10 +2231,11 @@ struct MediusLockTarget medius_lock_target_axis(uint8_t kind);
 struct MediusLockTarget medius_lock_target_usage(struct MediusUsage usage);
 
 // The scale in effect on `target`/`dir`: percent of the physical value kept, so
-// `MEDIUS_LOCK_SCALE_PASS` when nothing weighs it. `Both` reports the lowest across every direction.
+// `MEDIUS_LOCK_SCALE_PASS` when nothing weighs it. `Both` reports the lowest across every direction,
+// where a reversing (negative) one is lower than any pass.
 // Mirrors `medius::Locks::scale_of`. `dir` takes a `MEDIUS_DIRECTION_*` constant; any other value
 // names no entry and reads as `MEDIUS_LOCK_SCALE_PASS`.
-uint8_t medius_locks_scale_of(const struct MediusLocks *locks,
+int16_t medius_locks_scale_of(const struct MediusLocks *locks,
                               struct MediusLockTarget target,
                               uint8_t dir);
 

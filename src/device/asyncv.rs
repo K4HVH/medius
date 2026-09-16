@@ -14,8 +14,7 @@ use crate::types::{
     EmitPaceStatus, FirmwareInfo, Health, ImperfectStatus, LedMode, LedTarget, LockTarget, Locks,
     Motion, MoveTiming, Patch, PatchSet, PendingMotion, Rate, RebootTarget, RenderMode,
     RenderStatus, RewriteRule, RewriteTable, Setup, SpreadStatus, Stats, TransferOutcome,
-    TransferStatus, Transform, Transforms, UpdateProgress, UpdateTarget, Usage,
-    Version,
+    TransferStatus, Transform, Transforms, UpdateProgress, UpdateTarget, Usage, Version,
 };
 
 use super::Device;
@@ -167,18 +166,18 @@ impl AsyncDevice {
         &self,
         target: impl Into<LockTarget>,
         direction: Direction,
-        scale: u8,
+        scale: i16,
     ) -> Result<()> {
         self.dev().scale(target, direction, scale)
     }
 
     /// `LOCK`: weigh a relative axis by sign. Instant; see [`Device::scale_axis`].
-    pub fn scale_axis(&self, axis: Axis, direction: Direction, scale: u8) -> Result<()> {
+    pub fn scale_axis(&self, axis: Axis, direction: Direction, scale: i16) -> Result<()> {
         self.dev().scale_axis(axis, direction, scale)
     }
 
     /// `LOCK`: weigh a whole [`Blanket`] group. Instant; see [`Device::scale_all`].
-    pub fn scale_all(&self, what: Blanket, direction: Direction, scale: u8) -> Result<()> {
+    pub fn scale_all(&self, what: Blanket, direction: Direction, scale: i16) -> Result<()> {
         self.dev().scale_all(what, direction, scale)
     }
 
@@ -659,16 +658,6 @@ impl AsyncDevice {
     /// `TRANSFORM` clear: drop the whole transform table. Instant; see [`Device::clear_transforms`].
     pub fn clear_transforms(&self) -> Result<()> {
         self.dev().clear_transforms()
-    }
-
-    /// `TRANSFORM`: negate an axis. Instant; see [`Device::transform_invert`].
-    pub fn transform_invert(&self, axis: Axis) -> Result<()> {
-        self.dev().transform_invert(axis)
-    }
-
-    /// `TRANSFORM`: weigh an axis by a signed percent. Instant; see [`Device::transform_scale`].
-    pub fn transform_scale(&self, axis: Axis, percent: i16) -> Result<()> {
-        self.dev().transform_scale(axis, percent)
     }
 
     /// `TRANSFORM`: exchange two axes. Instant; see [`Device::transform_swap`].

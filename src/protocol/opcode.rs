@@ -268,9 +268,8 @@ pub const REWRITE_MATCH_MAX: usize = 16;
 pub const TF_REMAP: u8 = 0;
 /// Exchange two axes (read both, write both).
 pub const TF_SWAP: u8 = 1;
-/// Weigh one axis (source == destination) by the signed scale; `-100` negates it exactly. The highest
-/// op: the box refuses a byte above it (`CTRL_XF_OP_COUNT` is `TF_SCALE + 1`).
-pub const TF_SCALE: u8 = 2;
+/// Ops the box admits (`CTRL_XF_OP_COUNT`): a byte at or above it is refused.
+pub const TF_OP_COUNT: u8 = 2;
 
 /// Field-transform table summary: `QUERY [Q_TRANSFORMS]` → `RESP(TRANSFORMS)` (flags + list) (§3.15).
 pub const Q_TRANSFORMS: u8 = 16;
@@ -299,11 +298,16 @@ pub const LOCK_DIR_POS: u8 = 1;
 pub const LOCK_DIR_NEG: u8 = 2;
 pub const LOCK_DIR_WITH: u8 = 3;
 pub const LOCK_DIR_AGAINST: u8 = 4;
-/// `LOCK` scale byte (§3.8): percent of the physical value kept. 0 blocks, 100 passes it untouched,
-/// above 100 amplifies, to a ceiling of 255 (2.55x).
-pub const LOCK_SCALE_BLOCK: u8 = 0;
-pub const LOCK_SCALE_PASS: u8 = 100;
-pub const LOCK_SCALE_MAX: u8 = 255;
+/// `LOCK` scale (§3.8), an `i16` on the wire: percent of the physical value kept. 0 blocks, 100 passes
+/// it untouched, above 100 amplifies, to a ceiling of 255 (2.55x).
+pub const LOCK_SCALE_BLOCK: i16 = 0;
+pub const LOCK_SCALE_PASS: i16 = 100;
+pub const LOCK_SCALE_MAX: i16 = 255;
+/// The most a `LOCK` scale can REVERSE by: a negative scale weighs the physical value and reverses what
+/// it keeps, so `-100` is a plain inversion and `-50` keeps half of it the other way round. The slot is
+/// picked from the sign of the delta before the weigh, so a directional negative is well defined. A
+/// momentary usage carries one bit and has nothing to reverse, so it takes `0 ..= LOCK_SCALE_MAX`.
+pub const LOCK_SCALE_MIN: i16 = -LOCK_SCALE_MAX;
 
 /// `CAPS` kbd_flags: keys are an NKRO bitmap (`n_keys` = 0xFF), else a keycode array (§4.4).
 pub const KBC_NKRO: u8 = 0x01;

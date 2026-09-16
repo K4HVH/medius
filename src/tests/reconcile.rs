@@ -477,12 +477,11 @@ use crate::link::reconcile::StoredTransform;
 
 fn stored_xf(sclass: u8, sid: u16, dclass: u8, did: u16) -> StoredTransform {
     StoredTransform {
-        op: 2, // Invert
+        op: 0, // Remap
         sclass,
         sid,
         dclass,
         did,
-        scale: 100,
     }
 }
 
@@ -499,12 +498,11 @@ fn transform_overwrite_keeps_one_row() {
     let mut d = DesiredState::default();
     d.apply_transform(stored_xf(3, 1, 3, 1));
     let mut r = stored_xf(3, 1, 3, 1);
-    r.op = 3; // same key (source, dest), new op
-    r.scale = 200;
+    r.op = 1; // same key (source, dest), new op
     d.apply_transform(r);
     let held = d.held_transforms();
     assert_eq!(held.len(), 1);
-    assert_eq!((held[0].op, held[0].scale), (3, 200));
+    assert_eq!(held[0].op, 1);
 }
 
 #[test]

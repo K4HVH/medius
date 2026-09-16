@@ -266,11 +266,11 @@ class Stats:
 class LockEntry:
     """One weighed direction: what it addresses, which way, and how much of it survives.
 
-    `scale` is a percent of the physical value: 0 blocks, 100 passes untouched, above 100 amplifies.
-    A momentary usage carries one bit, so the box stores the block or pass it amounts to and one never
-    reports a value in between.
+    `scale` is a percent of the physical value: 0 blocks, 100 passes untouched, above 100 amplifies,
+    and a negative one reverses what it keeps. A momentary usage carries one bit, so the box stores the
+    block or pass it amounts to and one never reports a value in between.
 
-    It is the figure the box applies, not the byte it was sent: in `BearingMode.VECTOR` one relative
+    It is the figure the box applies, not the number it was sent: in `BearingMode.VECTOR` one relative
     scale governs both axes, the lower of X's and Y's, and both relative entries carry it.
     """
 
@@ -302,7 +302,8 @@ class Locks:
 
     def scale_of(self, target: "LockTarget", direction) -> int:
         """The percent of the physical value kept on that target and direction; 100 when nothing
-        weighs it. `Direction.BOTH` reports the lowest across every direction.
+        weighs it. `Direction.BOTH` reports the lowest across every direction, where a reversing
+        (negative) one is lower than any pass.
         """
         c = locks_to_c(self)
         return int(
@@ -482,43 +483,31 @@ class PatchSet:
 class Transform:
     """One field transform (§3.15), keyed by ``(source, dest)``.
 
-    A transform negates, scales, swaps or remaps a field the clone already declares, on the semantic
-    path where locks, riding and rendering run, so every emitted report stays one the real device
-    could produce. Unlike the rewrite/raw/patch layer it is faithful and needs no imperfect-clone
-    opt-in. ``source`` and ``dest`` are `LockTarget`\\ s (an axis, or a momentary usage). The signed
-    ``scale`` is a percent carrying a sign: ``-100`` inverts, ``100`` is identity, ``200`` doubles,
-    ``-50`` halves and flips, ``0`` blocks the source; ``INVERT`` ignores it.
+    A transform swaps or remaps a field the clone already declares, on the semantic path where locks,
+    riding and rendering run, so every emitted report stays one the real device could produce. Unlike
+    the rewrite/raw/patch layer it is faithful and needs no imperfect-clone opt-in. ``source`` and
+    ``dest`` are `LockTarget`\\ s (an axis, or a momentary usage).
 
-    Build one with `invert`, `scale_axis`, `swap`, `remap`, or the constructor for the general case.
+    It is structural only: how much of a field survives is `Device.scale`'s, which runs first and
+    whose percent is signed. A transform carries what the weigh left.
+
+    Build one with `swap`, `remap`, or the constructor for the general case.
     """
 
     op: TransformOp
     source: "LockTarget"
     dest: "LockTarget"
-    scale: int = LOCK_SCALE_PASS
-
-    @classmethod
-    def invert(cls, axis) -> "Transform":
-        """Negate an axis: a `TransformOp.SCALE` of -100, which the box applies exactly."""
-        t = LockTarget.axis(axis)
-        return cls(TransformOp.SCALE, t, t, -LOCK_SCALE_PASS)
-
-    @classmethod
-    def scale_axis(cls, axis, percent: int) -> "Transform":
-        """Weigh an axis by a signed percent (``200`` doubles, ``-50`` halves and flips)."""
-        t = LockTarget.axis(axis)
-        return cls(TransformOp.SCALE, t, t, percent)
 
     @classmethod
     def swap(cls, a, b) -> "Transform":
         """Exchange two axes atomically (read both, then write both)."""
-        return cls(TransformOp.SWAP, LockTarget.axis(a), LockTarget.axis(b), LOCK_SCALE_PASS)
+        return cls(TransformOp.SWAP, LockTarget.axis(a), LockTarget.axis(b))
 
     @classmethod
     def remap(cls, source, dest) -> "Transform":
-        """Move a source field's contribution into a destination, clearing the source. ``source`` and
+        """Move a source field's value into a destination, clearing the source. ``source`` and
         ``dest`` are a `LockTarget`, an `Axis`, or a usage (`Usage`/`Button`/`Key`/`MediaKey`)."""
-        return cls(TransformOp.REMAP, _as_lock_target(source), _as_lock_target(dest), LOCK_SCALE_PASS)
+        return cls(TransformOp.REMAP, _as_lock_target(source), _as_lock_target(dest))
 
     def with_scale(self, scale: int) -> "Transform":
         """This transform with a different signed scale, for a scaled `swap` or `remap`."""
@@ -529,7 +518,7 @@ class Transform:
 class Transforms:
     """Decoded RESP(TRANSFORMS) (§4.18): the whole transform table, in installation order.
 
-    Each entry is what you would send to reproduce it; ``table_full`` flags that the eight-entry
+    Each entry is what you would send to reproduce it; ``table_full`` flags that the table's
     ceiling refused a further entry.
     """
 
@@ -1477,7 +1466,6 @@ def transform_to_c(t) -> "_native.MediusTransform":
     c.op = int(_enum(t.op, TransformOp, "op"))
     c.source = _as_lock_target(t.source)._c
     c.dest = _as_lock_target(t.dest)._c
-    c.scale = _i16(t.scale, "scale")
     return c
 
 
@@ -1486,7 +1474,6 @@ def transform_from_c(c) -> Transform:
         TransformOp(c.op),
         lock_target_from_c(c.source),
         lock_target_from_c(c.dest),
-        int(c.scale),
     )
 
 
@@ -1701,7 +1688,7 @@ def locks_to_c(locks) -> "_native.MediusLocks":
             target=e.target._c,
             is_blanket=bool(e.is_blanket),
             direction=int(_enum(e.direction, Direction, f"entries[{i}].direction")),
-            scale=_u8(e.scale, f"entries[{i}].scale"),
+            scale=_i16(e.scale, f"entries[{i}].scale"),
         )
     return c
 

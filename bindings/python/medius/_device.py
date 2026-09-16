@@ -216,6 +216,14 @@ class Device:
         `scale` is the percent of the physical value the box keeps: 0 blocks, 100 passes it
         untouched, above that amplifies to 255 (2.55x). `lock` and `unlock` are its two ends.
 
+        The percent is signed, down to `LOCK_SCALE_MIN`: a negative one weighs the physical value and
+        reverses what it keeps, so -100 on an axis is a plain inversion and -50 keeps half of it the
+        other way round. The slot comes from the sign of the delta before the weigh, so a directional
+        negative is well defined: -100 on `Direction.POSITIVE` sends rightward motion left and leaves
+        leftward motion alone. Only an axis takes one; a momentary usage carries one bit and has
+        nothing to reverse, which raises `LockScaleUsageError`, and a magnitude outside
+        `LOCK_SCALE_MIN` ..= `LOCK_SCALE_MAX` raises `LockScaleRangeError`.
+
         A delta picks up at most two scales, its absolute direction's and its relative direction's,
         and they multiply, so a block anywhere wins. `Direction.BOTH` is the exception: it writes the
         scale to the two fixed signs and a full pass to the relative pair, so a `BOTH` of 50 is 50%
@@ -230,7 +238,7 @@ class Device:
         direction = _enum(direction, Direction, "direction")
         check(
             _native.lib.medius_device_scale(
-                self._handle, target._c, int(direction), _u8(scale, "scale")
+                self._handle, target._c, int(direction), _i16(scale, "scale")
             )
         )
 
@@ -240,7 +248,7 @@ class Device:
         direction = _enum(direction, Direction, "direction")
         check(
             _native.lib.medius_device_scale_all(
-                self._handle, int(what), int(direction), _u8(scale, "scale")
+                self._handle, int(what), int(direction), _i16(scale, "scale")
             )
         )
 
@@ -585,42 +593,25 @@ class Device:
     def transform(self, t: Transform) -> None:
         """`TRANSFORM` (§3.15): install (add or overwrite) one field transform.
 
-        A transform negates, scales, swaps or remaps a field the clone already declares, so it is
-        faithful and needs no `allow_imperfect_clones`. An entry is keyed by its `(source, dest)`, and
-        entries apply in installation order. A combination the op cannot address raises
-        `TransformOpFieldsError`, a scale past `LOCK_SCALE_MAX` raises `TransformScaleRangeError`, a
-        percentage on a usage source raises `TransformUsageScaleError`, and one past the table's
-        capacity raises `TransformTableFullError`. `query_transforms` confirms what the box holds.
+        A transform swaps or remaps a field the clone already declares, so it is faithful and needs
+        no `allow_imperfect_clones`. It is structural only: how much of a field survives is `scale`'s,
+        which runs first. An entry is keyed by its `(source, dest)`, and entries apply in installation
+        order. A combination the op cannot address raises `TransformOpFieldsError`, and one past the
+        table's capacity raises `TransformTableFullError`. `query_transforms` confirms what the box
+        holds.
         """
         c = transform_to_c(t)
         check(_native.lib.medius_device_transform(self._handle, ctypes.byref(c)))
 
     def untransform(self, t: Transform) -> None:
-        """`TRANSFORM` remove (§3.15): drop the transform keyed by `t`'s `(source, dest)`; its op and
-        scale are ignored. A no-op on the box if no such entry is held."""
+        """`TRANSFORM` remove (§3.15): drop the transform keyed by `t`'s `(source, dest)`; its op is
+        ignored. A no-op on the box if no such entry is held."""
         c = transform_to_c(t)
         check(_native.lib.medius_device_untransform(self._handle, ctypes.byref(c)))
 
     def clear_transforms(self) -> None:
         """`TRANSFORM` clear (§3.15): drop the whole transform table."""
         check(_native.lib.medius_device_clear_transforms(self._handle))
-
-    def transform_invert(self, axis: Axis) -> None:
-        """Negate an axis on the wire: a `transform` of `Transform.invert`."""
-        check(
-            _native.lib.medius_device_transform_invert(
-                self._handle, int(_enum(axis, Axis, "axis"))
-            )
-        )
-
-    def transform_scale(self, axis: Axis, percent: int) -> None:
-        """Weigh an axis by a signed percent (`200` doubles, `-50` halves and flips): a `transform` of
-        `Transform.scale_axis`."""
-        check(
-            _native.lib.medius_device_transform_scale(
-                self._handle, int(_enum(axis, Axis, "axis")), _i16(percent, "percent")
-            )
-        )
 
     def transform_swap(self, a: Axis, b: Axis) -> None:
         """Exchange two axes on the wire: a `transform` of `Transform.swap`."""

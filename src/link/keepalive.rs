@@ -112,7 +112,7 @@ fn keepalive_loop(ctx: KeepaliveCtx) {
                     &ctx.counters,
                     seq,
                     FrameType::Transform,
-                    &transform_payload(t.op, t.sclass, t.sid, t.dclass, t.did, t.scale, 1),
+                    &transform_payload(t.op, t.sclass, t.sid, t.dclass, t.did, 1),
                 );
             }
             sent_any = true;

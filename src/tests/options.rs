@@ -610,7 +610,10 @@ fn scale_sends_the_lock_frame_with_the_percentage() {
         .filter(|f| f.ty == FrameType::Lock)
         .map(|f| f.payload)
         .collect();
-    assert_eq!(frames, vec![vec![3, 0, 0, 4, 40], vec![3, 1, 0, 3, 130]]);
+    assert_eq!(
+        frames,
+        vec![vec![3, 0, 0, 4, 40, 0], vec![3, 1, 0, 3, 130, 0]]
+    );
 }
 
 #[cfg(feature = "mock")]
@@ -627,7 +630,10 @@ fn lock_and_unlock_are_the_two_ends_of_the_scale() {
         .filter(|f| f.ty == FrameType::Lock)
         .map(|f| f.payload)
         .collect();
-    assert_eq!(frames, vec![vec![3, 0, 0, 1, 0], vec![3, 0, 0, 1, 100]]);
+    assert_eq!(
+        frames,
+        vec![vec![3, 0, 0, 1, 0, 0], vec![3, 0, 0, 1, 100, 0]]
+    );
 }
 
 #[cfg(feature = "mock")]

@@ -44,14 +44,14 @@ class Status(IntEnum):
     ERR_HALF_EDGE_INPUT_FILTER = 17
     ERR_RESERVED_ID = 18
     ERR_RELATIVE_DIRECTION = 19
-    ERR_IMPERFECT_REQUIRED = 20
-    ERR_REWRITE_MASK_LENGTH = 21
-    ERR_REWRITE_ACTION_CLASS = 22
-    ERR_REWRITE_PAYLOAD_TOO_LARGE = 23
-    ERR_REWRITE_TABLE_FULL = 24
-    ERR_TRANSFORM_OP_FIELDS = 25
-    ERR_TRANSFORM_SCALE_RANGE = 26
-    ERR_TRANSFORM_USAGE_SCALE = 27
+    ERR_LOCK_SCALE_RANGE = 20
+    ERR_LOCK_SCALE_USAGE = 21
+    ERR_IMPERFECT_REQUIRED = 22
+    ERR_REWRITE_MASK_LENGTH = 23
+    ERR_REWRITE_ACTION_CLASS = 24
+    ERR_REWRITE_PAYLOAD_TOO_LARGE = 25
+    ERR_REWRITE_TABLE_FULL = 26
+    ERR_TRANSFORM_OP_FIELDS = 27
     ERR_TRANSFORM_TABLE_FULL = 28
     ERR_RAW_DIRECTION = 29
 
@@ -207,6 +207,9 @@ LOCK_SCALE_BLOCK = 0
 LOCK_SCALE_PASS = 100
 #: LOCK scale ceiling: 2.55x.
 LOCK_SCALE_MAX = 255
+#: LOCK scale floor: the most a scale can reverse by. A negative one weighs the physical value and
+#: reverses what it keeps, so -100 is a plain inversion. Axes only.
+LOCK_SCALE_MIN = -255
 #: The bearing window the box holds before any host sets one, in ms.
 BEARING_WINDOW_DEFAULT_MS = 20
 
@@ -380,14 +383,13 @@ class TransferStatus(IntEnum):
 class TransformOp(IntEnum):
     """The operation a `Transform` performs on its fields (§3.15).
 
-    `SCALE` acts on one axis (source == dest) and a scale of -100 negates it; `SWAP` exchanges two
-    axes; `REMAP` moves a source field into a destination (axis→axis or button→button in one report,
-    or button→key / button→media across classes).
+    `SWAP` exchanges two axes; `REMAP` moves a source field into a destination (axis→axis or
+    button→button in one report, or button→key / button→media across classes). Both MOVE a value;
+    weighing one, in either direction, is `Device.scale`'s, whose percent is signed.
     """
 
     REMAP = 0
     SWAP = 1
-    SCALE = 2
 
 
 class BusEventKind(IntEnum):

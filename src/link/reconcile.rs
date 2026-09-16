@@ -45,7 +45,7 @@ const SLOT_DIRS: [u8; 4] = [LOCK_DIR_POS, LOCK_DIR_NEG, LOCK_DIR_WITH, LOCK_DIR_
 // pair and passes the relative one, so a later single-direction unlock has to clear one slot out of a
 // group write, which a key per direction cannot express.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct Slots([u8; 4]);
+struct Slots([i16; 4]);
 
 impl Default for Slots {
     fn default() -> Slots {
@@ -54,7 +54,7 @@ impl Default for Slots {
 }
 
 impl Slots {
-    fn write(&mut self, dir: u8, scale: u8) {
+    fn write(&mut self, dir: u8, scale: i16) {
         if dir == LOCK_DIR_BOTH {
             self.0 = [scale, scale, LOCK_SCALE_PASS, LOCK_SCALE_PASS];
         } else if let Some(i) = SLOT_DIRS.iter().position(|&d| d == dir) {
@@ -67,7 +67,7 @@ impl Slots {
     }
 
     // The fewest LOCK commands that rebuild this row on a box holding nothing.
-    fn commands(self) -> Vec<(u8, u8)> {
+    fn commands(self) -> Vec<(u8, i16)> {
         let [p, n, w, a] = self.0;
         if p == n && w == LOCK_SCALE_PASS && a == LOCK_SCALE_PASS {
             return if p == LOCK_SCALE_PASS {
@@ -137,11 +137,10 @@ pub(crate) struct StoredTransform {
     pub(crate) sid: u16,
     pub(crate) dclass: u8,
     pub(crate) did: u16,
-    pub(crate) scale: i16,
 }
 
 /// The `(sclass, sid, dclass, did)` key the box files a transform under; two entries that differ in any
-/// of these are separate rows, and setting one whose key exists overwrites its op and scale.
+/// of these are separate rows, and setting one whose key exists overwrites its op.
 pub(crate) type TransformWireKey = (u8, u16, u8, u16);
 
 impl StoredTransform {
@@ -210,7 +209,7 @@ impl DesiredState {
     // expanded at reassert time onto the declared count (see `held_locks`); a single button touched
     // while it is held materialises it first, so releasing one button afterwards is not undone by the
     // replay.
-    pub(crate) fn apply_lock(&mut self, key: LockKey, scale: u8) -> LockUndo {
+    pub(crate) fn apply_lock(&mut self, key: LockKey, scale: i16) -> LockUndo {
         let (class, id, dir) = key;
         let scale = if class == LOCK_CLS_AXIS {
             scale
@@ -239,7 +238,7 @@ impl DesiredState {
     }
 
     // Write one lock-table row, dropping it when every slot passes and tracking the media slot order.
-    fn write_lock_row(&mut self, class: u8, id: u16, dir: u8, scale: u8, undo: &mut LockUndo) {
+    fn write_lock_row(&mut self, class: u8, id: u16, dir: u8, scale: i16, undo: &mut LockUndo) {
         let key = (class, id);
         undo.rows.push((key, self.locks.get(&key).copied()));
         let row = self.locks.entry(key).or_default();
@@ -474,7 +473,7 @@ impl DesiredState {
     // blanket is expanded here onto the count CAPS last reported, not at apply time, so a reconnect
     // that re-read CAPS re-asserts every declared button. Media rows come out in the order they were
     // taken, so the replay fills the box's slot array the way the live box filled it.
-    pub(crate) fn held_locks(&self) -> Vec<(LockKey, u8)> {
+    pub(crate) fn held_locks(&self) -> Vec<(LockKey, i16)> {
         let button_count = self.button_count();
         let mut rows: Vec<(&(u8, u16), &Slots)> = self.locks.iter().collect();
         rows.sort_by_key(|((class, id), _)| (*class, self.media_rank(*class, *id), *id));
