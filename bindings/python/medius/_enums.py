@@ -384,8 +384,8 @@ class TransformOp(IntEnum):
     """The operation a `Transform` performs on its fields (§3.15).
 
     `SWAP` exchanges two axes; `REMAP` moves a source field into a destination (axis→axis or
-    button→button in one report, or button→key / button→media across classes). Both MOVE a value;
-    weighing one, in either direction, is `Device.scale`'s, whose percent is signed.
+    button→button in one report, or button→key / button→media across classes). To weigh a field, or
+    reverse it, use `Device.scale`.
     """
 
     REMAP = 0

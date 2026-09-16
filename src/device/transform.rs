@@ -14,9 +14,9 @@ impl Device {
     /// `TRANSFORM` (§3.15): install (add or overwrite) one field transform.
     ///
     /// A transform moves a field the clone's descriptor already declares into another one, by swapping
-    /// two axes or remapping a source onto a destination. It is structural only: how much of a field
-    /// survives is [`scale`](Device::scale)'s, which runs first, and a transform carries what the weigh
-    /// left. Every emitted report stays one the real device could produce, so a transform needs no
+    /// two axes or remapping a source onto a destination. To weigh a field, or reverse it, use
+    /// [`scale`](Device::scale), which runs first and hands the transform what it kept. Every emitted
+    /// report stays one the real device could produce, so a transform needs no
     /// [`allow_imperfect_clones`](Device::allow_imperfect_clones).
     ///
     /// An entry is keyed by its `(source, dest)`; setting one whose key exists overwrites its op in
@@ -156,7 +156,8 @@ pub(crate) fn to_stored(t: &Transform) -> StoredTransform {
 }
 
 /// The one refusal the crate can make before the wire, mirroring the box's own `transform_tab_set`: an
-/// op a class pair cannot take. Which fields the clone declares stays the box's to answer.
+/// op a class pair cannot take, one field named as both ends included. Which fields the clone declares
+/// stays the box's to answer.
 pub(crate) fn validate_transform(t: &Transform) -> Result<()> {
     if !t.op.admits(t.source, t.dest) {
         return Err(Error::TransformOpFields {

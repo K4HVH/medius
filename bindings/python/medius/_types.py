@@ -487,8 +487,8 @@ class Transform:
     the rewrite/raw/patch layer it is faithful and needs no imperfect-clone opt-in. ``source`` and
     ``dest`` are `LockTarget`\\ s (an axis, or a momentary usage).
 
-    It is structural only: how much of a field survives is `Device.scale`'s, which runs first and
-    whose percent is signed. A transform carries what the weigh left.
+    To weigh a field, or reverse it, use `Device.scale`, which runs first and hands the transform what
+    it kept.
 
     Build one with `swap`, `remap`, or the constructor for the general case.
     """

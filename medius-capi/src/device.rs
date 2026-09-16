@@ -806,11 +806,12 @@ fn with_transform(
 
 /// `TRANSFORM` (§3.15): install (add or overwrite) one field transform, fire-and-forget. A transform
 /// swaps or remaps a field the clone already declares, so it is faithful and needs no imperfect-clone
-/// opt-in, unlike the rewrite/raw/patch layer. It is structural only: how much of a field survives is
-/// `medius_device_scale`'s, which runs first. An entry is keyed by its `(source, dest)`, and entries
-/// apply in the order they were installed. `transform->op` takes a `MEDIUS_TRANSFORM_OP_*` constant,
-/// and `source`/`dest` a `MEDIUS_LOCK_TARGET_KIND_*` axis or usage. Refusals: a combination the op
-/// cannot address is `MEDIUS_STATUS_ERR_TRANSFORM_OP_FIELDS`, and one past
+/// opt-in, unlike the rewrite/raw/patch layer. To weigh a field, or reverse it, use
+/// `medius_device_scale`, which runs first and hands the transform what it kept. An entry is keyed by
+/// its `(source, dest)`, and entries apply in the order they were installed. `transform->op` takes a
+/// `MEDIUS_TRANSFORM_OP_*` constant, and `source`/`dest` a `MEDIUS_LOCK_TARGET_KIND_*` axis or usage.
+/// Refusals: a combination the op cannot address, one field named as both ends included, is
+/// `MEDIUS_STATUS_ERR_TRANSFORM_OP_FIELDS`, and one past
 /// `MEDIUS_MAX_TRANSFORM_ENTRIES` is `..._TRANSFORM_TABLE_FULL`. `medius_device_query_transforms`
 /// confirms what the box holds.
 #[unsafe(no_mangle)]
