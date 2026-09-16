@@ -487,6 +487,29 @@ mod mock_roundtrip {
     }
 
     #[test]
+    fn the_readback_comes_back_in_apply_order() {
+        // The host→box half of the ordering claim is covered by the replay tests; this is the box→host
+        // half. RESP(TRANSFORMS) is meant to read back as the commands that rebuild the table, which it
+        // can only do if it carries the order the box applies them in.
+        let device = Device::with_mock(MockBox::new());
+        let first = Transform::scale_axis(Axis::Y, 200); // key (3,1,3,1)
+        let second = Transform::remap(Axis::X, Axis::Y); // key (3,0,3,1), sorts BELOW the first
+        device.transform(&first).unwrap();
+        device.transform(&second).unwrap();
+        let table = device.query_transforms().unwrap();
+        assert_eq!(
+            table.entries,
+            vec![first, second],
+            "the readback must carry installation order, not key order"
+        );
+        // An overwrite keeps its row, so the order does not change and the new scale is the one read.
+        device.transform(&Transform::scale_axis(Axis::Y, 150)).unwrap();
+        let table = device.query_transforms().unwrap();
+        assert_eq!(table.entries[0], Transform::scale_axis(Axis::Y, 150));
+        assert_eq!(table.entries[1], second);
+    }
+
+    #[test]
     fn an_overwrite_keeps_its_position_in_the_replay() {
         let mock = MockBox::new();
         let device = Device::with_mock(mock.clone());

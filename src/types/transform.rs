@@ -20,7 +20,7 @@ pub enum TransformOp {
 
 impl TransformOp {
     /// The wire `op` byte.
-    pub fn as_u8(self) -> u8 {
+    pub const fn as_u8(self) -> u8 {
         self as u8
     }
 

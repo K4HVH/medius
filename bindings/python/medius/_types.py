@@ -499,9 +499,9 @@ class Transform:
 
     @classmethod
     def invert(cls, axis) -> "Transform":
-        """Invert an axis: emit the report the device produces when moved the other way."""
+        """Negate an axis: a `TransformOp.SCALE` of -100, which the box applies exactly."""
         t = LockTarget.axis(axis)
-        return cls(TransformOp.INVERT, t, t, LOCK_SCALE_PASS)
+        return cls(TransformOp.SCALE, t, t, -LOCK_SCALE_PASS)
 
     @classmethod
     def scale_axis(cls, axis, percent: int) -> "Transform":

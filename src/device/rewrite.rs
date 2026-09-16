@@ -28,6 +28,14 @@ impl Device {
     pub fn set_rewrite(&self, rule: &RewriteRule) -> Result<()> {
         validate_rule(rule)?;
         self.require_imperfect()?;
+        self.set_rewrite_checked(rule)
+    }
+
+    /// The capacity check and the send under ONE re-assert guard, so two threads at the last slot
+    /// cannot both pass it, and so the async wrapper (which does its own opt-in check) gets the check
+    /// too. Taking the guard here and again in `set_rewrite_send` would deadlock: it is not reentrant.
+    pub(crate) fn set_rewrite_checked(&self, rule: &RewriteRule) -> Result<()> {
+        let _serial = self.link.reassert_guard();
         {
             let d = self.link.desired().lock();
             if !d.holds_rewrite(&to_stored(rule).key()) && d.rewrite_count() >= REWRITE_MAX_ENTRIES {
@@ -36,17 +44,16 @@ impl Device {
                 });
             }
         }
-        self.set_rewrite_send(rule)
+        self.set_rewrite_send_locked(rule)
     }
 
     /// The validated `REWRITE` set with no opt-in pre-check, so the async wrapper can gate on the async
     /// query path. Records the rule for reconnect-replay, then rolls back if the frame never went out.
-    pub(crate) fn set_rewrite_send(&self, rule: &RewriteRule) -> Result<()> {
+    /// The caller holds the re-assert guard, which serialises this against the keepalive/reconnect
+    /// re-assert so a concurrent remove/clear cannot interleave. Recorded before the write so a
+    /// reconnect racing it still replays the rule, and rolled back when the frame never went out.
+    fn set_rewrite_send_locked(&self, rule: &RewriteRule) -> Result<()> {
         let stored = to_stored(rule);
-        // Serialise the DesiredState write and its send against the keepalive/reconnect re-assert so a
-        // concurrent remove/clear can't interleave; recorded before the write so a reconnect racing it
-        // still replays the rule, and rolled back when the frame never went out (the lock pattern).
-        let _serial = self.link.reassert_guard();
         let undo = self.link.desired().lock().apply_rewrite(stored);
         let sent = self.link.send(
             FrameType::Rewrite,

@@ -575,7 +575,7 @@ impl AsyncDevice {
     pub async fn set_rewrite(&self, rule: &RewriteRule) -> Result<()> {
         crate::device::rewrite::validate_rule(rule)?;
         self.require_imperfect().await?;
-        self.dev().set_rewrite_send(rule)
+        self.dev().set_rewrite_checked(rule)
     }
 
     /// `REWRITE` remove: drop one rewrite rule by key. See [`Device::remove_rewrite`].

@@ -31,7 +31,7 @@ pub use error::{Error, Result};
 pub use link::{DEFAULT_KEEPALIVE_CADENCE, DEFAULT_QUERY_TIMEOUT};
 /// The control-protocol version this build speaks. A box reporting anything else is refused at the
 /// handshake; exposing it lets a caller say so in its own words before connecting.
-pub use protocol::PROTO_VER;
+pub use protocol::{MAX_PAYLOAD, PROTO_VER};
 pub use protocol::opcode::{
     CATCH_MAX_ENTRIES, LOCK_SCALE_BLOCK, LOCK_SCALE_MAX, LOCK_SCALE_PASS, PATCH_MAX_ENTRIES,
     REWRITE_MATCH_MAX, REWRITE_MAX_ENTRIES, TRANSFORM_MAX_ENTRIES,

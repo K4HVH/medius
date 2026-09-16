@@ -8,7 +8,8 @@ use crate::protocol::opcode::{
     CAP_PAN, CAP_REPORT_ID, CAP_WHEEL, CAP_X, CAP_Y, CAPS_CD_KBD, CAPS_CD_MOUSE, DI_HAS_BOS,
     DI_HAS_SERIAL, KBC_CONSUMER, KBC_NKRO, KBC_REPORT_ID, KBC_SYSTEM, LOCK_AXIS_PAN, LOCK_CLS_AXIS,
     LOCK_CLS_BTN, LOCK_CLS_KEY, LOCK_CLS_MEDIA, LOCK_DIR_AGAINST, LOCK_DIR_BOTH, LOCK_DIR_NEG,
-    LOCK_DIR_POS, LOCK_DIR_WITH, LOCK_ID_ALL, LOCK_SCALE_BLOCK, LOCK_SCALE_PASS, MAX_BUTTONS,
+    LOCK_DIR_POS, LOCK_DIR_WITH, LOCK_ID_ALL, LOCK_SCALE_BLOCK, LOCK_SCALE_MAX, LOCK_SCALE_PASS,
+    MAX_BUTTONS,
     OPT_BEARING, OPT_EMIT, OPT_IMPERFECT, OPT_MOVE_RIDE, OPT_NAME, OPT_RENDER, OPT_SPREAD,
     Q_FIRMWARE, RATE_CONFIDENT,
 };
@@ -580,6 +581,8 @@ impl State {
         // state 1: add or overwrite, after the same admissibility gauntlet the box runs.
         if op > TF_SCALE
             || !transform_pair_ok(op, sclass, sid, dclass, did)
+            || scale > LOCK_SCALE_MAX as i16
+            || scale < -(LOCK_SCALE_MAX as i16)
             || (sclass != CATCH_CLS_AXIS && scale != LOCK_SCALE_PASS as i16)
             || !self.transform_field_present(sclass, sid)
             || !self.transform_field_present(dclass, did)
