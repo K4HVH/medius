@@ -6,8 +6,8 @@ use crate::types::{Class, LockTarget};
 
 /// The operation a [`Transform`] performs on its fields (§3.15).
 ///
-/// Both MOVE a value. Weighing one, in either direction, is [`scale`](crate::Device::scale)'s: its
-/// percent is signed, so `-100` there is the inversion and `0` the block.
+/// Both move a value from one field to another. To weigh a field, or reverse it, use
+/// [`scale`](crate::Device::scale).
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TransformOp {
@@ -36,9 +36,9 @@ impl TransformOp {
         })
     }
 
-    /// Whether this op admits the given `source`/`dest` pair, mirroring the box's own check. Neither op
-    /// takes a field onto itself: both move a value, and there is nowhere to move it to. Whether the
-    /// fields are declared is the box's to answer.
+    /// Whether this op admits the given `source`/`dest` pair, mirroring the box's own check. A pair
+    /// whose source and destination are the same field is refused. Whether the fields are declared is
+    /// the box's to answer.
     pub fn admits(self, source: LockTarget, dest: LockTarget) -> bool {
         use LockTarget::{Axis, Usage};
         if source == dest {
@@ -71,8 +71,8 @@ pub struct TransformKey {
 /// One field transform: an [operation](TransformOp), the [`source`](Transform::source) field it reads
 /// and the [`dest`](Transform::dest) field it writes.
 ///
-/// A transform is purely structural. It says where a field's value lands, never how much of it
-/// survives: that is [`scale`](crate::Device::scale)'s, which runs first and whose percent is signed.
+/// A transform says where a field's value lands. To weigh one, or reverse it, use
+/// [`scale`](crate::Device::scale), which runs first and hands the transform what it kept.
 ///
 /// ```
 /// # use medius::{Axis, Transform, TransformOp};

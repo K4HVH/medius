@@ -906,8 +906,8 @@ const _: () = {
 /// writes.
 ///
 /// `source` and `dest` reuse `MediusLockTarget` (an axis `kind`, or `Usage` with `usage` read): the
-/// transform field space is the lock-target space. A transform is structural only: how much of a field
-/// survives is `medius_device_scale`'s, whose percent is signed. The same shape
+/// transform field space is the lock-target space. To weigh a field, or reverse it, use
+/// `medius_device_scale`, whose percent is signed. The same shape
 /// `medius_device_query_transforms` reads back, so a read entry replays as a set.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

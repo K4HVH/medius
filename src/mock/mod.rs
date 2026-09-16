@@ -1054,7 +1054,7 @@ fn clip_status_payload(c: &ClipStatus, cfg: &ClipSettings) -> Vec<u8> {
 
 // Which (op, class pair) a transform can take, mirroring transform_pair_ok in the firmware.
 fn transform_pair_ok(op: u8, sc: u8, si: u16, dc: u8, di: u16) -> bool {
-    // Neither op takes a field onto itself: both move a value, and there is nowhere to move it to.
+    // Neither op takes one field as both ends: a move needs two.
     if sc == dc && si == di {
         return false;
     }

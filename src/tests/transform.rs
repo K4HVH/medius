@@ -137,7 +137,7 @@ fn transform_op_admits_mirrors_the_box() {
     let key = LockTarget::from(Key::A);
     let media = LockTarget::from(MediaKey::VOLUME_UP);
 
-    // Neither op takes a field onto itself: both move a value, and there is nowhere to move it to.
+    // Neither op takes one field as both ends: a move needs two.
     assert!(!TransformOp::Swap.admits(x, x));
     assert!(!TransformOp::Remap.admits(x, x));
     assert!(!TransformOp::Remap.admits(btn, btn));
