@@ -217,12 +217,11 @@ class Device:
         untouched, above that amplifies to 255 (2.55x). `lock` and `unlock` are its two ends.
 
         The percent is signed, down to `LOCK_SCALE_MIN`: a negative one weighs the physical value and
-        reverses what it keeps, so -100 on an axis is a plain inversion and -50 keeps half of it the
-        other way round. The slot comes from the sign of the delta before the weigh, so a directional
-        negative is well defined: -100 on `Direction.POSITIVE` sends rightward motion left and leaves
-        leftward motion alone. Only an axis takes one; a momentary usage carries one bit and has
-        nothing to reverse, which raises `LockScaleUsageError`, and a magnitude outside
-        `LOCK_SCALE_MIN` ..= `LOCK_SCALE_MAX` raises `LockScaleRangeError`.
+        reverses it, so -100 is a plain inversion. The slot comes from the sign of the delta before the
+        weigh, so -100 on `Direction.POSITIVE` turns what arrived rightward into leftward and leaves
+        what arrived leftward alone. Only an axis takes one: a momentary usage carries one bit and has
+        nothing to reverse, which raises `LockScaleUsageError`, and a magnitude outside the range
+        raises `LockScaleRangeError`.
 
         A delta picks up at most two scales, its absolute direction's and its relative direction's,
         and they multiply, so a block anywhere wins. `Direction.BOTH` is the exception: it writes the

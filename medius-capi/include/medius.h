@@ -1890,12 +1890,11 @@ MediusStatus medius_device_force_release(struct MediusDevice *dev, struct Medius
 // above that amplifies to `MEDIUS_LOCK_SCALE_MAX` (2.55x). Lock and unlock are its two ends.
 //
 // The percent is signed, down to `MEDIUS_LOCK_SCALE_MIN`: a negative one weighs the physical value
-// and reverses what it keeps, so `-100` on an axis is a plain inversion and `-50` keeps half of it the
-// other way round. The slot is picked from the sign of the delta before the weigh, so a directional
-// negative is well defined: `-100` on `MEDIUS_DIRECTION_POSITIVE` sends rightward motion left and
-// leaves leftward motion alone. Only an axis takes one; a momentary usage carries one bit and has
-// nothing to reverse, which is `MEDIUS_STATUS_ERR_LOCK_SCALE_USAGE`, and a magnitude outside
-// `MEDIUS_LOCK_SCALE_MIN ..= MEDIUS_LOCK_SCALE_MAX` is `MEDIUS_STATUS_ERR_LOCK_SCALE_RANGE`.
+// and reverses it, so `-100` is a plain inversion. The slot is picked from the sign of the delta
+// before the weigh, so `-100` on `MEDIUS_DIRECTION_POSITIVE` turns what arrived rightward into
+// leftward and leaves what arrived leftward alone. Only an axis takes one: a momentary usage carries
+// one bit and has nothing to reverse, which is `MEDIUS_STATUS_ERR_LOCK_SCALE_USAGE`, and a magnitude
+// outside the range is `MEDIUS_STATUS_ERR_LOCK_SCALE_RANGE`.
 //
 // A delta picks up at most two scales, its absolute direction's and its relative direction's, and
 // they multiply. `MEDIUS_DIRECTION_BOTH` is the exception: it writes the scale to the two fixed
@@ -2231,8 +2230,8 @@ struct MediusLockTarget medius_lock_target_axis(uint8_t kind);
 struct MediusLockTarget medius_lock_target_usage(struct MediusUsage usage);
 
 // The scale in effect on `target`/`dir`: percent of the physical value kept, so
-// `MEDIUS_LOCK_SCALE_PASS` when nothing weighs it. `Both` reports the lowest across every direction,
-// where a reversing (negative) one is lower than any pass.
+// `MEDIUS_LOCK_SCALE_PASS` when nothing weighs it. `Both` reports the least that survives across every
+// direction, ranked by magnitude so a block outranks a reversal of any size.
 // Mirrors `medius::Locks::scale_of`. `dir` takes a `MEDIUS_DIRECTION_*` constant; any other value
 // names no entry and reads as `MEDIUS_LOCK_SCALE_PASS`.
 int16_t medius_locks_scale_of(const struct MediusLocks *locks,

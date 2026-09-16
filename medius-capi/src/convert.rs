@@ -776,8 +776,8 @@ impl From<PatchSet> for MediusPatchSet {
 
 // A `MediusTransform` to a [`Transform`]; `None` for an op, source or dest byte no constant names. A
 // transform addresses a field the same way a lock does, so both cross as a `MediusLockTarget`. The
-// structural refusals (an op a class pair cannot take, a scale a field cannot carry) are the crate's,
-// made when the transform is sent.
+// structural refusal (an op a class pair cannot take, including a field named as both ends) is the
+// crate's, made when the transform is sent.
 pub(crate) fn transform_from_c(c: &MediusTransform) -> Option<Transform> {
     Some(Transform {
         op: TransformOp::from_u8(c.op)?,

@@ -103,8 +103,8 @@ fn lock_entry_covers(e: &MediusLockEntry, target: MediusLockTarget) -> bool {
 }
 
 /// The scale in effect on `target`/`dir`: percent of the physical value kept, so
-/// `MEDIUS_LOCK_SCALE_PASS` when nothing weighs it. `Both` reports the lowest across every direction,
-/// where a reversing (negative) one is lower than any pass.
+/// `MEDIUS_LOCK_SCALE_PASS` when nothing weighs it. `Both` reports the least that survives across every
+/// direction, ranked by magnitude so a block outranks a reversal of any size.
 /// Mirrors `medius::Locks::scale_of`. `dir` takes a `MEDIUS_DIRECTION_*` constant; any other value
 /// names no entry and reads as `MEDIUS_LOCK_SCALE_PASS`.
 #[unsafe(no_mangle)]
@@ -127,7 +127,9 @@ pub unsafe extern "C" fn medius_locks_scale_of(
                     && (dir == both || e.direction == both || e.direction == dir)
             })
             .map(|e| e.scale)
-            .min()
+            // By magnitude, not by value: a signed minimum ranks -50 below 0 and would report a
+            // reversal over a block, when the block is what the delta actually meets.
+            .min_by_key(|s| (s.unsigned_abs(), *s))
             .unwrap_or(MEDIUS_LOCK_SCALE_PASS)
     })
 }

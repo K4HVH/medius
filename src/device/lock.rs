@@ -48,6 +48,13 @@ impl Device {
     /// amplifies, to [`LOCK_SCALE_MAX`](crate::LOCK_SCALE_MAX) = 2.55x.
     /// [`lock`](Self::lock) and [`unlock`](Self::unlock) are the two ends of this one number.
     ///
+    /// The percent is signed, down to [`LOCK_SCALE_MIN`](crate::LOCK_SCALE_MIN): a negative one weighs
+    /// the physical value and reverses it, so `-100` is a plain inversion. The slot is picked from the
+    /// sign of the delta before the weigh, so a `Positive` of `-100` turns what arrived rightward into
+    /// leftward and leaves what arrived leftward alone. Only an axis takes one:
+    /// [`Error::LockScaleUsage`](crate::Error::LockScaleUsage) otherwise, and
+    /// [`Error::LockScaleRange`](crate::Error::LockScaleRange) outside the range.
+    ///
     /// A delta picks up at most two scales, its absolute direction's and its relative direction's, and
     /// they multiply: a `Negative` of 50 with an `Against` of 40 lands leftward-while-injecting-right at
     /// 20%. A block anywhere therefore wins outright.
@@ -61,8 +68,8 @@ impl Device {
     /// until one is live; see [`set_bearing`](Self::set_bearing). Only an axis has a bearing, so a
     /// relative direction on a button, key or media usage is
     /// [`Error::RelativeDirection`](crate::Error::RelativeDirection) rather than a frame the box
-    /// discards. A momentary usage carries one bit, so any scale below a full pass locks it and there
-    /// is nothing in between; a scale at or above a full pass on one is an unlock.
+    /// discards. A momentary usage carries one bit, so any scale from zero to a full pass locks it and
+    /// there is nothing in between; a scale at or above a full pass on one is an unlock.
     ///
     /// A media usage has no edges (it is suppressed whole), so an edge direction on one is sent as
     /// [`Direction::Both`], which is what `RESP(LOCKS)` reports it as.

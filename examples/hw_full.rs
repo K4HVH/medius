@@ -831,7 +831,7 @@ mod linux {
                 })
                 .unwrap_or(false);
             // A momentary usage carries one bit and has nothing to reverse, and a magnitude past the
-            // bound is refused rather than silently weighed at it. Both are crate-side, before the wire.
+            // bound is refused rather than applied at the bound. Both are crate-side, before the wire.
             let n_usage = matches!(
                 dev.scale(Button::LEFT, Direction::Positive, -100),
                 Err(medius::Error::LockScaleUsage { .. })
@@ -1963,7 +1963,7 @@ mod linux {
                 ),
             );
 
-            // TRANSFORM (§3.15): swap X and Y (faithful, ungated — no opt-in needed), read it back,
+            // TRANSFORM (§3.15): swap X and Y (faithful and ungated, no opt-in needed), read it back,
             // then clear. Both axes are on any mouse, so the box holds the entry rather than refusing
             // it. A transform only MOVES a field; what survives the move is the scale's, above.
             let tset_ok = dev.transform_swap(Axis::X, Axis::Y).is_ok();
@@ -2060,9 +2060,11 @@ mod linux {
             let _ = adev.scale_axis(Axis::Y, Direction::With, 60);
             let _ = adev.scale_all(Blanket::Wheel, Direction::Negative, 25);
             let _ = adev.set_bearing(Some(Duration::from_millis(35)), BearingMode::Vector);
+            // Vector geometry reports one relative scale for X and Y as one vector, the lower of the
+            // two, on both axes, so X's With reads Y's 60 rather than its own stored pass.
             let ascale_ok = matches!(block_on(adev.query_locks()), Ok(l)
                 if l.scale_of(Axis::X, Direction::Positive) == 50
-                    && l.scale_of(Axis::X, Direction::With) == medius::LOCK_SCALE_PASS
+                    && l.scale_of(Axis::X, Direction::With) == 60
                     && l.scale_of(Axis::Y, Direction::With) == 60
                     && l.scale_of(Axis::Wheel, Direction::Negative) == 25);
             let abear_ok = matches!(block_on(adev.query_bearing()), Ok(b)

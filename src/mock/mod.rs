@@ -302,6 +302,12 @@ impl LockTable {
     // `n_buttons` is the clone's declared button count: a button blanket writes that many rows and a
     // button id past it is dropped, exactly as the firmware caps at `nbtn`.
     pub(crate) fn apply(&mut self, class: u8, id: u16, dir: u8, scale: i16, n_buttons: u8) {
+        // One bit has nothing to reverse, so the box writes nothing at all for a negative on a
+        // momentary class (usbdev_set_lock). Truncating it to a block here instead would agree with a
+        // crate that had lost its own guard.
+        if scale < 0 && class != LOCK_CLS_AXIS {
+            return;
+        }
         let on = scale < LOCK_SCALE_PASS;
         match class {
             LOCK_CLS_AXIS => {
@@ -576,7 +582,7 @@ impl State {
             return;
         }
         // state 1: add or overwrite, after the same admissibility gauntlet the box runs.
-        if op >= TF_OP_COUNT
+        if op >= TF_OP_COUNT  // `2` is the retired SCALE op, which a stale host still sends
             || !transform_pair_ok(op, sclass, sid, dclass, did)
             || !self.transform_field_present(sclass, sid)
             || !self.transform_field_present(dclass, did)
