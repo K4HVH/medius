@@ -1927,10 +1927,10 @@ mod linux {
 
             // TRANSFORM (§3.15): invert Y (faithful, ungated — no opt-in needed), read it back, then
             // clear. Y is present on any mouse, so the box holds the entry rather than refusing it.
-            let tset_ok = dev.invert(Axis::Y).is_ok();
+            let tset_ok = dev.transform_invert(Axis::Y).is_ok();
             let tq = dev.query_transforms();
             let tpresent = matches!(&tq, Ok(t)
-                if t.entries.iter().any(|e| e.op == TransformOp::Invert
+                if t.entries.iter().any(|e| e.op == TransformOp::Scale
                     && e.source == Transform::invert(Axis::Y).source));
             let thealth_on = dev.query_health().map(|h| h.transform_on).unwrap_or(false);
             let tclear_ok = dev.clear_transforms().is_ok();

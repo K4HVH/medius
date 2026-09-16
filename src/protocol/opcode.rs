@@ -268,16 +268,14 @@ pub const REWRITE_MATCH_MAX: usize = 16;
 pub const TF_REMAP: u8 = 0;
 /// Exchange two axes (read both, write both).
 pub const TF_SWAP: u8 = 1;
-/// Negate one axis (source == destination); the scale is ignored.
-pub const TF_INVERT: u8 = 2;
-/// Weigh one axis (source == destination) by the signed scale. The highest op: the box refuses a byte
-/// above it (`CTRL_XF_OP_COUNT` is `TF_SCALE + 1`).
-pub const TF_SCALE: u8 = 3;
+/// Weigh one axis (source == destination) by the signed scale; `-100` negates it exactly. The highest
+/// op: the box refuses a byte above it (`CTRL_XF_OP_COUNT` is `TF_SCALE + 1`).
+pub const TF_SCALE: u8 = 2;
 
 /// Field-transform table summary: `QUERY [Q_TRANSFORMS]` → `RESP(TRANSFORMS)` (flags + list) (§3.15).
 pub const Q_TRANSFORMS: u8 = 16;
 /// Entries the box's transform table holds (`CTRL_TRANSFORM_MAXN`); past it an entry is refused and `RESP(TRANSFORMS).table_full` says so.
-pub const TRANSFORM_MAX_ENTRIES: usize = 8;
+pub const TRANSFORM_MAX_ENTRIES: usize = 32;
 /// `RESP(TRANSFORMS).flags` bit 0 (`CTRL_TRANSFORM_F_FULL`): the table is full.
 pub const TF_F_FULL: u8 = 0x01;
 

@@ -75,7 +75,10 @@ from ._errors import (
     RewriteMaskLengthError,
     RewritePayloadTooLargeError,
     TransformOpFieldsError,
-    TransformInvertZeroScaleError,
+    RewriteTableFullError,
+    TransformScaleRangeError,
+    TransformTableFullError,
+    TransformUsageScaleError,
     WildcardNotInputError,
 )
 from ._device import Device
@@ -259,7 +262,10 @@ __all__ = [
     "RewriteActionClassError",
     "RewritePayloadTooLargeError",
     "TransformOpFieldsError",
-    "TransformInvertZeroScaleError",
+    "RewriteTableFullError",
+    "TransformScaleRangeError",
+    "TransformTableFullError",
+    "TransformUsageScaleError",
     "CatchFilter",
     "CatchState",
     "Bearing",

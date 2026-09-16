@@ -18,9 +18,9 @@ MEDIUS_MAX_SERIAL = 128
 MEDIUS_MAX_NAME = 33
 MEDIUS_MAX_CATCH_ENTRIES = 32
 MEDIUS_MAX_TRAFFIC_BYTES = 180
-MEDIUS_MAX_REWRITE_ENTRIES = 16
+MEDIUS_MAX_REWRITE_ENTRIES = 32
 MEDIUS_MAX_PATCH_ENTRIES = 16
-MEDIUS_MAX_TRANSFORM_ENTRIES = 8
+MEDIUS_MAX_TRANSFORM_ENTRIES = 32
 MEDIUS_MAX_REWRITE_MATCH = 16
 MEDIUS_MAX_DEV_PAYLOAD = 512
 
@@ -598,10 +598,10 @@ _decl("medius_device_query_patch_entry", i32, [HANDLE, u8, ctypes.POINTER(Medius
 _decl("medius_device_transform", i32, [HANDLE, ctypes.POINTER(MediusTransform)])
 _decl("medius_device_untransform", i32, [HANDLE, ctypes.POINTER(MediusTransform)])
 _decl("medius_device_clear_transforms", i32, [HANDLE])
-_decl("medius_device_invert", i32, [HANDLE, u8])
-_decl("medius_device_scale_transform", i32, [HANDLE, u8, i16])
-_decl("medius_device_swap", i32, [HANDLE, u8, u8])
-_decl("medius_device_remap", i32, [HANDLE, MediusLockTarget, MediusLockTarget])
+_decl("medius_device_transform_invert", i32, [HANDLE, u8])
+_decl("medius_device_transform_scale", i32, [HANDLE, u8, i16])
+_decl("medius_device_transform_swap", i32, [HANDLE, u8, u8])
+_decl("medius_device_transform_remap", i32, [HANDLE, MediusLockTarget, MediusLockTarget])
 _decl("medius_device_query_transforms", i32, [HANDLE, ctypes.POINTER(MediusTransforms)])
 
 _decl("medius_default_query_timeout_ms", u32, [])

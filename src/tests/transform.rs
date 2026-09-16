@@ -4,14 +4,14 @@
 use crate::protocol::command::transform_payload;
 use crate::protocol::{Resp, parse_resp};
 use crate::types::{
-    Axis, Button, Class, Key, MediaKey, Transform, TransformField, TransformOp, Usage,
+    Axis, Button, Class, Key, LockTarget, MediaKey, Transform, TransformOp, Usage,
 };
 
 #[test]
 fn transform_payload_bytes() {
     // SCALE the wheel (axis class 3, id 2) by +200%, state add.
-    let p = transform_payload(3, 3, 2, 3, 2, 200, 1);
-    assert_eq!(p, [3, 3, 0x02, 0x00, 3, 0x02, 0x00, 0xC8, 0x00, 1]);
+    let p = transform_payload(2, 3, 2, 3, 2, 200, 1);
+    assert_eq!(p, [2, 3, 0x02, 0x00, 3, 0x02, 0x00, 0xC8, 0x00, 1]);
 }
 
 #[test]
@@ -31,7 +31,7 @@ fn transform_clear_sentinel_bytes() {
 #[test]
 fn resp_transforms_decode() {
     // [16][flags 0][n 1] then one entry: Scale, wheel→wheel, scale 200. No state byte per entry.
-    let p = [16, 0, 1, 3, 3, 0x02, 0x00, 3, 0x02, 0x00, 0xC8, 0x00];
+    let p = [16, 0, 1, 2, 3, 0x02, 0x00, 3, 0x02, 0x00, 0xC8, 0x00];
     let Some(Resp::Transforms(t)) = parse_resp(&p) else {
         panic!("not a RESP(TRANSFORMS)");
     };
@@ -39,8 +39,8 @@ fn resp_transforms_decode() {
     assert_eq!(t.entries.len(), 1);
     let e = t.entries[0];
     assert_eq!(e.op, TransformOp::Scale);
-    assert_eq!(e.source, TransformField::Axis(Axis::Wheel));
-    assert_eq!(e.dest, TransformField::Axis(Axis::Wheel));
+    assert_eq!(e.source, LockTarget::Axis(Axis::Wheel));
+    assert_eq!(e.dest, LockTarget::Axis(Axis::Wheel));
     assert_eq!(e.scale, 200);
 }
 
@@ -58,11 +58,11 @@ fn resp_transforms_high_bytes_and_full_flag() {
     assert_eq!(e.op, TransformOp::Remap);
     assert_eq!(
         e.source,
-        TransformField::Usage(Usage::new(Class::Button, 6))
+        LockTarget::Usage(Usage::new(Class::Button, 6))
     );
     assert_eq!(
         e.dest,
-        TransformField::Usage(Usage::new(Class::Media, 0x0233))
+        LockTarget::Usage(Usage::new(Class::Media, 0x0233))
     );
     assert_eq!(e.scale, -50);
 }
@@ -80,35 +80,34 @@ fn resp_transforms_empty() {
 fn transform_op_wire() {
     assert_eq!(TransformOp::Remap.as_u8(), 0);
     assert_eq!(TransformOp::Swap.as_u8(), 1);
-    assert_eq!(TransformOp::Invert.as_u8(), 2);
-    assert_eq!(TransformOp::Scale.as_u8(), 3);
+    assert_eq!(TransformOp::Scale.as_u8(), 2);
     assert_eq!(TransformOp::from_u8(0), Some(TransformOp::Remap));
-    assert_eq!(TransformOp::from_u8(3), Some(TransformOp::Scale));
-    assert_eq!(TransformOp::from_u8(4), None);
+    assert_eq!(TransformOp::from_u8(2), Some(TransformOp::Scale));
+    assert_eq!(TransformOp::from_u8(3), None);
 }
 
 #[test]
 fn transform_field_class_id_roundtrips() {
     // Axis carries class 3; a usage carries INJECT's class byte.
-    assert_eq!(TransformField::Axis(Axis::X).class_id(), (3, 0));
-    assert_eq!(TransformField::Axis(Axis::Pan).class_id(), (3, 3));
-    assert_eq!(TransformField::from(Button::new(6)).class_id(), (0, 6));
+    assert_eq!(LockTarget::Axis(Axis::X).class_id(), (3, 0));
+    assert_eq!(LockTarget::Axis(Axis::Pan).class_id(), (3, 3));
+    assert_eq!(LockTarget::from(Button::new(6)).class_id(), (0, 6));
     assert_eq!(
-        TransformField::from(Usage::new(Class::Media, 0x0233)).class_id(),
+        LockTarget::from(Usage::new(Class::Media, 0x0233)).class_id(),
         (2, 0x0233)
     );
 
     for (cls, id) in [(3, 0), (3, 3), (0, 6), (1, 0x04), (2, 0x0233)] {
-        let f = TransformField::from_class_id(cls, id).unwrap();
+        let f = LockTarget::from_class_id(cls, id).unwrap();
         assert_eq!(f.class_id(), (cls, id));
     }
     // An axis id past pan, and a class no field names, decode to nothing.
-    assert_eq!(TransformField::from_class_id(3, 4), None);
-    assert_eq!(TransformField::from_class_id(0x0A, 0), None);
+    assert_eq!(LockTarget::from_class_id(3, 4), None);
+    assert_eq!(LockTarget::from_class_id(0x0A, 0), None);
 
     // as_axis pulls the axis back out, and is None for a momentary usage.
-    assert_eq!(TransformField::Axis(Axis::X).as_axis(), Some(Axis::X));
-    assert_eq!(TransformField::from(Button::new(6)).as_axis(), None);
+    assert_eq!(LockTarget::Axis(Axis::X).as_axis(), Some(Axis::X));
+    assert_eq!(LockTarget::from(Button::new(6)).as_axis(), None);
 }
 
 #[test]
@@ -120,54 +119,50 @@ fn transform_key_identifies_the_entry() {
     let c = Transform::invert(Axis::X);
     assert_eq!(a.key(), b.key());
     assert_ne!(a.key(), c.key());
-    assert_eq!(a.key().source, TransformField::Axis(Axis::Y));
-    assert_eq!(a.key().dest, TransformField::Axis(Axis::Y));
+    assert_eq!(a.key().source, LockTarget::Axis(Axis::Y));
+    assert_eq!(a.key().dest, LockTarget::Axis(Axis::Y));
 }
 
 #[test]
-fn transform_constructors_shape_the_fields() {
+fn invert_is_a_scale_of_minus_one_hundred() {
+    // There is no invert op on the wire: the box returns a weigh of -100 exactly, so the constructor
+    // builds the scale rather than a second op that would have to carry an ignored parameter.
     let inv = Transform::invert(Axis::Y);
-    assert_eq!(inv.op, TransformOp::Invert);
-    assert_eq!(inv.source, TransformField::Axis(Axis::Y));
-    assert_eq!(inv.dest, TransformField::Axis(Axis::Y));
-    assert_ne!(
-        inv.scale, 0,
-        "invert must carry a non-zero scale the box accepts"
-    );
-
-    assert_eq!(Transform::scale_axis(Axis::Wheel, 200).scale, 200);
-
-    let sw = Transform::swap(Axis::X, Axis::Y);
-    assert_eq!(sw.op, TransformOp::Swap);
-    assert_eq!(sw.source, TransformField::Axis(Axis::X));
-    assert_eq!(sw.dest, TransformField::Axis(Axis::Y));
-
-    let rm = Transform::remap(Button::SIDE1, Key::A);
-    assert_eq!(rm.op, TransformOp::Remap);
-    assert_eq!(rm.source, TransformField::from(Button::SIDE1));
-    assert_eq!(rm.dest, TransformField::from(Key::A));
-
-    assert_eq!(
-        Transform::swap(Axis::X, Axis::Y).with_scale(-100).scale,
-        -100
-    );
+    assert_eq!(inv.op, TransformOp::Scale);
+    assert_eq!(inv.scale, -100);
+    assert_eq!(inv, Transform::scale_axis(Axis::Y, -100));
+    // And it round-trips through the wire as the same entry, so a readback compares equal to what the
+    // caller built.
+    let (sc, si) = inv.source.class_id();
+    let (dc, di) = inv.dest.class_id();
+    let p = transform_payload(inv.op.as_u8(), sc, si, dc, di, inv.scale, 1);
+    let resp = [
+        vec![16u8, 0, 1],
+        p[..9].to_vec(),
+    ]
+    .concat();
+    let Some(Resp::Transforms(t)) = parse_resp(&resp) else {
+        panic!("not a RESP(TRANSFORMS)");
+    };
+    assert_eq!(t.entries[0], inv);
 }
 
 #[test]
 fn transform_op_admits_mirrors_the_box() {
-    use TransformField::Axis as A;
+    use LockTarget::Axis as A;
     let x = A(Axis::X);
     let y = A(Axis::Y);
-    let btn = TransformField::from(Button::new(6));
-    let key = TransformField::from(Key::A);
-    let media = TransformField::from(MediaKey::VOLUME_UP);
+    let btn = LockTarget::from(Button::new(6));
+    let key = LockTarget::from(Key::A);
+    let media = LockTarget::from(MediaKey::VOLUME_UP);
 
-    // Invert/Scale: one axis (source == dest).
-    assert!(TransformOp::Invert.admits(x, x));
-    assert!(!TransformOp::Invert.admits(x, y));
+    // Scale: one axis (source == dest).
+    assert!(TransformOp::Scale.admits(x, x));
+    assert!(!TransformOp::Scale.admits(x, y));
     assert!(!TransformOp::Scale.admits(x, btn));
-    // Swap: two axes.
+    // Swap: two DIFFERENT axes; an axis with itself is not an exchange.
     assert!(TransformOp::Swap.admits(x, y));
+    assert!(!TransformOp::Swap.admits(x, x));
     assert!(!TransformOp::Swap.admits(x, btn));
     // Remap: axis→axis, button→button, button→key, button→media; nothing else.
     assert!(TransformOp::Remap.admits(x, y));
@@ -178,10 +173,48 @@ fn transform_op_admits_mirrors_the_box() {
     assert!(!TransformOp::Remap.admits(key, key));
 }
 
+#[test]
+fn the_held_table_keeps_installation_order_through_every_mutation() {
+    use crate::device::transform::to_stored;
+    use crate::link::reconcile::DesiredState;
+
+    let a = to_stored(&Transform::scale_axis(Axis::Y, 200)); // key (3,1,3,1)
+    let b = to_stored(&Transform::remap(Axis::X, Axis::Y)); // key (3,0,3,1), sorts first
+    let c = to_stored(&Transform::scale_axis(Axis::Wheel, 150)); // key (3,2,3,2)
+
+    let mut d = DesiredState::default();
+    d.apply_transform(a.clone());
+    d.apply_transform(b.clone());
+    d.apply_transform(c.clone());
+    assert_eq!(d.held_transforms(), vec![a.clone(), b.clone(), c.clone()], "installation order, not key order");
+
+    // An overwrite keeps the row's position, the way the box does.
+    let a2 = to_stored(&Transform::scale_axis(Axis::Y, 150));
+    d.apply_transform(a2.clone());
+    assert_eq!(d.held_transforms(), vec![a2.clone(), b.clone(), c.clone()]);
+
+    // A removal rolled back puts the entry where it was, not at the end.
+    let undo = d.remove_transform(b.key());
+    assert_eq!(d.held_transforms(), vec![a2.clone(), c.clone()]);
+    d.restore_transform(undo);
+    assert_eq!(d.held_transforms(), vec![a2.clone(), b.clone(), c.clone()]);
+
+    // And an insert rolled back leaves nothing behind.
+    let e = to_stored(&Transform::scale_axis(Axis::X, 120));
+    let undo = d.apply_transform(e.clone());
+    d.restore_transform(undo);
+    assert_eq!(d.held_transforms(), vec![a2.clone(), b.clone(), c.clone()]);
+
+    assert!(d.holds_transform(b.key()));
+    assert_eq!(d.transform_count(), 3);
+    d.clear_transforms();
+    assert!(d.held_transforms().is_empty());
+}
+
 #[cfg(feature = "mock")]
 mod mock_roundtrip {
     use crate::error::Error;
-    use crate::types::{Axis, Button, Key, MouseCaps, Transform, TransformField, TransformOp};
+    use crate::types::{Axis, Button, Key, LockTarget, MouseCaps, Transform, TransformOp, Transforms};
     use crate::{Device, FrameType, MockBox};
 
     #[test]
@@ -191,8 +224,8 @@ mod mock_roundtrip {
 
         let table = device.query_transforms().unwrap();
         assert_eq!(table.entries.len(), 1);
-        assert_eq!(table.entries[0].op, TransformOp::Invert);
-        assert_eq!(table.entries[0].source, TransformField::Axis(Axis::Y));
+        assert_eq!(table.entries[0].op, TransformOp::Scale);
+        assert_eq!(table.entries[0].source, LockTarget::Axis(Axis::Y));
         assert!(device.query_health().unwrap().transform_on);
 
         device.clear_transforms().unwrap();
@@ -206,7 +239,7 @@ mod mock_roundtrip {
         // faithful and never needed the gate the rewrite/raw/patch layer does.
         let device = Device::with_mock(MockBox::new());
         assert!(!device.query_imperfect().unwrap().allowed);
-        device.invert(Axis::Y).unwrap();
+        device.transform_invert(Axis::Y).unwrap();
         assert_eq!(device.query_transforms().unwrap().entries.len(), 1);
     }
 
@@ -222,25 +255,25 @@ mod mock_roundtrip {
             n_hid: 1,
         };
         let device = Device::with_mock(MockBox::new().with_mouse_caps(caps));
-        device.scale_transform(Axis::Wheel, 200).unwrap();
-        device.swap(Axis::X, Axis::Y).unwrap();
+        device.transform_scale(Axis::Wheel, 200).unwrap();
+        device.transform_swap(Axis::X, Axis::Y).unwrap();
 
         let entries = device.query_transforms().unwrap().entries;
         assert_eq!(entries.len(), 2);
         assert!(entries.iter().any(|e| e.op == TransformOp::Scale
-            && e.source == TransformField::Axis(Axis::Wheel)
+            && e.source == LockTarget::Axis(Axis::Wheel)
             && e.scale == 200));
         assert!(entries.iter().any(|e| e.op == TransformOp::Swap
-            && e.source == TransformField::Axis(Axis::X)
-            && e.dest == TransformField::Axis(Axis::Y)));
+            && e.source == LockTarget::Axis(Axis::X)
+            && e.dest == LockTarget::Axis(Axis::Y)));
     }
 
     #[test]
     fn same_key_overwrites_op_and_scale() {
         // invert(Y) and scale_axis(Y) share the key (Y, Y): the second overwrites, not appends.
         let device = Device::with_mock(MockBox::new());
-        device.invert(Axis::Y).unwrap();
-        device.scale_transform(Axis::Y, 200).unwrap();
+        device.transform_invert(Axis::Y).unwrap();
+        device.transform_scale(Axis::Y, 200).unwrap();
         let entries = device.query_transforms().unwrap().entries;
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].op, TransformOp::Scale);
@@ -250,13 +283,13 @@ mod mock_roundtrip {
     #[test]
     fn untransform_drops_one_entry_by_key() {
         let device = Device::with_mock(MockBox::new());
-        device.invert(Axis::Y).unwrap();
-        device.scale_transform(Axis::Wheel, 150).unwrap();
+        device.transform_invert(Axis::Y).unwrap();
+        device.transform_scale(Axis::Wheel, 150).unwrap();
         assert_eq!(device.query_transforms().unwrap().entries.len(), 2);
         device.untransform(&Transform::invert(Axis::Y)).unwrap();
         let entries = device.query_transforms().unwrap().entries;
         assert_eq!(entries.len(), 1);
-        assert_eq!(entries[0].source, TransformField::Axis(Axis::Wheel));
+        assert_eq!(entries[0].source, LockTarget::Axis(Axis::Wheel));
     }
 
     #[test]
@@ -264,7 +297,7 @@ mod mock_roundtrip {
         let mock = MockBox::new();
         let device = Device::with_mock(mock.clone());
         // Invert across two different axes is not an op any class pair takes.
-        let bad = Transform::new(TransformOp::Invert, Axis::X, Axis::Y, 100);
+        let bad = Transform::new(TransformOp::Scale, Axis::X, Axis::Y, 100);
         assert!(matches!(
             device.transform(&bad),
             Err(Error::TransformOpFields { .. })
@@ -282,15 +315,71 @@ mod mock_roundtrip {
     }
 
     #[test]
-    fn zero_scale_on_invert_is_rejected_before_the_wire() {
+    fn a_scale_past_what_the_box_applies_is_rejected_before_the_wire() {
+        // The wire carries an i16 but the box weighs at most LOCK_SCALE_MAX, so a wider number would be
+        // applied at that bound while the readback echoed the number sent. Refuse instead.
         let mock = MockBox::new();
         let device = Device::with_mock(mock.clone());
-        let bad = Transform::invert(Axis::Y).with_scale(0);
+        for bad in [1000i16, -1000, i16::MAX, i16::MIN] {
+            assert!(
+                matches!(
+                    device.transform(&Transform::scale_axis(Axis::X, bad)),
+                    Err(Error::TransformScaleRange { .. })
+                ),
+                "scale {bad} should be refused"
+            );
+        }
+        assert!(!mock.saw(FrameType::Transform));
+        // The bound itself is accepted.
+        device
+            .transform(&Transform::scale_axis(Axis::X, crate::LOCK_SCALE_MAX as i16))
+            .unwrap();
+    }
+
+    #[test]
+    fn a_percentage_on_a_button_source_is_rejected_before_the_wire() {
+        // A button is one bit: it is pressed or it is not, so a percentage on one names something the
+        // field cannot hold. The box refuses it too.
+        let mock = MockBox::new();
+        let device = Device::with_mock(mock.clone());
+        let bad = Transform::remap(Button::SIDE1, Button::SIDE2).with_scale(50);
         assert!(matches!(
             device.transform(&bad),
-            Err(Error::TransformInvertZeroScale)
+            Err(Error::TransformUsageScale { .. })
         ));
         assert!(!mock.saw(FrameType::Transform));
+        device
+            .transform(&Transform::remap(Button::SIDE1, Button::SIDE2))
+            .unwrap();
+    }
+
+    #[test]
+    fn the_crate_refuses_a_set_past_the_ceiling_rather_than_holding_it_forever() {
+        // Without this the host keeps an entry the box refused: the keepalive re-sends it every tick,
+        // the state never reads idle, and after a reconnect the replay order decides which entries
+        // actually land.
+        let mock = MockBox::new();
+        let device = Device::with_mock(mock.clone());
+        for i in 0..Transforms::CAPACITY {
+            let src = Button::new((i % 16) as u8);
+            let dst = Button::new(((i + 1 + i / 16) % 16) as u8);
+            device.transform(&Transform::remap(src, dst)).unwrap();
+        }
+        assert!(matches!(
+            device.transform(&Transform::scale_axis(Axis::X, 200)),
+            Err(Error::TransformTableFull { .. })
+        ));
+        // An overwrite of a key already held is not an insert, so it still goes.
+        device
+            .transform(&Transform::remap(Button::new(0), Button::new(1)))
+            .unwrap();
+        // And removing one makes room again.
+        device
+            .untransform(&Transform::remap(Button::new(0), Button::new(1)))
+            .unwrap();
+        device
+            .transform(&Transform::scale_axis(Axis::X, 200))
+            .unwrap();
     }
 
     #[test]
@@ -299,8 +388,8 @@ mod mock_roundtrip {
         // structurally valid) and the box refuses them: absent from the readback, the frame still went.
         let mock = MockBox::new();
         let device = Device::with_mock(mock.clone());
-        device.invert(Axis::Pan).unwrap(); // pan not declared
-        device.remap(Button::LEFT, Key::A).unwrap(); // no keyboard collection
+        device.transform_invert(Axis::Pan).unwrap(); // pan not declared
+        device.transform_remap(Button::LEFT, Key::A).unwrap(); // no keyboard collection
         assert!(
             mock.saw(FrameType::Transform),
             "structurally-valid entries reach the wire"
@@ -324,44 +413,101 @@ mod mock_roundtrip {
             n_hid: 1,
         };
         let device = Device::with_mock(MockBox::new().with_mouse_caps(caps));
-        // Eight distinct button→button remaps fill the table (the box holds eight).
-        for i in 0..8u8 {
-            device
-                .transform(&Transform::remap(Button::new(i), Button::new(i + 1)))
-                .unwrap();
+        // Distinct button→button remaps fill the table.
+        for i in 0..Transforms::CAPACITY {
+            let src = Button::new((i % 16) as u8);
+            let dst = Button::new(((i + 1 + i / 16) % 16) as u8);
+            device.transform(&Transform::remap(src, dst)).unwrap();
         }
         let table = device.query_transforms().unwrap();
-        assert_eq!(table.entries.len(), 8);
+        assert_eq!(table.entries.len(), Transforms::CAPACITY);
         assert!(!table.table_full);
-        // A ninth is refused, and the flag says so.
+        // One past is refused by the crate before it reaches the wire, so make the box say so itself.
         device
-            .transform(&Transform::remap(Button::new(9), Button::new(10)))
+            .transform_send(&Transform::scale_axis(Axis::X, 200), 1)
             .unwrap();
         let table = device.query_transforms().unwrap();
-        assert_eq!(table.entries.len(), 8);
+        assert_eq!(table.entries.len(), Transforms::CAPACITY);
         assert!(table.table_full);
+        // A removal makes room, and the flag stops advertising a table that has some.
+        device
+            .untransform(&Transform::remap(Button::new(0), Button::new(1)))
+            .unwrap();
+        let table = device.query_transforms().unwrap();
+        assert_eq!(table.entries.len(), Transforms::CAPACITY - 1);
+        assert!(!table.table_full);
     }
 
     #[test]
     fn reset_clears_the_transform_table() {
         let device = Device::with_mock(MockBox::new());
-        device.invert(Axis::Y).unwrap();
+        device.transform_invert(Axis::Y).unwrap();
         device.reset().unwrap();
         assert!(device.query_transforms().unwrap().entries.is_empty());
     }
 
+    // The (source, dest) bytes of every TRANSFORM frame the host has sent, in order.
+    fn transform_keys(mock: &MockBox) -> Vec<(u8, u16, u8, u16)> {
+        mock.recorded_frames()
+            .into_iter()
+            .filter(|f| f.ty == FrameType::Transform)
+            .map(|f| {
+                let p = f.payload;
+                (
+                    p[1],
+                    u16::from_le_bytes([p[2], p[3]]),
+                    p[4],
+                    u16::from_le_bytes([p[5], p[6]]),
+                )
+            })
+            .collect()
+    }
+
     #[test]
-    fn a_reapply_re_sends_held_transforms() {
+    fn a_reapply_re_sends_held_transforms_in_installation_order() {
+        // The box applies transforms in table order and two that write the same field do not commute,
+        // so the replay is only correct if it rebuilds the ORDER, not just the set. Installed here so
+        // the second entry sorts BELOW the first by wire key: a map-backed store would swap them.
         let mock = MockBox::new();
         let device = Device::with_mock(mock.clone());
-        device.invert(Axis::Y).unwrap();
+        let scale_y = Transform::scale_axis(Axis::Y, 200); // key (3,1,3,1)
+        let remap_xy = Transform::remap(Axis::X, Axis::Y); // key (3,0,3,1), sorts first
+        device.transform(&scale_y).unwrap();
+        device.transform(&remap_xy).unwrap();
+        let installed = transform_keys(&mock);
+        assert_eq!(installed, vec![(3, 1, 3, 1), (3, 0, 3, 1)]);
+
         mock.clear_recorded();
         device.reapply().unwrap();
-        assert!(
-            mock.saw(FrameType::Transform),
-            "a reconnect must re-assert the held transform table"
+        assert_eq!(
+            transform_keys(&mock),
+            installed,
+            "a reconnect must replay the table in the order it was built, not in key order"
         );
     }
+
+    #[test]
+    fn an_overwrite_keeps_its_position_in_the_replay() {
+        let mock = MockBox::new();
+        let device = Device::with_mock(mock.clone());
+        device.transform(&Transform::scale_axis(Axis::Y, 200)).unwrap();
+        device.transform(&Transform::remap(Axis::X, Axis::Y)).unwrap();
+        // Re-set the first entry at a new scale: it is the same key, so it stays first.
+        device.transform(&Transform::scale_axis(Axis::Y, 150)).unwrap();
+        mock.clear_recorded();
+        device.reapply().unwrap();
+        assert_eq!(transform_keys(&mock), vec![(3, 1, 3, 1), (3, 0, 3, 1)]);
+        // And the replayed scale is the one that is live, not the one it replaced.
+        let scales: Vec<i16> = mock
+            .recorded_frames()
+            .into_iter()
+            .filter(|f| f.ty == FrameType::Transform)
+            .map(|f| i16::from_le_bytes([f.payload[7], f.payload[8]]))
+            .collect();
+        assert_eq!(scales[0], 150);
+    }
+
+
 
     #[test]
     fn the_keepalive_re_asserts_a_held_transform() {
@@ -369,7 +515,7 @@ mod mock_roundtrip {
         let mock = MockBox::new();
         let device =
             Device::from_transport_with_cadence(mock.transport(), Duration::from_millis(60));
-        device.invert(Axis::Y).unwrap();
+        device.transform_invert(Axis::Y).unwrap();
         mock.clear_recorded();
         std::thread::sleep(Duration::from_millis(220));
         assert!(
@@ -386,7 +532,7 @@ mod mock_roundtrip {
 mod async_roundtrip {
     use futures::executor::block_on;
 
-    use crate::types::{Axis, Transform, TransformField, TransformOp};
+    use crate::types::{Axis, LockTarget, Transform, TransformOp};
     use crate::{Device, MockBox};
 
     #[test]
@@ -395,8 +541,8 @@ mod async_roundtrip {
         device.transform(&Transform::invert(Axis::Y)).unwrap();
         let table = block_on(device.query_transforms()).unwrap();
         assert_eq!(table.entries.len(), 1);
-        assert_eq!(table.entries[0].op, TransformOp::Invert);
-        assert_eq!(table.entries[0].source, TransformField::Axis(Axis::Y));
+        assert_eq!(table.entries[0].op, TransformOp::Scale);
+        assert_eq!(table.entries[0].source, LockTarget::Axis(Axis::Y));
 
         device.clear_transforms().unwrap();
         assert!(
@@ -410,7 +556,7 @@ mod async_roundtrip {
     #[test]
     fn async_ergonomics_forward_to_the_core() {
         let device = Device::with_mock(MockBox::new()).into_async();
-        device.scale_transform(Axis::Wheel, 200).unwrap();
+        device.transform_scale(Axis::Wheel, 200).unwrap();
         let table = block_on(device.query_transforms()).unwrap();
         assert_eq!(table.entries.len(), 1);
         assert_eq!(table.entries[0].op, TransformOp::Scale);

@@ -586,9 +586,11 @@ class Device:
         """`TRANSFORM` (§3.15): install (add or overwrite) one field transform.
 
         A transform negates, scales, swaps or remaps a field the clone already declares, so it is
-        faithful and needs no `allow_imperfect_clones`. An entry is keyed by its `(source, dest)`. A
-        combination the op cannot address raises `TransformOpFieldsError`, and a `scale` of 0 on an
-        invert raises `TransformInvertZeroScaleError`. `query_transforms` confirms what the box holds.
+        faithful and needs no `allow_imperfect_clones`. An entry is keyed by its `(source, dest)`, and
+        entries apply in installation order. A combination the op cannot address raises
+        `TransformOpFieldsError`, a scale past `LOCK_SCALE_MAX` raises `TransformScaleRangeError`, a
+        percentage on a usage source raises `TransformUsageScaleError`, and one past the table's
+        capacity raises `TransformTableFullError`. `query_transforms` confirms what the box holds.
         """
         c = transform_to_c(t)
         check(_native.lib.medius_device_transform(self._handle, ctypes.byref(c)))
@@ -603,35 +605,37 @@ class Device:
         """`TRANSFORM` clear (§3.15): drop the whole transform table."""
         check(_native.lib.medius_device_clear_transforms(self._handle))
 
-    def invert(self, axis: Axis) -> None:
-        """Invert an axis on the wire: convenience for a `transform` of `Transform.invert`."""
-        check(_native.lib.medius_device_invert(self._handle, int(_enum(axis, Axis, "axis"))))
-
-    def scale_transform(self, axis: Axis, percent: int) -> None:
-        """Weigh an axis by a signed percent (`200` doubles, `-50` halves and flips): convenience for a
-        `transform` of `Transform.scale_axis`. Named `scale_transform` because `scale` is the LOCK
-        weigh, a different operation."""
+    def transform_invert(self, axis: Axis) -> None:
+        """Negate an axis on the wire: a `transform` of `Transform.invert`."""
         check(
-            _native.lib.medius_device_scale_transform(
+            _native.lib.medius_device_transform_invert(
+                self._handle, int(_enum(axis, Axis, "axis"))
+            )
+        )
+
+    def transform_scale(self, axis: Axis, percent: int) -> None:
+        """Weigh an axis by a signed percent (`200` doubles, `-50` halves and flips): a `transform` of
+        `Transform.scale_axis`."""
+        check(
+            _native.lib.medius_device_transform_scale(
                 self._handle, int(_enum(axis, Axis, "axis")), _i16(percent, "percent")
             )
         )
 
-    def swap(self, a: Axis, b: Axis) -> None:
-        """Exchange two axes on the wire: convenience for a `transform` of `Transform.swap`."""
+    def transform_swap(self, a: Axis, b: Axis) -> None:
+        """Exchange two axes on the wire: a `transform` of `Transform.swap`."""
         check(
-            _native.lib.medius_device_swap(
+            _native.lib.medius_device_transform_swap(
                 self._handle, int(_enum(a, Axis, "a")), int(_enum(b, Axis, "b"))
             )
         )
 
-    def remap(self, source, dest) -> None:
-        """Remap a source field into a destination: convenience for a `transform` of `Transform.remap`.
-        `source` and `dest` are a `LockTarget`, an `Axis`, or a usage (`Usage`/`Button`/`Key`/
-        `MediaKey`)."""
+    def transform_remap(self, source, dest) -> None:
+        """Move a source field into a destination: a `transform` of `Transform.remap`. `source` and
+        `dest` are a `LockTarget`, an `Axis`, or a usage (`Usage`/`Button`/`Key`/`MediaKey`)."""
         s = _as_lock_target(source)
         d = _as_lock_target(dest)
-        check(_native.lib.medius_device_remap(self._handle, s._c, d._c))
+        check(_native.lib.medius_device_transform_remap(self._handle, s._c, d._c))
 
     def query_transforms(self) -> Transforms:
         """`QUERY(TRANSFORMS)` (§4.18): the whole transform table, a row per entry in the shape

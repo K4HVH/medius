@@ -45,7 +45,7 @@
 #define MEDIUS_MAX_PATCH_ENTRIES 16
 
 // Largest number of entries in a decoded `RESP(TRANSFORMS)` (the firmware `CTRL_TRANSFORM_MAXN`).
-#define MEDIUS_MAX_TRANSFORM_ENTRIES 8
+#define MEDIUS_MAX_TRANSFORM_ENTRIES 32
 
 // The most `match`/`mask` bytes one rewrite rule compares (the firmware `REWRITE_MATCH_MAX`).
 #define MEDIUS_MAX_REWRITE_MATCH 16
@@ -154,12 +154,18 @@ enum MediusStatus
     MEDIUS_STATUS_ERR_REWRITE_ACTION_CLASS = 22,
     // A rewrite payload larger than the head the box holds for its class.
     MEDIUS_STATUS_ERR_REWRITE_PAYLOAD_TOO_LARGE = 23,
+    // A rewrite rule added to a table that already holds `MEDIUS_REWRITE_MAX_ENTRIES`.
+    MEDIUS_STATUS_ERR_REWRITE_TABLE_FULL = 24,
     // A transform op that cannot address its `source`/`dest` pair.
-    MEDIUS_STATUS_ERR_TRANSFORM_OP_FIELDS = 24,
-    // A scale of 0 on an invert, which ignores its scale (so 0 would block the field it must pass).
-    MEDIUS_STATUS_ERR_TRANSFORM_INVERT_ZERO_SCALE = 25,
+    MEDIUS_STATUS_ERR_TRANSFORM_OP_FIELDS = 25,
+    // A transform scale whose magnitude is past `MEDIUS_LOCK_SCALE_MAX`, the widest the box applies.
+    MEDIUS_STATUS_ERR_TRANSFORM_SCALE_RANGE = 26,
+    // A transform percentage on a button, key or media source, which carries one bit rather than a magnitude.
+    MEDIUS_STATUS_ERR_TRANSFORM_USAGE_SCALE = 27,
+    // A transform added to a table that already holds `MEDIUS_TRANSFORM_MAX_ENTRIES`.
+    MEDIUS_STATUS_ERR_TRANSFORM_TABLE_FULL = 28,
     // A raw injection direction other than `MEDIUS_DIRECTION_POSITIVE` (IN) or `MEDIUS_DIRECTION_NEGATIVE` (OUT).
-    MEDIUS_STATUS_ERR_RAW_DIRECTION = 26,
+    MEDIUS_STATUS_ERR_RAW_DIRECTION = 29,
 };
 #ifndef __cplusplus
 #if __STDC_VERSION__ >= 202311L
@@ -2056,24 +2062,24 @@ MediusStatus medius_device_clear_transforms(struct MediusDevice *dev);
 
 // Invert an axis on the wire: convenience for a `medius_device_transform` of an invert. `axis` takes
 // a `MEDIUS_AXIS_*` constant; any other value is `MEDIUS_STATUS_ERR_INVALID_ARG`.
-MediusStatus medius_device_invert(struct MediusDevice *dev,
-                                  uint8_t axis);
+MediusStatus medius_device_transform_invert(struct MediusDevice *dev,
+                                            uint8_t axis);
 
 // Weigh an axis by a signed percent (`200` doubles, `-50` halves and flips): convenience for a
 // `medius_device_transform` of a scale. `axis` takes a `MEDIUS_AXIS_*` constant; any other value is
 // `MEDIUS_STATUS_ERR_INVALID_ARG`.
-MediusStatus medius_device_scale_transform(struct MediusDevice *dev, uint8_t axis, int16_t percent);
+MediusStatus medius_device_transform_scale(struct MediusDevice *dev, uint8_t axis, int16_t percent);
 
 // Exchange two axes on the wire: convenience for a `medius_device_transform` of a swap. `a` and `b`
 // take `MEDIUS_AXIS_*` constants; any other value is `MEDIUS_STATUS_ERR_INVALID_ARG`.
-MediusStatus medius_device_swap(struct MediusDevice *dev, uint8_t a, uint8_t b);
+MediusStatus medius_device_transform_swap(struct MediusDevice *dev, uint8_t a, uint8_t b);
 
 // Remap a source field into a destination: convenience for a `medius_device_transform` of a remap.
 // `source` and `dest` are a `MEDIUS_LOCK_TARGET_KIND_*` axis or usage; a `kind` or usage no constant
 // names is `MEDIUS_STATUS_ERR_INVALID_ARG`.
-MediusStatus medius_device_remap(struct MediusDevice *dev,
-                                 struct MediusLockTarget source,
-                                 struct MediusLockTarget dest);
+MediusStatus medius_device_transform_remap(struct MediusDevice *dev,
+                                           struct MediusLockTarget source,
+                                           struct MediusLockTarget dest);
 
 // `QUERY(TRANSFORMS)` → `*out` (§4.18): the whole transform table, a row per entry in the shape
 // `medius_device_transform` takes, so a read entry replays as a set.

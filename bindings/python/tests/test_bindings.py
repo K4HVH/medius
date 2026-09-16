@@ -102,7 +102,9 @@ from medius import (
     RewriteActionClassError,
     RewritePayloadTooLargeError,
     TransformOpFieldsError,
-    TransformInvertZeroScaleError,
+    TransformScaleRangeError,
+    TransformTableFullError,
+    TransformUsageScaleError,
 )
 
 
@@ -1685,10 +1687,10 @@ def test_buttons_past_five_address_by_id():
 def test_transform_verbs_reach_the_wire_ungated():
     # A transform is faithful, so it needs no imperfect-clone opt-in (unlike the rewrite/patch layer).
     with MockBox() as mock, Device.with_mock(mock) as d:
-        d.invert(Axis.Y)
-        d.scale_transform(Axis.WHEEL, 200)
-        d.swap(Axis.X, Axis.Y)
-        d.remap(Axis.X, Axis.WHEEL)
+        d.transform_invert(Axis.Y)
+        d.transform_scale(Axis.WHEEL, 200)
+        d.transform_swap(Axis.X, Axis.Y)
+        d.transform_remap(Axis.X, Axis.WHEEL)
         d.transform(Transform.scale_axis(Axis.Y, 175))
         d.untransform(Transform.scale_axis(Axis.Y, 175))
         d.clear_transforms()
@@ -1700,14 +1702,14 @@ def test_transform_verbs_reach_the_wire_ungated():
 
 def test_a_transform_survives_the_query_roundtrip():
     with MockBox() as mock, Device.with_mock(mock) as d:
-        d.invert(Axis.Y)
-        d.scale_transform(Axis.WHEEL, 200)
-        d.swap(Axis.X, Axis.Y)
+        d.transform_invert(Axis.Y)
+        d.transform_scale(Axis.WHEEL, 200)
+        d.transform_swap(Axis.X, Axis.Y)
         got = d.query_transforms()
     assert isinstance(got, Transforms)
     assert got.table_full is False
     assert len(got.entries) == 3
-    assert got.entries[0].op == TransformOp.INVERT
+    assert got.entries[0].op == TransformOp.SCALE
     assert got.entries[0].source.kind == LockTargetKind.Y
     assert got.entries[0].dest.kind == LockTargetKind.Y
     assert got.entries[1].op == TransformOp.SCALE
@@ -1733,10 +1735,10 @@ def test_a_pan_axis_transform_is_first_class():
         )
         with Device.with_mock(mock) as d:
             assert d.caps().mouse.pan is True
-            d.invert(Axis.PAN)
+            d.transform_invert(Axis.PAN)
             got = d.query_transforms()
     assert len(got.entries) == 1
-    assert got.entries[0].op == TransformOp.INVERT
+    assert got.entries[0].op == TransformOp.SCALE
     assert got.entries[0].source.kind == LockTargetKind.PAN
 
 
@@ -1747,9 +1749,19 @@ def test_transform_validation_errors_have_their_own_exception():
             d.transform(
                 Transform(TransformOp.REMAP, LockTarget.x(), LockTarget.button(Button.LEFT), 100)
             )
-        # An invert ignores its scale, so a scale of 0 is contradictory and refused.
-        with pytest.raises(TransformInvertZeroScaleError):
-            d.transform(Transform(TransformOp.INVERT, LockTarget.y(), LockTarget.y(), 0))
+        # A scale past what the box applies is refused rather than silently weighed at that bound.
+        with pytest.raises(TransformScaleRangeError):
+            d.transform(Transform(TransformOp.SCALE, LockTarget.y(), LockTarget.y(), 1000))
+        # A button carries one bit, so a percentage on one names something it cannot hold.
+        with pytest.raises(TransformUsageScaleError):
+            d.transform(
+                Transform(
+                    TransformOp.REMAP,
+                    LockTarget.button(Button.LEFT),
+                    LockTarget.button(Button.RIGHT),
+                    50,
+                )
+            )
 
 
 def test_input_event_carries_pan():

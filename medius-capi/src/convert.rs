@@ -12,7 +12,7 @@ use medius::{
     MouseCaps, MoveTiming, Patch, PatchEntry, PatchSection, PatchSet, PendingMotion, PortInfo,
     Rate, RebootTarget, RenderMode, RenderStatus, RewriteAction, RewriteClass, RewriteEntry,
     RewriteRule, RewriteTable, Setup, SpreadStatus, Stats, TransferOutcome, Transform,
-    TransformField, TransformOp, Transforms, Usage, Version,
+    TransformOp, Transforms, Usage, Version,
 };
 
 use crate::ctypes::*;
@@ -776,29 +776,15 @@ impl From<PatchSet> for MediusPatchSet {
 
 // A `MediusLockTarget` to a [`TransformField`]; the transform field space is the lock-target space,
 // so this reuses [`lock_target_to_medius`] and is `None` for the same reasons it is.
-pub(crate) fn transform_field_from_c(v: MediusLockTarget) -> Option<TransformField> {
-    Some(match lock_target_to_medius(v)? {
-        LockTarget::Axis(a) => TransformField::Axis(a),
-        LockTarget::Usage(u) => TransformField::Usage(u),
-    })
-}
-
-/// A [`TransformField`] to a `MediusLockTarget`, reusing [`lock_target_to_c`].
-fn transform_field_to_c(f: TransformField) -> MediusLockTarget {
-    lock_target_to_c(match f {
-        TransformField::Axis(a) => LockTarget::Axis(a),
-        TransformField::Usage(u) => LockTarget::Usage(u),
-    })
-}
-
-// A `MediusTransform` to a [`Transform`]; `None` for an op, source or dest byte no constant names.
-// The device-dependent and structural refusals (an op a class pair cannot take, a zero-scale invert)
-// are the crate's, made when the transform is sent.
+// A `MediusTransform` to a [`Transform`]; `None` for an op, source or dest byte no constant names. A
+// transform addresses a field the same way a lock does, so both cross as a `MediusLockTarget`. The
+// structural refusals (an op a class pair cannot take, a scale a field cannot carry) are the crate's,
+// made when the transform is sent.
 pub(crate) fn transform_from_c(c: &MediusTransform) -> Option<Transform> {
     Some(Transform {
         op: TransformOp::from_u8(c.op)?,
-        source: transform_field_from_c(c.source)?,
-        dest: transform_field_from_c(c.dest)?,
+        source: lock_target_to_medius(c.source)?,
+        dest: lock_target_to_medius(c.dest)?,
         scale: c.scale,
     })
 }
@@ -806,8 +792,8 @@ pub(crate) fn transform_from_c(c: &MediusTransform) -> Option<Transform> {
 fn transform_to_c(t: &Transform) -> MediusTransform {
     MediusTransform {
         op: t.op.as_u8(),
-        source: transform_field_to_c(t.source),
-        dest: transform_field_to_c(t.dest),
+        source: lock_target_to_c(t.source),
+        dest: lock_target_to_c(t.dest),
         scale: t.scale,
     }
 }
