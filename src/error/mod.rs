@@ -92,7 +92,11 @@ pub enum Error {
         pass: i16,
     },
 
-    #[error("the box holds {limit} transforms and they are all in use; remove one first")]
+    #[error(
+        "{limit} transforms are already held for this device; remove one first. This counts what the \
+         host holds, which can include an entry the box refused for naming a field the clone does not \
+         declare: query_transforms reports what the box actually has"
+    )]
     TransformTableFull { limit: usize },
 
     #[error("{class:?} arrives decoded and carries no packet, so a capture on it does nothing")]

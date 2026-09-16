@@ -154,7 +154,7 @@ enum MediusStatus
     MEDIUS_STATUS_ERR_REWRITE_ACTION_CLASS = 22,
     // A rewrite payload larger than the head the box holds for its class.
     MEDIUS_STATUS_ERR_REWRITE_PAYLOAD_TOO_LARGE = 23,
-    // A rewrite rule added to a table that already holds `MEDIUS_REWRITE_MAX_ENTRIES`.
+    // A rewrite rule added to a table that already holds `MEDIUS_MAX_REWRITE_ENTRIES`.
     MEDIUS_STATUS_ERR_REWRITE_TABLE_FULL = 24,
     // A transform op that cannot address its `source`/`dest` pair.
     MEDIUS_STATUS_ERR_TRANSFORM_OP_FIELDS = 25,
@@ -162,7 +162,7 @@ enum MediusStatus
     MEDIUS_STATUS_ERR_TRANSFORM_SCALE_RANGE = 26,
     // A transform percentage on a button, key or media source, which carries one bit rather than a magnitude.
     MEDIUS_STATUS_ERR_TRANSFORM_USAGE_SCALE = 27,
-    // A transform added to a table that already holds `MEDIUS_TRANSFORM_MAX_ENTRIES`.
+    // A transform added to a table that already holds `MEDIUS_MAX_TRANSFORM_ENTRIES`.
     MEDIUS_STATUS_ERR_TRANSFORM_TABLE_FULL = 28,
     // A raw injection direction other than `MEDIUS_DIRECTION_POSITIVE` (IN) or `MEDIUS_DIRECTION_NEGATIVE` (OUT).
     MEDIUS_STATUS_ERR_RAW_DIRECTION = 29,
@@ -849,10 +849,9 @@ enum MediusTransformOp
     MEDIUS_TRANSFORM_OP_REMAP = 0,
     // Exchange two axes: read both, then write both, so it is not two remaps.
     MEDIUS_TRANSFORM_OP_SWAP = 1,
-    // Negate one axis; the signed scale is ignored.
-    MEDIUS_TRANSFORM_OP_INVERT = 2,
-    // Weigh one axis by the signed scale.
-    MEDIUS_TRANSFORM_OP_SCALE = 3,
+    // Weigh one axis by the signed scale. A scale of -100 negates it, exactly; there is no separate
+    // invert op.
+    MEDIUS_TRANSFORM_OP_SCALE = 2,
 };
 #ifndef __cplusplus
 #if __STDC_VERSION__ >= 202311L
@@ -2045,10 +2044,12 @@ MediusStatus medius_device_query_patch_entry(struct MediusDevice *dev,
 // `TRANSFORM` (§3.15): install (add or overwrite) one field transform, fire-and-forget. A transform
 // negates, scales, swaps or remaps a field the clone already declares, so it is faithful and needs
 // no imperfect-clone opt-in, unlike the rewrite/raw/patch layer. An entry is keyed by its
-// `(source, dest)`. `transform->op` takes a `MEDIUS_TRANSFORM_OP_*` constant, and `source`/`dest` a
-// `MEDIUS_LOCK_TARGET_KIND_*` axis or usage; a combination the op cannot address is
-// `MEDIUS_STATUS_ERR_TRANSFORM_OP_FIELDS` and a `scale` of 0 on an invert is
-// `..._TRANSFORM_INVERT_ZERO_SCALE`. `medius_device_query_transforms` confirms what the box holds.
+// `(source, dest)`, and entries apply in the order they were installed. `transform->op` takes a
+// `MEDIUS_TRANSFORM_OP_*` constant, and `source`/`dest` a `MEDIUS_LOCK_TARGET_KIND_*` axis or usage.
+// Refusals: a combination the op cannot address is `MEDIUS_STATUS_ERR_TRANSFORM_OP_FIELDS`, a `scale`
+// magnitude past `MEDIUS_LOCK_SCALE_MAX` is `..._TRANSFORM_SCALE_RANGE`, a percentage on a usage
+// source is `..._TRANSFORM_USAGE_SCALE`, and one past `MEDIUS_MAX_TRANSFORM_ENTRIES` is
+// `..._TRANSFORM_TABLE_FULL`. `medius_device_query_transforms` confirms what the box holds.
 MediusStatus medius_device_transform(struct MediusDevice *dev,
                                      const struct MediusTransform *transform);
 

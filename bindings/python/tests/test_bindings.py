@@ -1720,6 +1720,17 @@ def test_a_transform_survives_the_query_roundtrip():
     assert got.entries[2].dest.kind == LockTargetKind.Y
 
 
+def test_transform_invert_builds_the_scale_the_crate_builds():
+    # There is no invert op. The constructor must build Scale(-100), and the op bytes must be the ones
+    # the C header and the firmware use: a disagreement here is a wrong transform on the wire, not a
+    # type error, because `op` crosses the ABI as a plain byte.
+    t = Transform.invert(Axis.Y)
+    assert t.op == TransformOp.SCALE
+    assert t.scale == -100
+    assert (int(TransformOp.REMAP), int(TransformOp.SWAP), int(TransformOp.SCALE)) == (0, 1, 2)
+    assert not hasattr(TransformOp, "INVERT")
+
+
 def test_a_pan_axis_transform_is_first_class():
     with MockBox() as mock:
         mock.set_mouse_caps(

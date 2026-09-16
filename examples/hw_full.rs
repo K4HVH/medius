@@ -1944,6 +1944,40 @@ mod linux {
                 ),
             );
 
+            // The other three verbs, and the order the box applies them in: a scale installed before a
+            // remap onto the same axis composes differently the other way round, so the readback order
+            // is state, not presentation.
+            let _ = dev.clear_transforms();
+            let ord_ok = dev.transform_scale(Axis::Y, 150).is_ok()
+                && dev.transform_remap(Axis::X, Axis::Y).is_ok();
+            let ord = dev.query_transforms();
+            let ord_right = matches!(&ord, Ok(t) if t.entries.len() == 2
+                && t.entries[0] == Transform::scale_axis(Axis::Y, 150)
+                && t.entries[1] == Transform::remap(Axis::X, Axis::Y));
+            let swap_ok = dev.clear_transforms().is_ok() && dev.transform_swap(Axis::X, Axis::Y).is_ok();
+            let swap_present = matches!(dev.query_transforms(), Ok(t)
+                if t.entries.iter().any(|e| e.op == TransformOp::Swap));
+            let _ = dev.clear_transforms();
+            check(
+                "transforms: scale, swap, remap and apply order",
+                ord_ok && ord_right && swap_ok && swap_present,
+                format!("set={ord_ok}, readback in install order={ord_right}, swap={swap_ok}/{swap_present}"),
+            );
+
+            // The four refusals the crate makes before the wire. Each must be refused AND leave the
+            // table alone, so a rejected call cannot half-apply.
+            let r_pair = dev.transform(&Transform::new(TransformOp::Swap, Axis::X, Axis::X, 100)).is_err();
+            let r_range = dev.transform(&Transform::scale_axis(Axis::X, 1000)).is_err();
+            let r_usage = dev
+                .transform(&Transform::remap(Button::SIDE1, Button::SIDE2).with_scale(50))
+                .is_err();
+            let r_clean = matches!(dev.query_transforms(), Ok(t) if t.entries.is_empty());
+            check(
+                "transforms: refusals before the wire",
+                r_pair && r_range && r_usage && r_clean,
+                format!("pair={r_pair}, range={r_range}, usage-scale={r_usage}, table untouched={r_clean}"),
+            );
+
             let _ = dev.allow_imperfect_clones(false);
             let _ = dev.reset();
         }

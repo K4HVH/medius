@@ -46,7 +46,7 @@ pub enum MediusStatus {
     ErrRewriteActionClass = 22,
     /// A rewrite payload larger than the head the box holds for its class.
     ErrRewritePayloadTooLarge = 23,
-    /// A rewrite rule added to a table that already holds `MEDIUS_REWRITE_MAX_ENTRIES`.
+    /// A rewrite rule added to a table that already holds `MEDIUS_MAX_REWRITE_ENTRIES`.
     ErrRewriteTableFull = 24,
     /// A transform op that cannot address its `source`/`dest` pair.
     ErrTransformOpFields = 25,
@@ -54,7 +54,7 @@ pub enum MediusStatus {
     ErrTransformScaleRange = 26,
     /// A transform percentage on a button, key or media source, which carries one bit rather than a magnitude.
     ErrTransformUsageScale = 27,
-    /// A transform added to a table that already holds `MEDIUS_TRANSFORM_MAX_ENTRIES`.
+    /// A transform added to a table that already holds `MEDIUS_MAX_TRANSFORM_ENTRIES`.
     ErrTransformTableFull = 28,
     /// A raw injection direction other than `MEDIUS_DIRECTION_POSITIVE` (IN) or `MEDIUS_DIRECTION_NEGATIVE` (OUT).
     ErrRawDirection = 29,

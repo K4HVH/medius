@@ -800,10 +800,12 @@ fn with_transform(
 /// `TRANSFORM` (§3.15): install (add or overwrite) one field transform, fire-and-forget. A transform
 /// negates, scales, swaps or remaps a field the clone already declares, so it is faithful and needs
 /// no imperfect-clone opt-in, unlike the rewrite/raw/patch layer. An entry is keyed by its
-/// `(source, dest)`. `transform->op` takes a `MEDIUS_TRANSFORM_OP_*` constant, and `source`/`dest` a
-/// `MEDIUS_LOCK_TARGET_KIND_*` axis or usage; a combination the op cannot address is
-/// `MEDIUS_STATUS_ERR_TRANSFORM_OP_FIELDS` and a `scale` of 0 on an invert is
-/// `..._TRANSFORM_INVERT_ZERO_SCALE`. `medius_device_query_transforms` confirms what the box holds.
+/// `(source, dest)`, and entries apply in the order they were installed. `transform->op` takes a
+/// `MEDIUS_TRANSFORM_OP_*` constant, and `source`/`dest` a `MEDIUS_LOCK_TARGET_KIND_*` axis or usage.
+/// Refusals: a combination the op cannot address is `MEDIUS_STATUS_ERR_TRANSFORM_OP_FIELDS`, a `scale`
+/// magnitude past `MEDIUS_LOCK_SCALE_MAX` is `..._TRANSFORM_SCALE_RANGE`, a percentage on a usage
+/// source is `..._TRANSFORM_USAGE_SCALE`, and one past `MEDIUS_MAX_TRANSFORM_ENTRIES` is
+/// `..._TRANSFORM_TABLE_FULL`. `medius_device_query_transforms` confirms what the box holds.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_device_transform(
     dev: *mut MediusDevice,

@@ -41,6 +41,7 @@ const _: () = {
     assert!(MEDIUS_MAX_PATCH_ENTRIES == medius::PATCH_MAX_ENTRIES);
     assert!(MEDIUS_MAX_TRANSFORM_ENTRIES == medius::TRANSFORM_MAX_ENTRIES);
     assert!(MEDIUS_MAX_REWRITE_MATCH == medius::REWRITE_MATCH_MAX);
+    assert!(MEDIUS_MAX_DEV_PAYLOAD == medius::MAX_PAYLOAD);
 };
 /// The largest advanced control layer byte payload the control link carries in one frame (`MAX_PAYLOAD`):
 /// the bound on a `medius_device_raw` write, a rewrite rule's payload, a descriptor patch's bytes,
@@ -886,11 +887,18 @@ pub enum MediusTransformOp {
     Remap = 0,
     /// Exchange two axes: read both, then write both, so it is not two remaps.
     Swap = 1,
-    /// Negate one axis; the signed scale is ignored.
-    Invert = 2,
-    /// Weigh one axis by the signed scale.
-    Scale = 3,
+    /// Weigh one axis by the signed scale. A scale of -100 negates it, exactly; there is no separate
+    /// invert op.
+    Scale = 2,
 }
+
+// The `op` byte crosses the ABI as a plain `u8` and is decoded by the crate's own `TransformOp`, so a
+// value that disagrees with it is not a type error here, it is a wrong transform on the wire.
+const _: () = {
+    assert!(MediusTransformOp::Remap as u8 == medius::TransformOp::Remap.as_u8());
+    assert!(MediusTransformOp::Swap as u8 == medius::TransformOp::Swap.as_u8());
+    assert!(MediusTransformOp::Scale as u8 == medius::TransformOp::Scale.as_u8());
+};
 
 /// One field transform (§3.15): an operation, the `source` field it reads, the `dest` field it
 /// writes, and a signed scale.
