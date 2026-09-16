@@ -38,22 +38,23 @@ pub enum MediusStatus {
     ErrReservedId = 18,
     /// `MEDIUS_DIRECTION_WITH` / `_AGAINST` on something with no bearing to measure them against.
     ErrRelativeDirection = 19,
+    /// A lock scale outside `MEDIUS_LOCK_SCALE_MIN ..= MEDIUS_LOCK_SCALE_MAX`.
+    ErrLockScaleRange = 20,
+    /// A negative (reversing) lock scale on a button, key or media usage, which carries one bit and has
+    /// nothing to reverse.
+    ErrLockScaleUsage = 21,
     /// An advanced control layer call with the imperfect-clone opt-in off, which gates the whole layer.
-    ErrImperfectRequired = 20,
+    ErrImperfectRequired = 22,
     /// A rewrite rule whose `match` and `mask` are different lengths.
-    ErrRewriteMaskLength = 21,
+    ErrRewriteMaskLength = 23,
     /// A rewrite action that is not valid for its class (a report-only or control-only action misused).
-    ErrRewriteActionClass = 22,
+    ErrRewriteActionClass = 24,
     /// A rewrite payload larger than the head the box holds for its class.
-    ErrRewritePayloadTooLarge = 23,
+    ErrRewritePayloadTooLarge = 25,
     /// A rewrite rule added to a table that already holds `MEDIUS_MAX_REWRITE_ENTRIES`.
-    ErrRewriteTableFull = 24,
+    ErrRewriteTableFull = 26,
     /// A transform op that cannot address its `source`/`dest` pair.
-    ErrTransformOpFields = 25,
-    /// A transform scale whose magnitude is past `MEDIUS_LOCK_SCALE_MAX`, the widest the box applies.
-    ErrTransformScaleRange = 26,
-    /// A transform percentage on a button, key or media source, which carries one bit rather than a magnitude.
-    ErrTransformUsageScale = 27,
+    ErrTransformOpFields = 27,
     /// A transform added to a table that already holds `MEDIUS_MAX_TRANSFORM_ENTRIES`.
     ErrTransformTableFull = 28,
     /// A raw injection direction other than `MEDIUS_DIRECTION_POSITIVE` (IN) or `MEDIUS_DIRECTION_NEGATIVE` (OUT).
@@ -109,9 +110,9 @@ fn status_for(err: &Error) -> MediusStatus {
         Error::RewriteActionClass { .. } => MediusStatus::ErrRewriteActionClass,
         Error::RewritePayloadTooLarge { .. } => MediusStatus::ErrRewritePayloadTooLarge,
         Error::RewriteTableFull { .. } => MediusStatus::ErrRewriteTableFull,
+        Error::LockScaleRange { .. } => MediusStatus::ErrLockScaleRange,
+        Error::LockScaleUsage { .. } => MediusStatus::ErrLockScaleUsage,
         Error::TransformOpFields { .. } => MediusStatus::ErrTransformOpFields,
-        Error::TransformScaleRange { .. } => MediusStatus::ErrTransformScaleRange,
-        Error::TransformUsageScale { .. } => MediusStatus::ErrTransformUsageScale,
         Error::TransformTableFull { .. } => MediusStatus::ErrTransformTableFull,
         Error::Update { .. } => MediusStatus::ErrUpdate,
         _ => MediusStatus::ErrUnknown,

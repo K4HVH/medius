@@ -510,7 +510,7 @@ fn scale_and_bearing_cross_the_boundary() {
 
 #[test]
 fn scale_frames_carry_the_direction_and_the_number() {
-    // The payload bytes, derived from ctrl_proto.h: [class][id u16 LE][direction][scale].
+    // The payload bytes, derived from ctrl_proto.h: [class][id u16 LE][direction][scale i16 LE].
     let frames = native_frames(|d| {
         d.scale(medius::Axis::X, medius::Direction::Against, 40)
             .unwrap();
@@ -523,10 +523,10 @@ fn scale_frames_carry_the_direction_and_the_number() {
     assert_eq!(
         payloads,
         vec![
-            vec![3, 0, 0, 4, 40],  // AXIS X, AGAINST, 40%
-            vec![3, 0, 0, 3, 130], // AXIS X, WITH, 130%
-            vec![3, 1, 0, 3, 130], // AXIS Y, WITH, 130%
-            vec![4, 35, 0, 1],     // OPTION(BEARING), 35 ms, VECTOR
+            vec![3, 0, 0, 4, 40, 0],  // AXIS X, AGAINST, 40%
+            vec![3, 0, 0, 3, 130, 0], // AXIS X, WITH, 130%
+            vec![3, 1, 0, 3, 130, 0], // AXIS Y, WITH, 130%
+            vec![4, 35, 0, 1],        // OPTION(BEARING), 35 ms, VECTOR
         ]
     );
 }
@@ -2753,24 +2753,14 @@ fn transform_verbs_parity() {
     use medius::{Axis, Transform};
     assert_parity(
         |d| {
-            d.transform_invert(Axis::Y).unwrap();
-            d.transform_scale(Axis::Wheel, 200).unwrap();
             d.transform_swap(Axis::X, Axis::Y).unwrap();
             d.transform_remap(Axis::X, Axis::Wheel).unwrap();
-            let scaled = Transform::scale_axis(Axis::Y, 175);
-            d.transform(&scaled).unwrap();
-            d.untransform(&scaled).unwrap();
+            let moved = Transform::remap(Axis::Wheel, Axis::Y);
+            d.transform(&moved).unwrap();
+            d.untransform(&moved).unwrap();
             d.clear_transforms().unwrap();
         },
         |dev| unsafe {
-            assert_eq!(
-                medius_device_transform_invert(dev, MediusAxis::Y as u8),
-                MediusStatus::Ok
-            );
-            assert_eq!(
-                medius_device_transform_scale(dev, MediusAxis::Wheel as u8, 200),
-                MediusStatus::Ok
-            );
             assert_eq!(
                 medius_device_transform_swap(dev, MediusAxis::X as u8, MediusAxis::Y as u8),
                 MediusStatus::Ok
@@ -2783,14 +2773,13 @@ fn transform_verbs_parity() {
                 ),
                 MediusStatus::Ok
             );
-            let scaled = MediusTransform {
-                op: MediusTransformOp::Scale as u8,
-                source: medius_lock_target_axis(MediusLockTargetKind::Y as u8),
+            let moved = MediusTransform {
+                op: MediusTransformOp::Remap as u8,
+                source: medius_lock_target_axis(MediusLockTargetKind::Wheel as u8),
                 dest: medius_lock_target_axis(MediusLockTargetKind::Y as u8),
-                scale: 175,
             };
-            assert_eq!(medius_device_transform(dev, &scaled), MediusStatus::Ok);
-            assert_eq!(medius_device_untransform(dev, &scaled), MediusStatus::Ok);
+            assert_eq!(medius_device_transform(dev, &moved), MediusStatus::Ok);
+            assert_eq!(medius_device_untransform(dev, &moved), MediusStatus::Ok);
             assert_eq!(medius_device_clear_transforms(dev), MediusStatus::Ok);
         },
     );
@@ -2802,9 +2791,9 @@ fn a_transform_survives_the_query_roundtrip() {
     let want = {
         let mock = MockBox::new();
         let dev = Device::with_mock(mock);
-        dev.transform_invert(Axis::Y).unwrap();
-        dev.transform_scale(Axis::Wheel, 200).unwrap();
         dev.transform_swap(Axis::X, Axis::Y).unwrap();
+        dev.transform_remap(Axis::Wheel, Axis::Y).unwrap();
+        dev.transform_remap(Axis::Y, Axis::X).unwrap();
         dev.query_transforms().unwrap()
     };
 
@@ -2816,15 +2805,23 @@ fn a_transform_survives_the_query_roundtrip() {
     );
     unsafe {
         assert_eq!(
-            medius_device_transform_invert(dev, MediusAxis::Y as u8),
-            MediusStatus::Ok
-        );
-        assert_eq!(
-            medius_device_transform_scale(dev, MediusAxis::Wheel as u8, 200),
-            MediusStatus::Ok
-        );
-        assert_eq!(
             medius_device_transform_swap(dev, MediusAxis::X as u8, MediusAxis::Y as u8),
+            MediusStatus::Ok
+        );
+        assert_eq!(
+            medius_device_transform_remap(
+                dev,
+                medius_lock_target_axis(MediusLockTargetKind::Wheel as u8),
+                medius_lock_target_axis(MediusLockTargetKind::Y as u8)
+            ),
+            MediusStatus::Ok
+        );
+        assert_eq!(
+            medius_device_transform_remap(
+                dev,
+                medius_lock_target_axis(MediusLockTargetKind::Y as u8),
+                medius_lock_target_axis(MediusLockTargetKind::X as u8)
+            ),
             MediusStatus::Ok
         );
     }
@@ -2839,19 +2836,19 @@ fn a_transform_survives_the_query_roundtrip() {
     // Entry for entry, the C readback matches the native crate's.
     for (i, w) in want.entries.iter().enumerate() {
         assert_eq!(got.entries[i].op, w.op.as_u8());
-        assert_eq!(got.entries[i].scale, w.scale);
     }
-    assert_eq!(got.entries[0].op, MediusTransformOp::Scale as u8);
-    assert_eq!(got.entries[0].source.kind, MediusLockTargetKind::Y as u8);
-    assert_eq!(got.entries[1].op, MediusTransformOp::Scale as u8);
+    assert_eq!(got.entries[0].op, MediusTransformOp::Swap as u8);
+    assert_eq!(got.entries[0].source.kind, MediusLockTargetKind::X as u8);
+    assert_eq!(got.entries[0].dest.kind, MediusLockTargetKind::Y as u8);
+    assert_eq!(got.entries[1].op, MediusTransformOp::Remap as u8);
     assert_eq!(
         got.entries[1].source.kind,
         MediusLockTargetKind::Wheel as u8
     );
-    assert_eq!(got.entries[1].scale, 200);
-    assert_eq!(got.entries[2].op, MediusTransformOp::Swap as u8);
-    assert_eq!(got.entries[2].source.kind, MediusLockTargetKind::X as u8);
-    assert_eq!(got.entries[2].dest.kind, MediusLockTargetKind::Y as u8);
+    assert_eq!(got.entries[1].dest.kind, MediusLockTargetKind::Y as u8);
+    assert_eq!(got.entries[2].op, MediusTransformOp::Remap as u8);
+    assert_eq!(got.entries[2].source.kind, MediusLockTargetKind::Y as u8);
+    assert_eq!(got.entries[2].dest.kind, MediusLockTargetKind::X as u8);
     unsafe {
         medius_device_free(dev);
         medius_mock_free(mock);
@@ -2883,7 +2880,13 @@ fn mouse_caps_pan_crosses_the_boundary() {
     assert_eq!(out.mouse.has_wheel, 1);
     // A clone that declares pan holds a pan-axis transform, so pan is first-class end to end.
     assert_eq!(
-        unsafe { medius_device_transform_invert(dev, MediusAxis::Pan as u8) },
+        unsafe {
+            medius_device_transform_remap(
+                dev,
+                medius_lock_target_axis(MediusLockTargetKind::Wheel as u8),
+                medius_lock_target_axis(MediusLockTargetKind::Pan as u8),
+            )
+        },
         MediusStatus::Ok
     );
     let mut tf: MediusTransforms = unsafe { std::mem::zeroed() };
@@ -2892,8 +2895,8 @@ fn mouse_caps_pan_crosses_the_boundary() {
         MediusStatus::Ok
     );
     assert_eq!(tf.n, 1);
-    assert_eq!(tf.entries[0].op, MediusTransformOp::Scale as u8);
-    assert_eq!(tf.entries[0].source.kind, MediusLockTargetKind::Pan as u8);
+    assert_eq!(tf.entries[0].op, MediusTransformOp::Remap as u8);
+    assert_eq!(tf.entries[0].dest.kind, MediusLockTargetKind::Pan as u8);
     unsafe {
         medius_device_free(dev);
         medius_mock_free(mock);

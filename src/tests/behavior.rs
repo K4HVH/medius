@@ -161,7 +161,10 @@ fn reapply_re_emits_held_locks_but_not_released_ones() {
     // Only the two still-held locks, each re-asserted at the scale it was set to; key A is gone.
     // Ordered by the desired-set key (class,id,dir): the KEY blanket (1, 0xFFFF, both) before the
     // AXIS X+ (3, 0, pos).
-    assert_eq!(locks, vec![vec![1, 0xFF, 0xFF, 0, 0], vec![3, 0, 0, 1, 0]]);
+    assert_eq!(
+        locks,
+        vec![vec![1, 0xFF, 0xFF, 0, 0, 0], vec![3, 0, 0, 1, 0, 0]]
+    );
     drop(device);
 }
 
@@ -183,7 +186,10 @@ fn reapply_re_emits_a_scale_at_its_own_value() {
         .collect();
     // A weighing comes back weighing, not blocked: re-sending these as a blanket lock would turn a
     // 40% damp into a dead axis across a reconnect the user never saw.
-    assert_eq!(locks, vec![vec![3, 0, 0, 4, 40], vec![3, 1, 0, 3, 130]]);
+    assert_eq!(
+        locks,
+        vec![vec![3, 0, 0, 4, 40, 0], vec![3, 1, 0, 3, 130, 0]]
+    );
     drop(device);
 }
 
@@ -231,7 +237,7 @@ fn releasing_one_sign_of_a_both_lock_is_not_undone_by_a_reapply() {
         .collect();
     // Both wrote two slots and the unlock cleared one of them, so only the positive sign is still
     // held. Re-sending the Both would re-block a direction the caller released.
-    assert_eq!(locks, vec![vec![3, 0, 0, 1, 0]]);
+    assert_eq!(locks, vec![vec![3, 0, 0, 1, 0, 0]]);
     drop(device);
 }
 

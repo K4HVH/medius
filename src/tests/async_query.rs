@@ -116,7 +116,6 @@ fn async_scale_verbs_send_the_same_frames_as_the_sync_ones() {
     use crate::protocol::FrameType;
     use crate::protocol::opcode::{
         LOCK_CLS_AXIS, LOCK_CLS_MEDIA, LOCK_DIR_AGAINST, LOCK_DIR_BOTH, LOCK_DIR_WITH,
-        LOCK_SCALE_BLOCK,
     };
     use crate::{Axis, Blanket, Direction, MediaKey};
 
@@ -137,11 +136,11 @@ fn async_scale_verbs_send_the_same_frames_as_the_sync_ones() {
     assert_eq!(
         sent,
         vec![
-            vec![LOCK_CLS_AXIS, 0, 0, LOCK_DIR_AGAINST, 40],
-            vec![LOCK_CLS_AXIS, 2, 0, LOCK_DIR_WITH, 130],
-            vec![LOCK_CLS_AXIS, 0, 0, LOCK_DIR_BOTH, 50],
-            vec![LOCK_CLS_AXIS, 1, 0, LOCK_DIR_BOTH, 50],
-            vec![LOCK_CLS_MEDIA, 0xE2, 0x00, LOCK_DIR_BOTH, LOCK_SCALE_BLOCK],
+            vec![LOCK_CLS_AXIS, 0, 0, LOCK_DIR_AGAINST, 40, 0],
+            vec![LOCK_CLS_AXIS, 2, 0, LOCK_DIR_WITH, 130, 0],
+            vec![LOCK_CLS_AXIS, 0, 0, LOCK_DIR_BOTH, 50, 0],
+            vec![LOCK_CLS_AXIS, 1, 0, LOCK_DIR_BOTH, 50, 0],
+            vec![LOCK_CLS_MEDIA, 0xE2, 0x00, LOCK_DIR_BOTH, 0, 0],
         ]
     );
 }

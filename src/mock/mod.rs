@@ -8,14 +8,13 @@ use crate::protocol::opcode::{
     CAP_PAN, CAP_REPORT_ID, CAP_WHEEL, CAP_X, CAP_Y, CAPS_CD_KBD, CAPS_CD_MOUSE, DI_HAS_BOS,
     DI_HAS_SERIAL, KBC_CONSUMER, KBC_NKRO, KBC_REPORT_ID, KBC_SYSTEM, LOCK_AXIS_PAN, LOCK_CLS_AXIS,
     LOCK_CLS_BTN, LOCK_CLS_KEY, LOCK_CLS_MEDIA, LOCK_DIR_AGAINST, LOCK_DIR_BOTH, LOCK_DIR_NEG,
-    LOCK_DIR_POS, LOCK_DIR_WITH, LOCK_ID_ALL, LOCK_SCALE_BLOCK, LOCK_SCALE_MAX, LOCK_SCALE_PASS,
-    MAX_BUTTONS,
+    LOCK_DIR_POS, LOCK_DIR_WITH, LOCK_ID_ALL, LOCK_SCALE_BLOCK, LOCK_SCALE_PASS, MAX_BUTTONS,
     OPT_BEARING, OPT_EMIT, OPT_IMPERFECT, OPT_MOVE_RIDE, OPT_NAME, OPT_RENDER, OPT_SPREAD,
     Q_FIRMWARE, RATE_CONFIDENT,
 };
 use crate::protocol::opcode::{
     CATCH_CLS_AXIS, CATCH_CLS_BTN, CATCH_CLS_KEY, CATCH_CLS_MEDIA, Q_TRANSFORMS, TF_F_FULL,
-    TF_REMAP, TF_SCALE, TF_SWAP, TRANSFORM_MAX_ENTRIES,
+    TF_OP_COUNT, TF_REMAP, TF_SWAP, TRANSFORM_MAX_ENTRIES,
 };
 use crate::protocol::opcode::{
     CLIP_CFG_F_FINALIZED, CLIP_CFG_F_LOOP, CLIP_CFG_F_RETAIN, CLIP_CFG_F_RIDE, CLIP_TRIG_MAX,
@@ -122,7 +121,6 @@ struct MockTransform {
     sid: u16,
     dclass: u8,
     did: u16,
-    scale: i16,
 }
 
 impl MockTransform {
@@ -222,7 +220,7 @@ const LOCK_TGT_COUNT: usize = LOCK_TGT_BTN_BASE + MAX_BUTTONS as usize; // 4 axe
 const LOCK_SLOT_WITH: usize = 2;
 const SLOT_DIRS: [u8; 4] = [LOCK_DIR_POS, LOCK_DIR_NEG, LOCK_DIR_WITH, LOCK_DIR_AGAINST];
 // CTRL_RESP_LOCKS_MAXN and INPUT_MEDIA_MAX: past either the box drops silently.
-const RESP_LOCKS_MAXN: usize = 96;
+const RESP_LOCKS_MAXN: usize = 85;
 const MEDIA_LOCK_MAX: usize = 8;
 // The rest of ctrl_proto.h's reply bounds. Every one of these sits behind a public builder that
 // takes a caller-supplied length, and the box truncates at each rather than refusing: it appends
@@ -238,7 +236,7 @@ const TRAFFIC_DATA_MAX: usize = 180; // CTRL_TRAFFIC_DATA_MAX
 
 #[derive(Debug, Clone)]
 pub(crate) struct LockTable {
-    mouse: [[u8; 4]; LOCK_TGT_COUNT],
+    mouse: [[i16; 4]; LOCK_TGT_COUNT],
     key_blanket: u8,
     key_press: [bool; 256],
     key_release: [bool; 256],
@@ -271,7 +269,7 @@ fn slot_mask(dir: u8) -> u8 {
 }
 
 impl LockTable {
-    fn set_mouse(&mut self, target: usize, dir: u8, scale: u8) {
+    fn set_mouse(&mut self, target: usize, dir: u8, scale: i16) {
         let slots = slot_mask(dir);
         for i in 0..4 {
             if slots & (1 << i) == 0 {
@@ -303,7 +301,7 @@ impl LockTable {
 
     // `n_buttons` is the clone's declared button count: a button blanket writes that many rows and a
     // button id past it is dropped, exactly as the firmware caps at `nbtn`.
-    pub(crate) fn apply(&mut self, class: u8, id: u16, dir: u8, scale: u8, n_buttons: u8) {
+    pub(crate) fn apply(&mut self, class: u8, id: u16, dir: u8, scale: i16, n_buttons: u8) {
         let on = scale < LOCK_SCALE_PASS;
         match class {
             LOCK_CLS_AXIS => {
@@ -373,7 +371,7 @@ impl LockTable {
 
     // In vector mode one relative scale governs both axes, the lower of X's and Y's, so the
     // readback names that number on both axes instead of each axis's stored byte.
-    fn reported(&self, t: usize, slot: usize, vector: bool) -> u8 {
+    fn reported(&self, t: usize, slot: usize, vector: bool) -> i16 {
         let sc = self.mouse[t][slot];
         if !vector || slot < LOCK_SLOT_WITH || t > Axis::Y.as_u16() as usize {
             return sc;
@@ -384,7 +382,7 @@ impl LockTable {
     pub(crate) fn pack(&self, mode: BearingMode) -> Locks {
         let vector = mode == BearingMode::Vector;
         let mut out: Vec<LockEntry> = Vec::new();
-        let mut push = |scope: LockScope, direction: u8, scale: u8| {
+        let mut push = |scope: LockScope, direction: u8, scale: i16| {
             if out.len() < RESP_LOCKS_MAXN {
                 out.push(LockEntry {
                     scope,
@@ -451,7 +449,7 @@ impl LockTable {
 
 impl State {
     fn apply_lock_frame(&mut self, p: &[u8]) {
-        if p.len() < 5 {
+        if p.len() < 6 {
             return;
         }
         let n_buttons = self.caps.mouse.n_buttons;
@@ -459,7 +457,7 @@ impl State {
             p[0],
             u16::from_le_bytes([p[1], p[2]]),
             p[3],
-            p[4],
+            i16::from_le_bytes([p[4], p[5]]),
             n_buttons,
         );
     }
@@ -550,10 +548,10 @@ impl State {
 
     // Apply a TRANSFORM frame (§3.15), modelled on transform_tab_set. Ungated: a transform is faithful,
     // so unlike REWRITE this runs whatever the imperfect opt-in. The refusals mirror the firmware: an
-    // op at or above the count, a class pair the op cannot take, a scale of 0 on an INVERT, a field
-    // neither map declares, and the eight-entry ceiling (which sets the full flag).
+    // op at or above the count, a class pair the op cannot take, a field neither map declares, and the
+    // table ceiling (which sets the full flag).
     fn apply_transform_frame(&mut self, p: &[u8]) {
-        if p.len() < 10 {
+        if p.len() < 8 {
             return;
         }
         let op = p[0];
@@ -561,8 +559,7 @@ impl State {
         let sid = u16::from_le_bytes([p[2], p[3]]);
         let dclass = p[4];
         let did = u16::from_le_bytes([p[5], p[6]]);
-        let scale = i16::from_le_bytes([p[7], p[8]]);
-        let state = p[9];
+        let state = p[7];
         // The all-0xFF state-0 blanket clears the table.
         if state == 0 && sclass == 0xFF && dclass == 0xFF && sid == 0xFFFF && did == 0xFFFF {
             self.transforms.clear();
@@ -579,11 +576,8 @@ impl State {
             return;
         }
         // state 1: add or overwrite, after the same admissibility gauntlet the box runs.
-        if op > TF_SCALE
+        if op >= TF_OP_COUNT
             || !transform_pair_ok(op, sclass, sid, dclass, did)
-            || scale > LOCK_SCALE_MAX as i16
-            || scale < -(LOCK_SCALE_MAX as i16)
-            || (sclass != CATCH_CLS_AXIS && scale != LOCK_SCALE_PASS as i16)
             || !self.transform_field_present(sclass, sid)
             || !self.transform_field_present(dclass, did)
         {
@@ -591,9 +585,8 @@ impl State {
         }
         match pos {
             Some(i) => {
-                // The key matches: only the op and scale change, keeping the row's position.
+                // The key matches: only the op changes, keeping the row's position.
                 self.transforms[i].op = op;
-                self.transforms[i].scale = scale;
             }
             None => {
                 if self.transforms.len() >= TRANSFORM_MAX_ENTRIES {
@@ -606,7 +599,6 @@ impl State {
                     sid,
                     dclass,
                     did,
-                    scale,
                 });
             }
         }
@@ -625,8 +617,9 @@ impl State {
                 _ => false,
             },
             CATCH_CLS_BTN => id < self.caps.mouse.n_buttons as u16 && id < MAX_BUTTONS as u16,
-            CATCH_CLS_KEY => self.caps.keyboard.n_keys > 0,
-            CATCH_CLS_MEDIA => self.caps.keyboard.has_consumer,
+            // A keycode below 0x04 is no key, and the field is a byte wide; media usage 0 is no usage.
+            CATCH_CLS_KEY => self.caps.keyboard.n_keys > 0 && (0x04..=0xFF).contains(&id),
+            CATCH_CLS_MEDIA => self.caps.keyboard.has_consumer && id != 0,
             _ => false,
         }
     }
@@ -880,7 +873,7 @@ fn locks_payload(l: &Locks) -> Vec<u8> {
         p.push(class);
         p.extend_from_slice(&id.to_le_bytes());
         p.push(e.direction.as_u8());
-        p.push(e.scale);
+        p.extend_from_slice(&e.scale.to_le_bytes());
     }
     p
 }
@@ -1055,9 +1048,12 @@ fn clip_status_payload(c: &ClipStatus, cfg: &ClipSettings) -> Vec<u8> {
 
 // Which (op, class pair) a transform can take, mirroring transform_pair_ok in the firmware.
 fn transform_pair_ok(op: u8, sc: u8, si: u16, dc: u8, di: u16) -> bool {
+    // Neither op takes a field onto itself: both move a value, and there is nowhere to move it to.
+    if sc == dc && si == di {
+        return false;
+    }
     match op {
-        TF_SCALE => sc == CATCH_CLS_AXIS && dc == CATCH_CLS_AXIS && si == di,
-        TF_SWAP => sc == CATCH_CLS_AXIS && dc == CATCH_CLS_AXIS && si != di,
+        TF_SWAP => sc == CATCH_CLS_AXIS && dc == CATCH_CLS_AXIS,
         TF_REMAP => {
             (sc == CATCH_CLS_AXIS && dc == CATCH_CLS_AXIS)
                 || (sc == CATCH_CLS_BTN && dc == CATCH_CLS_BTN)
@@ -1068,7 +1064,7 @@ fn transform_pair_ok(op: u8, sc: u8, si: u16, dc: u8, di: u16) -> bool {
     }
 }
 
-// RESP(TRANSFORMS): [16][flags][n] then n × [op][sclass][sid u16][dclass][did u16][scale i16]. No state
+// RESP(TRANSFORMS): [16][flags][n] then n × [op][sclass][sid u16][dclass][did u16]. No state
 // byte per entry: a readback row is always a live one, hardcoded state 1 when it rebuilds.
 fn transforms_resp_payload(st: &State) -> Vec<u8> {
     let mut p = vec![
@@ -1082,7 +1078,6 @@ fn transforms_resp_payload(st: &State) -> Vec<u8> {
         p.extend_from_slice(&t.sid.to_le_bytes());
         p.push(t.dclass);
         p.extend_from_slice(&t.did.to_le_bytes());
-        p.extend_from_slice(&t.scale.to_le_bytes());
     }
     p
 }

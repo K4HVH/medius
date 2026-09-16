@@ -1,9 +1,11 @@
-//! LOCK command (§3.8): payload bytes, target/direction wire, scale weighing, `RESP(LOCKS)` decode, and the HEALTH `lock_on` bit.
+//! LOCK command (§3.8): payload bytes, target/direction wire, signed scale weighing, `RESP(LOCKS)`
+//! decode, and the HEALTH `lock_on` bit.
 
 use crate::protocol::command::lock_payload;
 use crate::protocol::opcode::{
     LOCK_CLS_AXIS, LOCK_CLS_KEY, LOCK_CLS_MEDIA, LOCK_DIR_AGAINST, LOCK_DIR_BOTH, LOCK_DIR_NEG,
-    LOCK_DIR_POS, LOCK_DIR_WITH, LOCK_ID_ALL, LOCK_SCALE_BLOCK, LOCK_SCALE_MAX, LOCK_SCALE_PASS,
+    LOCK_DIR_POS, LOCK_DIR_WITH, LOCK_ID_ALL, LOCK_SCALE_BLOCK, LOCK_SCALE_MAX, LOCK_SCALE_MIN,
+    LOCK_SCALE_PASS,
 };
 use crate::protocol::{Resp, parse_resp};
 use crate::types::{
@@ -14,32 +16,57 @@ use crate::types::{
 fn lock_payload_bytes() {
     assert_eq!(
         lock_payload(LOCK_CLS_AXIS, 2, LOCK_DIR_NEG, LOCK_SCALE_BLOCK),
-        [3, 2, 0, 2, 0]
+        [3, 2, 0, 2, 0, 0]
     );
     assert_eq!(
         lock_payload(LOCK_CLS_MEDIA, 0x00E9, LOCK_DIR_BOTH, LOCK_SCALE_BLOCK),
-        [2, 0xE9, 0x00, 0, 0]
+        [2, 0xE9, 0x00, 0, 0, 0]
     );
     assert_eq!(
         lock_payload(LOCK_CLS_KEY, LOCK_ID_ALL, LOCK_DIR_BOTH, LOCK_SCALE_BLOCK),
-        [1, 0xFF, 0xFF, 0, 0]
+        [1, 0xFF, 0xFF, 0, 0, 0]
     );
-    // The scale rides the byte that used to be a state, so an unlock and a weighing both land here.
+    // The scale is the two bytes that used to be a state, so an unlock and a weighing both land here.
     assert_eq!(
         lock_payload(LOCK_CLS_AXIS, 0, LOCK_DIR_AGAINST, 40),
-        [3, 0, 0, LOCK_DIR_AGAINST, 40]
+        [3, 0, 0, LOCK_DIR_AGAINST, 40, 0]
     );
     assert_eq!(
         lock_payload(LOCK_CLS_AXIS, 0, LOCK_DIR_BOTH, LOCK_SCALE_PASS),
-        [3, 0, 0, 0, 100]
+        [3, 0, 0, 0, 100, 0]
+    );
+}
+
+#[test]
+fn a_reversing_scale_is_two_signed_bytes_on_the_wire() {
+    // The sign is the whole point of the field being an i16: a u8 write, or a decode that forgets the
+    // high byte, turns -100 into 156 and the axis amplifies instead of reversing.
+    assert_eq!(
+        lock_payload(LOCK_CLS_AXIS, 0, LOCK_DIR_BOTH, -100),
+        [3, 0, 0, 0, 0x9C, 0xFF]
+    );
+    assert_eq!(
+        lock_payload(LOCK_CLS_AXIS, 1, LOCK_DIR_POS, LOCK_SCALE_MIN),
+        [3, 1, 0, LOCK_DIR_POS, 0x01, 0xFF]
+    );
+    let l = Locks::from_payload(&[6, 1, 3, 0, 0, LOCK_DIR_BOTH, 0x9C, 0xFF]).unwrap();
+    assert_eq!(l.scale_of(Axis::X, Direction::Both), -100);
+    assert!(
+        !l.is_locked(Axis::X, Direction::Both),
+        "a reversal is not a block"
     );
 }
 
 #[test]
 fn lock_scale_constants() {
     assert_eq!(
-        (LOCK_SCALE_BLOCK, LOCK_SCALE_PASS, LOCK_SCALE_MAX),
-        (0, 100, 255)
+        (
+            LOCK_SCALE_BLOCK,
+            LOCK_SCALE_PASS,
+            LOCK_SCALE_MAX,
+            LOCK_SCALE_MIN
+        ),
+        (0, 100, 255, -255)
     );
 }
 
@@ -132,12 +159,14 @@ fn locks_list_decode() {
         0,
         0,
         LOCK_DIR_POS,
-        LOCK_SCALE_BLOCK,
+        0,
+        0,
         1,
         0x04,
         0x00,
         LOCK_DIR_NEG,
-        LOCK_SCALE_BLOCK,
+        0,
+        0,
     ])
     .unwrap();
     assert_eq!(l.entries().len(), 2);
@@ -148,7 +177,7 @@ fn locks_list_decode() {
 
 #[test]
 fn locks_report_a_partial_scale_as_weighed_not_locked() {
-    let l = Locks::from_payload(&[6, 1, 3, 0, 0, LOCK_DIR_AGAINST, 40]).unwrap();
+    let l = Locks::from_payload(&[6, 1, 3, 0, 0, LOCK_DIR_AGAINST, 40, 0]).unwrap();
     let e = l.entries()[0];
     assert_eq!(e.direction, Direction::Against);
     assert_eq!(e.scale, 40);
@@ -163,8 +192,23 @@ fn locks_report_a_partial_scale_as_weighed_not_locked() {
 
 #[test]
 fn locks_scale_of_takes_the_lowest_of_overlapping_entries() {
-    let l = Locks::from_payload(&[6, 2, 3, 0, 0, LOCK_DIR_BOTH, 60, 3, 0, 0, LOCK_DIR_NEG, 25])
-        .unwrap();
+    let l = Locks::from_payload(&[
+        6,
+        2,
+        3,
+        0,
+        0,
+        LOCK_DIR_BOTH,
+        60,
+        0,
+        3,
+        0,
+        0,
+        LOCK_DIR_NEG,
+        25,
+        0,
+    ])
+    .unwrap();
     assert_eq!(l.scale_of(Axis::X, Direction::Negative), 25);
     assert_eq!(l.scale_of(Axis::X, Direction::Positive), 60);
 }
@@ -178,19 +222,21 @@ fn locks_is_locked_both_needs_both_signs() {
         0,
         0,
         LOCK_DIR_POS,
-        LOCK_SCALE_BLOCK,
+        0,
+        0,
         3,
         0,
         0,
         LOCK_DIR_NEG,
-        LOCK_SCALE_BLOCK,
+        0,
+        0,
     ])
     .unwrap();
     assert!(both.is_locked(Axis::X, Direction::Both));
-    let one = Locks::from_payload(&[6, 1, 3, 0, 0, LOCK_DIR_POS, LOCK_SCALE_BLOCK]).unwrap();
+    let one = Locks::from_payload(&[6, 1, 3, 0, 0, LOCK_DIR_POS, 0, 0]).unwrap();
     assert!(!one.is_locked(Axis::X, Direction::Both));
     // A relative block leaves both fixed signs passing, so Both must not read it as a lock.
-    let rel = Locks::from_payload(&[6, 1, 3, 0, 0, LOCK_DIR_AGAINST, LOCK_SCALE_BLOCK]).unwrap();
+    let rel = Locks::from_payload(&[6, 1, 3, 0, 0, LOCK_DIR_AGAINST, 0, 0]).unwrap();
     assert!(!rel.is_locked(Axis::X, Direction::Both));
     assert!(rel.is_locked(Axis::X, Direction::Against));
 }
@@ -204,12 +250,14 @@ fn decode_locks_through_parse_resp() {
         1,
         0,
         LOCK_DIR_NEG,
-        LOCK_SCALE_BLOCK,
+        0,
+        0,
         0,
         4,
         0,
         LOCK_DIR_NEG,
-        LOCK_SCALE_BLOCK,
+        0,
+        0,
     ]) else {
         panic!("expected Locks");
     };
@@ -219,7 +267,7 @@ fn decode_locks_through_parse_resp() {
 
 #[test]
 fn locks_blanket_entry_decodes() {
-    let l = Locks::from_payload(&[6, 1, 1, 0xFF, 0xFF, LOCK_DIR_POS, LOCK_SCALE_BLOCK]).unwrap();
+    let l = Locks::from_payload(&[6, 1, 1, 0xFF, 0xFF, LOCK_DIR_POS, 0, 0]).unwrap();
     let e = l.entries()[0];
     assert_eq!(e.scope, LockScope::Blanket(Class::Key));
     assert_eq!(e.direction, Direction::Positive);
@@ -239,17 +287,20 @@ fn locks_unknown_entry_is_skipped() {
         0x00,
         0x00,
         LOCK_DIR_POS,
-        LOCK_SCALE_BLOCK,
+        0,
+        0,
         3,
         0x00,
         0x00,
         0x7F,
-        LOCK_SCALE_BLOCK,
+        0,
+        0,
         1,
         4,
         0,
         LOCK_DIR_POS,
-        LOCK_SCALE_BLOCK,
+        0,
+        0,
     ])
     .unwrap();
     assert_eq!(l.entries().len(), 1);
@@ -262,13 +313,15 @@ fn locks_unknown_entry_is_skipped() {
 #[test]
 fn locks_truncated_payload_is_none() {
     assert!(parse_resp(&[6]).is_none());
-    // A five-byte entry cut short must not decode as a shorter one.
+    // A six-byte entry cut short must not decode as a shorter one, and the cut that matters is the
+    // scale's high byte: dropping it is what a five-byte reader would do.
     assert!(Locks::from_payload(&[6, 1, 3, 0, 0, LOCK_DIR_POS]).is_none());
+    assert!(Locks::from_payload(&[6, 1, 3, 0, 0, LOCK_DIR_POS, 0]).is_none());
 }
 
 #[test]
 fn locks_wide_entry_decodes_a_gain() {
-    let l = Locks::from_payload(&[6, 1, 3, 0, 0, LOCK_DIR_WITH, LOCK_SCALE_MAX]).unwrap();
+    let l = Locks::from_payload(&[6, 1, 3, 0, 0, LOCK_DIR_WITH, 0xFF, 0x00]).unwrap();
     assert_eq!(l.scale_of(Axis::X, Direction::With), 255);
     assert!(!l.is_locked(Axis::X, Direction::With));
 }
@@ -340,13 +393,7 @@ fn a_media_edge_is_sent_as_the_both_the_box_reports() {
         .collect();
     assert_eq!(
         sent,
-        vec![vec![
-            LOCK_CLS_MEDIA,
-            0xE2,
-            0x00,
-            LOCK_DIR_BOTH,
-            LOCK_SCALE_BLOCK
-        ]]
+        vec![vec![LOCK_CLS_MEDIA, 0xE2, 0x00, LOCK_DIR_BOTH, 0, 0]]
     );
 }
 
@@ -552,14 +599,15 @@ fn the_reply_truncates_granular_keys_and_never_the_bounded_classes() {
     use crate::types::MediaKey;
     let dev = crate::Device::with_mock(crate::MockBox::new());
     dev.lock(MediaKey::MUTE, Direction::Both).unwrap();
+    dev.lock(MediaKey::new(0xE9), Direction::Both).unwrap();
     for u in 0x04..=0x3Fu8 {
         dev.lock(crate::Key::new(u), Direction::Both).unwrap();
     }
     let l = dev.query_locks().unwrap();
-    // The reply holds 96 entries. 60 keys on both edges offer 120, so what comes back is the one
-    // media entry plus the 95 key edges that fit: media first, because granular keys are enumerated
+    // The reply holds 85 entries. 60 keys on both edges offer 120, so what comes back is the two
+    // media entries plus the 83 key edges that fit: media first, because granular keys are enumerated
     // last precisely so the unbounded class cannot crowd the bounded one off the frame.
-    assert_eq!(l.entries().len(), 96);
+    assert_eq!(l.entries().len(), 85);
     assert_eq!(
         l.entries()[0],
         crate::types::LockEntry {
@@ -569,23 +617,23 @@ fn the_reply_truncates_granular_keys_and_never_the_bounded_classes() {
         }
     );
     assert!(l.is_locked(MediaKey::MUTE, Direction::Both));
-    assert!(l.entries()[1..].iter().all(|e| matches!(
+    assert!(l.entries()[2..].iter().all(|e| matches!(
         e.scope,
         LockScope::Target(LockTarget::Usage(u)) if u.class == Class::Key
     )));
-    // 95 key edges is usages 0x04..=0x32 on both edges (94) then 0x33's press edge alone, so the cut
+    // 83 key edges is usages 0x04..=0x2C on both edges (82) then 0x2D's press edge alone, so the cut
     // lands mid-usage and everything past it is gone.
     assert_eq!(
         *l.entries().last().unwrap(),
         crate::types::LockEntry {
-            scope: LockScope::Target(crate::Key::new(0x33).into()),
+            scope: LockScope::Target(crate::Key::new(0x2D).into()),
             direction: Direction::Positive,
             scale: LOCK_SCALE_BLOCK,
         }
     );
-    assert!(l.is_locked(crate::Key::new(0x32), Direction::Negative));
-    assert!(!l.is_locked(crate::Key::new(0x33), Direction::Negative));
-    assert!(!l.is_locked(crate::Key::new(0x34), Direction::Positive));
+    assert!(l.is_locked(crate::Key::new(0x2C), Direction::Negative));
+    assert!(!l.is_locked(crate::Key::new(0x2D), Direction::Negative));
+    assert!(!l.is_locked(crate::Key::new(0x2E), Direction::Positive));
 }
 
 #[test]
@@ -654,7 +702,7 @@ fn a_released_media_slot_is_refilled_before_the_end() {
 fn a_locks_reply_past_the_entry_cap_still_answers() {
     // Locks::from_entries and MockBox::set_locks are both public and unbounded, but the box appends
     // at most CTRL_RESP_LOCKS_MAXN entries and always replies (ctrl_locks_append). 256 entries would
-    // encode a count byte of 0 over a payload no frame can carry, and 103 a payload one byte too
+    // encode a count byte of 0 over a payload no frame can carry, and 86 a payload four bytes too
     // long: either way the caller waits out the query timeout instead of reading a short answer.
     use crate::types::{LockEntry, MediaKey};
     let mock = crate::MockBox::new();
@@ -668,11 +716,11 @@ fn a_locks_reply_past_the_entry_cap_still_answers() {
     mock.set_locks(Locks::from_entries(entries));
     let dev = crate::Device::with_mock(mock);
     let l = dev.query_locks().unwrap();
-    // 96 entries is ids 0x100..=0x15F; everything from 0x160 up fell off the reply.
-    assert_eq!(l.entries().len(), 96);
+    // 85 entries is ids 0x100..=0x154; everything from 0x155 up fell off the reply.
+    assert_eq!(l.entries().len(), 85);
     assert!(l.is_locked(MediaKey::new(0x100), Direction::Both));
-    assert!(l.is_locked(MediaKey::new(0x15F), Direction::Both));
-    assert!(!l.is_locked(MediaKey::new(0x160), Direction::Both));
+    assert!(l.is_locked(MediaKey::new(0x154), Direction::Both));
+    assert!(!l.is_locked(MediaKey::new(0x155), Direction::Both));
 }
 
 #[cfg(feature = "mock")]

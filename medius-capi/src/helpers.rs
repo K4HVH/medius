@@ -103,7 +103,8 @@ fn lock_entry_covers(e: &MediusLockEntry, target: MediusLockTarget) -> bool {
 }
 
 /// The scale in effect on `target`/`dir`: percent of the physical value kept, so
-/// `MEDIUS_LOCK_SCALE_PASS` when nothing weighs it. `Both` reports the lowest across every direction.
+/// `MEDIUS_LOCK_SCALE_PASS` when nothing weighs it. `Both` reports the lowest across every direction,
+/// where a reversing (negative) one is lower than any pass.
 /// Mirrors `medius::Locks::scale_of`. `dir` takes a `MEDIUS_DIRECTION_*` constant; any other value
 /// names no entry and reads as `MEDIUS_LOCK_SCALE_PASS`.
 #[unsafe(no_mangle)]
@@ -111,7 +112,7 @@ pub unsafe extern "C" fn medius_locks_scale_of(
     locks: *const MediusLocks,
     target: MediusLockTarget,
     dir: u8,
-) -> u8 {
+) -> i16 {
     guard(MEDIUS_LOCK_SCALE_PASS, || {
         if locks.is_null() {
             return MEDIUS_LOCK_SCALE_PASS;

@@ -126,14 +126,14 @@ pub struct LockEntry {
     pub scope: LockScope,
     /// Which direction of it.
     pub direction: Direction,
-    /// Percent of the physical value kept: 0 blocks, 100 passes, above 100 amplifies. A momentary
-    /// usage carries one bit, so the box stores the block or pass it amounts to and one never reports a
-    /// value in between.
+    /// Percent of the physical value kept: 0 blocks, 100 passes, above 100 amplifies, and a negative
+    /// one reverses what it keeps. A momentary usage carries one bit, so the box stores the block or
+    /// pass it amounts to and one never reports a value in between.
     ///
-    /// This is the figure the box applies, not the byte it was sent. In
+    /// This is the figure the box applies, not the number it was sent. In
     /// [`BearingMode::Vector`](crate::BearingMode) one relative scale governs both axes, the lower
     /// of X's and Y's, and both relative entries carry that number.
-    pub scale: u8,
+    pub scale: i16,
 }
 
 impl LockEntry {
@@ -150,16 +150,17 @@ pub struct Locks {
 }
 
 impl Locks {
-    /// Decode a `RESP(LOCKS)` payload: `[what][n]` then `n × [class][id u16 LE][dir][scale]`; unknown entries skip.
+    /// Decode a `RESP(LOCKS)` payload: `[what][n]` then `n × [class][id u16 LE][dir][scale i16 LE]`;
+    /// unknown entries skip.
     pub(crate) fn from_payload(p: &[u8]) -> Option<Locks> {
         let n = *p.get(1)? as usize;
         let mut entries = Vec::with_capacity(n);
         for i in 0..n {
-            let off = 2 + 5 * i;
+            let off = 2 + 6 * i;
             let cls = *p.get(off)?;
             let id = u16::from_le_bytes([*p.get(off + 1)?, *p.get(off + 2)?]);
             let dir = *p.get(off + 3)?;
-            let scale = *p.get(off + 4)?;
+            let scale = i16::from_le_bytes([*p.get(off + 4)?, *p.get(off + 5)?]);
             let (Some(scope), Some(direction)) = (decode_scope(cls, id), Direction::from_u8(dir))
             else {
                 continue;
@@ -203,13 +204,14 @@ impl Locks {
     /// The scale in effect on one target and direction: percent of the physical value kept, so
     /// [`LOCK_SCALE_PASS`] when nothing weighs it.
     ///
-    /// [`Direction::Both`] reports the lowest scale across any direction. That is not what a delta
-    /// meets: a delta picks up one fixed-direction scale and one bearing-relative one, and the box
-    /// multiplies them, so `Negative` 50 with `Against` 40 lands at 20% while this returns 40. Ask by
-    /// direction and multiply if you need the figure a delta actually sees.
+    /// [`Direction::Both`] reports the lowest scale across any direction, where a reversing (negative)
+    /// one is lower than any pass. That is not what a delta meets: a delta picks up one fixed-direction
+    /// scale and one bearing-relative one, and the box multiplies them, so `Negative` 50 with `Against`
+    /// 40 lands at 20% while this returns 40. Ask by direction and multiply if you need the figure a
+    /// delta actually sees.
     ///
     /// A covering blanket counts, and where several entries cover the same direction the lowest wins.
-    pub fn scale_of(&self, target: impl Into<LockTarget>, dir: Direction) -> u8 {
+    pub fn scale_of(&self, target: impl Into<LockTarget>, dir: Direction) -> i16 {
         let target = target.into();
         let covers = |e: &LockEntry| match e.scope {
             LockScope::Target(t) => t == target,

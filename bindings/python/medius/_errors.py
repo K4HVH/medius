@@ -91,6 +91,15 @@ class RelativeDirectionError(MediusError):
     """`Direction.WITH` / `AGAINST` on something with no bearing to measure them against."""
 
 
+class LockScaleRangeError(MediusError):
+    """A lock scale outside `LOCK_SCALE_MIN` ..= `LOCK_SCALE_MAX`."""
+
+
+class LockScaleUsageError(MediusError):
+    """A negative (reversing) lock scale on a button, key or media usage, which carries one bit and
+    has nothing to reverse."""
+
+
 class ImperfectRequiredError(MediusError):
     """An advanced control layer call with the imperfect-clone opt-in off, which gates the whole layer."""
 
@@ -113,14 +122,6 @@ class RewriteTableFullError(MediusError):
 
 class TransformOpFieldsError(MediusError):
     """A transform op that cannot address its `source`/`dest` pair."""
-
-
-class TransformScaleRangeError(MediusError):
-    """A transform scale whose magnitude is past `LOCK_SCALE_MAX`, the widest the box applies."""
-
-
-class TransformUsageScaleError(MediusError):
-    """A transform percentage on a button, key or media source, which carries one bit."""
 
 
 class TransformTableFullError(MediusError):
@@ -150,14 +151,14 @@ _STATUS_EXC = {
     Status.ERR_HALF_EDGE_INPUT_FILTER: HalfEdgeInputFilterError,
     Status.ERR_RESERVED_ID: ReservedIdError,
     Status.ERR_RELATIVE_DIRECTION: RelativeDirectionError,
+    Status.ERR_LOCK_SCALE_RANGE: LockScaleRangeError,
+    Status.ERR_LOCK_SCALE_USAGE: LockScaleUsageError,
     Status.ERR_IMPERFECT_REQUIRED: ImperfectRequiredError,
     Status.ERR_REWRITE_MASK_LENGTH: RewriteMaskLengthError,
     Status.ERR_REWRITE_ACTION_CLASS: RewriteActionClassError,
     Status.ERR_REWRITE_PAYLOAD_TOO_LARGE: RewritePayloadTooLargeError,
     Status.ERR_REWRITE_TABLE_FULL: RewriteTableFullError,
     Status.ERR_TRANSFORM_OP_FIELDS: TransformOpFieldsError,
-    Status.ERR_TRANSFORM_SCALE_RANGE: TransformScaleRangeError,
-    Status.ERR_TRANSFORM_USAGE_SCALE: TransformUsageScaleError,
     Status.ERR_TRANSFORM_TABLE_FULL: TransformTableFullError,
     Status.ERR_RAW_DIRECTION: RawDirectionError,
 }

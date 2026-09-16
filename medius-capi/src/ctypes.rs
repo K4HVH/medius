@@ -195,10 +195,16 @@ pub struct MediusBearing {
 }
 
 /// `LOCK` scale: percent of the physical value kept. 0 blocks, 100 passes it untouched, above 100
-/// amplifies, to 255 (2.55x).
-pub const MEDIUS_LOCK_SCALE_BLOCK: u8 = 0;
-pub const MEDIUS_LOCK_SCALE_PASS: u8 = 100;
-pub const MEDIUS_LOCK_SCALE_MAX: u8 = 255;
+/// amplifies, to 255 (2.55x), and a negative one reverses what it keeps, to `MEDIUS_LOCK_SCALE_MIN`.
+pub const MEDIUS_LOCK_SCALE_BLOCK: i16 = 0;
+pub const MEDIUS_LOCK_SCALE_PASS: i16 = 100;
+pub const MEDIUS_LOCK_SCALE_MAX: i16 = 255;
+/// The most a `LOCK` scale can reverse by: `-100` is a plain inversion, `-50` keeps half of it the
+/// other way round. Axes only; a momentary usage carries one bit and has nothing to reverse.
+// Written out rather than negated, so the generated header carries a literal a C expression can use
+// without parentheses of its own.
+pub const MEDIUS_LOCK_SCALE_MIN: i16 = -255;
+const _: () = assert!(MEDIUS_LOCK_SCALE_MIN == -MEDIUS_LOCK_SCALE_MAX);
 /// The bearing window the box holds before any host sets one, in ms.
 pub const MEDIUS_BEARING_WINDOW_DEFAULT_MS: u16 = 20;
 
@@ -563,14 +569,14 @@ pub struct MediusLockEntry {
     /// as one; C++ renders the enum as `enum : uint8_t`, so assigning this to a `MediusDirection`
     /// there needs a cast.
     pub direction: u8,
-    /// Percent of the physical value kept: 0 blocks, 100 passes, above 100 amplifies. A momentary
-    /// usage carries one bit, so the box stores the block or pass it amounts to and one never reports a
-    /// value in between.
+    /// Percent of the physical value kept: 0 blocks, 100 passes, above 100 amplifies, and a negative
+    /// one reverses what it keeps. A momentary usage carries one bit, so the box stores the block or
+    /// pass it amounts to and one never reports a value in between.
     ///
-    /// This is the figure the box applies, not the byte it was sent: in `MEDIUS_BEARING_MODE_VECTOR`
+    /// This is the figure the box applies, not the number it was sent: in `MEDIUS_BEARING_MODE_VECTOR`
     /// one relative scale governs both axes, the lower of X's and Y's, and both relative entries
     /// carry that number.
-    pub scale: u8,
+    pub scale: i16,
 }
 
 /// The active locks: `entries[0..n]`. Use `medius_locks_is_locked` to test a target/direction.
@@ -875,21 +881,18 @@ pub struct MediusPatchSet {
     pub entries: [MediusPatchEntry; MEDIUS_MAX_PATCH_ENTRIES],
 }
 
-// Field transforms (§3.15): a faithful field operation on the semantic path: negate, scale, swap or
-// remap a field the clone already declares. Not gated on the imperfect-clone opt-in.
+// Field transforms (§3.15): a faithful field operation on the semantic path: swap or remap a field the
+// clone already declares. Not gated on the imperfect-clone opt-in.
 
 /// The operation a `MediusTransform` performs on its fields (§3.15). Crosses the ABI as the `op` byte
 /// of a `MediusTransform`.
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MediusTransformOp {
-    /// Move a source field's contribution into a destination, clearing the source.
+    /// Move a source field's value into a destination, clearing the source.
     Remap = 0,
     /// Exchange two axes: read both, then write both, so it is not two remaps.
     Swap = 1,
-    /// Weigh one axis by the signed scale. A scale of -100 negates it, exactly; there is no separate
-    /// invert op.
-    Scale = 2,
 }
 
 // The `op` byte crosses the ABI as a plain `u8` and is decoded by the crate's own `TransformOp`, so a
@@ -897,17 +900,15 @@ pub enum MediusTransformOp {
 const _: () = {
     assert!(MediusTransformOp::Remap as u8 == medius::TransformOp::Remap.as_u8());
     assert!(MediusTransformOp::Swap as u8 == medius::TransformOp::Swap.as_u8());
-    assert!(MediusTransformOp::Scale as u8 == medius::TransformOp::Scale.as_u8());
 };
 
-/// One field transform (§3.15): an operation, the `source` field it reads, the `dest` field it
-/// writes, and a signed scale.
+/// One field transform (§3.15): an operation, the `source` field it reads and the `dest` field it
+/// writes.
 ///
 /// `source` and `dest` reuse `MediusLockTarget` (an axis `kind`, or `Usage` with `usage` read): the
-/// transform field space is the lock-target space. The **signed scale** is a percent carrying a sign:
-/// `-100` inverts, `100` is identity, `200` doubles, `-50` halves and flips, `0` blocks the source.
-/// `Invert` ignores it and the box refuses a `0`. The same shape `medius_device_query_transforms`
-/// reads back, so a read entry replays as a set.
+/// transform field space is the lock-target space. A transform is structural only: how much of a field
+/// survives is `medius_device_scale`'s, whose percent is signed. The same shape
+/// `medius_device_query_transforms` reads back, so a read entry replays as a set.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MediusTransform {
@@ -917,10 +918,8 @@ pub struct MediusTransform {
     pub op: u8,
     /// The field the transform reads.
     pub source: MediusLockTarget,
-    /// The field the transform writes (equal to `source` for invert and scale).
+    /// The field the transform writes.
     pub dest: MediusLockTarget,
-    /// The signed percent (see the type docs). Ignored by `Invert`.
-    pub scale: i16,
 }
 
 /// Decoded `RESP(TRANSFORMS)` (§4.18): the whole transform table in `entries[0..n]`, in installation

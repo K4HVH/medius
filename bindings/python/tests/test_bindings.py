@@ -44,6 +44,7 @@ from medius import (
     LedTarget,
     LOCK_SCALE_BLOCK,
     LOCK_SCALE_MAX,
+    LOCK_SCALE_MIN,
     LOCK_SCALE_PASS,
     RebootTarget,
     Timeline,
@@ -102,9 +103,7 @@ from medius import (
     RewriteActionClassError,
     RewritePayloadTooLargeError,
     TransformOpFieldsError,
-    TransformScaleRangeError,
     TransformTableFullError,
-    TransformUsageScaleError,
 )
 
 
@@ -279,14 +278,14 @@ def test_scale_and_bearing_reach_the_device():
         d.set_bearing(None, BearingMode.PER_AXIS)
         locks = _clip_frames(d, mock, FrameType.LOCK)
         options = _clip_frames(d, mock, FrameType.OPTION)
-    # The payload bytes, from ctrl_proto.h: LOCK is [class][id u16 LE][direction][scale] and
+    # The payload bytes, from ctrl_proto.h: LOCK is [class][id u16 LE][direction][scale i16 LE] and
     # OPTION(BEARING) is [4][window u16 LE][mode]. A status of OK proves only that the call returned.
     assert locks == [
-        bytes([3, 0, 0, 4, 40]),    # AXIS X, AGAINST, 40%
-        bytes([3, 0, 0, 3, 130]),   # AXIS X, WITH, 130%  (Blanket.AIM is X then Y)
-        bytes([3, 1, 0, 3, 130]),   # AXIS Y, WITH, 130%
-        bytes([3, 0, 0, 1, 0]),     # AXIS X, POSITIVE, block
-        bytes([3, 0, 0, 1, 100]),   # AXIS X, POSITIVE, pass
+        bytes([3, 0, 0, 4, 40, 0]),    # AXIS X, AGAINST, 40%
+        bytes([3, 0, 0, 3, 130, 0]),   # AXIS X, WITH, 130%  (Blanket.AIM is X then Y)
+        bytes([3, 1, 0, 3, 130, 0]),   # AXIS Y, WITH, 130%
+        bytes([3, 0, 0, 1, 0, 0]),     # AXIS X, POSITIVE, block
+        bytes([3, 0, 0, 1, 100, 0]),   # AXIS X, POSITIVE, pass
     ]
     assert options == [bytes([4, 35, 0, 1]), bytes([4, 0, 0, 0])]
 
@@ -351,7 +350,7 @@ def test_a_media_lock_is_sent_and_reported_as_both():
         entries = d.query_locks().entries
     # A media usage has no edges: it is suppressed whole, so the frame carries BOTH rather than an
     # edge the readback would disagree with.
-    assert sent == [bytes([2, 0xE2, 0x00, 0, 0])]
+    assert sent == [bytes([2, 0xE2, 0x00, 0, 0, 0])]
     assert [e.direction for e in entries] == [Direction.BOTH]
 
 
@@ -374,8 +373,8 @@ def test_a_relative_direction_needs_a_bearing_and_only_an_axis_has_one():
 def test_scalars_are_checked_before_ctypes_truncates_them():
     x = LockTarget.x()
     with MockBox() as mock, Device.with_mock(mock) as d:
-        # 300 would arrive as 44 and -1 as 255, the widest amplification the byte carries.
-        for bad in (300, -1, 256):
+        # The scale is an i16, so 40000 would arrive as -25536 and wrap the reversal the sign means.
+        for bad in (40_000, -40_000, 32_768):
             with pytest.raises(ValueError):
                 d.scale(x, Direction.AGAINST, bad)
             with pytest.raises(ValueError):
@@ -406,12 +405,12 @@ def test_mock_set_locks_checks_each_entry_before_ctypes_truncates_it():
     with MockBox() as mock:
         with pytest.raises(ValueError):
             mock.set_locks(Locks([LockEntry(x, is_blanket=False, direction=40, scale=0)]))
-        for bad in (300, -1):
+        for bad in (40_000, -40_000):
             with pytest.raises(ValueError):
                 mock.set_locks(
                     Locks([LockEntry(x, is_blanket=False, direction=Direction.POSITIVE, scale=bad)])
                 )
-        # The same byte reaches the two readers, which take it as a plain u8 as well.
+        # The same direction byte reaches the two readers, which take it as a plain u8 as well.
         good = Locks([LockEntry(x, is_blanket=False, direction=Direction.POSITIVE, scale=0)])
         with pytest.raises(ValueError):
             good.is_locked(x, 40)
@@ -488,7 +487,12 @@ def test_relative_directions_report_themselves():
     assert not Direction.BOTH.is_relative
     assert not Direction.POSITIVE.is_relative and not Direction.NEGATIVE.is_relative
     assert (int(Direction.WITH), int(Direction.AGAINST)) == (3, 4)
-    assert (LOCK_SCALE_BLOCK, LOCK_SCALE_PASS, LOCK_SCALE_MAX) == (0, 100, 255)
+    assert (LOCK_SCALE_BLOCK, LOCK_SCALE_PASS, LOCK_SCALE_MAX, LOCK_SCALE_MIN) == (
+        0,
+        100,
+        255,
+        -255,
+    )
 
 
 def test_health_roundtrip():
@@ -1687,48 +1691,44 @@ def test_buttons_past_five_address_by_id():
 def test_transform_verbs_reach_the_wire_ungated():
     # A transform is faithful, so it needs no imperfect-clone opt-in (unlike the rewrite/patch layer).
     with MockBox() as mock, Device.with_mock(mock) as d:
-        d.transform_invert(Axis.Y)
-        d.transform_scale(Axis.WHEEL, 200)
         d.transform_swap(Axis.X, Axis.Y)
         d.transform_remap(Axis.X, Axis.WHEEL)
-        d.transform(Transform.scale_axis(Axis.Y, 175))
-        d.untransform(Transform.scale_axis(Axis.Y, 175))
+        d.transform(Transform.remap(Axis.WHEEL, Axis.Y))
+        d.untransform(Transform.remap(Axis.WHEEL, Axis.Y))
         d.clear_transforms()
         assert mock.saw(FrameType.TRANSFORM)
-        # Seven verbs, one TRANSFORM frame each.
+        # Five verbs, one TRANSFORM frame each.
         types = [mock.recorded_frame(i).type for i in range(mock.recorded())]
-        assert types.count(FrameType.TRANSFORM) == 7
+        assert types.count(FrameType.TRANSFORM) == 5
 
 
 def test_a_transform_survives_the_query_roundtrip():
     with MockBox() as mock, Device.with_mock(mock) as d:
-        d.transform_invert(Axis.Y)
-        d.transform_scale(Axis.WHEEL, 200)
         d.transform_swap(Axis.X, Axis.Y)
+        d.transform_remap(Axis.WHEEL, Axis.Y)
+        d.transform_remap(Axis.Y, Axis.X)
         got = d.query_transforms()
     assert isinstance(got, Transforms)
     assert got.table_full is False
     assert len(got.entries) == 3
-    assert got.entries[0].op == TransformOp.SCALE
-    assert got.entries[0].source.kind == LockTargetKind.Y
+    assert got.entries[0].op == TransformOp.SWAP
+    assert got.entries[0].source.kind == LockTargetKind.X
     assert got.entries[0].dest.kind == LockTargetKind.Y
-    assert got.entries[1].op == TransformOp.SCALE
+    assert got.entries[1].op == TransformOp.REMAP
     assert got.entries[1].source.kind == LockTargetKind.WHEEL
-    assert got.entries[1].scale == 200
-    assert got.entries[2].op == TransformOp.SWAP
-    assert got.entries[2].source.kind == LockTargetKind.X
-    assert got.entries[2].dest.kind == LockTargetKind.Y
+    assert got.entries[1].dest.kind == LockTargetKind.Y
+    assert got.entries[2].op == TransformOp.REMAP
+    assert got.entries[2].source.kind == LockTargetKind.Y
+    assert got.entries[2].dest.kind == LockTargetKind.X
 
 
-def test_transform_invert_builds_the_scale_the_crate_builds():
-    # There is no invert op. The constructor must build Scale(-100), and the op bytes must be the ones
-    # the C header and the firmware use: a disagreement here is a wrong transform on the wire, not a
-    # type error, because `op` crosses the ABI as a plain byte.
-    t = Transform.invert(Axis.Y)
-    assert t.op == TransformOp.SCALE
-    assert t.scale == -100
-    assert (int(TransformOp.REMAP), int(TransformOp.SWAP), int(TransformOp.SCALE)) == (0, 1, 2)
+def test_the_op_bytes_are_the_ones_the_wire_uses():
+    # A disagreement here is a wrong transform on the wire, not a type error, because `op` crosses
+    # the ABI as a plain byte. Weighing is the lock's, so there is no scale op and no invert.
+    assert (int(TransformOp.REMAP), int(TransformOp.SWAP)) == (0, 1)
+    assert not hasattr(TransformOp, "SCALE")
     assert not hasattr(TransformOp, "INVERT")
+    assert not hasattr(Transform.swap(Axis.X, Axis.Y), "scale")
 
 
 def test_a_pan_axis_transform_is_first_class():
@@ -1746,11 +1746,11 @@ def test_a_pan_axis_transform_is_first_class():
         )
         with Device.with_mock(mock) as d:
             assert d.caps().mouse.pan is True
-            d.transform_invert(Axis.PAN)
+            d.transform_remap(Axis.WHEEL, Axis.PAN)
             got = d.query_transforms()
     assert len(got.entries) == 1
-    assert got.entries[0].op == TransformOp.SCALE
-    assert got.entries[0].source.kind == LockTargetKind.PAN
+    assert got.entries[0].op == TransformOp.REMAP
+    assert got.entries[0].dest.kind == LockTargetKind.PAN
 
 
 def test_transform_validation_errors_have_their_own_exception():
@@ -1758,21 +1758,40 @@ def test_transform_validation_errors_have_their_own_exception():
         # Remap cannot move an axis into a usage.
         with pytest.raises(TransformOpFieldsError):
             d.transform(
-                Transform(TransformOp.REMAP, LockTarget.x(), LockTarget.button(Button.LEFT), 100)
+                Transform(TransformOp.REMAP, LockTarget.x(), LockTarget.button(Button.LEFT))
             )
-        # A scale past what the box applies is refused rather than silently weighed at that bound.
-        with pytest.raises(TransformScaleRangeError):
-            d.transform(Transform(TransformOp.SCALE, LockTarget.y(), LockTarget.y(), 1000))
-        # A button carries one bit, so a percentage on one names something it cannot hold.
-        with pytest.raises(TransformUsageScaleError):
+        # Both ops MOVE a value, so a field onto itself names no operation at all.
+        with pytest.raises(TransformOpFieldsError):
+            d.transform(Transform(TransformOp.SWAP, LockTarget.y(), LockTarget.y()))
+        with pytest.raises(TransformOpFieldsError):
             d.transform(
                 Transform(
                     TransformOp.REMAP,
                     LockTarget.button(Button.LEFT),
-                    LockTarget.button(Button.RIGHT),
-                    50,
+                    LockTarget.button(Button.LEFT),
                 )
             )
+
+
+def test_a_negative_lock_scale_reverses_and_is_refused_where_it_cannot():
+    x = LockTarget.x()
+    with MockBox() as mock, Device.with_mock(mock) as d:
+        d.scale(x, Direction.BOTH, -100)
+        locks = d.query_locks()
+        assert locks.scale_of(x, Direction.POSITIVE) == -100
+        assert locks.scale_of(x, Direction.NEGATIVE) == -100
+        # A reversal is not a block: everything still arrives, the other way round.
+        assert not locks.is_locked(x, Direction.BOTH)
+        # One bit has nothing to reverse, and a magnitude past the bound is refused rather than
+        # silently weighed at it. Neither reaches the wire.
+        before = mock.recorded()
+        with pytest.raises(medius.LockScaleUsageError):
+            d.scale(LockTarget.button(Button.LEFT), Direction.POSITIVE, -100)
+        with pytest.raises(medius.LockScaleRangeError):
+            d.scale(x, Direction.BOTH, LOCK_SCALE_MIN - 1)
+        with pytest.raises(medius.LockScaleRangeError):
+            d.scale(x, Direction.BOTH, LOCK_SCALE_MAX + 1)
+        assert mock.recorded() == before
 
 
 def test_input_event_carries_pan():

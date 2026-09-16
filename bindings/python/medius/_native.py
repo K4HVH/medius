@@ -209,7 +209,7 @@ class MediusLockEntry(ctypes.Structure):
         ("target", MediusLockTarget),
         ("is_blanket", c_bool),
         ("direction", u8),
-        ("scale", u8),
+        ("scale", i16),
     ]
 
 
@@ -338,7 +338,6 @@ class MediusTransform(ctypes.Structure):
         ("op", u8),
         ("source", MediusLockTarget),
         ("dest", MediusLockTarget),
-        ("scale", i16),
     ]
 
 
@@ -543,8 +542,8 @@ _decl("medius_device_lock", i32, [HANDLE, MediusLockTarget, u8])
 _decl("medius_device_unlock", i32, [HANDLE, MediusLockTarget, u8])
 _decl("medius_device_lock_all", i32, [HANDLE, u8, u8])
 _decl("medius_device_unlock_all", i32, [HANDLE, u8, u8])
-_decl("medius_device_scale", i32, [HANDLE, MediusLockTarget, u8, u8])
-_decl("medius_device_scale_all", i32, [HANDLE, u8, u8, u8])
+_decl("medius_device_scale", i32, [HANDLE, MediusLockTarget, u8, i16])
+_decl("medius_device_scale_all", i32, [HANDLE, u8, u8, i16])
 _decl("medius_device_led", i32, [HANDLE, u8, u8, u8])
 _decl("medius_device_reset", i32, [HANDLE])
 _decl("medius_device_reapply", i32, [HANDLE])
@@ -598,8 +597,6 @@ _decl("medius_device_query_patch_entry", i32, [HANDLE, u8, ctypes.POINTER(Medius
 _decl("medius_device_transform", i32, [HANDLE, ctypes.POINTER(MediusTransform)])
 _decl("medius_device_untransform", i32, [HANDLE, ctypes.POINTER(MediusTransform)])
 _decl("medius_device_clear_transforms", i32, [HANDLE])
-_decl("medius_device_transform_invert", i32, [HANDLE, u8])
-_decl("medius_device_transform_scale", i32, [HANDLE, u8, i16])
 _decl("medius_device_transform_swap", i32, [HANDLE, u8, u8])
 _decl("medius_device_transform_remap", i32, [HANDLE, MediusLockTarget, MediusLockTarget])
 _decl("medius_device_query_transforms", i32, [HANDLE, ctypes.POINTER(MediusTransforms)])
@@ -620,7 +617,7 @@ _decl("medius_motion_pan", MediusMotion, [i16])
 _decl("medius_lock_target_axis", MediusLockTarget, [u8])
 _decl("medius_lock_target_usage", MediusLockTarget, [MediusUsage])
 _decl("medius_locks_is_locked", c_bool, [ctypes.POINTER(MediusLocks), MediusLockTarget, u8])
-_decl("medius_locks_scale_of", u8, [ctypes.POINTER(MediusLocks), MediusLockTarget, u8])
+_decl("medius_locks_scale_of", i16, [ctypes.POINTER(MediusLocks), MediusLockTarget, u8])
 _decl("medius_rate_native_hz", c_bool, [MediusRate, ctypes.POINTER(ctypes.c_float)])
 _decl("medius_usage_event_is_held", c_bool, [ctypes.POINTER(MediusUsageEvent), MediusUsage])
 _decl("medius_catch_filter_watch", MediusCatchFilter, [MediusUsage])

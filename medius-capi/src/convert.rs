@@ -11,8 +11,8 @@ use medius::{
     LedTarget, LockEntry, LockScope, LockTarget, Locks, LogLevel, LogLine, MediaKey, Motion,
     MouseCaps, MoveTiming, Patch, PatchEntry, PatchSection, PatchSet, PendingMotion, PortInfo,
     Rate, RebootTarget, RenderMode, RenderStatus, RewriteAction, RewriteClass, RewriteEntry,
-    RewriteRule, RewriteTable, Setup, SpreadStatus, Stats, TransferOutcome, Transform,
-    TransformOp, Transforms, Usage, Version,
+    RewriteRule, RewriteTable, Setup, SpreadStatus, Stats, TransferOutcome, Transform, TransformOp,
+    Transforms, Usage, Version,
 };
 
 use crate::ctypes::*;
@@ -774,8 +774,6 @@ impl From<PatchSet> for MediusPatchSet {
     }
 }
 
-// A `MediusLockTarget` to a [`TransformField`]; the transform field space is the lock-target space,
-// so this reuses [`lock_target_to_medius`] and is `None` for the same reasons it is.
 // A `MediusTransform` to a [`Transform`]; `None` for an op, source or dest byte no constant names. A
 // transform addresses a field the same way a lock does, so both cross as a `MediusLockTarget`. The
 // structural refusals (an op a class pair cannot take, a scale a field cannot carry) are the crate's,
@@ -785,7 +783,6 @@ pub(crate) fn transform_from_c(c: &MediusTransform) -> Option<Transform> {
         op: TransformOp::from_u8(c.op)?,
         source: lock_target_to_medius(c.source)?,
         dest: lock_target_to_medius(c.dest)?,
-        scale: c.scale,
     })
 }
 
@@ -794,7 +791,6 @@ fn transform_to_c(t: &Transform) -> MediusTransform {
         op: t.op.as_u8(),
         source: lock_target_to_c(t.source),
         dest: lock_target_to_c(t.dest),
-        scale: t.scale,
     }
 }
 
@@ -804,7 +800,6 @@ impl From<Transforms> for MediusTransforms {
             op: 0,
             source: axis_target(MediusLockTargetKind::X),
             dest: axis_target(MediusLockTargetKind::X),
-            scale: 0,
         };
         let mut entries = [blank; MEDIUS_MAX_TRANSFORM_ENTRIES];
         let n = t.entries.len().min(MEDIUS_MAX_TRANSFORM_ENTRIES);

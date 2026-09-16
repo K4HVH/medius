@@ -3,14 +3,25 @@ use crate::protocol::FrameType;
 use crate::protocol::command::lock_payload;
 use crate::protocol::opcode::{
     LOCK_AXIS_WHEEL, LOCK_AXIS_X, LOCK_AXIS_Y, LOCK_CLS_AXIS, LOCK_CLS_BTN, LOCK_CLS_KEY,
-    LOCK_CLS_MEDIA, LOCK_ID_ALL, LOCK_SCALE_BLOCK, LOCK_SCALE_PASS,
+    LOCK_CLS_MEDIA, LOCK_ID_ALL, LOCK_SCALE_BLOCK, LOCK_SCALE_MAX, LOCK_SCALE_MIN, LOCK_SCALE_PASS,
 };
 use crate::types::{Axis, Blanket, Direction, LockTarget};
 
 use super::Device;
 
 impl Device {
-    fn send_lock(&self, class: u8, id: u16, direction: Direction, scale: u8) -> Result<()> {
+    fn send_lock(&self, class: u8, id: u16, direction: Direction, scale: i16) -> Result<()> {
+        if !(LOCK_SCALE_MIN..=LOCK_SCALE_MAX).contains(&scale) {
+            return Err(Error::LockScaleRange {
+                scale,
+                min: LOCK_SCALE_MIN,
+                max: LOCK_SCALE_MAX,
+            });
+        }
+        // One bit has nothing to reverse, so a negative names an operation the target cannot perform.
+        if scale < 0 && class != LOCK_CLS_AXIS {
+            return Err(Error::LockScaleUsage { scale, class });
+        }
         let dir = lock_direction(class, direction)?.as_u8();
         // Recorded before the write so a reconnect racing it still replays the lock, and rolled back
         // when the frame never went out: a desired state the box was never told about holds the
@@ -68,7 +79,7 @@ impl Device {
         &self,
         target: impl Into<LockTarget>,
         direction: Direction,
-        scale: u8,
+        scale: i16,
     ) -> Result<()> {
         let (class, id) = LockTarget::class_id(target.into());
         self.send_lock(class, id, direction, scale)
@@ -101,7 +112,7 @@ impl Device {
     }
 
     /// Weigh a relative axis by sign; convenience for `scale(axis, direction, scale)`.
-    pub fn scale_axis(&self, axis: Axis, direction: Direction, scale: u8) -> Result<()> {
+    pub fn scale_axis(&self, axis: Axis, direction: Direction, scale: i16) -> Result<()> {
         self.scale(axis, direction, scale)
     }
 
@@ -119,11 +130,11 @@ impl Device {
     }
 
     /// Weigh a whole [`Blanket`] group; see [`scale`](Self::scale) for what the number means.
-    pub fn scale_all(&self, what: Blanket, direction: Direction, scale: u8) -> Result<()> {
+    pub fn scale_all(&self, what: Blanket, direction: Direction, scale: i16) -> Result<()> {
         self.blanket(what, direction, scale)
     }
 
-    fn blanket(&self, what: Blanket, direction: Direction, scale: u8) -> Result<()> {
+    fn blanket(&self, what: Blanket, direction: Direction, scale: i16) -> Result<()> {
         match what {
             Blanket::Aim => {
                 self.send_lock(LOCK_CLS_AXIS, LOCK_AXIS_X, direction, scale)?;

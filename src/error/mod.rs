@@ -28,6 +28,19 @@ pub enum Error {
     #[error("frame payload too long (max {max} bytes)", max = crate::protocol::MAX_PAYLOAD)]
     FrameTooLong,
 
+    #[error(
+        "a lock scale is a percent of the physical value bounded by {min} to {max}: 0 blocks, 100 \
+         passes untouched, above that amplifies, and a negative one reverses what it keeps. {scale} \
+         is outside it"
+    )]
+    LockScaleRange { scale: i16, min: i16, max: i16 },
+
+    #[error(
+        "a lock scale of {scale} reverses what it keeps, and class {class} carries one bit, which has \
+         nothing to reverse; use 0 to block it or 100 to pass it"
+    )]
+    LockScaleUsage { scale: i16, class: u8 },
+
     #[error("the box holds at most {limit} catch entries and this subscription needs {needed}")]
     CatchTableFull { needed: usize, limit: usize },
 
@@ -67,29 +80,13 @@ pub enum Error {
     },
 
     #[error(
-        "a {op:?} transform cannot address {src:?} → {dst:?}: a scale is one axis, a swap is two \
-         axes, and a remap is axis→axis, button→button, button→key or button→media"
+        "a {op:?} transform cannot address {src:?} → {dst:?}: a swap is two axes, and a remap is \
+         axis→axis, button→button, button→key or button→media"
     )]
     TransformOpFields {
         op: crate::types::TransformOp,
         src: crate::types::LockTarget,
         dst: crate::types::LockTarget,
-    },
-
-    #[error(
-        "a transform scale is a percent bounded by ±{max}, which is the widest the box applies; \
-         {scale} would be silently weighed at that bound instead"
-    )]
-    TransformScaleRange { scale: i16, max: i16 },
-
-    #[error(
-        "a {src:?} source carries one bit, so a transform on it takes only a full pass ({pass}); \
-         {scale} names a percentage a single bit cannot hold"
-    )]
-    TransformUsageScale {
-        src: crate::types::LockTarget,
-        scale: i16,
-        pass: i16,
     },
 
     #[error(
