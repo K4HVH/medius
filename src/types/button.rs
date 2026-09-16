@@ -4,38 +4,40 @@ use crate::protocol::opcode::{
     ACT_FORCEREL, ACT_PRESS, ACT_SOFTREL, BTN_LEFT, BTN_MIDDLE, BTN_RIGHT, BTN_SIDE1, BTN_SIDE2,
 };
 
-/// One of the five standard mouse buttons (§3.3).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum Button {
-    Left,
-    Right,
-    Middle,
-    Side1,
-    Side2,
-}
+/// A mouse button, addressed by its 0-based id (§3.3).
+///
+/// The five standard buttons have named constants ([`Button::LEFT`] .. [`Button::SIDE2`]); a gaming
+/// mouse commonly declares more than it wires, so any id is representable and the box drives it up to
+/// the clone's declared button count (`RESP(CAPS)`). A button the device declares but never itself
+/// produces is a descriptor-faithful injection; shaping which button is natural is the caller's job.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct Button(pub u8);
 
 impl Button {
-    /// The wire `id` byte for this button (§3.3).
-    pub fn as_id(self) -> u8 {
-        match self {
-            Button::Left => BTN_LEFT,
-            Button::Right => BTN_RIGHT,
-            Button::Middle => BTN_MIDDLE,
-            Button::Side1 => BTN_SIDE1,
-            Button::Side2 => BTN_SIDE2,
-        }
+    /// The left button.
+    pub const LEFT: Button = Button(BTN_LEFT);
+    /// The right button.
+    pub const RIGHT: Button = Button(BTN_RIGHT);
+    /// The middle button.
+    pub const MIDDLE: Button = Button(BTN_MIDDLE);
+    /// The first side button.
+    pub const SIDE1: Button = Button(BTN_SIDE1);
+    /// The second side button.
+    pub const SIDE2: Button = Button(BTN_SIDE2);
+
+    /// A button from its 0-based id. Any id is representable; the box caps it at the declared count.
+    pub const fn new(id: u8) -> Button {
+        Button(id)
     }
 
-    /// Map a wire `id` byte to a [`Button`], or `None` for an unknown id.
-    pub fn from_id(id: u8) -> Option<Self> {
-        Some(match id {
-            BTN_LEFT => Button::Left,
-            BTN_RIGHT => Button::Right,
-            BTN_MIDDLE => Button::Middle,
-            BTN_SIDE1 => Button::Side1,
-            BTN_SIDE2 => Button::Side2,
-            _ => return None,
-        })
+    /// The wire `id` byte for this button (§3.3).
+    pub const fn as_id(self) -> u8 {
+        self.0
+    }
+
+    /// Map a wire `id` byte to a [`Button`]. Total: every id is a valid button.
+    pub const fn from_id(id: u8) -> Button {
+        Button(id)
     }
 }
 

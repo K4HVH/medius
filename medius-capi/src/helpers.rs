@@ -42,6 +42,7 @@ pub extern "C" fn medius_motion_cursor(dx: i16, dy: i16) -> MediusMotion {
         dx,
         dy,
         wheel: 0,
+        pan: 0,
     }
 }
 
@@ -53,12 +54,25 @@ pub extern "C" fn medius_motion_wheel(delta: i16) -> MediusMotion {
         dx: 0,
         dy: 0,
         wheel: delta,
+        pan: 0,
     }
 }
 
-/// Build a [`MediusLockTarget`] addressing an axis: `kind` takes `MEDIUS_LOCK_TARGET_KIND_X`, `_Y` or
-/// `_WHEEL`. Any other byte is carried through and refused by the call that takes the target, since a
-/// constructor has no status to return.
+/// Build an AC Pan (horizontal-scroll) [`MediusMotion`].
+#[unsafe(no_mangle)]
+pub extern "C" fn medius_motion_pan(delta: i16) -> MediusMotion {
+    MediusMotion {
+        kind: MediusMotionKind::Pan as u8,
+        dx: 0,
+        dy: 0,
+        wheel: 0,
+        pan: delta,
+    }
+}
+
+/// Build a [`MediusLockTarget`] addressing an axis: `kind` takes `MEDIUS_LOCK_TARGET_KIND_X`, `_Y`,
+/// `_WHEEL` or `_PAN`. Any other byte is carried through and refused by the call that takes the
+/// target, since a constructor has no status to return.
 #[unsafe(no_mangle)]
 pub extern "C" fn medius_lock_target_axis(kind: u8) -> MediusLockTarget {
     MediusLockTarget {
@@ -89,7 +103,8 @@ fn lock_entry_covers(e: &MediusLockEntry, target: MediusLockTarget) -> bool {
 }
 
 /// The scale in effect on `target`/`dir`: percent of the physical value kept, so
-/// `MEDIUS_LOCK_SCALE_PASS` when nothing weighs it. `Both` reports the lowest across every direction.
+/// `MEDIUS_LOCK_SCALE_PASS` when nothing weighs it. `Both` reports the least that survives across every
+/// direction, ranked by magnitude so a block outranks a reversal of any size.
 /// Mirrors `medius::Locks::scale_of`. `dir` takes a `MEDIUS_DIRECTION_*` constant; any other value
 /// names no entry and reads as `MEDIUS_LOCK_SCALE_PASS`.
 #[unsafe(no_mangle)]
@@ -97,7 +112,7 @@ pub unsafe extern "C" fn medius_locks_scale_of(
     locks: *const MediusLocks,
     target: MediusLockTarget,
     dir: u8,
-) -> u8 {
+) -> i16 {
     guard(MEDIUS_LOCK_SCALE_PASS, || {
         if locks.is_null() {
             return MEDIUS_LOCK_SCALE_PASS;
@@ -112,7 +127,9 @@ pub unsafe extern "C" fn medius_locks_scale_of(
                     && (dir == both || e.direction == both || e.direction == dir)
             })
             .map(|e| e.scale)
-            .min()
+            // By magnitude, not by value: a signed minimum ranks -50 below 0 and would report a
+            // reversal over a block, when the block is what the delta actually meets.
+            .min_by_key(|s| (s.unsigned_abs(), *s))
             .unwrap_or(MEDIUS_LOCK_SCALE_PASS)
     })
 }
@@ -224,7 +241,7 @@ pub extern "C" fn medius_catch_filter_watch_class(class: u8) -> MediusCatchFilte
     }
 }
 
-/// Every relative axis: X, Y and the wheel.
+/// Every relative axis: X, Y, the wheel and AC Pan.
 #[unsafe(no_mangle)]
 pub extern "C" fn medius_catch_filter_watch_axes() -> MediusCatchFilter {
     blanket(MEDIUS_CATCH_CLASS_AXIS)

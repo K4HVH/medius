@@ -15,7 +15,7 @@ use super::{CTRL_BAUD, IO_TIMEOUT};
 use crate::transport::Transport;
 
 // fAbortOnError. The driver fails every transfer after a comm error until ClearCommError, which
-// nothing here calls, so a single overrun at 4 Mbaud would wedge the link until it reconnected.
+// nothing here calls, so a single overrun at 6 Mbaud would wedge the link until it reconnected.
 const DCB_ABORT_ON_ERROR: u32 = 1 << 14;
 
 #[derive(Debug)]

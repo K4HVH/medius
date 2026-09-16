@@ -1,8 +1,6 @@
 //! `LOCK` control vocabulary (§3.8): what a lock addresses, its edge, blanket groups, and decoded locks.
 
-use crate::protocol::opcode::{
-    LOCK_AXIS_WHEEL, LOCK_AXIS_X, LOCK_AXIS_Y, LOCK_CLS_AXIS, LOCK_SCALE_BLOCK, LOCK_SCALE_PASS,
-};
+use crate::protocol::opcode::{LOCK_CLS_AXIS, LOCK_SCALE_BLOCK, LOCK_SCALE_PASS};
 use crate::types::{Axis, Class, Direction, Usage};
 
 /// A whole-group blanket: the cursor aim (X+Y), the wheel, every mouse button, every key, or every media usage.
@@ -57,13 +55,44 @@ pub(crate) fn blanket_from_scope(scope: u8) -> Vec<Blanket> {
         .collect()
 }
 
-/// What a lock addresses: a relative axis or a momentary usage (button/key/media).
+/// One addressable input field: a relative axis or a momentary usage (button/key/media).
+///
+/// The box addresses a field the same way everywhere, so this is what a [`lock`](crate::Device::lock)
+/// weighs and what a [`Transform`](crate::Transform) reads and writes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum LockTarget {
-    /// A relative axis (X/Y/wheel), locked by sign.
+    /// A relative axis (X/Y/wheel/pan), locked by sign.
     Axis(Axis),
     /// A momentary usage (button/key/media), locked by press/release edge.
     Usage(Usage),
+}
+
+impl LockTarget {
+    /// The wire `(class, id)` this field encodes to.
+    pub fn class_id(self) -> (u8, u16) {
+        match self {
+            LockTarget::Axis(a) => (LOCK_CLS_AXIS, a.as_u16()),
+            LockTarget::Usage(u) => u.class_id(),
+        }
+    }
+
+    /// Map a wire `(class, id)` back to a [`LockTarget`], or `None` for a class no field names or an
+    /// axis id past the declared axes.
+    pub fn from_class_id(class: u8, id: u16) -> Option<LockTarget> {
+        if class == LOCK_CLS_AXIS {
+            Some(LockTarget::Axis(Axis::from_u16(id)?))
+        } else {
+            Some(LockTarget::Usage(Usage::new(Class::from_u8(class)?, id)))
+        }
+    }
+
+    /// The axis this field names, or `None` if it is a momentary usage.
+    pub fn as_axis(self) -> Option<Axis> {
+        match self {
+            LockTarget::Axis(a) => Some(a),
+            LockTarget::Usage(_) => None,
+        }
+    }
 }
 
 impl From<Axis> for LockTarget {
@@ -97,14 +126,14 @@ pub struct LockEntry {
     pub scope: LockScope,
     /// Which direction of it.
     pub direction: Direction,
-    /// Percent of the physical value kept: 0 blocks, 100 passes, above 100 amplifies. A momentary
-    /// usage carries one bit, so the box stores the block or pass it amounts to and one never reports a
-    /// value in between.
+    /// Percent of the physical value kept: 0 blocks, 100 passes, above 100 amplifies, and a negative
+    /// one reverses what it keeps. A momentary usage carries one bit, so the box stores the block or
+    /// pass it amounts to and one never reports a value in between.
     ///
-    /// This is the figure the box applies, not the byte it was sent. In
+    /// This is the figure the box applies, not the number it was sent. In
     /// [`BearingMode::Vector`](crate::BearingMode) one relative scale governs both axes, the lower
     /// of X's and Y's, and both relative entries carry that number.
-    pub scale: u8,
+    pub scale: i16,
 }
 
 impl LockEntry {
@@ -121,16 +150,17 @@ pub struct Locks {
 }
 
 impl Locks {
-    /// Decode a `RESP(LOCKS)` payload: `[what][n]` then `n × [class][id u16 LE][dir][scale]`; unknown entries skip.
+    /// Decode a `RESP(LOCKS)` payload: `[what][n]` then `n × [class][id u16 LE][dir][scale i16 LE]`;
+    /// unknown entries skip.
     pub(crate) fn from_payload(p: &[u8]) -> Option<Locks> {
         let n = *p.get(1)? as usize;
         let mut entries = Vec::with_capacity(n);
         for i in 0..n {
-            let off = 2 + 5 * i;
+            let off = 2 + 6 * i;
             let cls = *p.get(off)?;
             let id = u16::from_le_bytes([*p.get(off + 1)?, *p.get(off + 2)?]);
             let dir = *p.get(off + 3)?;
-            let scale = *p.get(off + 4)?;
+            let scale = i16::from_le_bytes([*p.get(off + 4)?, *p.get(off + 5)?]);
             let (Some(scope), Some(direction)) = (decode_scope(cls, id), Direction::from_u8(dir))
             else {
                 continue;
@@ -174,13 +204,16 @@ impl Locks {
     /// The scale in effect on one target and direction: percent of the physical value kept, so
     /// [`LOCK_SCALE_PASS`] when nothing weighs it.
     ///
-    /// [`Direction::Both`] reports the lowest scale across any direction. That is not what a delta
-    /// meets: a delta picks up one fixed-direction scale and one bearing-relative one, and the box
-    /// multiplies them, so `Negative` 50 with `Against` 40 lands at 20% while this returns 40. Ask by
-    /// direction and multiply if you need the figure a delta actually sees.
+    /// [`Direction::Both`] reports the least that survives across any direction, ranked by magnitude
+    /// so a block outranks a reversal of any size: `Positive` blocked with `Against` at `-50` reports
+    /// `0`, not `-50`. That is not what a delta meets: a delta picks up one fixed-direction scale and
+    /// one bearing-relative one, and the box multiplies them, so `Negative` 50 with `Against` 40 lands
+    /// at 20% while this returns 40. Ask by direction and multiply if you need the figure a delta
+    /// actually sees.
     ///
-    /// A covering blanket counts, and where several entries cover the same direction the lowest wins.
-    pub fn scale_of(&self, target: impl Into<LockTarget>, dir: Direction) -> u8 {
+    /// A covering blanket counts, and where several entries cover the same direction the least that
+    /// survives wins.
+    pub fn scale_of(&self, target: impl Into<LockTarget>, dir: Direction) -> i16 {
         let target = target.into();
         let covers = |e: &LockEntry| match e.scope {
             LockScope::Target(t) => t == target,
@@ -190,20 +223,16 @@ impl Locks {
             .iter()
             .filter(|e| covers(e) && (dir == Direction::Both || e.direction.admits(dir)))
             .map(|e| e.scale)
-            .min()
+            // By magnitude, not by value: a signed minimum would rank -50 below 0 and report a
+            // reversal over a block, when the block is what the delta actually meets.
+            .min_by_key(|s| (s.unsigned_abs(), *s))
             .unwrap_or(LOCK_SCALE_PASS)
     }
 }
 
 fn decode_scope(cls: u8, id: u16) -> Option<LockScope> {
     if cls == LOCK_CLS_AXIS {
-        let axis = match id {
-            LOCK_AXIS_X => Axis::X,
-            LOCK_AXIS_Y => Axis::Y,
-            LOCK_AXIS_WHEEL => Axis::Wheel,
-            _ => return None,
-        };
-        Some(LockScope::Target(LockTarget::Axis(axis)))
+        Some(LockScope::Target(LockTarget::Axis(Axis::from_u16(id)?)))
     } else if id == crate::protocol::opcode::LOCK_ID_ALL {
         Some(LockScope::Blanket(Class::from_u8(cls)?))
     } else {

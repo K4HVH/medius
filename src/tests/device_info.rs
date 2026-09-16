@@ -80,11 +80,44 @@ fn decode_caps_exact_bytes() {
     };
     assert_eq!(c.mouse.n_buttons, 5);
     assert!(c.mouse.has_x && c.mouse.has_y && c.mouse.has_wheel);
+    assert!(!c.mouse.pan); // axis flags 0x07 = X|Y|WHEEL, no AC Pan bit
     assert!(!c.mouse.has_report_id);
     assert_eq!(c.mouse.n_hid, 2);
     assert!(c.is_composite());
     assert!(c.has_mouse() && !c.has_keyboard());
     assert!(!c.mouse_change_driven && !c.kbd_change_driven);
+}
+
+#[test]
+fn decode_caps_reports_ac_pan_and_a_wide_button_count() {
+    // axis flags 0x17 = X|Y|WHEEL|PAN (0x10); n_buttons past the five named ones.
+    let p = [3u8, 16, 0x17, 1, 0, 0, 0];
+    let Some(Resp::Caps(c)) = parse_resp(&p) else {
+        panic!("expected Caps");
+    };
+    assert_eq!(c.mouse.n_buttons, 16);
+    assert!(c.mouse.has_x && c.mouse.has_y && c.mouse.has_wheel);
+    assert!(c.mouse.pan);
+    assert!(!c.mouse.has_report_id); // 0x17 clears the 0x08 report-id bit
+}
+
+#[cfg(feature = "mock")]
+#[test]
+fn the_mock_reports_ac_pan_through_a_caps_query() {
+    use crate::types::MouseCaps;
+    let mock = crate::MockBox::new().with_mouse_caps(MouseCaps {
+        n_buttons: 8,
+        has_x: true,
+        has_y: true,
+        has_wheel: true,
+        pan: true,
+        has_report_id: false,
+        n_hid: 1,
+    });
+    let dev = crate::Device::with_mock(mock);
+    let c = dev.caps().unwrap();
+    assert!(c.mouse.pan);
+    assert_eq!(c.mouse.n_buttons, 8);
 }
 
 #[test]

@@ -5,8 +5,12 @@ use crate::protocol::opcode::{MV_F_DISCARD, MV_F_FLUSH, MV_F_NOW};
 /// A relative axis to drive with the [`move_axis`](crate::Device::move_axis) verb.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Motion {
+    /// The X and Y cursor axes together.
     Cursor { dx: i16, dy: i16 },
+    /// The wheel (vertical scroll).
     Wheel(i16),
+    /// AC Pan (horizontal scroll), a full peer of the wheel.
+    Pan(i16),
 }
 
 /// Whether a delta obeys [`set_movement_riding`](crate::Device::set_movement_riding) or bypasses it,

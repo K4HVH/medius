@@ -2,8 +2,8 @@
 
 use super::{KbdCaps, MouseCaps};
 use crate::protocol::opcode::{
-    CAP_REPORT_ID, CAP_WHEEL, CAP_X, CAP_Y, CAPS_CD_KBD, CAPS_CD_MOUSE, KBC_CONSUMER, KBC_NKRO,
-    KBC_REPORT_ID, KBC_SYSTEM,
+    CAP_PAN, CAP_REPORT_ID, CAP_WHEEL, CAP_X, CAP_Y, CAPS_CD_KBD, CAPS_CD_MOUSE, KBC_CONSUMER,
+    KBC_NKRO, KBC_REPORT_ID, KBC_SYSTEM,
 };
 
 /// A semantic capability summary of the whole cloned device, mouse and keyboard, from one [`caps()`](crate::Device::caps) query.
@@ -49,6 +49,7 @@ impl Caps {
                 has_x: axis & CAP_X != 0,
                 has_y: axis & CAP_Y != 0,
                 has_wheel: axis & CAP_WHEEL != 0,
+                pan: axis & CAP_PAN != 0,
                 has_report_id: axis & CAP_REPORT_ID != 0,
                 n_hid: p[3],
             },

@@ -28,11 +28,74 @@ pub enum Error {
     #[error("frame payload too long (max {max} bytes)", max = crate::protocol::MAX_PAYLOAD)]
     FrameTooLong,
 
+    #[error(
+        "a lock scale is a percent of the physical value bounded by {min} to {max}: 0 blocks, 100 \
+         passes untouched, above that amplifies, and a negative one reverses what it keeps. {scale} \
+         is outside it"
+    )]
+    LockScaleRange { scale: i16, min: i16, max: i16 },
+
+    #[error(
+        "a lock scale of {scale} reverses what it keeps, and class {class} carries one bit, which has \
+         nothing to reverse; use 0 to block it or 100 to pass it"
+    )]
+    LockScaleUsage { scale: i16, class: u8 },
+
     #[error("the box holds at most {limit} catch entries and this subscription needs {needed}")]
     CatchTableFull { needed: usize, limit: usize },
 
     #[error("a catch subscription needs at least one filter")]
     EmptySubscription,
+
+    #[error(
+        "the advanced control layer (§3.14) is gated on the imperfect-clone opt-in, which the box reports \
+         off; call allow_imperfect_clones(true) first"
+    )]
+    ImperfectRequired,
+
+    #[error(
+        "a rewrite rule's match and mask must be the same length (match {match_len}, mask {mask_len})"
+    )]
+    RewriteMaskLength { match_len: usize, mask_len: usize },
+
+    #[error("the box holds {limit} rewrite rules and they are all in use; remove one first")]
+    RewriteTableFull { limit: usize },
+
+    #[error("{action:?} is not a valid action for a {class:?} rewrite rule")]
+    RewriteActionClass {
+        action: crate::types::RewriteAction,
+        class: crate::types::RewriteClass,
+    },
+
+    #[error(
+        "a {action:?} rewrite payload of {len} bytes at offset {offset} exceeds the {cap}-byte head \
+         the box holds for a {class:?} rule"
+    )]
+    RewritePayloadTooLarge {
+        action: crate::types::RewriteAction,
+        class: crate::types::RewriteClass,
+        len: usize,
+        offset: usize,
+        cap: usize,
+    },
+
+    #[error(
+        "a {op:?} transform cannot address {src:?} → {dst:?}: a swap is two axes, a remap is \
+         axis→axis, button→button, button→key or button→media, and neither takes one field as both \
+         ends. To weigh a field in place, use scale"
+    )]
+    TransformOpFields {
+        op: crate::types::TransformOp,
+        src: crate::types::LockTarget,
+        dst: crate::types::LockTarget,
+    },
+
+    #[error(
+        "{limit} transforms are already held for this device; remove one first. This counts what the \
+         host holds, which can include an entry the box refused for naming a field the clone does not \
+         declare: query_transforms reports what the box actually has"
+    )]
+    TransformTableFull { limit: usize },
 
     #[error("{class:?} arrives decoded and carries no packet, so a capture on it does nothing")]
     CaptureNotApplicable { class: CatchClass },
@@ -53,6 +116,12 @@ pub enum Error {
         direction: crate::types::Direction,
         what: &'static str,
     },
+
+    #[error(
+        "a raw injection puts bytes on one cloned endpoint flow, so it needs Direction::IN or \
+         Direction::OUT; {direction:?} names neither"
+    )]
+    RawDirection { direction: crate::types::Direction },
 
     #[error(
         "id 0x{id:04X} is the blanket sentinel on the wire, so an exact {class:?} subscription to it \

@@ -13,6 +13,7 @@ from ._types import (
     Bearing,
     Caps,
     _enum,
+    _u8,
     _u16,
     _window_ms,
     CatchState,
@@ -113,6 +114,15 @@ class MockBox:
 
     def set_imperfect_status(self, status: ImperfectStatus):
         _native.lib.medius_mock_set_imperfect_status(self._handle, imperfect_to_c(status))
+
+    def set_transfer_reply(self, status, data: bytes = b""):
+        """Set the canned (status, IN data) the mock answers a TRANSFER with while the opt-in is on;
+        with it off it answers REFUSED. `status` is a `TransferStatus` or a raw wire byte."""
+        raw = bytes(data)
+        buf = (_native.u8 * len(raw)).from_buffer_copy(raw)
+        _native.lib.medius_mock_set_transfer_reply(
+            self._handle, _u8(int(status), "status"), buf, len(raw)
+        )
 
     def set_advertised_hz(self, hz: int):
         """The rate the mock's clone advertises unforced; 0 means no clone."""

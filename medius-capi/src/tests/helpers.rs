@@ -35,7 +35,8 @@ fn motion_constructors_select_the_right_arm() {
             kind: MediusMotionKind::Cursor as u8,
             dx: 100,
             dy: -50,
-            wheel: 0
+            wheel: 0,
+            pan: 0
         }
     );
     assert_eq!(
@@ -44,7 +45,18 @@ fn motion_constructors_select_the_right_arm() {
             kind: MediusMotionKind::Wheel as u8,
             dx: 0,
             dy: 0,
-            wheel: 3
+            wheel: 3,
+            pan: 0
+        }
+    );
+    assert_eq!(
+        medius_motion_pan(-4),
+        MediusMotion {
+            kind: MediusMotionKind::Pan as u8,
+            dx: 0,
+            dy: 0,
+            wheel: 0,
+            pan: -4
         }
     );
 }
@@ -211,6 +223,7 @@ fn caps_predicates() {
             has_x: 1,
             has_y: 1,
             has_wheel: 1,
+            pan: 0,
             has_report_id: 0,
             n_hid: 1,
         },
@@ -322,8 +335,8 @@ fn catch_filter_wildcards_round_trip_through_the_sentinels() {
     assert_eq!(class_only.class, MEDIUS_CATCH_CLASS_HID_IN);
     assert_eq!(class_only.id, MEDIUS_CATCH_ID_ANY);
 
-    let exact = medius_catch_filter_traffic(MEDIUS_CATCH_CLASS_VENDOR_INTERRUPT, 0x81);
-    assert_eq!(exact.id, 0x81);
+    let exact = medius_catch_filter_traffic(MEDIUS_CATCH_CLASS_VENDOR_INTERRUPT, 1);
+    assert_eq!(exact.id, 1);
 
     // A wildcard is `None` on the Rust side and the sentinel on the C side, and the pair has to come
     // back byte-identical or a re-sent subscription would address something else.
@@ -337,7 +350,7 @@ fn catch_filter_wildcards_round_trip_through_the_sentinels() {
     );
     assert_eq!(
         crate::convert::catch_filter_from_c(exact).unwrap(),
-        medius::CatchFilter::traffic(medius::TrafficClass::VendorInterrupt, 0x81)
+        medius::CatchFilter::traffic(medius::TrafficClass::VendorInterrupt, 1)
     );
     assert!(crate::convert::catch_filter_from_c(medius_catch_filter_traffic_class(99)).is_none());
     // The wildcard class with a real id addresses nothing: `id` means something different in every
@@ -388,7 +401,7 @@ fn the_input_filter_constructors_mirror_the_rust_ones() {
 
 #[test]
 fn the_filter_setters_narrow_without_moving_the_address() {
-    let f = medius_catch_filter_traffic(MEDIUS_CATCH_CLASS_VENDOR_BULK, 0x83);
+    let f = medius_catch_filter_traffic(MEDIUS_CATCH_CLASS_VENDOR_BULK, 3);
     let capped = medius_catch_filter_with_capture(f, 16);
     assert_eq!(capped.capture, 16);
     assert!(medius_catch_filter_same_address(f, capped));

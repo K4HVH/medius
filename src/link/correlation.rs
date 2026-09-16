@@ -6,22 +6,32 @@ use parking_lot::Mutex;
 
 use crate::error::{Error, Result};
 use crate::protocol::FrameType;
-use crate::protocol::command::query_payload;
+use crate::protocol::command::{query_payload, transfer_payload};
 use crate::protocol::opcode::Q_OPTIONS;
+use crate::types::Setup;
 
 use super::{Link, LinkInner};
 
 pub(crate) struct PendingEntry {
     gen_id: u64,
+    // Both the frame type and its first byte have to match, so a stale `RESP` reusing a `SEQ` a
+    // `TRANSFER` now waits on cannot be delivered as that transfer's answer: the two frames differ in
+    // type (`Resp` vs `TransferResp`) even when their first byte (a selector vs an endpoint) collides.
+    expected_ty: FrameType,
     expected_what: u8,
     tx: flume::Sender<Vec<u8>>,
 }
 
-pub(crate) fn deliver(pending: &Mutex<HashMap<u8, PendingEntry>>, seq: u8, payload: Vec<u8>) {
+pub(crate) fn deliver(
+    pending: &Mutex<HashMap<u8, PendingEntry>>,
+    ty: FrameType,
+    seq: u8,
+    payload: Vec<u8>,
+) {
     let mut pending = pending.lock();
     let matches = pending
         .get(&seq)
-        .is_some_and(|e| payload.first() == Some(&e.expected_what));
+        .is_some_and(|e| e.expected_ty == ty && payload.first() == Some(&e.expected_what));
     if matches && let Some(entry) = pending.remove(&seq) {
         let _ = entry.tx.send(payload);
     }
@@ -39,6 +49,7 @@ impl LinkInner {
 impl Link {
     pub(crate) fn register_pending(
         &self,
+        expected_ty: FrameType,
         expected_what: u8,
     ) -> (u8, u64, flume::Receiver<Vec<u8>>) {
         let gen_id = self.inner.query_gen.fetch_add(1, Ordering::Relaxed);
@@ -55,6 +66,7 @@ impl Link {
             seq,
             PendingEntry {
                 gen_id,
+                expected_ty,
                 expected_what,
                 tx,
             },
@@ -82,12 +94,40 @@ impl Link {
         expected_what: u8,
         request: &[u8],
     ) -> Result<(u8, u64, flume::Receiver<Vec<u8>>)> {
-        let (seq, gen_id, rx) = self.register_pending(expected_what);
+        let (seq, gen_id, rx) = self.register_pending(FrameType::Resp, expected_what);
         if let Err(e) = self.send_with_seq(seq, FrameType::Query, request) {
             self.cancel_query(seq, gen_id);
             return Err(e);
         }
         Ok((seq, gen_id, rx))
+    }
+
+    /// `QUERY [what][index]`: read one indexed entry (a rewrite rule or descriptor patch), correlated
+    /// on the `what` selector the reply leads with, exactly like [`query_option`](Self::query_option).
+    pub(crate) fn query_indexed(&self, what: u8, index: u8) -> Result<Vec<u8>> {
+        let timeout = self.query_timeout_default();
+        let (seq, gen_id, rx) = self.register_query_with(what, &[what, index])?;
+        self.recv_query(seq, gen_id, &rx, what, timeout)
+    }
+
+    /// Run one `TRANSFER` and wait for its `TRANSFER_RESP`, correlated by `SEQ` on the answer's own
+    /// opcode. Returns `(status, in_data)`; the surrounding `Ok` means the box answered at all.
+    pub(crate) fn transfer(
+        &self,
+        ep: u8,
+        setup: Setup,
+        out: &[u8],
+        timeout: Duration,
+    ) -> Result<(u8, Vec<u8>)> {
+        let (seq, gen_id, rx) = self.register_pending(FrameType::TransferResp, ep);
+        if let Err(e) =
+            self.send_with_seq(seq, FrameType::Transfer, &transfer_payload(ep, setup, out))
+        {
+            self.cancel_query(seq, gen_id);
+            return Err(e);
+        }
+        let resp = self.recv_query(seq, gen_id, &rx, ep, timeout)?;
+        Ok(split_transfer_resp(&resp))
     }
 
     pub(crate) fn query(&self, what: u8) -> Result<Vec<u8>> {
@@ -154,6 +194,36 @@ impl Link {
     }
 
     #[cfg(feature = "async")]
+    pub(crate) async fn query_indexed_async(
+        &self,
+        what: u8,
+        index: u8,
+        timeout: Duration,
+    ) -> Result<Vec<u8>> {
+        let (seq, gen_id, rx) = self.register_query_with(what, &[what, index])?;
+        self.recv_query_async(seq, gen_id, rx, timeout).await
+    }
+
+    #[cfg(feature = "async")]
+    pub(crate) async fn transfer_async(
+        &self,
+        ep: u8,
+        setup: Setup,
+        out: &[u8],
+        timeout: Duration,
+    ) -> Result<(u8, Vec<u8>)> {
+        let (seq, gen_id, rx) = self.register_pending(FrameType::TransferResp, ep);
+        if let Err(e) =
+            self.send_with_seq(seq, FrameType::Transfer, &transfer_payload(ep, setup, out))
+        {
+            self.cancel_query(seq, gen_id);
+            return Err(e);
+        }
+        let resp = self.recv_query_async(seq, gen_id, rx, timeout).await?;
+        Ok(split_transfer_resp(&resp))
+    }
+
+    #[cfg(feature = "async")]
     async fn recv_query_async(
         &self,
         seq: u8,
@@ -180,4 +250,12 @@ impl Link {
             Err(_) => Err(Error::QueryTimeout),
         }
     }
+}
+
+// Split a `TRANSFER_RESP` payload `[ep][status][in-data…]` into `(status, in-data)`. A reply too
+// short to carry a status reads as `Refused` (0xFC), the same byte the box sends when it declines.
+fn split_transfer_resp(payload: &[u8]) -> (u8, Vec<u8>) {
+    let status = payload.get(1).copied().unwrap_or(0xFC);
+    let data = payload.get(2..).unwrap_or(&[]).to_vec();
+    (status, data)
 }

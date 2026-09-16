@@ -68,6 +68,7 @@ impl InputStream {
                         dx: m.dx,
                         dy: m.dy,
                         dz: m.dz,
+                        pan: m.pan,
                     },
                 })
             }
