@@ -59,6 +59,17 @@ pub enum MediusStatus {
     ErrTransformTableFull = 28,
     /// A raw injection direction other than `MEDIUS_DIRECTION_POSITIVE` (IN) or `MEDIUS_DIRECTION_NEGATIVE` (OUT).
     ErrRawDirection = 29,
+    /// A clip frame with more than `MEDIUS_CLIP_EDGES_MAX` edges or `MEDIUS_CLIP_RAW_MAX` raw reports.
+    ErrClipFrameCount = 30,
+    /// A clip frame that encodes to more than `MEDIUS_CLIP_ENTRY_MAX` bytes.
+    ErrClipFrameTooLong = 31,
+    /// A clip transfer whose data is not what its setup packet announces: `length` bytes for an OUT
+    /// request, none for an IN one.
+    ErrClipTransferData = 32,
+    /// A `MEDIUS_REWRITE_ACTION_CLIP` rule the box would refuse; `medius_last_error_message` says why.
+    ErrRewriteClipRule = 33,
+    /// A rewrite rule with more than `MEDIUS_MAX_REWRITE_MATCH` match bytes.
+    ErrRewriteMatchTooLong = 34,
 }
 
 #[derive(Default)]
@@ -105,11 +116,16 @@ fn status_for(err: &Error) -> MediusStatus {
         Error::ReservedId { .. } => MediusStatus::ErrReservedId,
         Error::RelativeDirection { .. } => MediusStatus::ErrRelativeDirection,
         Error::RawDirection { .. } => MediusStatus::ErrRawDirection,
+        Error::ClipFrameCount { .. } => MediusStatus::ErrClipFrameCount,
+        Error::ClipFrameTooLong { .. } => MediusStatus::ErrClipFrameTooLong,
+        Error::ClipTransferData { .. } => MediusStatus::ErrClipTransferData,
         Error::ImperfectRequired => MediusStatus::ErrImperfectRequired,
         Error::RewriteMaskLength { .. } => MediusStatus::ErrRewriteMaskLength,
+        Error::RewriteMatchTooLong { .. } => MediusStatus::ErrRewriteMatchTooLong,
         Error::RewriteActionClass { .. } => MediusStatus::ErrRewriteActionClass,
         Error::RewritePayloadTooLarge { .. } => MediusStatus::ErrRewritePayloadTooLarge,
         Error::RewriteTableFull { .. } => MediusStatus::ErrRewriteTableFull,
+        Error::RewriteClipRule { .. } => MediusStatus::ErrRewriteClipRule,
         Error::LockScaleRange { .. } => MediusStatus::ErrLockScaleRange,
         Error::LockScaleUsage { .. } => MediusStatus::ErrLockScaleUsage,
         Error::TransformOpFields { .. } => MediusStatus::ErrTransformOpFields,

@@ -389,6 +389,9 @@ class MediusClipStatus(ctypes.Structure):
         ("underruns", u16),
         ("overruns", u16),
         ("seq_gaps", u16),
+        ("xfers", u16),
+        ("xfer_errs", u16),
+        ("gated", u16),
         ("held_n", u16),
         ("held", MediusUsage * MEDIUS_MAX_USAGES),
     ]
@@ -660,8 +663,23 @@ _decl(
     c_bool,
     [ctypes.POINTER(MediusTrafficEvent), ctypes.POINTER(MediusBusEvent)],
 )
+_decl(
+    "medius_traffic_event_transfer_status",
+    c_bool,
+    [ctypes.POINTER(MediusTrafficEvent), ctypes.POINTER(u8)],
+)
 _decl("medius_traffic_event_bulk_end_of_transfer", c_bool, [ctypes.POINTER(MediusTrafficEvent)])
 _decl("medius_traffic_event_bulk_zlp", c_bool, [ctypes.POINTER(MediusTrafficEvent)])
+_decl(
+    "medius_rewrite_rule_clip",
+    i32,
+    [ctypes.POINTER(MediusRewriteRule), u8, u16, u8, u8, u8, u8],
+)
+_decl(
+    "medius_rewrite_rule_clip_verb",
+    c_bool,
+    [ctypes.POINTER(MediusRewriteRule), ctypes.POINTER(u8), ctypes.POINTER(u8), ctypes.POINTER(u8)],
+)
 _decl("medius_clip_status_is_held", c_bool, [ctypes.POINTER(MediusClipStatus), MediusUsage])
 _decl("medius_caps_has_mouse", c_bool, [MediusCaps])
 _decl("medius_caps_has_keyboard", c_bool, [MediusCaps])
@@ -716,17 +734,34 @@ _decl("medius_log_stream_recv", i32, [HANDLE, ctypes.POINTER(MediusLogLine)])
 _decl("medius_log_stream_try_recv", c_bool, [HANDLE, ctypes.POINTER(MediusLogLine)])
 _decl("medius_log_stream_recv_timeout", c_bool, [HANDLE, u64, ctypes.POINTER(MediusLogLine)])
 
+_decl("medius_clip_frame_new", HANDLE, [])
+_decl("medius_clip_frame_free", None, [HANDLE])
+_decl("medius_clip_frame_clear", i32, [HANDLE])
+_decl("medius_clip_frame_move", i32, [HANDLE, i16, i16])
+_decl("medius_clip_frame_wheel", i32, [HANDLE, i16])
+_decl("medius_clip_frame_pan", i32, [HANDLE, i16])
+_decl("medius_clip_frame_edge", i32, [HANDLE, MediusUsage, u8])
+_decl("medius_clip_frame_press", i32, [HANDLE, MediusUsage])
+_decl("medius_clip_frame_release", i32, [HANDLE, MediusUsage])
+_decl("medius_clip_frame_force_release", i32, [HANDLE, MediusUsage])
+_decl("medius_clip_frame_raw", i32, [HANDLE, u8, u8, ctypes.POINTER(u8), usize])
+_decl("medius_clip_frame_transfer", i32, [HANDLE, u8, MediusSetup, ctypes.POINTER(u8), usize])
+_decl("medius_clip_frame_byte_len", usize, [HANDLE])
 _decl("medius_clip_builder_new", HANDLE, [])
 _decl("medius_clip_builder_free", None, [HANDLE])
 _decl("medius_clip_builder_clear", i32, [HANDLE])
+_decl("medius_clip_builder_byte_len", usize, [HANDLE])
 _decl("medius_clip_builder_gap", i32, [HANDLE, u16])
 _decl("medius_clip_builder_move", i32, [HANDLE, i16, i16])
 _decl("medius_clip_builder_wheel", i32, [HANDLE, i16])
+_decl("medius_clip_builder_pan", i32, [HANDLE, i16])
 _decl("medius_clip_builder_press", i32, [HANDLE, MediusUsage])
 _decl("medius_clip_builder_release", i32, [HANDLE, MediusUsage])
 _decl("medius_clip_builder_force_release", i32, [HANDLE, MediusUsage])
 _decl("medius_clip_builder_edge", i32, [HANDLE, MediusUsage, u8])
-_decl("medius_clip_builder_frame", i32, [HANDLE, i16, i16, i16, ctypes.POINTER(MediusUsage), ctypes.POINTER(u8), usize])
+_decl("medius_clip_builder_raw", i32, [HANDLE, u8, u8, ctypes.POINTER(u8), usize])
+_decl("medius_clip_builder_transfer", i32, [HANDLE, u8, MediusSetup, ctypes.POINTER(u8), usize])
+_decl("medius_clip_builder_frame", i32, [HANDLE, HANDLE])
 _decl("medius_device_clip", i32, [HANDLE, PHANDLE])
 _decl("medius_clip_free", None, [HANDLE])
 _decl("medius_clip_append", i32, [HANDLE, HANDLE])

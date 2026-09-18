@@ -49,7 +49,7 @@ const _: () = {
 pub const MEDIUS_MAX_DEV_PAYLOAD: usize = 512;
 
 /// CATCH classes, the `class` of a `MediusCatchFilter`. 0-3 are the classes `LOCK` and `INJECT`
-/// address; 4-10 are the traffic the box relays.
+/// address; 4-11 are byte-oriented traffic.
 pub const MEDIUS_CATCH_CLASS_BTN: u8 = 0;
 pub const MEDIUS_CATCH_CLASS_KEY: u8 = 1;
 pub const MEDIUS_CATCH_CLASS_MEDIA: u8 = 2;
@@ -68,6 +68,8 @@ pub const MEDIUS_CATCH_CLASS_CONTROL: u8 = 8;
 pub const MEDIUS_CATCH_CLASS_EMIT: u8 = 9;
 /// Bus lifecycle: reset, suspend, configuration and interface changes, attach and detach.
 pub const MEDIUS_CATCH_CLASS_BUS: u8 = 10;
+/// A control transfer a clip ran against the real device, keyed by endpoint number (0 = EP0).
+pub const MEDIUS_CATCH_CLASS_CLIP_TRANSFER: u8 = 11;
 /// Wildcard: every class.
 pub const MEDIUS_CATCH_CLASS_ANY: u8 = 0xFF;
 /// Wildcard: every id within a class.
@@ -687,7 +689,8 @@ pub enum MediusRewriteClass {
 
 /// What the winning rewrite rule does to a matched packet (§3.14). Crosses the ABI as the `action`
 /// byte. `Drop` is a report surface only; `Answer`/`Stall`/`Nak` and the two reply rewrites are
-/// control-only, mirroring the box's own admissibility check.
+/// control-only, mirroring the box's own admissibility check. `Clip` runs a clip verb on any class;
+/// `medius_rewrite_rule_clip` builds one.
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MediusRewriteAction {
@@ -700,7 +703,15 @@ pub enum MediusRewriteAction {
     Nak = 6,
     ReplyPatch = 7,
     ReplyReplace = 8,
+    Clip = 9,
 }
+
+const _: () = assert!(MediusRewriteAction::Clip as u8 == medius::RewriteAction::Clip as u8);
+
+/// `medius_rewrite_rule_clip` flag: every packet the rule wins is dropped.
+pub const MEDIUS_REWRITE_CLIP_DROP: u8 = 0x01;
+/// `medius_rewrite_rule_clip` flag: the verb runs on the first packet of a run of matching ones.
+pub const MEDIUS_REWRITE_CLIP_EDGE: u8 = 0x02;
 
 /// Which descriptor a patch overwrites (§3.14). Crosses the ABI as the `section` byte of a
 /// `MediusPatch`/`MediusPatchEntry`.
@@ -1002,12 +1013,31 @@ pub struct MediusClipStatus {
     pub underruns: u16,
     pub overruns: u16,
     pub seq_gaps: u16,
+    /// Clip transfers the device completed.
+    pub xfers: u16,
+    /// Clip transfers that ended any other way: a refusal, no answer, no room in the box's queue, or
+    /// dropped behind one the device did not answer.
+    pub xfer_errs: u16,
+    /// Raw reports and transfers the box discarded because the imperfect-clone opt-in was off.
+    pub gated: u16,
     pub held_n: u16,
     pub held: [MediusUsage; MEDIUS_MAX_USAGES],
 }
 
 /// The max clip trigger bindings in a `MediusClipSettings` (matches the firmware `CLIP_TRIG_MAX`).
 pub const MEDIUS_CLIP_TRIG_MAX: usize = 8;
+/// The most edges one `MediusClipFrame` carries (the firmware `CLIP_EDGES_MAX`).
+pub const MEDIUS_CLIP_EDGES_MAX: usize = 8;
+/// The most raw reports one `MediusClipFrame` carries (the firmware `CLIP_RAW_MAX`).
+pub const MEDIUS_CLIP_RAW_MAX: usize = 8;
+/// The most bytes one `MediusClipFrame` encodes to: one `CLIP_APPEND` payload.
+pub const MEDIUS_CLIP_ENTRY_MAX: usize = 512;
+
+const _: () = {
+    assert!(MEDIUS_CLIP_EDGES_MAX == medius::CLIP_EDGES_MAX);
+    assert!(MEDIUS_CLIP_RAW_MAX == medius::CLIP_RAW_MAX);
+    assert!(MEDIUS_CLIP_ENTRY_MAX == medius::CLIP_ENTRY_MAX);
+};
 
 /// The clip configuration read back from `RESP(CLIP)`: autolock scope, loop/retain scalars, and triggers.
 #[repr(C)]
@@ -1090,7 +1120,8 @@ pub struct MediusUsageEvent {
 }
 
 /// One byte-oriented catch event: HID reports, vendor endpoints, control transactions, the bytes the
-/// clone emitted, or bus lifecycle. `bytes[0..len]` is as much of the packet as `capture` kept.
+/// clone emitted, bus lifecycle, or a clip's control transfers. `bytes[0..len]` is as much of the
+/// packet as `capture` kept.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MediusTrafficEvent {
@@ -1103,7 +1134,8 @@ pub struct MediusTrafficEvent {
     /// as one; C++ renders the enum as `enum : uint8_t`, so assigning this to a `MediusDirection`
     /// there needs a cast.
     pub direction: u8,
-    /// Class-specific; read it with `medius_traffic_event_control_status` or `..._bus_event`.
+    /// Class-specific; read it with `medius_traffic_event_control_status`, `..._bus_event` or
+    /// `..._transfer_status`.
     pub flags: u8,
     /// The packet's length before `capture` truncated it.
     pub true_len: u16,

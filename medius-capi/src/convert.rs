@@ -601,6 +601,19 @@ impl From<ImperfectStatus> for MediusImperfectStatus {
 // materialised as an enum. The variable-length fields follow the catch-event convention: a fixed max
 // array plus a length, truncated at the array's capacity.
 
+// A read-only byte slice from a caller pointer + length. `from_raw_parts` needs a non-null aligned
+// pointer even for a zero length, so an empty request maps to a real empty slice, and a null pointer
+// with a non-zero length is refused before it is read.
+pub(crate) unsafe fn opt_slice<'a>(ptr: *const u8, len: usize) -> Option<&'a [u8]> {
+    if len == 0 {
+        Some(&[])
+    } else if ptr.is_null() {
+        None
+    } else {
+        Some(unsafe { std::slice::from_raw_parts(ptr, len) })
+    }
+}
+
 /// A [`Setup`] from its C mirror. Every field is raw, so this never fails.
 pub(crate) fn setup_from_c(c: MediusSetup) -> Setup {
     Setup {
@@ -625,12 +638,19 @@ impl From<TransferOutcome> for MediusTransferOutcome {
     }
 }
 
+// `len` bytes of a match or mask array, zero-filled past the array's end so the length checks see
+// the length the caller declared.
+fn match_field(bytes: &[u8; MEDIUS_MAX_REWRITE_MATCH], len: u16) -> Vec<u8> {
+    let len = len as usize;
+    let mut v = bytes[..len.min(MEDIUS_MAX_REWRITE_MATCH)].to_vec();
+    v.resize(len, 0);
+    v
+}
+
 // A `MediusRewriteRule` to a [`RewriteRule`]; `None` for a class, action or direction byte no
 // constant names. `match_len` and `mask_len` are kept separate so an unequal pair still reaches the
 // crate, which refuses it with `RewriteMaskLength` rather than this layer papering over it.
 pub(crate) fn rewrite_rule_from_c(c: &MediusRewriteRule) -> Option<RewriteRule> {
-    let ml = (c.match_len as usize).min(MEDIUS_MAX_REWRITE_MATCH);
-    let msl = (c.mask_len as usize).min(MEDIUS_MAX_REWRITE_MATCH);
     let pl = (c.payload_len as usize).min(MEDIUS_MAX_DEV_PAYLOAD);
     Some(RewriteRule {
         class: RewriteClass::from_u8(c.class)?,
@@ -638,8 +658,8 @@ pub(crate) fn rewrite_rule_from_c(c: &MediusRewriteRule) -> Option<RewriteRule> 
         direction: Direction::from_u8(c.direction)?,
         action: RewriteAction::from_u8(c.action)?,
         offset: c.offset,
-        match_bytes: c.match_bytes[..ml].to_vec(),
-        mask: c.mask[..msl].to_vec(),
+        match_bytes: match_field(&c.match_bytes, c.match_len),
+        mask: match_field(&c.mask, c.mask_len),
         payload: c.payload[..pl].to_vec(),
     })
 }
@@ -840,6 +860,9 @@ impl From<ClipStatus> for MediusClipStatus {
             underruns: s.underruns,
             overruns: s.overruns,
             seq_gaps: s.seq_gaps,
+            xfers: s.xfers,
+            xfer_errs: s.xfer_errs,
+            gated: s.gated,
             held_n: n as u16,
             held,
         }
@@ -883,7 +906,7 @@ fn edge_to_c(e: medius::Edge) -> u8 {
     e as u8
 }
 
-fn clip_action_to_c(a: medius::ClipAction) -> u8 {
+pub(crate) fn clip_action_to_c(a: medius::ClipAction) -> u8 {
     let a = match a {
         medius::ClipAction::Start => MediusClipAction::Start,
         medius::ClipAction::Stop => MediusClipAction::Stop,
@@ -958,6 +981,9 @@ pub(crate) fn clip_status_from_c(s: MediusClipStatus) -> Option<ClipStatus> {
         underruns: s.underruns,
         overruns: s.overruns,
         seq_gaps: s.seq_gaps,
+        xfers: s.xfers,
+        xfer_errs: s.xfer_errs,
+        gated: s.gated,
         held,
     })
 }

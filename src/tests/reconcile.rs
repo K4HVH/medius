@@ -1,5 +1,8 @@
 use crate::link::reconcile::DesiredState;
-use crate::types::{Action, Button, Key, MediaKey, Usage};
+use crate::types::{
+    Action, Blanket, Button, ClipAction, ClipSettings, ClipState, ClipStatus, ClipTrigger, Edge,
+    Key, MediaKey, Usage,
+};
 
 #[test]
 fn default_is_idle() {
@@ -540,5 +543,173 @@ fn reset_clears_transforms_too() {
     d.apply_transform(stored_xf(3, 1, 3, 1));
     d.clear(); // the RESET path
     assert!(d.held_transforms().is_empty());
+    assert!(d.is_idle());
+}
+
+// What the box holds of a clip is not re-asserted, but a second of silence clears it, so any of it keeps
+// the keepalive running.
+#[test]
+fn a_loaded_clip_a_setting_or_a_trigger_is_not_idle() {
+    let mut d = DesiredState::default();
+    d.clip_loaded(true);
+    assert!(!d.is_idle());
+    d.clip_loaded(false);
+    assert!(d.is_idle());
+
+    d.clip_setting(2, 1); // retain
+    assert!(!d.is_idle());
+    d.clip_setting(2, 0);
+    assert!(d.is_idle());
+    d.clip_setting(9, 1); // an id the box does not know either
+    assert!(d.is_idle());
+
+    d.clip_trigger((1, 0x3A, 1), true);
+    d.clip_trigger((1, 0x3A, 2), true);
+    d.clip_trigger((1, 0x3A, 1), false);
+    assert!(!d.is_idle());
+    d.clip_triggers_clear();
+    assert!(d.is_idle());
+}
+
+#[test]
+fn a_reset_forgets_the_clip() {
+    let mut d = DesiredState::default();
+    d.clip_loaded(true);
+    d.clip_setting(1, 1);
+    d.clip_trigger((0, 3, 1), true);
+    d.clear();
+    assert!(d.is_idle());
+}
+
+// After a reconnect the box's own answer replaces what was recorded: a blip shorter than the silence
+// window leaves the clip standing, a longer one clears it.
+#[test]
+fn a_reconnect_adopts_what_the_box_still_holds_of_a_clip() {
+    let empty = ClipStatus::default();
+    let plain = ClipSettings::default();
+    let mut d = DesiredState::default();
+    d.clip_loaded(true);
+    d.clip_setting(3, 1);
+    d.clip_trigger((0, 3, 1), true);
+    d.clip_adopt(&empty, &plain);
+    assert!(
+        d.is_idle(),
+        "a box that lost the clip leaves nothing to keep alive"
+    );
+
+    let held = |status: &ClipStatus, settings: &ClipSettings| {
+        let mut d = DesiredState::default();
+        d.clip_adopt(status, settings);
+        !d.is_idle()
+    };
+    assert!(held(
+        &ClipStatus {
+            total: 40,
+            ..empty.clone()
+        },
+        &plain
+    ));
+    // A streaming clip that ran dry holds no bytes and is still playing.
+    assert!(held(
+        &ClipStatus {
+            state: ClipState::Playing,
+            ..empty.clone()
+        },
+        &plain
+    ));
+    assert!(held(
+        &empty,
+        &ClipSettings {
+            autolock: vec![Blanket::Aim],
+            ..plain.clone()
+        }
+    ));
+    assert!(held(
+        &empty,
+        &ClipSettings {
+            loop_: true,
+            ..plain.clone()
+        }
+    ));
+    assert!(held(
+        &empty,
+        &ClipSettings {
+            retain: true,
+            ..plain.clone()
+        }
+    ));
+    assert!(held(
+        &empty,
+        &ClipSettings {
+            ride: true,
+            ..plain.clone()
+        }
+    ));
+    // `finalized` is the ring's state, which `total` already covers.
+    assert!(!held(
+        &empty,
+        &ClipSettings {
+            finalized: true,
+            ..plain.clone()
+        }
+    ));
+
+    // Each adopted scalar lands on its own `CLIP_SET` id, where the next `set` of it overwrites it.
+    for (id, only) in [
+        (
+            0u8,
+            ClipSettings {
+                autolock: vec![Blanket::Aim],
+                ..plain.clone()
+            },
+        ),
+        (
+            1,
+            ClipSettings {
+                loop_: true,
+                ..plain.clone()
+            },
+        ),
+        (
+            2,
+            ClipSettings {
+                retain: true,
+                ..plain.clone()
+            },
+        ),
+        (
+            3,
+            ClipSettings {
+                ride: true,
+                ..plain.clone()
+            },
+        ),
+    ] {
+        let mut d = DesiredState::default();
+        d.clip_adopt(&empty, &only);
+        for other in (0..4).filter(|&o| o != id) {
+            d.clip_setting(other, 0);
+        }
+        assert!(!d.is_idle(), "setting {id} was adopted onto another id");
+        d.clip_setting(id, 0);
+        assert!(d.is_idle(), "setting {id}");
+    }
+
+    // An adopted trigger is the one `unbind` removes, and an adopted setting the one `set` overwrites.
+    let bound = ClipSettings {
+        triggers: vec![ClipTrigger::new(
+            Button::SIDE1,
+            Edge::Press,
+            ClipAction::Toggle,
+        )],
+        ride: true,
+        ..plain.clone()
+    };
+    let mut d = DesiredState::default();
+    d.clip_adopt(&empty, &bound);
+    d.clip_setting(3, 0);
+    assert!(!d.is_idle());
+    let (class, id) = Usage::from(Button::SIDE1).class_id();
+    d.clip_trigger((class, id, 1), false);
     assert!(d.is_idle());
 }

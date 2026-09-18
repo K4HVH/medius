@@ -47,10 +47,13 @@ fn rewrite_class_and_action_wire() {
     assert_eq!(RewriteClass::from_u8(8), Some(RewriteClass::Control));
     assert_eq!(RewriteClass::from_u8(0), None); // a parsed-input class is not rewritable
     assert_eq!(RewriteClass::from_u8(10), None); // the bus class is not rewritable
+    assert_eq!(RewriteClass::from_u8(11), None); // nor are a clip's transfers
 
     assert_eq!(RewriteAction::ReplyReplace.as_u8(), 8);
     assert_eq!(RewriteAction::from_u8(2), Some(RewriteAction::Patch));
-    assert_eq!(RewriteAction::from_u8(9), None);
+    assert_eq!(RewriteAction::Clip.as_u8(), 9);
+    assert_eq!(RewriteAction::from_u8(9), Some(RewriteAction::Clip));
+    assert_eq!(RewriteAction::from_u8(10), None);
 }
 
 #[test]
@@ -532,4 +535,220 @@ fn resp_health_u16_roundtrips_through_parse() {
         panic!("not a RESP(HEALTH)");
     };
     assert!(h.rewrite_on && h.patch_on && !h.transform_on);
+}
+
+// RW_CLIP (§3.14): the rule that runs a clip verb. Its payload is [op][flags][slen].
+mod clip_rule {
+    use crate::device::rewrite::validate_rule;
+    use crate::error::Error;
+    use crate::protocol::command::rewrite_payload;
+    use crate::types::{ClipAction, ClipVerb, Direction, RewriteAction, RewriteClass, RewriteRule};
+
+    const M: [u8; 2] = [0x07, 0x20];
+    const K: [u8; 2] = [0xFF, 0x20];
+
+    fn held() -> RewriteRule {
+        RewriteRule::clip(RewriteClass::HidIn, 2, Direction::IN, ClipAction::Start).matching(M, K)
+    }
+
+    #[test]
+    fn the_builders_write_the_payload_the_box_reads() {
+        assert_eq!(held().payload, [0, 0, 0]);
+        assert_eq!(held().action, RewriteAction::Clip);
+        assert_eq!(held().dropping().payload, [0, 0x01, 0]);
+        assert_eq!(held().on_edge(1).payload, [0, 0x02, 1]);
+        let both = RewriteRule::clip(RewriteClass::Emit, 1, Direction::IN, ClipAction::Toggle)
+            .matching(M, K)
+            .dropping()
+            .on_edge(1);
+        assert_eq!(both.payload, [5, 0x03, 1]);
+        assert_eq!(
+            both.clip_verb(),
+            Some(ClipVerb {
+                action: ClipAction::Toggle,
+                drop: true,
+                edge: true,
+                selector_len: 1
+            })
+        );
+        // The wire is the ordinary REWRITE frame: the verb rides where a PATCH's bytes would.
+        assert_eq!(
+            rewrite_payload(
+                9,
+                1,
+                1,
+                1,
+                9,
+                0,
+                &both.match_bytes,
+                &both.mask,
+                &both.payload
+            ),
+            [
+                9, 0x01, 0x00, 1, 1, 9, 0x00, 0x00, 2, 0x07, 0x20, 0xFF, 0x20, 5, 0x03, 1
+            ]
+        );
+    }
+
+    #[test]
+    fn the_flag_builders_leave_any_other_rule_alone() {
+        let patch = RewriteRule::new(RewriteClass::Emit, 1, Direction::IN, RewriteAction::Patch)
+            .with_payload([0xAA, 0xBB, 0xCC]);
+        assert_eq!(patch.clone().dropping().on_edge(2), patch);
+        assert_eq!(patch.clip_verb(), None);
+        // A clip action with anything but its three bytes decodes to nothing.
+        let bare = RewriteRule::new(RewriteClass::Emit, 1, Direction::IN, RewriteAction::Clip);
+        assert_eq!(bare.clip_verb(), None);
+        assert_eq!(bare.clone().dropping().on_edge(1), bare);
+        let bad_op = bare.with_payload([6, 0, 0]);
+        assert_eq!(bad_op.clip_verb(), None);
+    }
+
+    fn refused(rule: RewriteRule) -> bool {
+        matches!(validate_rule(&rule), Err(Error::RewriteClipRule { .. }))
+    }
+
+    #[test]
+    fn each_refusal_names_its_own_fault() {
+        let reason = |rule: RewriteRule| match validate_rule(&rule) {
+            Err(Error::RewriteClipRule { reason }) => reason,
+            other => panic!("not a clip rule refusal: {other:?}"),
+        };
+        assert!(reason(held().with_payload([0, 0])).contains("three payload bytes"));
+        assert!(reason(held().with_payload([6, 0, 0])).contains("clip verb from 0"));
+        assert!(reason(held().with_payload([0, 0x04, 0])).contains("drop and edge flags"));
+        assert!(reason(held().at_offset(1)).contains("offset 0"));
+        assert!(reason(held().with_payload([0, 0, 1])).contains("only with the edge flag"));
+        assert!(reason(held().on_edge(2)).contains("past its selector"));
+        let control = RewriteRule::clip(RewriteClass::Control, 0, Direction::IN, ClipAction::Start);
+        assert!(reason(control.clone().dropping()).contains("cannot drop"));
+        assert!(reason(control.matching(M, K).on_edge(1)).contains("one stream"));
+    }
+
+    // The box refuses a rule its read-back reply cannot carry, and that reply's header is two bytes
+    // wider than the command's.
+    #[test]
+    fn a_rule_the_box_cannot_read_back_is_refused() {
+        let answer = |n: usize| {
+            RewriteRule::new(
+                RewriteClass::Control,
+                0,
+                Direction::IN,
+                RewriteAction::Answer,
+            )
+            .with_payload(vec![0u8; n])
+        };
+        assert!(validate_rule(&answer(501)).is_ok());
+        assert!(matches!(
+            validate_rule(&answer(502)),
+            Err(Error::RewritePayloadTooLarge {
+                len: 502,
+                cap: 501,
+                ..
+            })
+        ));
+        assert!(matches!(
+            validate_rule(&answer(498).matching([1, 2], [0xFF, 0xFF])),
+            Err(Error::RewritePayloadTooLarge {
+                len: 498,
+                cap: 497,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn a_match_past_the_box_cap_is_refused() {
+        let fits = held().matching([0x07; 16], [0xFF; 16]);
+        assert!(validate_rule(&fits).is_ok());
+        let over = held().matching([0x07; 17], [0xFF; 17]);
+        assert!(matches!(
+            validate_rule(&over),
+            Err(Error::RewriteMatchTooLong { len: 17, limit: 16 })
+        ));
+    }
+
+    #[test]
+    fn what_the_box_refuses_is_refused_before_the_wire() {
+        assert!(validate_rule(&held()).is_ok());
+        assert!(validate_rule(&held().dropping()).is_ok());
+        assert!(validate_rule(&held().on_edge(1)).is_ok());
+        assert!(validate_rule(&held().on_edge(0)).is_ok());
+        let on = |class, id, direction| {
+            RewriteRule::clip(class, id, direction, ClipAction::Start).matching(M, K)
+        };
+        // Every packet, from anywhere: legal with no flags.
+        assert!(validate_rule(&on(RewriteClass::Control, 0, Direction::IN)).is_ok());
+        assert!(validate_rule(&on(RewriteClass::Any, 0xFFFF, Direction::Both)).is_ok());
+        // DROP where Drop is not an action.
+        assert!(refused(
+            on(RewriteClass::Control, 0, Direction::IN).dropping()
+        ));
+        assert!(refused(
+            on(RewriteClass::Any, 0xFFFF, Direction::Both).dropping()
+        ));
+        // EDGE with no single stream to have a run over.
+        assert!(refused(
+            on(RewriteClass::Control, 0, Direction::IN).on_edge(1)
+        ));
+        assert!(refused(on(RewriteClass::Any, 2, Direction::IN).on_edge(1)));
+        assert!(refused(
+            on(RewriteClass::HidIn, 0xFFFF, Direction::IN).on_edge(1)
+        ));
+        assert!(refused(
+            on(RewriteClass::HidIn, 2, Direction::Both).on_edge(1)
+        ));
+        // EDGE with nothing past the selector to stop matching on.
+        assert!(refused(held().on_edge(2)));
+        assert!(refused(held().on_edge(3)));
+        assert!(refused(
+            RewriteRule::clip(RewriteClass::HidIn, 2, Direction::IN, ClipAction::Start).on_edge(0)
+        ));
+        // A payload the builders did not write.
+        assert!(refused(held().with_payload([0, 0])));
+        assert!(refused(held().with_payload([6, 0, 0])));
+        assert!(refused(held().with_payload([0, 0x04, 0])));
+        assert!(refused(held().with_payload([0, 0, 1])));
+        assert!(refused(held().at_offset(1)));
+    }
+
+    #[cfg(feature = "mock")]
+    #[test]
+    fn a_clip_rule_round_trips_and_the_mock_refuses_what_the_box_does() {
+        use crate::protocol::FrameType;
+        use crate::{Device, MockBox};
+
+        let mock = MockBox::new().with_imperfect(true);
+        let device = Device::with_mock(mock.clone());
+        let rule = held().on_edge(1).dropping();
+        device.set_rewrite(&rule).unwrap();
+        let read = device.query_rewrite_entry(0).unwrap();
+        assert_eq!(read, rule);
+        assert_eq!(read.clip_verb().unwrap().action, ClipAction::Start);
+
+        // Past the crate's own check, straight onto the link, where the mock refuses what the box does.
+        let gen_before = device.query_rewrite().unwrap().generation;
+        for bad in [
+            rewrite_payload(8, 0, 1, 1, 9, 0, &[], &[], &[0, 0x01, 0]), // DROP on CONTROL
+            rewrite_payload(4, 2, 0, 1, 9, 0, &M, &K, &[0, 0x02, 1]),   // EDGE with dir Both
+            rewrite_payload(4, 3, 1, 1, 9, 0, &M, &K, &[0, 0x02, 2]), // the selector covers the whole match
+            rewrite_payload(4, 3, 1, 1, 9, 0, &M, &K, &[6, 0, 0]),    // not a verb
+            rewrite_payload(4, 3, 1, 1, 10, 0, &M, &K, &[]),          // not an action
+            rewrite_payload(4, 3, 1, 1, 9, 1, &M, &K, &[0, 0, 0]),    // an offset
+            rewrite_payload(4, 0xFFFF, 1, 1, 9, 0, &M, &K, &[0, 0x02, 1]), // EDGE on every id
+            rewrite_payload(4, 3, 1, 1, 9, 0, &M, &K, &[0, 0, 1]),    // a selector without EDGE
+            rewrite_payload(4, 3, 1, 1, 9, 0, &M, &K, &[0, 0x04, 0]), // a flag the box does not know
+            rewrite_payload(11, 0, 1, 1, 9, 0, &[], &[], &[0, 0, 0]), // a class that is never rewritten
+            rewrite_payload(4, 3, 3, 1, 0, 0, &M, &K, &[]),           // a relative direction
+            rewrite_payload(8, 0, 1, 1, 4, 0, &[], &[], &[0u8; 502]), // past its own read-back
+            rewrite_payload(4, 3, 1, 1, 2, 60, &M, &K, &[0u8; 5]), // a patch past the report head
+            rewrite_payload(4, 2, 1, 1, 9, 0, &M, &K, &[6, 0, 0]), // onto the held key: it stays
+        ] {
+            device.link.send(FrameType::Rewrite, &bad).unwrap();
+        }
+        let table = device.query_rewrite().unwrap();
+        assert_eq!(table.entries.len(), 1);
+        assert_eq!(table.generation, gen_before);
+        assert_eq!(device.query_rewrite_entry(0).unwrap(), rule);
+    }
 }

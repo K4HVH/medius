@@ -30,12 +30,19 @@ from medius import (
     CatchState,
     Action,
     Blanket,
+    CLIP_EDGES_MAX,
+    CLIP_ENTRY_MAX,
+    CLIP_RAW_MAX,
     ClipAction,
     ClipBuilder,
+    ClipFrameCountError,
+    ClipFrameTooLongError,
     ClipSettings,
     ClipState,
     ClipStatus,
+    ClipTransferDataError,
     ClipTrigger,
+    ClipVerb,
     ClockDomain,
     ClockEstimate,
     ControlStatus,
@@ -85,11 +92,15 @@ from medius import (
     PatchEntry,
     PatchSet,
     PatchSection,
+    REWRITE_CLIP_DROP,
+    REWRITE_CLIP_EDGE,
     RewriteRule,
     RewriteEntry,
     RewriteTable,
     RewriteClass,
     RewriteAction,
+    RewriteClipRuleError,
+    RewriteMatchTooLongError,
     Setup,
     TransferOutcome,
     TransferStatus,
@@ -884,6 +895,41 @@ def test_traffic_event_control_accessors():
     assert answered.data() == b"\x12\x01"
 
 
+def test_clip_transfer_event_accessors():
+    setup = bytes([0xA1, 0x01, 0x00, 0x03, 0x00, 0x00, 0x02, 0x00])
+    answered = TrafficEvent(
+        catch_class=CatchClass.CLIP_TRANSFER,
+        id=0,
+        direction=Direction.IN,
+        flags=TransferStatus.OK,
+        true_len=10,
+        bytes=setup + b"\x04\x01",
+    )
+    with MockBox() as mock, Device.with_mock(mock) as d:
+        with d.catch_events(CatchFilter.traffic_class(TrafficClass.CLIP_TRANSFER)) as stream:
+            ev = _push_and_recv(mock, stream, answered)
+    assert ev.traffic == answered
+    assert ev.traffic.catch_class.is_traffic()
+    assert ev.traffic.setup() == setup
+    assert ev.traffic.data() == b"\x04\x01"
+    assert ev.traffic.transfer_status() == TransferStatus.OK
+    assert ev.traffic.transfer_status().is_ok
+    # The flags byte is a transfer status on this class, so the control reading does not apply.
+    assert ev.traffic.control_status() is None
+
+    stalled = TrafficEvent(CatchClass.CLIP_TRANSFER, 0, Direction.IN, 0xFD, 8, setup)
+    assert stalled.transfer_status() == TransferStatus.STALL
+    assert stalled.data() == b""
+    unanswered = TrafficEvent(CatchClass.CLIP_TRANSFER, 0, Direction.IN, 0xFE, 8, setup)
+    assert unanswered.transfer_status() == TransferStatus.NAK
+    # A status no member names is kept as its byte.
+    unknown = TrafficEvent(CatchClass.CLIP_TRANSFER, 0, Direction.IN, 0x42, 8, setup)
+    assert unknown.transfer_status() == 0x42
+    # Any other class reads as None.
+    control = TrafficEvent(CatchClass.CONTROL, 0, Direction.IN, 0x00, 8, setup)
+    assert control.transfer_status() is None
+
+
 def test_traffic_event_bus_event():
     with MockBox() as mock, Device.with_mock(mock) as d:
         with d.catch_events(CatchFilter.traffic_class(TrafficClass.BUS)) as stream:
@@ -1063,7 +1109,7 @@ def test_clip_append_encodes_and_chunks():
 def test_clip_builder_frame_edges():
     with MockBox() as mock, Device.with_mock(mock) as d:
         b = ClipBuilder()
-        b.frame(1, 2, -1, [(Usage.button(Button.LEFT), Action.PRESS), (Usage.key(0x04), Action.PRESS)])
+        b.frame(1, 2, -1, edges=[(Usage.button(Button.LEFT), Action.PRESS), (Usage.key(0x04), Action.PRESS)])
         d.clip().append(b)
         b.close()
         appends = _clip_frames(d, mock, FrameType.CLIP_APPEND)
@@ -1073,10 +1119,215 @@ def test_clip_builder_frame_edges():
     )
 
 
+def test_clip_frame_carries_pan_raw_reports_and_transfers():
+    set_report = Setup(0x21, 0x09, 0x0300, 0, 2)
+    get_report = Setup(0xA1, 0x01, 0x0300, 0, 8)
+    with MockBox() as mock, Device.with_mock(mock) as d:
+        with ClipBuilder() as b:
+            b.frame(
+                dx=4,
+                dy=-2,
+                wheel=1,
+                pan=-3,
+                edges=[(Usage.button(Button.LEFT), Action.PRESS)],
+                raw=[(2, Direction.OUT, b"\x10\xFF\x05"), (1, Direction.IN, b"")],
+                transfers=[(3, set_report, b"\x04\x01"), (4, get_report)],
+            )
+            d.clip().append(b)
+        appends = _clip_frames(d, mock, FrameType.CLIP_APPEND)
+    assert appends == [
+        bytes(
+            [0x3F, 0x04, 0x00, 0xFE, 0xFF]              # flags XY|WHEEL|EDGES|PAN|RAW|XFER, dx=4 dy=-2
+            + [0x01, 0x00]                              # wheel=1
+            + [0xFD, 0xFF]                              # pan=-3
+            + [0x01, 0x00, 0x00, 0x00, 0x01]            # n=1, [btn left press]
+            + [0x02]                                    # 2 raw reports
+            + [0x02, 0x02, 0x03, 0x00, 0x10, 0xFF, 0x05]  # ep 2 OUT, 3 bytes
+            + [0x01, 0x01, 0x00, 0x00]                  # ep 1 IN, 0 bytes
+            + [0x02]                                    # 2 transfers
+            + [0x03, 0x21, 0x09, 0x00, 0x03, 0x00, 0x00, 0x02, 0x00, 0x04, 0x01]  # ep 3, setup, 2 OUT bytes
+            + [0x04, 0xA1, 0x01, 0x00, 0x03, 0x00, 0x00, 0x08, 0x00]              # ep 4, setup, no data
+        )
+    ]
+
+
+def test_clip_builder_one_field_pan_raw_and_transfer_frames():
+    with MockBox() as mock, Device.with_mock(mock) as d:
+        with ClipBuilder() as b:
+            b.pan(7).raw(2, Direction.OUT, b"\xAA").transfer(5, Setup(0x21, 0x09, 0x0300, 0, 1), b"\x05")
+            b.transfer(6, Setup(0xA1, 0x01, 0x0300, 0, 8))
+            assert b.byte_len() == 3 + 7 + 12 + 11
+            d.clip().append(b)
+        joined = b"".join(_clip_frames(d, mock, FrameType.CLIP_APPEND))
+    assert joined == bytes(
+        [0x08, 0x07, 0x00]                                                        # PAN, dpan=7
+        + [0x10, 0x01, 0x02, 0x02, 0x01, 0x00, 0xAA]                              # RAW, n=1, ep 2 OUT, 1 byte
+        + [0x20, 0x01, 0x05, 0x21, 0x09, 0x00, 0x03, 0x00, 0x00, 0x01, 0x00, 0x05]  # XFER, n=1, ep 5, setup, data
+        + [0x20, 0x01, 0x06, 0xA1, 0x01, 0x00, 0x03, 0x00, 0x00, 0x08, 0x00]      # XFER, n=1, ep 6, setup
+    )
+
+
+def test_clip_builder_byte_len_is_what_an_append_puts_in_the_ring():
+    left = Usage.button(Button.LEFT)
+    with MockBox() as mock, Device.with_mock(mock) as d:
+        with ClipBuilder() as b:
+            assert b.byte_len() == 0
+            b.frame()
+            assert b.byte_len() == 5  # a frame carrying nothing is a zero XY tick
+            b.gap(4).wheel(1).press(left)
+            assert b.byte_len() == 5 + 3 + 3 + 6
+            for _ in range(150):
+                b.move(3, -2)
+            b.frame(dx=1, raw=[(2, Direction.OUT, b"\x10\xFF")], transfers=[(3, Setup(0xA1, 0x01, 0x0300, 0, 8))])
+            want = b.byte_len()
+            d.clip().append(b)
+            b.clear()
+            assert b.byte_len() == 0
+        appends = _clip_frames(d, mock, FrameType.CLIP_APPEND)
+    assert len(appends) >= 2
+    assert want == sum(len(p) for p in appends)
+
+
+def test_clip_frame_transfers_take_a_pair_or_a_triple():
+    get_report = Setup(0xA1, 0x01, 0x0300, 0, 8)
+    set_report = Setup(0x21, 0x09, 0x0300, 0, 1)
+    with MockBox() as mock, Device.with_mock(mock) as d:
+        with ClipBuilder() as b:
+            b.frame(transfers=[(3, get_report), [4, set_report, b"\x05"]])
+            for bad in ([(3,)], [(3, get_report, b"", 0)], [get_report], [3]):
+                with pytest.raises(ValueError, match=r"\(ep, setup\) or \(ep, setup, out_bytes\)"):
+                    b.frame(transfers=bad)
+            d.clip().append(b)
+        appends = _clip_frames(d, mock, FrameType.CLIP_APPEND)
+    assert appends == [
+        bytes(
+            [0x20, 0x02]
+            + [0x03, 0xA1, 0x01, 0x00, 0x03, 0x00, 0x00, 0x08, 0x00]
+            + [0x04, 0x21, 0x09, 0x00, 0x03, 0x00, 0x00, 0x01, 0x00, 0x05]
+        )
+    ]
+
+
+@pytest.mark.parametrize("bad", [3, 0, True, "abc", None, 1.5, ["a"]])
+def test_a_byte_argument_that_is_not_bytes_is_refused(bad):
+    # bytes(3) is three zero bytes, which would go out as a report nobody wrote.
+    setup = Setup(0x21, 0x09, 0x0300, 0, 3)
+    with MockBox() as mock:
+        mock.set_imperfect_status(_allowed())
+        with Device.with_mock(mock) as d, ClipBuilder() as b:
+            calls = [
+                lambda: d.raw(1, Direction.OUT, bad),
+                lambda: d.transfer(0, setup, bad),
+                lambda: d.transfer(0, setup, bad, timeout_ms=1000),
+                lambda: b.raw(1, Direction.OUT, bad),
+                lambda: b.transfer(0, setup, bad),
+                lambda: b.frame(raw=[(1, Direction.OUT, bad)]),
+                lambda: b.frame(transfers=[(0, setup, bad)]),
+                lambda: d.set_rewrite(RewriteRule(RewriteClass.EMIT, 1, Direction.IN, RewriteAction.REPLACE, payload=bad)),
+                lambda: d.set_rewrite(RewriteRule(RewriteClass.EMIT, 1, Direction.IN, RewriteAction.PASS, match_bytes=bad, mask=b"")),
+                lambda: d.set_rewrite(RewriteRule(RewriteClass.EMIT, 1, Direction.IN, RewriteAction.PASS, match_bytes=b"", mask=bad)),
+                lambda: RewriteRule.clip(RewriteClass.HID_IN, 2, Direction.IN, ClipAction.START, bad, b""),
+                lambda: d.set_patch(Patch(PatchSection.DEVICE, 0, 0, 0, bad)),
+                lambda: mock.set_transfer_reply(TransferStatus.OK, bad),
+                lambda: mock.push_traffic(0, 0, ClockDomain.DEVICE_CHIP, TrafficEvent(CatchClass.HID_IN, 1, Direction.IN, 0, 3, bad)),
+            ]
+            for i, call in enumerate(calls):
+                with pytest.raises(TypeError):
+                    call()
+                    pytest.fail(f"call {i} took {bad!r}")
+            assert b.byte_len() == 0
+            sent = {mock.recorded_frame(i).type for i in range(mock.recorded())}
+    assert sent <= {FrameType.QUERY}
+
+
+def test_a_byte_argument_takes_every_bytes_like_and_an_iterable_of_ints():
+    with MockBox() as mock:
+        mock.set_imperfect_status(_allowed())
+        with Device.with_mock(mock) as d:
+            for data in (b"\x01\x02", bytearray(b"\x01\x02"), memoryview(b"\x01\x02"), [1, 2], (1, 2), range(1, 3)):
+                d.raw(1, Direction.OUT, data)
+            raws = [
+                mock.recorded_frame(i).payload
+                for i in range(mock.recorded())
+                if mock.recorded_frame(i).type == FrameType.RAW
+            ]
+            with pytest.raises(ValueError):
+                d.raw(1, Direction.OUT, [1, 300])
+    assert len(raws) == 6
+    assert all(r.endswith(b"\x01\x02") for r in raws)
+    assert len(set(raws)) == 1
+
+
+def test_a_refused_clip_frame_raises_its_own_exception_and_sends_nothing():
+    left = Usage.button(Button.LEFT)
+    set_report = Setup(0x21, 0x09, 0x0300, 0, 2)
+    refusals = [
+        (ClipFrameCountError, dict(edges=[(left, Action.PRESS)] * (CLIP_EDGES_MAX + 1))),
+        (ClipFrameCountError, dict(raw=[(1, Direction.OUT, b"\x00")] * (CLIP_RAW_MAX + 1))),
+        (ClipFrameTooLongError, dict(raw=[(1, Direction.OUT, bytes(CLIP_ENTRY_MAX))])),
+        (ClipTransferDataError, dict(transfers=[(0, set_report, b"\x04")])),
+        (ClipTransferDataError, dict(transfers=[(0, Setup(0xA1, 0x01, 0x0300, 0, 8), b"\x04")])),
+        (RawDirectionError, dict(raw=[(1, Direction.BOTH, b"\x00")])),
+        (RelativeDirectionError, dict(raw=[(1, Direction.WITH, b"\x00")])),
+    ]
+    with MockBox() as mock, Device.with_mock(mock) as d:
+        clip = d.clip()
+        for exc, fields in refusals:
+            with ClipBuilder() as b:
+                b.move(1, 1).frame(**fields)  # a good entry ahead of the bad one
+                with pytest.raises(exc):
+                    clip.append(b)
+        assert _clip_frames(d, mock, FrameType.CLIP_APPEND) == []
+        # The limits themselves are admitted.
+        with ClipBuilder() as b:
+            b.frame(
+                edges=[(left, Action.PRESS)] * CLIP_EDGES_MAX,
+                raw=[(1, Direction.OUT, b"\x00")] * CLIP_RAW_MAX,
+            )
+            clip.append(b)
+        assert len(_clip_frames(d, mock, FrameType.CLIP_APPEND)) == 1
+
+
+def test_a_bad_clip_frame_field_leaves_the_builder_as_it_was():
+    with MockBox() as mock, Device.with_mock(mock) as d:
+        with ClipBuilder() as b:
+            b.move(1, 1)
+            with pytest.raises(ValueError):
+                b.frame(dx=2, raw=[(1, 200, b"\x00")])
+            with pytest.raises(ValueError):
+                b.frame(dx=2, raw=[(300, Direction.OUT, b"\x00")])
+            with pytest.raises(ValueError):
+                b.frame(dx=2, transfers=[(0, Setup(0x21, 0x09, 0x0300, 0, 70_000), b"")])
+            with pytest.raises(ValueError):
+                b.frame(pan=70_000)
+            with pytest.raises(ValueError):
+                b.raw(1, 200, b"\x00")
+            with pytest.raises(ValueError):
+                b.pan(70_000)
+            d.clip().append(b)
+        assert _clip_frames(d, mock, FrameType.CLIP_APPEND) == [bytes([0x01, 0x01, 0x00, 0x01, 0x00])]
+
+
+def test_the_clip_limits_are_the_header_s():
+    import re
+
+    header = pathlib.Path(__file__).resolve().parents[3] / "medius-capi" / "include" / "medius.h"
+    if not header.exists():
+        pytest.skip(f"{header} not present")
+    defines = dict(re.findall(r"^#define (MEDIUS_\w+) (\d+)$", header.read_text(), re.M))
+    assert int(defines["MEDIUS_CLIP_EDGES_MAX"]) == CLIP_EDGES_MAX
+    assert int(defines["MEDIUS_CLIP_RAW_MAX"]) == CLIP_RAW_MAX
+    assert int(defines["MEDIUS_CLIP_ENTRY_MAX"]) == CLIP_ENTRY_MAX
+    assert int(defines["MEDIUS_REWRITE_CLIP_DROP"]) == REWRITE_CLIP_DROP
+    assert int(defines["MEDIUS_REWRITE_CLIP_EDGE"]) == REWRITE_CLIP_EDGE
+    assert int(defines["MEDIUS_CATCH_CLASS_CLIP_TRANSFER"]) == CatchClass.CLIP_TRANSFER == TrafficClass.CLIP_TRANSFER
+
+
 def test_clip_status_and_config_roundtrip():
     status = ClipStatus(
         ClipState.PLAYING, free=512, total=40, played=8, ticks=99, underruns=2, overruns=0,
-        seq_gaps=1, held=[Usage.button(Button.SIDE1), Usage.key(Key.A)],
+        seq_gaps=1, xfers=7, xfer_errs=3, gated=5,
+        held=[Usage.button(Button.SIDE1), Usage.key(Key.A)],
     )
     settings = ClipSettings(
         autolock=[Blanket.AIM, Blanket.KEYS],
@@ -1096,6 +1347,7 @@ def test_clip_status_and_config_roundtrip():
             got = d.clip().query_status()
             cfg = d.clip().query_config()
     assert got == status
+    assert (got.xfers, got.xfer_errs, got.gated) == (7, 3, 5)
     assert got.state == ClipState.PLAYING
     assert got.is_held(Usage.button(Button.SIDE1))
     assert got.is_held(Usage.key(Key.A))
@@ -1392,7 +1644,7 @@ def test_mock_and_stream_enum_parameters_are_checked():
         with pytest.raises(ValueError):
             mock.set_clip_status(
                 ClipStatus(200, free=0, total=0, played=0, ticks=0, underruns=0, overruns=0,
-                           seq_gaps=0, held=[])
+                           seq_gaps=0, xfers=0, xfer_errs=0, gated=0, held=[])
             )
         with pytest.raises(ValueError):
             mock.push_usages(0, 0, UsageSnapshot([], 200, Direction.POSITIVE))
@@ -1577,6 +1829,95 @@ def test_rewrite_survives_the_query_roundtrip():
             assert read.payload == payload
 
 
+def test_a_clip_rewrite_rule_survives_the_query_roundtrip():
+    rule = RewriteRule.clip(
+        RewriteClass.HID_IN,
+        2,
+        Direction.IN,
+        ClipAction.START,
+        match_bytes=b"\x07\x20",
+        mask=b"\xFF\x20",
+        drop=True,
+        on_edge=1,
+    )
+    assert rule.action == RewriteAction.CLIP
+    assert rule.offset == 0
+    assert rule.payload == bytes([ClipAction.START, REWRITE_CLIP_DROP | REWRITE_CLIP_EDGE, 1])
+    assert rule.clip_verb() == ClipVerb(ClipAction.START, drop=True, edge=True, selector_len=1)
+
+    plain = RewriteRule.clip(RewriteClass.CONTROL, 0, Direction.BOTH, ClipAction.TOGGLE)
+    assert plain.payload == bytes([ClipAction.TOGGLE, 0, 0])
+    assert plain.clip_verb() == ClipVerb(ClipAction.TOGGLE)
+
+    hid = (RewriteClass.HID_IN, 2, Direction.IN, ClipAction.PAUSE)
+    drop_only = RewriteRule.clip(*hid, drop=True)
+    assert drop_only.payload == bytes([ClipAction.PAUSE, REWRITE_CLIP_DROP, 0])
+    assert drop_only.clip_verb() == ClipVerb(ClipAction.PAUSE, drop=True, edge=False, selector_len=0)
+    edge_only = RewriteRule.clip(*hid, on_edge=2)
+    assert edge_only.payload == bytes([ClipAction.PAUSE, REWRITE_CLIP_EDGE, 2])
+    assert edge_only.clip_verb() == ClipVerb(ClipAction.PAUSE, drop=False, edge=True, selector_len=2)
+    # A selector length of 0 is still an edge rule.
+    whole_address = RewriteRule.clip(RewriteClass.HID_IN, 2, Direction.IN, ClipAction.START, on_edge=0)
+    assert whole_address.payload == bytes([0x00, 0x02, 0x00])
+    assert whole_address.clip_verb() == ClipVerb(ClipAction.START, drop=False, edge=True, selector_len=0)
+
+    with MockBox() as mock:
+        mock.set_imperfect_status(_allowed())
+        with Device.with_mock(mock) as d:
+            d.set_rewrite(rule)
+            d.set_rewrite(plain)
+            frames = [
+                mock.recorded_frame(i).payload
+                for i in range(mock.recorded())
+                if mock.recorded_frame(i).type == FrameType.REWRITE
+            ]
+            entries = d.query_rewrite().entries
+            assert [e.action for e in entries] == [RewriteAction.CLIP, RewriteAction.CLIP]
+            assert [e.payload_len for e in entries] == [3, 3]
+            read = d.query_rewrite_entry(0)
+            assert read == rule
+            assert read.clip_verb() == rule.clip_verb()
+            assert d.query_rewrite_entry(1) == plain
+    # [cls][id u16][dir][state][action][off u16][mlen][match][mask][payload]
+    assert frames[0] == bytes(
+        [4, 2, 0, Direction.IN, 1, 9, 0, 0, 2, 0x07, 0x20, 0xFF, 0x20, 0, 0x03, 1]
+    )
+
+    # Any other rule reads as None, and so does a CLIP action whose payload is not a clip verb.
+    assert RewriteRule(RewriteClass.EMIT, 1, Direction.IN, RewriteAction.DROP).clip_verb() is None
+    assert RewriteRule(RewriteClass.EMIT, 1, Direction.IN, RewriteAction.CLIP).clip_verb() is None
+
+
+def test_a_clip_rewrite_rule_the_box_would_refuse_has_its_own_exception():
+    hid = (RewriteClass.HID_IN, 2, Direction.IN, ClipAction.START)
+    refused = [
+        # A drop where DROP itself is refused.
+        RewriteRule.clip(RewriteClass.CONTROL, 0, Direction.BOTH, ClipAction.START, drop=True),
+        RewriteRule.clip(RewriteClass.ANY, 0xFFFF, Direction.BOTH, ClipAction.START, drop=True),
+        # An edge with no single stream to have a run over.
+        RewriteRule.clip(RewriteClass.CONTROL, 0, Direction.IN, ClipAction.START, b"\x07\x20", b"\xFF\x20", on_edge=1),
+        RewriteRule.clip(RewriteClass.HID_IN, 2, Direction.BOTH, ClipAction.START, b"\x07\x20", b"\xFF\x20", on_edge=1),
+        # An edge whose selector covers the whole match.
+        RewriteRule.clip(*hid, match_bytes=b"\x07", mask=b"\xFF", on_edge=1),
+        # A payload that is not a clip verb, an offset, an unknown flag.
+        RewriteRule(RewriteClass.HID_IN, 2, Direction.IN, RewriteAction.CLIP),
+        RewriteRule(RewriteClass.HID_IN, 2, Direction.IN, RewriteAction.CLIP, offset=1, payload=bytes([0, 0, 0])),
+        RewriteRule(RewriteClass.HID_IN, 2, Direction.IN, RewriteAction.CLIP, payload=bytes([0, 0x80, 0])),
+        RewriteRule(RewriteClass.HID_IN, 2, Direction.IN, RewriteAction.CLIP, payload=bytes([0, 0, 1])),
+    ]
+    with MockBox() as mock:
+        mock.set_imperfect_status(_allowed())
+        with Device.with_mock(mock) as d:
+            for rule in refused:
+                with pytest.raises(RewriteClipRuleError):
+                    d.set_rewrite(rule)
+            assert d.query_rewrite().entries == []
+    with pytest.raises(ValueError):
+        RewriteRule.clip(RewriteClass.HID_IN, 2, Direction.IN, 200)
+    with pytest.raises(ValueError):
+        RewriteRule.clip(*hid, on_edge=300)
+
+
 def test_clear_rewrite_empties_the_table():
     with MockBox() as mock:
         mock.set_imperfect_status(_allowed())
@@ -1619,24 +1960,54 @@ def test_rewrite_validation_errors_have_their_own_exception():
 
 
 def test_over_capacity_bytes_are_refused_before_ctypes():
-    # The C struct holds a fixed 16 match bytes and 512 payload bytes; over that raises here rather than
-    # letting ctypes truncate a rule to a wrong-length one that the box would silently misapply.
+    # The C struct holds a fixed 512 payload bytes. A longer payload raises here, because ctypes would
+    # cut it to fit and the box would apply the shorter rule.
     with MockBox() as mock:
         mock.set_imperfect_status(_allowed())
         with Device.with_mock(mock) as d:
             with pytest.raises(ValueError):
                 d.set_rewrite(
                     RewriteRule(
-                        RewriteClass.EMIT,
-                        1,
-                        Direction.IN,
-                        RewriteAction.DROP,
-                        match_bytes=bytes(17),
-                        mask=bytes(17),
+                        RewriteClass.CONTROL,
+                        0,
+                        Direction.BOTH,
+                        RewriteAction.ANSWER,
+                        payload=bytes(513),
                     )
                 )
             with pytest.raises(ValueError):
                 d.set_patch(Patch(PatchSection.DEVICE, 0, 0, 0, bytes(513)))
+
+
+def test_a_rewrite_match_past_the_limit_has_its_own_exception():
+    def rule(match_len, mask_len):
+        return RewriteRule(
+            RewriteClass.HID_IN,
+            2,
+            Direction.IN,
+            RewriteAction.PASS,
+            match_bytes=bytes([0x11]) * match_len,
+            mask=bytes([0xFF]) * mask_len,
+        )
+
+    with MockBox() as mock:
+        mock.set_imperfect_status(_allowed())
+        with Device.with_mock(mock) as d:
+            for n in (17, 40, 0xFFFF):
+                with pytest.raises(RewriteMatchTooLongError) as e:
+                    d.set_rewrite(rule(n, n))
+                assert e.value.status == Status.ERR_REWRITE_MATCH_TOO_LONG
+                with pytest.raises(RewriteMatchTooLongError):
+                    d.remove_rewrite(rule(n, n))
+            # The mask length is checked first.
+            with pytest.raises(RewriteMaskLengthError):
+                d.set_rewrite(rule(17, 16))
+            with pytest.raises(RewriteMaskLengthError):
+                d.set_rewrite(rule(16, 17))
+            assert d.query_rewrite().entries == []
+
+            d.set_rewrite(rule(16, 16))
+            assert d.query_rewrite_entry(0) == rule(16, 16)
 
 
 def test_patch_survives_the_query_roundtrip():

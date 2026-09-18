@@ -2,7 +2,7 @@ mod bearing;
 mod button;
 mod caps;
 pub(crate) mod catch;
-mod clip;
+pub(crate) mod clip;
 mod clock;
 mod counters;
 mod device_info;
@@ -41,7 +41,8 @@ pub use catch::{
     Capture, CatchClass, CatchEntry, CatchFilter, CatchState, DirectionMeaning, TrafficClass,
 };
 pub use clip::{
-    CLIP_EDGES_MAX, ClipAction, ClipBuilder, ClipSettings, ClipState, ClipStatus, ClipTrigger, Edge,
+    CLIP_EDGES_MAX, CLIP_ENTRY_MAX, CLIP_RAW_MAX, ClipAction, ClipBuilder, ClipFrame, ClipSettings,
+    ClipState, ClipStatus, ClipTrigger, Edge,
 };
 pub use clock::{ClockDomain, ClockEstimate, Stamped, Timeline, Timestamped};
 pub use counters::CountersSnapshot;
@@ -66,7 +67,7 @@ pub use rate::Rate;
 pub use reboot::RebootTarget;
 pub use render::{RenderMode, RenderStatus};
 pub use rewrite::{
-    RewriteAction, RewriteClass, RewriteEntry, RewriteKey, RewriteRule, RewriteTable,
+    ClipVerb, RewriteAction, RewriteClass, RewriteEntry, RewriteKey, RewriteRule, RewriteTable,
 };
 pub use spread::SpreadStatus;
 pub use stats::Stats;

@@ -54,6 +54,11 @@ class Status(IntEnum):
     ERR_TRANSFORM_OP_FIELDS = 27
     ERR_TRANSFORM_TABLE_FULL = 28
     ERR_RAW_DIRECTION = 29
+    ERR_CLIP_FRAME_COUNT = 30
+    ERR_CLIP_FRAME_TOO_LONG = 31
+    ERR_CLIP_TRANSFER_DATA = 32
+    ERR_REWRITE_CLIP_RULE = 33
+    ERR_REWRITE_MATCH_TOO_LONG = 34
 
 
 class DeviceKind(IntEnum):
@@ -100,6 +105,14 @@ class ClipState(IntEnum):
     PLAYING = 1
     PAUSED = 2
     FAULTED = 3
+
+
+#: The most edges one clip frame carries.
+CLIP_EDGES_MAX = 8
+#: The most raw reports one clip frame carries.
+CLIP_RAW_MAX = 8
+#: The most bytes one clip frame encodes to: one CLIP_APPEND payload.
+CLIP_ENTRY_MAX = 512
 
 
 class Edge(IntEnum):
@@ -256,7 +269,7 @@ class CatchEventKind(IntEnum):
 
 
 class CatchClass(IntEnum):
-    """What a `CatchFilter` addresses. 0-3 are the classes LOCK and INJECT address; 4-10 are relayed traffic."""
+    """What a `CatchFilter` addresses. 0-3 are the classes LOCK and INJECT address; 4-11 are byte-oriented traffic."""
 
     BUTTON = 0
     KEY = 1
@@ -269,13 +282,14 @@ class CatchClass(IntEnum):
     CONTROL = 8
     EMIT = 9
     BUS = 10
+    CLIP_TRANSFER = 11
 
     def is_input(self) -> bool:
         """A parsed-input class: it arrives decoded and carries no packet, so a capture means nothing."""
         return self <= CatchClass.AXIS
 
     def is_traffic(self) -> bool:
-        """One of the seven byte-oriented traffic classes."""
+        """One of the eight byte-oriented traffic classes."""
         return not self.is_input()
 
 
@@ -289,6 +303,7 @@ class TrafficClass(IntEnum):
     CONTROL = 8
     EMIT = 9
     BUS = 10
+    CLIP_TRANSFER = 11
 
 
 class InputKind(IntEnum):
@@ -338,7 +353,8 @@ class RewriteAction(IntEnum):
     """What the winning rewrite rule does to a matched packet (§3.14).
 
     A report class may `PASS`, `DROP`, `PATCH` or `REPLACE`. The control class adds `ANSWER`, `STALL`,
-    `NAK` and the two reply rewrites, which the box refuses on any other class.
+    `NAK` and the two reply rewrites, which the box refuses on any other class. Every class takes
+    `CLIP`, which runs a clip verb; build that rule with `RewriteRule.clip`.
     """
 
     PASS = 0
@@ -350,6 +366,13 @@ class RewriteAction(IntEnum):
     NAK = 6
     REPLY_PATCH = 7
     REPLY_REPLACE = 8
+    CLIP = 9
+
+
+#: `RewriteAction.CLIP` flag: every packet the rule wins is dropped.
+REWRITE_CLIP_DROP = 0x01
+#: `RewriteAction.CLIP` flag: the verb runs on the first packet of a run of matching ones.
+REWRITE_CLIP_EDGE = 0x02
 
 
 class PatchSection(IntEnum):

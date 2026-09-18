@@ -1,5 +1,7 @@
 //! Buffered clip playback (§3.11 / §4.15): entry-stream encoder, CLIP_CTRL/CLIP_SET/CLIP_TRIGGER frames, and QUERY(CLIP) decode, pinned to the firmware wire.
 
+use crate::device::clip::encode_chunks;
+use crate::error::Error;
 use crate::protocol::command::{clip_op_payload, clip_set_payload, clip_trigger_payload};
 use crate::protocol::opcode::{
     CLIP_OP_CLEAR, CLIP_OP_FINALIZE, CLIP_OP_STOP, CLIP_SET_LOOP, CLIP_SET_RIDE,
@@ -7,50 +9,54 @@ use crate::protocol::opcode::{
 };
 use crate::protocol::{Resp, parse_resp};
 use crate::types::{
-    Action, Blanket, Button, ClipAction, ClipBuilder, ClipSettings, ClipState, ClipStatus,
-    ClipTrigger, Edge, Key, MediaKey, Usage,
+    Blanket, Button, CLIP_EDGES_MAX, CLIP_ENTRY_MAX, CLIP_RAW_MAX, ClipAction, ClipBuilder,
+    ClipFrame, ClipSettings, ClipState, ClipStatus, ClipTrigger, Direction, Edge, Key, MediaKey,
+    Setup, Usage,
 };
+
+// The whole stream as one piece, the way the firmware's ring holds it.
+fn bytes(b: &ClipBuilder) -> Vec<u8> {
+    encode_chunks(b, usize::MAX).unwrap().concat()
+}
 
 #[test]
 fn clip_builder_encodes_entries_to_the_firmware_wire() {
     let mut b = ClipBuilder::new();
     b.gap(10);
-    assert_eq!(b.as_bytes(), &[0x00, 0x0A, 0x00]);
+    assert_eq!(bytes(&b), &[0x00, 0x0A, 0x00]);
     assert_eq!(b.len(), 1);
 
     let mut z = ClipBuilder::new();
     z.gap(0);
     assert!(z.is_empty());
-    assert_eq!(z.as_bytes(), &[] as &[u8]);
+    assert_eq!(bytes(&z), &[] as &[u8]);
 
     let mut m = ClipBuilder::new();
     m.move_by(5, -3);
-    assert_eq!(m.as_bytes(), &[0x01, 0x05, 0x00, 0xFD, 0xFF]);
+    assert_eq!(bytes(&m), &[0x01, 0x05, 0x00, 0xFD, 0xFF]);
 
     let mut w = ClipBuilder::new();
     w.wheel(2);
-    assert_eq!(w.as_bytes(), &[0x02, 0x02, 0x00]);
+    assert_eq!(bytes(&w), &[0x02, 0x02, 0x00]);
 
     let mut p = ClipBuilder::new();
     p.press(Button::LEFT);
-    assert_eq!(p.as_bytes(), &[0x04, 0x01, 0x00, 0x00, 0x00, 0x01]);
+    assert_eq!(bytes(&p), &[0x04, 0x01, 0x00, 0x00, 0x00, 0x01]);
 
     let mut r = ClipBuilder::new();
     r.release(Button::RIGHT);
-    assert_eq!(r.as_bytes(), &[0x04, 0x01, 0x00, 0x01, 0x00, 0x00]);
+    assert_eq!(bytes(&r), &[0x04, 0x01, 0x00, 0x01, 0x00, 0x00]);
 
     let mut f = ClipBuilder::new();
     f.frame(
-        1,
-        2,
-        -1,
-        &[
-            (Button::LEFT.into(), Action::Press),
-            (Button::LEFT.into(), Action::ForceRelease),
-        ],
+        ClipFrame::new()
+            .move_by(1, 2)
+            .wheel(-1)
+            .press(Button::LEFT)
+            .force_release(Button::LEFT),
     );
     assert_eq!(
-        f.as_bytes(),
+        bytes(&f),
         &[
             0x07, 0x01, 0x00, 0x02, 0x00, 0xFF, 0xFF, 0x02, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00,
             0x00, 0x02,
@@ -59,8 +65,153 @@ fn clip_builder_encodes_entries_to_the_firmware_wire() {
 
     // an all-zero content frame with no edges still emits a report (zero XY tick, never a gap tag)
     let mut empty = ClipBuilder::new();
-    empty.frame(0, 0, 0, &[]);
-    assert_eq!(empty.as_bytes(), &[0x01, 0x00, 0x00, 0x00, 0x00]);
+    empty.frame(ClipFrame::new());
+    assert_eq!(bytes(&empty), &[0x01, 0x00, 0x00, 0x00, 0x00]);
+}
+// The byte vectors are tests/host/test_clip_entry.c's in the firmware repo: the two encoders agree on
+// every one, or a clip built here faults the box.
+#[test]
+fn clip_frame_encodes_pan_raw_and_transfers_to_the_firmware_wire() {
+    // Pan sits with the motion fields, ahead of the edges, whatever its flag bit says.
+    let mut p = ClipBuilder::new();
+    p.frame(ClipFrame::new().wheel(2).pan(-2).press(Button::new(9)));
+    assert_eq!(
+        bytes(&p),
+        &[0x0E, 0x02, 0x00, 0xFE, 0xFF, 0x01, 0x00, 0x09, 0x00, 0x01]
+    );
+    let mut only = ClipBuilder::new();
+    only.pan(7);
+    assert_eq!(bytes(&only), &[0x08, 0x07, 0x00]);
+
+    let mut r = ClipBuilder::new();
+    r.frame(
+        ClipFrame::new()
+            .move_by(1, 0)
+            .raw(1, Direction::IN, [0xAA, 0xBB, 0xCC])
+            .raw(2, Direction::OUT, []),
+    );
+    assert_eq!(
+        bytes(&r),
+        &[
+            0x11, 0x01, 0x00, 0x00, 0x00, 0x02, 0x01, 0x01, 0x03, 0x00, 0xAA, 0xBB, 0xCC, 0x02,
+            0x02, 0x00, 0x00,
+        ]
+    );
+    // The endpoint is a number, not an address: bit 7 is the direction's to carry.
+    let mut masked = ClipBuilder::new();
+    masked.raw(0x81, Direction::IN, [0x00]);
+    assert_eq!(bytes(&masked)[2], 0x01);
+
+    let mut x = ClipBuilder::new();
+    x.frame(
+        ClipFrame::new()
+            .transfer(0, Setup::new(0x21, 0x09, 0x0300, 0, 2), [0x11, 0x22])
+            .transfer(3, Setup::new(0xA1, 0x01, 0x0300, 0, 0x5A), []),
+    );
+    assert_eq!(
+        bytes(&x),
+        &[
+            0x20, 0x02, 0x00, 0x21, 0x09, 0x00, 0x03, 0x00, 0x00, 0x02, 0x00, 0x11, 0x22, 0x03,
+            0xA1, 0x01, 0x00, 0x03, 0x00, 0x00, 0x5A, 0x00,
+        ]
+    );
+
+    let mut all = ClipBuilder::new();
+    all.frame(
+        ClipFrame::new()
+            .move_by(1, 2)
+            .wheel(3)
+            .pan(4)
+            .press(MediaKey::new(0x1234))
+            .raw(5, Direction::IN, [0x7E])
+            .transfer(0, Setup::new(0x80, 0x06, 0x0100, 0, 18), []),
+    );
+    assert_eq!(
+        bytes(&all),
+        &[
+            0x3F, 0x01, 0x00, 0x02, 0x00, 0x03, 0x00, 0x04, 0x00, 0x01, 0x02, 0x34, 0x12, 0x01,
+            0x01, 0x05, 0x01, 0x01, 0x00, 0x7E, 0x01, 0x00, 0x80, 0x06, 0x00, 0x01, 0x00, 0x00,
+            0x12, 0x00,
+        ]
+    );
+}
+
+#[test]
+fn a_frame_the_box_would_fault_on_is_refused_before_anything_is_encoded() {
+    let refused = |f: ClipFrame| {
+        let mut b = ClipBuilder::new();
+        b.move_by(1, 1).frame(f);
+        encode_chunks(&b, 512).unwrap_err()
+    };
+    let mut edges = ClipFrame::new();
+    for i in 0..=CLIP_EDGES_MAX {
+        edges = edges.press(Button::new(i as u8));
+    }
+    assert!(matches!(
+        refused(edges),
+        Error::ClipFrameCount {
+            what: "edges",
+            count: 9,
+            limit: 8
+        }
+    ));
+    let mut raws = ClipFrame::new();
+    for _ in 0..=CLIP_RAW_MAX {
+        raws = raws.raw(1, Direction::IN, [0]);
+    }
+    assert!(matches!(
+        refused(raws),
+        Error::ClipFrameCount {
+            what: "raw reports",
+            count: 9,
+            limit: 8
+        }
+    ));
+    // Eight of each is a full frame, and it encodes.
+    let mut full = ClipFrame::new();
+    for i in 0..CLIP_EDGES_MAX {
+        full = full.press(Button::new(i as u8));
+    }
+    for _ in 0..CLIP_RAW_MAX {
+        full = full.raw(1, Direction::IN, [0]);
+    }
+    let mut at_the_limit = ClipBuilder::new();
+    at_the_limit.frame(full);
+    assert_eq!(bytes(&at_the_limit).len(), 1 + (1 + 8 * 4) + (1 + 8 * 5));
+    // 506 raw bytes fill an entry exactly; one more does not fit a CLIP_APPEND.
+    let mut fits = ClipBuilder::new();
+    fits.raw(2, Direction::OUT, vec![0u8; 506]);
+    assert_eq!(bytes(&fits).len(), CLIP_ENTRY_MAX);
+    assert!(matches!(
+        refused(ClipFrame::new().raw(2, Direction::OUT, vec![0u8; 507])),
+        Error::ClipFrameTooLong { len: 513 }
+    ));
+    // The length reported is the whole frame's, whichever field carried it past the cap.
+    assert!(matches!(
+        refused(
+            ClipFrame::new()
+                .move_by(1, 1)
+                .raw(2, Direction::OUT, vec![0u8; 600])
+        ),
+        Error::ClipFrameTooLong { len: 610 }
+    ));
+    assert!(matches!(
+        refused(ClipFrame::new().raw(1, Direction::Both, [0])),
+        Error::RawDirection { .. }
+    ));
+    assert!(matches!(
+        refused(ClipFrame::new().raw(1, Direction::With, [0])),
+        Error::RelativeDirection { .. }
+    ));
+    // A transfer item's length is its setup packet's: wLength bytes of OUT data, none for an IN request.
+    assert!(matches!(
+        refused(ClipFrame::new().transfer(0, Setup::new(0x21, 9, 0, 0, 4), [1])),
+        Error::ClipTransferData { want: 4, got: 1 }
+    ));
+    assert!(matches!(
+        refused(ClipFrame::new().transfer(0, Setup::new(0xA1, 1, 0, 0, 4), [1, 2, 3, 4])),
+        Error::ClipTransferData { want: 0, got: 4 }
+    ));
 }
 
 #[test]
@@ -92,6 +243,9 @@ fn decode_clip_status_and_settings_from_one_frame() {
         0x03, 0x00, // underruns 3
         0x01, 0x00, // overruns 1
         0x02, 0x00, // seq_gaps 2
+        0x07, 0x00, // xfers 7
+        0x01, 0x01, // xfer_errs 257
+        0x09, 0x00, // gated 9
         0x02, // held_n
         0x00, 0x04, 0x00, // Button::SIDE2
         0x01, 0xE1, 0x00, // Key 0xE1
@@ -114,6 +268,9 @@ fn decode_clip_status_and_settings_from_one_frame() {
             underruns: 3,
             overruns: 1,
             seq_gaps: 2,
+            xfers: 7,
+            xfer_errs: 257,
+            gated: 9,
             held: vec![Usage::from(Button::SIDE2), Usage::from(Key::new(0xE1))],
         }
     );
@@ -270,7 +427,65 @@ fn clip_append_chunks_on_entry_boundaries_with_incrementing_seq() {
         );
         reassembled.extend_from_slice(payload);
     }
-    assert_eq!(reassembled, b.as_bytes(), "no bytes lost or reordered");
+    assert_eq!(reassembled, bytes(&b), "no bytes lost or reordered");
+}
+#[cfg(feature = "mock")]
+#[test]
+fn clip_append_never_splits_an_entry_and_sends_nothing_when_one_is_refused() {
+    use crate::protocol::FrameType;
+    use crate::protocol::opcode::MAX_PAYLOAD;
+    use crate::{Device, MockBox};
+
+    let mock = MockBox::new();
+    let device = Device::with_mock(mock.clone());
+    let appends = || {
+        mock.recorded_frames()
+            .into_iter()
+            .filter(|f| f.ty == FrameType::ClipAppend)
+            .map(|f| f.payload)
+            .collect::<Vec<_>>()
+    };
+
+    // Entries of very different sizes: a piece ends where an entry ends, however they fall.
+    let mut b = ClipBuilder::new();
+    for i in 0..6u8 {
+        b.move_by(1, 0).raw(2, Direction::OUT, vec![i; 300]);
+    }
+    device.clip().append(&b).unwrap();
+    let frames = appends();
+    assert_eq!(frames.concat(), bytes(&b));
+    // A limit of one byte puts every entry in a piece of its own, which is where the boundaries are.
+    let mut ends = std::collections::BTreeSet::new();
+    let mut at = 0;
+    for entry in encode_chunks(&b, 1).unwrap() {
+        at += entry.len();
+        ends.insert(at);
+    }
+    assert_eq!(ends.len(), 12);
+    let mut at = 0;
+    for f in &frames {
+        assert!(f.len() <= MAX_PAYLOAD);
+        at += f.len();
+        assert!(
+            ends.contains(&at),
+            "a piece ends {at} bytes in, inside an entry"
+        );
+    }
+    assert_eq!(
+        frames.len(),
+        6,
+        "two 306-byte raw entries never share a piece"
+    );
+
+    // A bad entry at the END of a long clip: nothing at all goes out, not the good pieces before it.
+    let sent = appends().len();
+    let mut bad = ClipBuilder::new();
+    for _ in 0..200 {
+        bad.move_by(1, 0);
+    }
+    bad.raw(1, Direction::Both, [0]);
+    assert!(device.clip().append(&bad).is_err());
+    assert_eq!(appends().len(), sent);
 }
 
 #[cfg(feature = "mock")]
@@ -287,6 +502,9 @@ fn clip_status_and_config_roundtrip_through_the_mock() {
         underruns: 1,
         overruns: 2,
         seq_gaps: 1,
+        xfers: 0x0708,
+        xfer_errs: 0x090A,
+        gated: 0x0B0C,
         held: vec![
             Usage::from(Button::LEFT),
             Usage::from(MediaKey::new(0x00E9)),
@@ -332,4 +550,74 @@ fn empty_append_sends_nothing() {
             .into_iter()
             .any(|f| f.ty == FrameType::ClipAppend)
     );
+}
+
+// A streaming host paces its appends against `ClipStatus::free`, so the length it holds against it has
+// to be the length the ring takes.
+#[test]
+fn byte_len_is_the_length_the_stream_encodes_to() {
+    let get = Setup::new(0x80, 6, 0x0100, 0, 18);
+    let set = Setup::new(0x21, 9, 0x0300, 0, 2);
+    let frames = [
+        ClipFrame::new(),
+        ClipFrame::new().move_by(0, -1),
+        ClipFrame::new().wheel(1),
+        ClipFrame::new().pan(-1),
+        ClipFrame::new().wheel(1).pan(1),
+        ClipFrame::new().press(Button::LEFT).release(Key::A),
+        ClipFrame::new().raw(1, Direction::IN, [1, 2, 3]),
+        ClipFrame::new()
+            .raw(1, Direction::IN, [])
+            .raw(2, Direction::OUT, [9]),
+        ClipFrame::new().transfer(0, get, []),
+        ClipFrame::new()
+            .transfer(0, set, [4, 1])
+            .transfer(0, get, []),
+        ClipFrame::new()
+            .move_by(3, 4)
+            .wheel(1)
+            .pan(2)
+            .press(Button::LEFT)
+            .raw(2, Direction::OUT, [7; 40])
+            .transfer(0, set, [4, 1]),
+    ];
+    let mut all = ClipBuilder::new();
+    for f in frames {
+        let mut one = ClipBuilder::new();
+        one.frame(f.clone());
+        assert_eq!(f.byte_len(), bytes(&one).len(), "{f:?}");
+        all.frame(f).gap(7);
+    }
+    assert_eq!(all.byte_len(), bytes(&all).len());
+    assert_eq!(ClipBuilder::new().byte_len(), 0);
+}
+
+// A reply whose length is not the one its own counts describe is some other layout, and reading the
+// counters out of it would hand back another field's bytes.
+#[test]
+fn a_clip_reply_of_another_shape_is_refused() {
+    let mut good = vec![0u8; 31];
+    good[0] = 10;
+    good.extend_from_slice(&[0, 0, 0]);
+    assert!(ClipStatus::from_payload(&good).is_some());
+    assert!(ClipSettings::from_payload(&good).is_some());
+
+    let mut long = good.clone();
+    long.push(0);
+    let mut short = good.clone();
+    short.pop();
+    // A shorter prefix carrying two triggers: 25 + 3 + 12 bytes.
+    let mut older = vec![0u8; 25];
+    older[0] = 10;
+    older.extend_from_slice(&[0, 0, 2]);
+    older.extend_from_slice(&[0, 3, 0, 1, 0, 0, 1, 4, 0, 1, 0, 0]);
+    // A trigger count past the box's set.
+    let mut many = vec![0u8; 31];
+    many[0] = 10;
+    many.extend_from_slice(&[0, 0, 9]);
+    many.extend_from_slice(&[0u8; 54]);
+    for bad in [long, short, older, many] {
+        assert!(ClipStatus::from_payload(&bad).is_none(), "{bad:02X?}");
+        assert!(ClipSettings::from_payload(&bad).is_none(), "{bad:02X?}");
+    }
 }

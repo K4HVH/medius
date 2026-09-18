@@ -1110,6 +1110,86 @@ fn traffic_event_survives_the_mock_push_round_trip() {
 }
 
 #[test]
+fn a_clip_transfer_event_reads_through_the_helpers() {
+    let mock = medius_mock_new();
+    let mut dev: *mut MediusDevice = ptr::null_mut();
+    assert_eq!(
+        unsafe { medius_device_with_mock(mock, &mut dev) },
+        MediusStatus::Ok
+    );
+    let stream = unsafe {
+        subscribe(
+            dev,
+            &[medius_catch_filter_traffic_class(
+                MEDIUS_CATCH_CLASS_CLIP_TRANSFER,
+            )],
+        )
+    };
+    let setup = [0xA1, 0x01, 0x00, 0x03, 0x00, 0x00, 0x02, 0x00];
+    let mut pushed: MediusTrafficEvent = unsafe { std::mem::zeroed() };
+    pushed.class = MEDIUS_CATCH_CLASS_CLIP_TRANSFER;
+    pushed.direction = MediusDirection::Positive as u8;
+    pushed.flags = MediusTransferStatus::Ok as u8;
+    pushed.true_len = 10;
+    pushed.len = 10;
+    pushed.bytes[..8].copy_from_slice(&setup);
+    pushed.bytes[8..10].copy_from_slice(&[0x04, 0x01]);
+    unsafe {
+        medius_mock_push_traffic(mock, 1, 7_000, MediusClockDomain::HostChip as u8, &pushed);
+    }
+    let mut event = zeroed_event();
+    assert!(unsafe { medius_event_stream_recv_timeout(stream, 2000, &mut event) });
+    assert_eq!(event.kind, MediusCatchEventKind::Traffic);
+    let t = unsafe { event.data.traffic };
+    assert_eq!(t, pushed);
+    assert!(medius_catch_class_is_traffic(t.class));
+
+    let p = unsafe { medius_traffic_event_setup(&t) };
+    assert!(!p.is_null());
+    assert_eq!(unsafe { std::slice::from_raw_parts(p, 8) }, &setup);
+    let mut len = 0usize;
+    let d = unsafe { medius_traffic_event_data(&t, &mut len) };
+    assert_eq!(unsafe { std::slice::from_raw_parts(d, len) }, &[0x04, 0x01]);
+
+    let mut status = 0xEEu8;
+    assert!(unsafe { medius_traffic_event_transfer_status(&t, &mut status) });
+    assert_eq!(status, MediusTransferStatus::Ok as u8);
+    // The flags byte is a transfer status here, so the control reading does not apply.
+    let mut control = MediusControlStatus::Ok;
+    assert!(!unsafe { medius_traffic_event_control_status(&t, &mut control) });
+
+    let mut stalled = t;
+    stalled.flags = MediusTransferStatus::Stall as u8;
+    assert!(unsafe { medius_traffic_event_transfer_status(&stalled, &mut status) });
+    assert_eq!(status, MediusTransferStatus::Stall as u8);
+    // A byte no constant names is carried through.
+    stalled.flags = 0x42;
+    assert!(unsafe { medius_traffic_event_transfer_status(&stalled, &mut status) });
+    assert_eq!(status, 0x42);
+    // The out is optional: a null one is skipped and the answer still comes back.
+    assert!(unsafe { medius_traffic_event_transfer_status(&stalled, ptr::null_mut()) });
+
+    // Any other class answers false and leaves the out alone.
+    let mut other = t;
+    other.class = MEDIUS_CATCH_CLASS_CONTROL;
+    status = 0xEE;
+    assert!(!unsafe { medius_traffic_event_transfer_status(&other, &mut status) });
+    assert_eq!(status, 0xEE);
+
+    // A capture cut inside the setup packet has neither a setup nor a data stage.
+    let mut short = t;
+    short.len = 4;
+    assert!(unsafe { medius_traffic_event_setup(&short) }.is_null());
+    let _ = unsafe { medius_traffic_event_data(&short, &mut len) };
+    assert_eq!(len, 0);
+    unsafe {
+        medius_event_stream_free(stream);
+        medius_device_free(dev);
+        medius_mock_free(mock);
+    }
+}
+
+#[test]
 fn catch_events_rejects_an_empty_or_unknown_filter_list() {
     let mock = medius_mock_new();
     let mut dev: *mut MediusDevice = ptr::null_mut();
@@ -1673,6 +1753,7 @@ fn free_null_handles_is_a_noop() {
         medius_log_stream_free(ptr::null_mut());
         medius_clip_free(ptr::null_mut());
         medius_clip_builder_free(ptr::null_mut());
+        medius_clip_frame_free(ptr::null_mut());
         medius_mock_free(ptr::null_mut());
     }
 }
@@ -1820,41 +1901,493 @@ fn clip_builder_frame_edges_match_native() {
         |d| {
             let mut b = medius::ClipBuilder::new();
             b.frame(
-                1,
-                2,
-                -1,
-                &[
-                    (medius::Button::LEFT.into(), medius::Action::Press),
-                    (medius::Key::new(0x04).into(), medius::Action::Press),
-                ],
+                medius::ClipFrame::new()
+                    .move_by(1, 2)
+                    .wheel(-1)
+                    .press(medius::Button::LEFT)
+                    .press(medius::Key::new(0x04)),
             );
             d.clip().append(&b).unwrap();
         },
         |dev| unsafe {
             let builder = medius_clip_builder_new();
-            let inputs = [
-                medius_usage_button(MediusButton::Left as u8),
-                medius_usage_key(0x04),
-            ];
-            let actions = [MediusAction::Press as u8, MediusAction::Press as u8];
+            let frame = medius_clip_frame_new();
+            assert_eq!(medius_clip_frame_move(frame, 1, 2), MediusStatus::Ok);
+            assert_eq!(medius_clip_frame_wheel(frame, -1), MediusStatus::Ok);
             assert_eq!(
-                medius_clip_builder_frame(
-                    builder,
-                    1,
-                    2,
-                    -1,
-                    inputs.as_ptr(),
-                    actions.as_ptr(),
-                    inputs.len()
-                ),
+                medius_clip_frame_press(frame, medius_usage_button(MediusButton::Left as u8)),
                 MediusStatus::Ok
             );
+            assert_eq!(
+                medius_clip_frame_edge(frame, medius_usage_key(0x04), MediusAction::Press as u8),
+                MediusStatus::Ok
+            );
+            assert_eq!(medius_clip_builder_frame(builder, frame), MediusStatus::Ok);
+            let mut clip: *mut MediusClip = ptr::null_mut();
+            assert_eq!(medius_device_clip(dev, &mut clip), MediusStatus::Ok);
+            assert_eq!(medius_clip_append(clip, builder), MediusStatus::Ok);
+            medius_clip_free(clip);
+            medius_clip_frame_free(frame);
+            medius_clip_builder_free(builder);
+        },
+    );
+}
+
+#[test]
+fn a_clip_frame_carries_every_field_like_the_crate() {
+    let setup_out = medius::Setup::new(0x21, 0x09, 0x0300, 0, 2);
+    let setup_in = medius::Setup::new(0xA1, 0x01, 0x0300, 0, 8);
+    assert_parity(
+        |d| {
+            let mut b = medius::ClipBuilder::new();
+            let frame = medius::ClipFrame::new()
+                .move_by(4, -2)
+                .wheel(1)
+                .pan(-3)
+                .press(medius::Button::LEFT)
+                .release(medius::Key::new(0x04))
+                .force_release(medius::MediaKey::new(0xCD))
+                .raw(2, medius::Direction::OUT, [0x10, 0xFF, 0x05])
+                .raw(1, medius::Direction::IN, [])
+                .transfer(0, setup_out, [0x04, 0x01])
+                .transfer(0, setup_in, []);
+            b.frame(frame.clone());
+            b.frame(frame);
+            b.pan(7);
+            b.raw(2, medius::Direction::OUT, [0xAA]);
+            b.transfer(0, setup_out, [0x01, 0x02]);
+            b.frame(medius::ClipFrame::new().pan(9));
+            d.clip().append(&b).unwrap();
+        },
+        |dev| unsafe {
+            let c_out = MediusSetup {
+                request_type: 0x21,
+                request: 0x09,
+                value: 0x0300,
+                index: 0,
+                length: 2,
+            };
+            let c_in = MediusSetup {
+                request_type: 0xA1,
+                request: 0x01,
+                value: 0x0300,
+                index: 0,
+                length: 8,
+            };
+            let out = MediusDirection::Negative as u8;
+            let builder = medius_clip_builder_new();
+            let frame = medius_clip_frame_new();
+            assert_eq!(medius_clip_frame_move(frame, 4, -2), MediusStatus::Ok);
+            assert_eq!(medius_clip_frame_wheel(frame, 1), MediusStatus::Ok);
+            assert_eq!(medius_clip_frame_pan(frame, -3), MediusStatus::Ok);
+            assert_eq!(
+                medius_clip_frame_press(frame, medius_usage_button(MediusButton::Left as u8)),
+                MediusStatus::Ok
+            );
+            assert_eq!(
+                medius_clip_frame_release(frame, medius_usage_key(0x04)),
+                MediusStatus::Ok
+            );
+            assert_eq!(
+                medius_clip_frame_force_release(frame, medius_usage_media(0xCD)),
+                MediusStatus::Ok
+            );
+            let report = [0x10u8, 0xFF, 0x05];
+            assert_eq!(
+                medius_clip_frame_raw(frame, 2, out, report.as_ptr(), report.len()),
+                MediusStatus::Ok
+            );
+            assert_eq!(
+                medius_clip_frame_raw(frame, 1, MediusDirection::Positive as u8, ptr::null(), 0),
+                MediusStatus::Ok
+            );
+            let data = [0x04u8, 0x01];
+            assert_eq!(
+                medius_clip_frame_transfer(frame, 0, c_out, data.as_ptr(), data.len()),
+                MediusStatus::Ok
+            );
+            assert_eq!(
+                medius_clip_frame_transfer(frame, 0, c_in, ptr::null(), 0),
+                MediusStatus::Ok
+            );
+            // The builder copies the frame, so the same handle appends twice.
+            assert_eq!(medius_clip_builder_frame(builder, frame), MediusStatus::Ok);
+            assert_eq!(medius_clip_builder_frame(builder, frame), MediusStatus::Ok);
+            assert_eq!(medius_clip_builder_pan(builder, 7), MediusStatus::Ok);
+            assert_eq!(
+                medius_clip_builder_raw(builder, 2, out, [0xAAu8].as_ptr(), 1),
+                MediusStatus::Ok
+            );
+            let data = [0x01u8, 0x02];
+            assert_eq!(
+                medius_clip_builder_transfer(builder, 0, c_out, data.as_ptr(), data.len()),
+                MediusStatus::Ok
+            );
+            assert_eq!(medius_clip_frame_clear(frame), MediusStatus::Ok);
+            assert_eq!(medius_clip_frame_pan(frame, 9), MediusStatus::Ok);
+            assert_eq!(medius_clip_builder_frame(builder, frame), MediusStatus::Ok);
+            let mut clip: *mut MediusClip = ptr::null_mut();
+            assert_eq!(medius_device_clip(dev, &mut clip), MediusStatus::Ok);
+            assert_eq!(medius_clip_append(clip, builder), MediusStatus::Ok);
+            medius_clip_free(clip);
+            medius_clip_frame_free(frame);
+            medius_clip_builder_free(builder);
+        },
+    );
+}
+
+#[test]
+fn a_refused_clip_frame_has_its_own_status_and_sends_nothing() {
+    let mock = medius_mock_new();
+    let mut dev: *mut MediusDevice = ptr::null_mut();
+    assert_eq!(
+        unsafe { medius_device_with_mock(mock, &mut dev) },
+        MediusStatus::Ok
+    );
+    let mut clip: *mut MediusClip = ptr::null_mut();
+    assert_eq!(
+        unsafe { medius_device_clip(dev, &mut clip) },
+        MediusStatus::Ok
+    );
+    let builder = medius_clip_builder_new();
+    let frame = medius_clip_frame_new();
+    let left = medius_usage_button(MediusButton::Left as u8);
+    let out = MediusDirection::Negative as u8;
+    let byte = [0u8];
+    let setup = MediusSetup {
+        request_type: 0x21,
+        request: 0x09,
+        value: 0x0300,
+        index: 0,
+        length: 2,
+    };
+
+    // A good entry ahead of each bad one: the refusal must hold the whole append back.
+    let refused = |status: MediusStatus, what: &str| unsafe {
+        assert_eq!(medius_clip_builder_clear(builder), MediusStatus::Ok);
+        assert_eq!(medius_clip_builder_move(builder, 1, 1), MediusStatus::Ok);
+        assert_eq!(medius_clip_builder_frame(builder, frame), MediusStatus::Ok);
+        assert_eq!(medius_clip_append(clip, builder), status, "{what}");
+        assert_eq!(medius_clip_frame_clear(frame), MediusStatus::Ok);
+    };
+
+    unsafe {
+        for _ in 0..=MEDIUS_CLIP_EDGES_MAX {
+            assert_eq!(medius_clip_frame_press(frame, left), MediusStatus::Ok);
+        }
+    }
+    refused(MediusStatus::ErrClipFrameCount, "edges");
+
+    unsafe {
+        for _ in 0..=MEDIUS_CLIP_RAW_MAX {
+            assert_eq!(
+                medius_clip_frame_raw(frame, 1, out, byte.as_ptr(), 1),
+                MediusStatus::Ok
+            );
+        }
+    }
+    refused(MediusStatus::ErrClipFrameCount, "raw reports");
+
+    let long = [0u8; MEDIUS_CLIP_ENTRY_MAX];
+    assert_eq!(
+        unsafe { medius_clip_frame_raw(frame, 1, out, long.as_ptr(), long.len()) },
+        MediusStatus::Ok
+    );
+    refused(MediusStatus::ErrClipFrameTooLong, "entry length");
+
+    // An OUT request announcing two bytes and carrying one.
+    assert_eq!(
+        unsafe { medius_clip_frame_transfer(frame, 0, setup, byte.as_ptr(), 1) },
+        MediusStatus::Ok
+    );
+    refused(MediusStatus::ErrClipTransferData, "transfer data");
+
+    assert_eq!(
+        unsafe { medius_clip_frame_raw(frame, 1, MediusDirection::Both as u8, byte.as_ptr(), 1) },
+        MediusStatus::Ok
+    );
+    refused(MediusStatus::ErrRawDirection, "raw direction");
+
+    assert_eq!(
+        unsafe { medius_clip_frame_raw(frame, 1, MediusDirection::With as u8, byte.as_ptr(), 1) },
+        MediusStatus::Ok
+    );
+    refused(MediusStatus::ErrRelativeDirection, "relative raw direction");
+
+    let frames = unsafe { (*mock).inner.recorded_frames() };
+    assert!(
+        frames.iter().all(|f| f.ty != medius::FrameType::ClipAppend),
+        "a refused append put a frame on the wire: {frames:?}"
+    );
+    unsafe {
+        medius_clip_frame_free(frame);
+        medius_clip_builder_free(builder);
+        medius_clip_free(clip);
+        medius_device_free(dev);
+        medius_mock_free(mock);
+    }
+}
+
+#[test]
+fn the_clip_entry_points_refuse_a_null() {
+    let builder = medius_clip_builder_new();
+    let frame = medius_clip_frame_new();
+    let left = medius_usage_button(MediusButton::Left as u8);
+    let out = MediusDirection::Negative as u8;
+    let byte = [0u8];
+    let setup = MediusSetup {
+        request_type: 0x21,
+        request: 0x09,
+        value: 0x0300,
+        index: 0,
+        length: 1,
+    };
+    let none: *mut MediusClipFrame = ptr::null_mut();
+    for (what, status) in [
+        ("frame clear", unsafe { medius_clip_frame_clear(none) }),
+        ("frame move", unsafe { medius_clip_frame_move(none, 1, 1) }),
+        ("frame wheel", unsafe { medius_clip_frame_wheel(none, 1) }),
+        ("frame pan", unsafe { medius_clip_frame_pan(none, 1) }),
+        ("frame edge", unsafe {
+            medius_clip_frame_edge(none, left, MediusAction::Press as u8)
+        }),
+        ("frame press", unsafe {
+            medius_clip_frame_press(none, left)
+        }),
+        ("frame release", unsafe {
+            medius_clip_frame_release(none, left)
+        }),
+        ("frame force_release", unsafe {
+            medius_clip_frame_force_release(none, left)
+        }),
+        ("frame raw", unsafe {
+            medius_clip_frame_raw(none, 1, out, byte.as_ptr(), 1)
+        }),
+        ("frame raw bytes", unsafe {
+            medius_clip_frame_raw(frame, 1, out, ptr::null(), 1)
+        }),
+        ("frame transfer", unsafe {
+            medius_clip_frame_transfer(none, 0, setup, byte.as_ptr(), 1)
+        }),
+        ("frame transfer data", unsafe {
+            medius_clip_frame_transfer(frame, 0, setup, ptr::null(), 1)
+        }),
+        ("builder frame, null builder", unsafe {
+            medius_clip_builder_frame(ptr::null_mut(), frame)
+        }),
+        ("builder frame, null frame", unsafe {
+            medius_clip_builder_frame(builder, ptr::null())
+        }),
+        ("builder pan", unsafe {
+            medius_clip_builder_pan(ptr::null_mut(), 1)
+        }),
+        ("builder raw", unsafe {
+            medius_clip_builder_raw(ptr::null_mut(), 1, out, byte.as_ptr(), 1)
+        }),
+        ("builder raw bytes", unsafe {
+            medius_clip_builder_raw(builder, 1, out, ptr::null(), 1)
+        }),
+        ("builder transfer", unsafe {
+            medius_clip_builder_transfer(ptr::null_mut(), 0, setup, byte.as_ptr(), 1)
+        }),
+        ("builder transfer data", unsafe {
+            medius_clip_builder_transfer(builder, 0, setup, ptr::null(), 1)
+        }),
+        ("rewrite clip rule", unsafe {
+            medius_rewrite_rule_clip(
+                ptr::null_mut(),
+                MediusRewriteClass::HidIn as u8,
+                2,
+                MediusDirection::Positive as u8,
+                MediusClipAction::Start as u8,
+                0,
+                0,
+            )
+        }),
+    ] {
+        assert_eq!(status, MediusStatus::ErrInvalidArg, "{what}");
+    }
+    let mut byte_out = 0u8;
+    unsafe {
+        assert!(!medius_traffic_event_transfer_status(
+            ptr::null(),
+            &mut byte_out
+        ));
+        assert!(!medius_rewrite_rule_clip_verb(
+            ptr::null(),
+            &mut byte_out,
+            &mut byte_out,
+            &mut byte_out
+        ));
+        medius_clip_frame_free(frame);
+        medius_clip_builder_free(builder);
+    }
+}
+
+// The CLIP_APPEND payloads a C-side build sends, joined in order.
+unsafe fn appended(build: impl FnOnce(*mut MediusClipBuilder)) -> Vec<u8> {
+    let frames = unsafe {
+        capi_frames(|dev| {
+            let builder = medius_clip_builder_new();
+            build(builder);
             let mut clip: *mut MediusClip = ptr::null_mut();
             assert_eq!(medius_device_clip(dev, &mut clip), MediusStatus::Ok);
             assert_eq!(medius_clip_append(clip, builder), MediusStatus::Ok);
             medius_clip_free(clip);
             medius_clip_builder_free(builder);
-        },
+        })
+    };
+    frames
+        .into_iter()
+        .filter(|f| f.ty == medius::FrameType::ClipAppend)
+        .flat_map(|f| f.payload)
+        .collect()
+}
+
+#[test]
+fn a_clip_transfer_keeps_its_endpoint() {
+    let setup = MediusSetup {
+        request_type: 0x21,
+        request: 0x09,
+        value: 0x0300,
+        index: 0,
+        length: 1,
+    };
+    let bytes = unsafe {
+        appended(|builder| {
+            let frame = medius_clip_frame_new();
+            assert_eq!(
+                medius_clip_frame_transfer(frame, 3, setup, [0xAAu8].as_ptr(), 1),
+                MediusStatus::Ok
+            );
+            assert_eq!(medius_clip_builder_frame(builder, frame), MediusStatus::Ok);
+            assert_eq!(
+                medius_clip_builder_transfer(builder, 5, setup, [0xBBu8].as_ptr(), 1),
+                MediusStatus::Ok
+            );
+            medius_clip_frame_free(frame);
+        })
+    };
+    // [flags XFER][n][ep][setup 8][data], once per entry.
+    let setup_bytes = [0x21, 0x09, 0x00, 0x03, 0x00, 0x00, 0x01, 0x00];
+    let mut want = vec![0x20, 0x01, 0x03];
+    want.extend_from_slice(&setup_bytes);
+    want.push(0xAA);
+    want.extend_from_slice(&[0x20, 0x01, 0x05]);
+    want.extend_from_slice(&setup_bytes);
+    want.push(0xBB);
+    assert_eq!(bytes, want);
+}
+
+#[test]
+fn a_cleared_clip_frame_encodes_as_an_empty_one() {
+    let setup = MediusSetup {
+        request_type: 0x21,
+        request: 0x09,
+        value: 0x0300,
+        index: 0,
+        length: 1,
+    };
+    let bytes = unsafe {
+        appended(|builder| {
+            let frame = medius_clip_frame_new();
+            let out = MediusDirection::Negative as u8;
+            assert_eq!(medius_clip_frame_move(frame, 4, -2), MediusStatus::Ok);
+            assert_eq!(
+                medius_clip_frame_press(frame, medius_usage_button(MediusButton::Left as u8)),
+                MediusStatus::Ok
+            );
+            assert_eq!(
+                medius_clip_frame_raw(frame, 2, out, [0x10u8, 0xFF].as_ptr(), 2),
+                MediusStatus::Ok
+            );
+            assert_eq!(
+                medius_clip_frame_transfer(frame, 3, setup, [0xAAu8].as_ptr(), 1),
+                MediusStatus::Ok
+            );
+            assert!(medius_clip_frame_byte_len(frame) > 5);
+            assert_eq!(medius_clip_frame_clear(frame), MediusStatus::Ok);
+            assert_eq!(medius_clip_frame_byte_len(frame), 5);
+            assert_eq!(medius_clip_builder_frame(builder, frame), MediusStatus::Ok);
+            medius_clip_frame_free(frame);
+        })
+    };
+    // A frame carrying nothing is a zero XY tick.
+    assert_eq!(bytes, [0x01, 0, 0, 0, 0]);
+}
+
+#[test]
+fn byte_len_is_what_an_append_puts_in_the_ring() {
+    let setup = MediusSetup {
+        request_type: 0x21,
+        request: 0x09,
+        value: 0x0300,
+        index: 0,
+        length: 2,
+    };
+    let mut frame_len = 0;
+    let mut builder_len = 0;
+    let bytes = unsafe {
+        appended(|builder| {
+            let frame = medius_clip_frame_new();
+            let out = MediusDirection::Negative as u8;
+            assert_eq!(medius_clip_frame_byte_len(frame), 5);
+            assert_eq!(medius_clip_frame_move(frame, 4, -2), MediusStatus::Ok);
+            assert_eq!(medius_clip_frame_wheel(frame, 1), MediusStatus::Ok);
+            assert_eq!(medius_clip_frame_pan(frame, -3), MediusStatus::Ok);
+            assert_eq!(
+                medius_clip_frame_press(frame, medius_usage_button(MediusButton::Left as u8)),
+                MediusStatus::Ok
+            );
+            assert_eq!(
+                medius_clip_frame_raw(frame, 2, out, [0x10u8, 0xFF, 0x05].as_ptr(), 3),
+                MediusStatus::Ok
+            );
+            assert_eq!(
+                medius_clip_frame_transfer(frame, 3, setup, [0x04u8, 0x01].as_ptr(), 2),
+                MediusStatus::Ok
+            );
+            frame_len = medius_clip_frame_byte_len(frame);
+            assert_eq!(medius_clip_builder_byte_len(builder), 0);
+            assert_eq!(medius_clip_builder_frame(builder, frame), MediusStatus::Ok);
+            assert_eq!(medius_clip_builder_gap(builder, 4), MediusStatus::Ok);
+            assert_eq!(medius_clip_builder_pan(builder, 7), MediusStatus::Ok);
+            builder_len = medius_clip_builder_byte_len(builder);
+            medius_clip_frame_free(frame);
+        })
+    };
+    // flags + XY + wheel + pan + (n + one edge) + (n + raw header + 3) + (n + ep + setup + 2)
+    assert_eq!(
+        frame_len,
+        1 + 4 + 2 + 2 + (1 + 4) + (1 + 4 + 3) + (1 + 9 + 2)
+    );
+    assert_eq!(builder_len, frame_len + 3 + 3);
+    assert_eq!(builder_len, bytes.len());
+    unsafe {
+        assert_eq!(medius_clip_frame_byte_len(ptr::null()), 0);
+        assert_eq!(medius_clip_builder_byte_len(ptr::null()), 0);
+    }
+}
+
+#[test]
+fn the_clip_status_layout_is_the_one_the_header_declares() {
+    use std::mem::{offset_of, size_of};
+    assert_eq!(offset_of!(MediusClipStatus, state), 0);
+    assert_eq!(offset_of!(MediusClipStatus, free), 4);
+    assert_eq!(offset_of!(MediusClipStatus, total), 8);
+    assert_eq!(offset_of!(MediusClipStatus, played), 12);
+    assert_eq!(offset_of!(MediusClipStatus, ticks), 16);
+    assert_eq!(offset_of!(MediusClipStatus, underruns), 20);
+    assert_eq!(offset_of!(MediusClipStatus, overruns), 22);
+    assert_eq!(offset_of!(MediusClipStatus, seq_gaps), 24);
+    assert_eq!(offset_of!(MediusClipStatus, xfers), 26);
+    assert_eq!(offset_of!(MediusClipStatus, xfer_errs), 28);
+    assert_eq!(offset_of!(MediusClipStatus, gated), 30);
+    assert_eq!(offset_of!(MediusClipStatus, held_n), 32);
+    assert_eq!(offset_of!(MediusClipStatus, held), 34);
+    assert_eq!(
+        size_of::<MediusClipStatus>(),
+        (34 + MEDIUS_MAX_USAGES * size_of::<MediusUsage>()).next_multiple_of(4)
     );
 }
 
@@ -1869,6 +2402,9 @@ fn clip_status_query_returns_configured_value() {
     status.ticks = 99;
     status.underruns = 2;
     status.seq_gaps = 1;
+    status.xfers = 7;
+    status.xfer_errs = 3;
+    status.gated = 5;
     status.held_n = 2;
     status.held[0] = medius_usage_button(MediusButton::Side1 as u8);
     status.held[1] = medius_usage_key(MEDIUS_KEY_A);
@@ -1889,6 +2425,7 @@ fn clip_status_query_returns_configured_value() {
         MediusStatus::Ok
     );
     assert_eq!(out, status);
+    assert_eq!((out.xfers, out.xfer_errs, out.gated), (7, 3, 5));
     assert_eq!(out.held_n, 2);
     assert_eq!(out.held[0], medius_usage_button(MediusButton::Side1 as u8));
     assert_eq!(out.held[1], medius_usage_key(MEDIUS_KEY_A));
@@ -1917,6 +2454,11 @@ fn every_enum_byte_on_the_boundary_is_refused_rather_than_materialized() {
         MediusStatus::Ok
     );
     let builder = medius_clip_builder_new();
+    let frame = medius_clip_frame_new();
+    let mut rule: MediusRewriteRule = unsafe { std::mem::zeroed() };
+    let hid_in = MediusRewriteClass::HidIn as u8;
+    let inbound = MediusDirection::Positive as u8;
+    let start = MediusClipAction::Start as u8;
     let left = medius_usage_button(MediusButton::Left as u8);
     let bad_usage = MediusUsage { kind: BAD, id: 3 };
     let bad_motion = MediusMotion {
@@ -1959,8 +2501,35 @@ fn every_enum_byte_on_the_boundary_is_refused_rather_than_materialized() {
         ("clip edge action", unsafe {
             medius_clip_builder_edge(builder, left, BAD)
         }),
-        ("clip frame action", unsafe {
-            medius_clip_builder_frame(builder, 0, 0, 0, [left].as_ptr(), [BAD].as_ptr(), 1)
+        ("clip frame edge action", unsafe {
+            medius_clip_frame_edge(frame, left, BAD)
+        }),
+        ("clip frame edge usage kind", unsafe {
+            medius_clip_frame_edge(frame, bad_usage, MediusAction::Press as u8)
+        }),
+        ("clip frame press usage kind", unsafe {
+            medius_clip_frame_press(frame, bad_usage)
+        }),
+        ("clip frame release usage kind", unsafe {
+            medius_clip_frame_release(frame, bad_usage)
+        }),
+        ("clip frame force_release usage kind", unsafe {
+            medius_clip_frame_force_release(frame, bad_usage)
+        }),
+        ("clip frame raw direction", unsafe {
+            medius_clip_frame_raw(frame, 1, BAD, [0u8].as_ptr(), 1)
+        }),
+        ("clip builder raw direction", unsafe {
+            medius_clip_builder_raw(builder, 1, BAD, [0u8].as_ptr(), 1)
+        }),
+        ("rewrite clip rule class", unsafe {
+            medius_rewrite_rule_clip(&mut rule, BAD, 2, inbound, start, 0, 0)
+        }),
+        ("rewrite clip rule direction", unsafe {
+            medius_rewrite_rule_clip(&mut rule, hid_in, 2, BAD, start, 0, 0)
+        }),
+        ("rewrite clip rule action", unsafe {
+            medius_rewrite_rule_clip(&mut rule, hid_in, 2, inbound, BAD, 0, 0)
         }),
         ("clip autolock group", unsafe {
             medius_clip_set_autolock(clip, [BAD].as_ptr(), 1)
@@ -2009,6 +2578,15 @@ fn every_enum_byte_on_the_boundary_is_refused_rather_than_materialized() {
         );
     }
 
+    // Every refusal left the frame and the builder as they were: one empty frame is all it holds.
+    assert_eq!(
+        unsafe { medius_clip_builder_frame(builder, frame) },
+        MediusStatus::Ok
+    );
+    let mut fresh = medius::ClipBuilder::new();
+    fresh.frame(medius::ClipFrame::new());
+    assert_eq!(unsafe { &(*builder).inner }, &fresh);
+
     // The no-status surfaces answer their fallback rather than acting on the byte.
     assert!(!unsafe { medius_mock_saw(mock, BAD) });
     let timeline = medius_timeline_new();
@@ -2026,6 +2604,7 @@ fn every_enum_byte_on_the_boundary_is_refused_rather_than_materialized() {
 
     unsafe {
         medius_timeline_free(timeline);
+        medius_clip_frame_free(frame);
         medius_clip_builder_free(builder);
         medius_clip_free(clip);
         medius_device_free(dev);
@@ -2492,6 +3071,261 @@ fn a_rewrite_survives_the_query_roundtrip() {
 }
 
 #[test]
+fn a_clip_rewrite_rule_survives_the_query_roundtrip() {
+    use medius::{ClipAction, Direction, RewriteClass, RewriteRule};
+    let want = RewriteRule::clip(RewriteClass::HidIn, 2, Direction::IN, ClipAction::Start)
+        .matching([0x07, 0x20], [0xFF, 0x20])
+        .dropping()
+        .on_edge(1);
+    // The flag bits, read off a rule the crate built.
+    assert_eq!(
+        want.payload[1],
+        MEDIUS_REWRITE_CLIP_DROP | MEDIUS_REWRITE_CLIP_EDGE
+    );
+    assert_eq!(
+        medius::RewriteAction::Clip.as_u8(),
+        MediusRewriteAction::Clip as u8
+    );
+
+    let mut rule: MediusRewriteRule = unsafe { std::mem::zeroed() };
+    rule.offset = 99;
+    assert_eq!(
+        unsafe {
+            medius_rewrite_rule_clip(
+                &mut rule,
+                MediusRewriteClass::HidIn as u8,
+                2,
+                MediusDirection::Positive as u8,
+                MediusClipAction::Start as u8,
+                MEDIUS_REWRITE_CLIP_DROP | MEDIUS_REWRITE_CLIP_EDGE,
+                1,
+            )
+        },
+        MediusStatus::Ok
+    );
+    assert_eq!(
+        rule.offset, 0,
+        "the constructor zeroes what it does not set"
+    );
+    rule.match_len = 2;
+    rule.mask_len = 2;
+    rule.match_bytes[..2].copy_from_slice(&[0x07, 0x20]);
+    rule.mask[..2].copy_from_slice(&[0xFF, 0x20]);
+
+    assert_parity_imperfect(
+        |d| d.set_rewrite(&want).unwrap(),
+        |dev| {
+            assert_eq!(
+                unsafe { medius_device_set_rewrite(dev, &rule) },
+                MediusStatus::Ok
+            )
+        },
+    );
+
+    let mock = medius_mock_new();
+    unsafe { medius_mock_set_imperfect_status(mock, allowed_status()) };
+    let mut dev: *mut MediusDevice = ptr::null_mut();
+    assert_eq!(
+        unsafe { medius_device_with_mock(mock, &mut dev) },
+        MediusStatus::Ok
+    );
+    assert_eq!(
+        unsafe { medius_device_set_rewrite(dev, &rule) },
+        MediusStatus::Ok
+    );
+    let mut table: MediusRewriteTable = unsafe { std::mem::zeroed() };
+    assert_eq!(
+        unsafe { medius_device_query_rewrite(dev, &mut table) },
+        MediusStatus::Ok
+    );
+    assert_eq!(table.n, 1);
+    assert_eq!(table.entries[0].action, MediusRewriteAction::Clip as u8);
+    assert_eq!(table.entries[0].payload_len, 3);
+
+    let mut read: MediusRewriteRule = unsafe { std::mem::zeroed() };
+    assert_eq!(
+        unsafe { medius_device_query_rewrite_entry(dev, 0, &mut read) },
+        MediusStatus::Ok
+    );
+    assert_eq!(read.action, MediusRewriteAction::Clip as u8);
+    assert_eq!(
+        &read.payload[..read.payload_len as usize],
+        &want.payload[..]
+    );
+    assert_eq!(&read.match_bytes[..read.match_len as usize], &[0x07, 0x20]);
+    let (mut action, mut flags, mut selector_len) = (0xEEu8, 0xEEu8, 0xEEu8);
+    assert!(unsafe {
+        medius_rewrite_rule_clip_verb(&read, &mut action, &mut flags, &mut selector_len)
+    });
+    assert_eq!(action, MediusClipAction::Start as u8);
+    assert_eq!(flags, MEDIUS_REWRITE_CLIP_DROP | MEDIUS_REWRITE_CLIP_EDGE);
+    assert_eq!(selector_len, 1);
+    // A read rule replays as a set.
+    assert_eq!(
+        unsafe { medius_device_set_rewrite(dev, &read) },
+        MediusStatus::Ok
+    );
+
+    // Any other rule answers false and leaves the outs alone.
+    let drop = c_rewrite(
+        MediusRewriteClass::Emit as u8,
+        1,
+        MediusDirection::Positive as u8,
+        MediusRewriteAction::Drop as u8,
+        0,
+        &[],
+        &[],
+        &[],
+    );
+    action = 0xEE;
+    assert!(!unsafe {
+        medius_rewrite_rule_clip_verb(&drop, &mut action, &mut flags, &mut selector_len)
+    });
+    assert_eq!(action, 0xEE);
+    unsafe {
+        medius_device_free(dev);
+        medius_mock_free(mock);
+    }
+}
+
+fn c_clip_rule(flags: u8, selector_len: u8) -> (MediusStatus, MediusRewriteRule) {
+    let mut rule: MediusRewriteRule = unsafe { std::mem::zeroed() };
+    rule.id = 0xBEEF;
+    let status = unsafe {
+        medius_rewrite_rule_clip(
+            &mut rule,
+            MediusRewriteClass::HidIn as u8,
+            2,
+            MediusDirection::Positive as u8,
+            MediusClipAction::Pause as u8,
+            flags,
+            selector_len,
+        )
+    };
+    (status, rule)
+}
+
+#[test]
+fn a_clip_rule_reads_back_the_flags_it_was_built_with() {
+    for (flags, selector_len) in [
+        (0, 0),
+        (MEDIUS_REWRITE_CLIP_DROP, 0),
+        (MEDIUS_REWRITE_CLIP_EDGE, 1),
+        (MEDIUS_REWRITE_CLIP_EDGE, 0),
+        (MEDIUS_REWRITE_CLIP_DROP | MEDIUS_REWRITE_CLIP_EDGE, 3),
+    ] {
+        let (status, rule) = c_clip_rule(flags, selector_len);
+        assert_eq!(status, MediusStatus::Ok);
+        assert_eq!(
+            &rule.payload[..rule.payload_len as usize],
+            &[MediusClipAction::Pause as u8, flags, selector_len]
+        );
+        let (mut action, mut got_flags, mut got_len) = (0xEEu8, 0xEEu8, 0xEEu8);
+        assert!(unsafe {
+            medius_rewrite_rule_clip_verb(&rule, &mut action, &mut got_flags, &mut got_len)
+        });
+        assert_eq!(
+            (action, got_flags, got_len),
+            (MediusClipAction::Pause as u8, flags, selector_len)
+        );
+        // Each out is optional: a null one is skipped and the answer still comes back.
+        assert!(unsafe {
+            medius_rewrite_rule_clip_verb(&rule, ptr::null_mut(), ptr::null_mut(), ptr::null_mut())
+        });
+        let mut only_flags = 0xEEu8;
+        assert!(unsafe {
+            medius_rewrite_rule_clip_verb(&rule, ptr::null_mut(), &mut only_flags, ptr::null_mut())
+        });
+        assert_eq!(only_flags, flags);
+    }
+}
+
+#[test]
+fn a_clip_rule_with_an_unknown_flag_is_refused_when_built() {
+    for flags in [0x04u8, 0x80, 0x84, MEDIUS_REWRITE_CLIP_DROP | 0x40, 0xFF] {
+        let (status, rule) = c_clip_rule(flags, 0);
+        assert_eq!(
+            status,
+            MediusStatus::ErrRewriteClipRule,
+            "flags {flags:#04x}"
+        );
+        assert_eq!(rule.id, 0xBEEF, "a refusal leaves the rule as it was");
+        assert_eq!(rule.payload_len, 0);
+        let mut buf = [0 as c_char; 128];
+        let n = unsafe { medius_last_error_message(buf.as_mut_ptr(), buf.len()) };
+        assert!(n > 0);
+        assert!(read_cname(&buf).contains("drop and edge flags"));
+    }
+}
+
+#[test]
+fn a_rewrite_match_past_the_limit_has_its_own_status() {
+    let mock = medius_mock_new();
+    unsafe { medius_mock_set_imperfect_status(mock, allowed_status()) };
+    let mut dev: *mut MediusDevice = ptr::null_mut();
+    assert_eq!(
+        unsafe { medius_device_with_mock(mock, &mut dev) },
+        MediusStatus::Ok
+    );
+    let rule = |match_len: u16, mask_len: u16| {
+        let mut r = c_rewrite(
+            MediusRewriteClass::HidIn as u8,
+            2,
+            MediusDirection::Positive as u8,
+            MediusRewriteAction::Pass as u8,
+            0,
+            &[0x11; MEDIUS_MAX_REWRITE_MATCH],
+            &[0xFF; MEDIUS_MAX_REWRITE_MATCH],
+            &[],
+        );
+        r.match_len = match_len;
+        r.mask_len = mask_len;
+        r
+    };
+    let max = MEDIUS_MAX_REWRITE_MATCH as u16;
+    let rewrites = || {
+        unsafe { (*mock).inner.recorded_frames() }
+            .into_iter()
+            .filter(|f| f.ty == medius::FrameType::Rewrite)
+            .count()
+    };
+    for (match_len, mask_len, status) in [
+        (max + 1, max + 1, MediusStatus::ErrRewriteMatchTooLong),
+        (u16::MAX, u16::MAX, MediusStatus::ErrRewriteMatchTooLong),
+        // The mask length is checked first, as the crate does.
+        (max + 1, max, MediusStatus::ErrRewriteMaskLength),
+        (max, max + 1, MediusStatus::ErrRewriteMaskLength),
+    ] {
+        let r = rule(match_len, mask_len);
+        assert_eq!(unsafe { medius_device_set_rewrite(dev, &r) }, status);
+        assert_eq!(unsafe { medius_device_remove_rewrite(dev, &r) }, status);
+    }
+    assert_eq!(rewrites(), 0, "a refused rule put a frame on the wire");
+
+    let full = rule(max, max);
+    assert_eq!(
+        unsafe { medius_device_set_rewrite(dev, &full) },
+        MediusStatus::Ok
+    );
+    assert_eq!(rewrites(), 1);
+    let mut read: MediusRewriteRule = unsafe { std::mem::zeroed() };
+    assert_eq!(
+        unsafe { medius_device_query_rewrite_entry(dev, 0, &mut read) },
+        MediusStatus::Ok
+    );
+    assert_eq!(read.match_len, max);
+    assert_eq!(read.match_bytes, full.match_bytes);
+    assert_eq!(
+        unsafe { medius_device_remove_rewrite(dev, &full) },
+        MediusStatus::Ok
+    );
+    unsafe {
+        medius_device_free(dev);
+        medius_mock_free(mock);
+    }
+}
+
+#[test]
 fn a_patch_survives_the_query_roundtrip() {
     use medius::Patch;
     let bytes = vec![0xCDu8; 40];
@@ -2672,6 +3506,61 @@ fn rewrite_validation_errors_have_their_own_status() {
     assert_eq!(
         unsafe { medius_device_set_rewrite(dev, &too_big) },
         MediusStatus::ErrRewritePayloadTooLarge
+    );
+    // A clip rule with a selector and no edge flag to read it.
+    let mut stray_selector: MediusRewriteRule = unsafe { std::mem::zeroed() };
+    assert_eq!(
+        unsafe {
+            medius_rewrite_rule_clip(
+                &mut stray_selector,
+                MediusRewriteClass::HidIn as u8,
+                2,
+                MediusDirection::Positive as u8,
+                MediusClipAction::Start as u8,
+                0,
+                1,
+            )
+        },
+        MediusStatus::Ok
+    );
+    assert_eq!(
+        unsafe { medius_device_set_rewrite(dev, &stray_selector) },
+        MediusStatus::ErrRewriteClipRule
+    );
+    // A clip rule that drops on the control class, where Drop itself is refused.
+    let mut control_drop: MediusRewriteRule = unsafe { std::mem::zeroed() };
+    assert_eq!(
+        unsafe {
+            medius_rewrite_rule_clip(
+                &mut control_drop,
+                MediusRewriteClass::Control as u8,
+                0,
+                MediusDirection::Both as u8,
+                MediusClipAction::Toggle as u8,
+                MEDIUS_REWRITE_CLIP_DROP,
+                0,
+            )
+        },
+        MediusStatus::Ok
+    );
+    assert_eq!(
+        unsafe { medius_device_set_rewrite(dev, &control_drop) },
+        MediusStatus::ErrRewriteClipRule
+    );
+    // A Clip action whose payload is not a clip verb.
+    let bare_clip = c_rewrite(
+        MediusRewriteClass::HidIn as u8,
+        2,
+        MediusDirection::Positive as u8,
+        MediusRewriteAction::Clip as u8,
+        0,
+        &[],
+        &[],
+        &[],
+    );
+    assert_eq!(
+        unsafe { medius_device_set_rewrite(dev, &bare_clip) },
+        MediusStatus::ErrRewriteClipRule
     );
     // An unknown class byte is refused before the wire.
     let bad_class = c_rewrite(0x77, 0, MediusDirection::Both as u8, 0, 0, &[], &[], &[]);

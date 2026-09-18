@@ -23,7 +23,9 @@ def _build_mock_lib() -> Path:
         check=True,
     )
     name = _LIB_NAMES.get(sys.platform, "libmedius_capi.so")
-    return _WORKSPACE / "target" / "debug" / name
+    # cargo resolves a relative CARGO_TARGET_DIR against its cwd, the workspace.
+    target = _WORKSPACE / os.environ.get("CARGO_TARGET_DIR", "target")
+    return target / "debug" / name
 
 
 _lib = _build_mock_lib()

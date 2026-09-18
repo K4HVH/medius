@@ -39,18 +39,19 @@ pub use protocol::{DecodedFrame, FrameType};
 pub use protocol::{MAX_PAYLOAD, PROTO_VER};
 pub use transport::scan::find_medius;
 pub use types::{
-    Action, Axis, Bearing, BearingMode, Blanket, BusEvent, Button, CLIP_EDGES_MAX, Caps, Capture,
-    CatchClass, CatchEntry, CatchEvent, CatchFilter, CatchState, ChipFirmware, Class, ClipAction,
-    ClipBuilder, ClipSettings, ClipState, ClipStatus, ClipTrigger, ClockDomain, ClockEstimate,
-    ControlStatus, CountersSnapshot, DeviceInfo, DeviceKind, Direction, DirectionMeaning, Edge,
-    EmitPace, EmitPaceStatus, FirmwareInfo, Health, ImageState, ImperfectStatus, Input, InputEvent,
-    KbdCaps, Key, LedMode, LedTarget, LockEntry, LockScope, LockTarget, Locks, LogLevel, LogLine,
-    MediaKey, Motion, MotionEvent, MouseCaps, MoveTiming, Patch, PatchEntry, PatchKey,
-    PatchSection, PatchSet, PendingMotion, PortInfo, Rate, RebootTarget, RenderMode, RenderStatus,
-    RewriteAction, RewriteClass, RewriteEntry, RewriteKey, RewriteRule, RewriteTable, Setup,
-    SpreadStatus, Stamped, Stats, Timeline, Timestamped, TrafficClass, TrafficEvent,
-    TransferOutcome, TransferStatus, Transform, TransformKey, TransformOp, Transforms,
-    UpdateProgress, UpdateStatus, UpdateTarget, Usage, UsageSnapshot, Version,
+    Action, Axis, Bearing, BearingMode, Blanket, BusEvent, Button, CLIP_EDGES_MAX, CLIP_ENTRY_MAX,
+    CLIP_RAW_MAX, Caps, Capture, CatchClass, CatchEntry, CatchEvent, CatchFilter, CatchState,
+    ChipFirmware, Class, ClipAction, ClipBuilder, ClipFrame, ClipSettings, ClipState, ClipStatus,
+    ClipTrigger, ClipVerb, ClockDomain, ClockEstimate, ControlStatus, CountersSnapshot, DeviceInfo,
+    DeviceKind, Direction, DirectionMeaning, Edge, EmitPace, EmitPaceStatus, FirmwareInfo, Health,
+    ImageState, ImperfectStatus, Input, InputEvent, KbdCaps, Key, LedMode, LedTarget, LockEntry,
+    LockScope, LockTarget, Locks, LogLevel, LogLine, MediaKey, Motion, MotionEvent, MouseCaps,
+    MoveTiming, Patch, PatchEntry, PatchKey, PatchSection, PatchSet, PendingMotion, PortInfo, Rate,
+    RebootTarget, RenderMode, RenderStatus, RewriteAction, RewriteClass, RewriteEntry, RewriteKey,
+    RewriteRule, RewriteTable, Setup, SpreadStatus, Stamped, Stats, Timeline, Timestamped,
+    TrafficClass, TrafficEvent, TransferOutcome, TransferStatus, Transform, TransformKey,
+    TransformOp, Transforms, UpdateProgress, UpdateStatus, UpdateTarget, Usage, UsageSnapshot,
+    Version,
 };
 
 #[cfg(feature = "async")]
