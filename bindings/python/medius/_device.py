@@ -21,6 +21,7 @@ from ._types import (
     _i16,
     _u8,
     _u16,
+    _u32,
     _window_ms,
     Caps,
     CatchFilter,
@@ -503,20 +504,38 @@ class Device:
         buf, n = _bytes_buf(data)
         check(_native.lib.medius_device_raw(self._handle, _u8(ep, "ep"), int(direction), buf, n))
 
-    def transfer(self, ep: int, setup: Setup, out: bytes = b"") -> TransferOutcome:
+    def transfer(
+        self, ep: int, setup: Setup, out: bytes = b"", timeout_ms: Optional[int] = None
+    ) -> TransferOutcome:
         """`TRANSFER` (§3.14): run one control transfer against the real device and return its answer.
 
         `ep` is 0 for EP0 or a control endpoint the device declares; `out` is the OUT data stage
         (empty for an IN transfer). A `TransferOutcome.status` other than `TransferStatus.OK` is a real
         protocol outcome returned rather than raised; the box answers `REFUSED` while the opt-in is off.
+        `timeout_ms` is the reply wait; the default is `default_transfer_timeout_ms()`, and the box gives
+        up on a transfer after its own ~800 ms window, so a shorter one abandons the wait before a slow
+        device answers.
         """
         buf, n = _bytes_buf(out)
         outcome = _native.MediusTransferOutcome()
-        check(
-            _native.lib.medius_device_transfer(
-                self._handle, _u8(ep, "ep"), setup_to_c(setup), buf, n, ctypes.byref(outcome)
+        if timeout_ms is None:
+            check(
+                _native.lib.medius_device_transfer(
+                    self._handle, _u8(ep, "ep"), setup_to_c(setup), buf, n, ctypes.byref(outcome)
+                )
             )
-        )
+        else:
+            check(
+                _native.lib.medius_device_transfer_timeout(
+                    self._handle,
+                    _u8(ep, "ep"),
+                    setup_to_c(setup),
+                    buf,
+                    n,
+                    _u32(timeout_ms, "timeout_ms"),
+                    ctypes.byref(outcome),
+                )
+            )
         return transfer_outcome_from_c(outcome)
 
     def set_rewrite(self, rule: RewriteRule) -> None:

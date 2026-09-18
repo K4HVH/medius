@@ -584,6 +584,11 @@ _decl(
     i32,
     [HANDLE, u8, MediusSetup, ctypes.POINTER(u8), usize, ctypes.POINTER(MediusTransferOutcome)],
 )
+_decl(
+    "medius_device_transfer_timeout",
+    i32,
+    [HANDLE, u8, MediusSetup, ctypes.POINTER(u8), usize, u32, ctypes.POINTER(MediusTransferOutcome)],
+)
 _decl("medius_device_set_rewrite", i32, [HANDLE, ctypes.POINTER(MediusRewriteRule)])
 _decl("medius_device_remove_rewrite", i32, [HANDLE, ctypes.POINTER(MediusRewriteRule)])
 _decl("medius_device_clear_rewrite", i32, [HANDLE])
@@ -602,6 +607,7 @@ _decl("medius_device_transform_remap", i32, [HANDLE, MediusLockTarget, MediusLoc
 _decl("medius_device_query_transforms", i32, [HANDLE, ctypes.POINTER(MediusTransforms)])
 
 _decl("medius_default_query_timeout_ms", u32, [])
+_decl("medius_default_transfer_timeout_ms", u32, [])
 _decl("medius_default_keepalive_cadence_ms", u32, [])
 _decl("medius_abi_version", u32, [])
 _decl("medius_version_string", ctypes.c_char_p, [])

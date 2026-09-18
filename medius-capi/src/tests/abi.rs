@@ -2293,6 +2293,50 @@ fn dev_layer_commands_reach_the_wire_like_the_crate() {
 }
 
 #[test]
+fn transfer_timeout_takes_its_own_reply_wait() {
+    assert!(medius_default_transfer_timeout_ms() >= 800);
+    let mock = medius_mock_new();
+    unsafe {
+        medius_mock_set_imperfect_status(mock, allowed_status());
+        let data = [0x12u8, 0x01];
+        medius_mock_set_transfer_reply(mock, 0x00, data.as_ptr(), data.len());
+    }
+    let mut dev: *mut MediusDevice = ptr::null_mut();
+    assert_eq!(
+        unsafe { medius_device_with_mock(mock, &mut dev) },
+        MediusStatus::Ok
+    );
+    let setup = MediusSetup {
+        request_type: 0x80,
+        request: 0x06,
+        value: 0x0100,
+        index: 0x0000,
+        length: 2,
+    };
+    let mut out: MediusTransferOutcome = unsafe { std::mem::zeroed() };
+    assert_eq!(
+        unsafe {
+            medius_device_transfer_timeout(
+                dev,
+                0,
+                setup,
+                ptr::null(),
+                0,
+                medius_default_transfer_timeout_ms(),
+                &mut out,
+            )
+        },
+        MediusStatus::Ok
+    );
+    assert_eq!(out.status, MediusTransferStatus::Ok as u8);
+    assert_eq!(out.len, 2);
+    unsafe {
+        medius_device_free(dev);
+        medius_mock_free(mock);
+    }
+}
+
+#[test]
 fn transfer_roundtrips_the_devices_answer() {
     let want = {
         let mock = MockBox::new()

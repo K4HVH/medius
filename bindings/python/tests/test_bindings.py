@@ -1507,6 +1507,20 @@ def test_transfer_roundtrips_the_answer():
     assert out.data == reply
 
 
+def test_transfer_takes_its_own_reply_wait():
+    reply = bytes([0x12, 0x01])
+    with MockBox() as mock:
+        mock.set_imperfect_status(_allowed())
+        mock.set_transfer_reply(TransferStatus.OK, reply)
+        with Device.with_mock(mock) as d:
+            out = d.transfer(
+                0, Setup(0x80, 0x06, 0x0100, 0, 2), timeout_ms=medius.default_transfer_timeout_ms()
+            )
+    assert out.status == TransferStatus.OK
+    assert out.data == reply
+    assert medius.default_transfer_timeout_ms() >= 800
+
+
 def test_transfer_is_refused_without_the_opt_in():
     with MockBox() as mock, Device.with_mock(mock) as d:
         out = d.transfer(0, Setup(0x80, 0x06, 0x0100, 0, 18))

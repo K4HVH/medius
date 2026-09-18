@@ -69,6 +69,13 @@ def _u16(value, what):
     return v
 
 
+def _u32(value, what):
+    v = int(value)
+    if not 0 <= v <= 0xFFFFFFFF:
+        raise ValueError(f"{what} must be 0..4294967295, got {value!r}")
+    return v
+
+
 def _i16(value, what):
     v = int(value)
     if not -0x8000 <= v <= 0x7FFF:

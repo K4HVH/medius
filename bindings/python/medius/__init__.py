@@ -170,6 +170,10 @@ def default_query_timeout_ms() -> int:
     return int(_native.lib.medius_default_query_timeout_ms())
 
 
+def default_transfer_timeout_ms() -> int:
+    return int(_native.lib.medius_default_transfer_timeout_ms())
+
+
 def default_keepalive_cadence_ms() -> int:
     return int(_native.lib.medius_default_keepalive_cadence_ms())
 
@@ -318,6 +322,7 @@ __all__ = [
     "find_ports",
     "list_boxes",
     "default_query_timeout_ms",
+    "default_transfer_timeout_ms",
     "default_keepalive_cadence_ms",
     "abi_version",
     "version_string",
