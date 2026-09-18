@@ -157,6 +157,19 @@ jobs:
     - name: Check if publishable
       run: cargo publish -p medius --dry-run --allow-dirty
 
+    - name: The crate, the C ABI and the Python binding carry one version
+      # A release publishes all three. medius 3.4.0 shipped while the Python binding still said
+      # 3.3.1, so PyPI never got that version at all.
+      run: |
+        set -euo pipefail
+        crate=$(grep -m1 '^version = ' Cargo.toml | cut -d'"' -f2)
+        capi=$(grep -m1 '^version = ' medius-capi/Cargo.toml | cut -d'"' -f2)
+        py=$(grep -m1 '^version = ' bindings/python/pyproject.toml | cut -d'"' -f2)
+        echo "crate=$crate capi=$capi python=$py"
+        if [ "$crate" != "$capi" ] || [ "$crate" != "$py" ]; then
+          echo "::error::versions disagree (crate $crate, C ABI $capi, Python $py)"; exit 1
+        fi
+
   publish:
     name: Publish to crates.io
     runs-on: ubuntu-latest
