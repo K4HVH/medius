@@ -20,10 +20,10 @@ mod linux {
 
     use medius::{
         Action, Axis, BearingMode, Blanket, Button, CatchClass, CatchFilter, Class, ClipAction,
-        ClipBuilder, ClipState, ClipTrigger, Device, Direction, Edge, EmitPace, Input, Key,
-        LedMode, LedTarget, MediaKey, Patch, PatchSection, RebootTarget, RenderMode, RewriteAction,
-        RewriteClass, RewriteRule, Setup, Timeline, TrafficClass, TransferStatus, Transform,
-        TransformOp,
+        ClipBuilder, ClipFrame, ClipState, ClipTrigger, Device, Direction, Edge, EmitPace, Input,
+        Key, LedMode, LedTarget, MediaKey, Patch, PatchSection, RebootTarget, RenderMode,
+        RewriteAction, RewriteClass, RewriteRule, Setup, Timeline, TrafficClass, TransferStatus,
+        Transform, TransformOp,
     };
     use medius::{BEARING_WINDOW_DEFAULT, PROTO_VER};
 
@@ -579,7 +579,9 @@ mod linux {
             // OPTION(SPREAD): the percent round-trips, and the interval the box reports tracks the
             // rate this loop actually commands at. Reading the percent back alone would pass a box
             // that stores the number and spreads nothing, so the discriminating half is span_us
-            // against a loop whose period is known here: 40 MOVEs 4 ms apart is a 250 Hz host.
+            // against a loop whose period is known here: MOVEs 4 ms apart are a 250 Hz host. The box
+            // takes the modal gap of its last 128 MOVEs, so the loop fills that whole window: a shorter
+            // one is outvoted by whatever cadence the previous check or run left in it.
             let dev = device.as_ref().unwrap();
             let mut all_ok = true;
             let mut last = String::new();
@@ -591,7 +593,7 @@ mod linux {
                 all_ok &= set_ok && matched;
                 last = format!("{pct} -> {read:?}");
             }
-            for _ in 0..40 {
+            for _ in 0..140 {
                 let _ = dev.move_rel(1, 0);
                 std::thread::sleep(Duration::from_millis(4));
             }
@@ -1511,9 +1513,12 @@ mod linux {
             let mut b = ClipBuilder::new();
             // Hold KEY_A across the whole motion run so the held-usage snapshot is sampled mid-hold.
             b.press(Key::A);
-            for _ in 0..200 {
+            for _ in 0..199 {
                 b.move_by(10, 0);
             }
+            // One frame with every motion field: on a mouse that declares no pan the box drops that
+            // field and plays the rest.
+            b.frame(ClipFrame::new().move_by(10, 0).pan(1));
             b.release(Key::A);
             let appended = clip.append(&b).is_ok();
             let loaded = clip.query_status().map(|s| s.total > 0).unwrap_or(false);
@@ -1862,6 +1867,37 @@ mod linux {
         }
 
         {
+            // A reconnect re-sends nothing of a clip and reads back what the box still holds, so a
+            // retained clip rides out a blip shorter than the box's silence window. Nothing else is
+            // held here: past the reconnect, only the clip keeps the keepalive running.
+            let dev = device.as_ref().unwrap();
+            let clip = dev.clip();
+            let _ = dev.reset();
+            let _ = clip.clear();
+            let loaded = clip.set_retain(true).is_ok() && {
+                let mut one = ClipBuilder::new();
+                one.move_by(1, 0);
+                clip.append(&one).is_ok() && clip.finalize().is_ok()
+            };
+            std::thread::sleep(Duration::from_millis(100));
+            let before = clip.query_status().map(|s| s.total).unwrap_or(0);
+            let rc = dev.reconnect();
+            std::thread::sleep(Duration::from_millis(1600));
+            let after = clip.query_status().map(|s| s.total).unwrap_or(0);
+            let retained = clip.query_config().map(|c| c.retain).unwrap_or(false);
+            let _ = clip.clear();
+            let _ = clip.set_retain(false);
+            check(
+                "clip: held across a reconnect",
+                loaded && rc.is_ok() && before > 0 && after == before && retained,
+                format!(
+                    "loaded={loaded}, reconnect={:?}, ring {before} B before, {after} B 1.6 s after, retain={retained}",
+                    rc.map(|_| "Ok")
+                ),
+            );
+        }
+
+        {
             let dev = device.as_ref().unwrap();
             let _ = dev.reboot(RebootTarget::HostRun);
             std::thread::sleep(Duration::from_secs(2));
@@ -1950,6 +1986,141 @@ mod linux {
                 format!(
                     "set={set_ok}, present={present} gen={generation}, entry={entry_ok}, \
                      health.rewrite_on={health_on}, clear={clear_ok}, cleared={cleared}"
+                ),
+            );
+
+            // The next two checks need one exact frame off the emit wire: the one an injected move of
+            // (3, 0) produces, learnt from the EMIT tap as the report that appears once (a streaming
+            // mouse fills the rest of the tap with its idle report). Spreading is off while they run,
+            // so the move is one frame on the wire.
+            let clip = dev.clip();
+            let _ = clip.clear();
+            let _ = dev.clear_rewrite();
+            let spread_was = dev.query_spread().map(|s| s.percent).unwrap_or(100);
+            let _ = dev.set_spread(0);
+            std::thread::sleep(Duration::from_millis(60));
+            let mut seen: Vec<(Vec<u8>, usize)> = Vec::new();
+            if let Ok(stream) = dev.catch_events([CatchFilter::traffic(TrafficClass::Emit, 1)]) {
+                let _ = dev.move_rel(3, 0);
+                let until = Instant::now() + Duration::from_millis(250);
+                while Instant::now() < until {
+                    if let Some(medius::CatchEvent::Traffic(t)) =
+                        stream.recv_timeout(Duration::from_millis(50))
+                    {
+                        match seen.iter_mut().find(|(b, _)| b == &t.bytes) {
+                            Some((_, n)) => *n += 1,
+                            None => seen.push((t.bytes.clone(), 1)),
+                        }
+                    }
+                }
+            }
+            let once: Vec<&Vec<u8>> = seen
+                .iter()
+                .filter(|(_, n)| *n == 1)
+                .map(|(b, _)| b)
+                .collect();
+            let frame: Option<Vec<u8>> = (once.len() == 1).then(|| once[0].clone());
+            let learnt = format!(
+                "frame learnt={} ({} distinct reports)",
+                frame.is_some(),
+                seen.len()
+            );
+
+            // CLIP entries that ride this layer: a raw report and a control transfer on the clip's own
+            // timeline. The raw report is the learnt frame, so it moves the cursor by 3 when the box
+            // emits it. With the opt-in off the box discards both items and counts them in `gated`.
+            let get_device = Setup::new(0x80, 0x06, 0x0100, 0x0000, 18);
+            let mut adv = ClipBuilder::new();
+            adv.gap(2).frame(
+                ClipFrame::new()
+                    .raw(1, Direction::IN, frame.clone().unwrap_or_default())
+                    .transfer(0, get_device, []),
+            );
+            let before = clip.query_status().unwrap_or_default();
+            let _ = dev.allow_imperfect_clones(false);
+            reset_motion(&acc);
+            let gated_sent = clip.append(&adv).is_ok() && clip.start().is_ok();
+            std::thread::sleep(Duration::from_millis(150));
+            let _ = clip.stop();
+            let off = clip.query_status().unwrap_or_default();
+            let off_x = acc.rel_x.load(Ordering::Relaxed);
+            let _ = dev.allow_imperfect_clones(true);
+            reset_motion(&acc);
+            let mut answer = None;
+            if let Ok(stream) =
+                dev.catch_events([CatchFilter::traffic_class(TrafficClass::ClipTransfer)])
+            {
+                let _ = clip.append(&adv).and_then(|_| clip.start());
+                let until = Instant::now() + Duration::from_millis(800);
+                while answer.is_none() && Instant::now() < until {
+                    if let Some(medius::CatchEvent::Traffic(t)) =
+                        stream.recv_timeout(Duration::from_millis(100))
+                    {
+                        answer = Some((t.transfer_status(), t.data().to_vec()));
+                    }
+                }
+            }
+            std::thread::sleep(Duration::from_millis(100));
+            let _ = clip.stop();
+            let on = clip.query_status().unwrap_or_default();
+            let on_x = acc.rel_x.load(Ordering::Relaxed);
+            let gated = off.gated.wrapping_sub(before.gated);
+            let ran = on.xfers.wrapping_sub(off.xfers);
+            let answered = matches!(&answer, Some((Some(TransferStatus::Ok), d))
+                if d.len() >= 2 && d[1] == 0x01);
+            check(
+                "clip: raw and transfer entries",
+                frame.is_some()
+                    && gated_sent
+                    && gated == 2
+                    && off_x == 0
+                    && on.gated == off.gated
+                    && on_x == 3
+                    && ran == 1
+                    && answered,
+                format!(
+                    "{learnt}; opt-in off: gated +{gated}, REL_X {off_x}; on: gated +{}, REL_X {on_x}, \
+                     xfers +{ran}, answer {:?}",
+                    on.gated.wrapping_sub(off.gated),
+                    answer.as_ref().map(|(s, d)| (*s, d.len()))
+                ),
+            );
+
+            // A rewrite rule that runs a clip verb. The rule matches the learnt frame on the emit wire
+            // (the head of it, where a report is longer than a rule compares), so injecting the move
+            // again starts a retained one-frame clip, exactly once.
+            let _ = clip.clear();
+            let armed = frame.is_some() && clip.set_retain(true).is_ok() && {
+                let mut one = ClipBuilder::new();
+                one.move_by(7, 0);
+                clip.append(&one).is_ok() && clip.finalize().is_ok()
+            };
+            let mut rule_set = false;
+            let mut read_back = false;
+            if let (true, Some(frame)) = (armed, &frame) {
+                let head = &frame[..frame.len().min(medius::REWRITE_MATCH_MAX)];
+                let rule =
+                    RewriteRule::clip(RewriteClass::Emit, 1, Direction::IN, ClipAction::Start)
+                        .matching(head.to_vec(), vec![0xFF; head.len()]);
+                rule_set = dev.set_rewrite(&rule).is_ok();
+                read_back = dev
+                    .query_rewrite_entry(0)
+                    .map(|r| r.clip_verb().map(|v| v.action) == Some(ClipAction::Start))
+                    .unwrap_or(false);
+            }
+            reset_motion(&acc);
+            let _ = dev.move_rel(3, 0);
+            std::thread::sleep(Duration::from_millis(300));
+            let rule_x = acc.rel_x.load(Ordering::Relaxed);
+            let _ = dev.clear_rewrite();
+            let _ = clip.clear();
+            let _ = clip.set_retain(false);
+            let _ = dev.set_spread(spread_was);
+            check(
+                "clip: a rewrite rule runs a clip verb",
+                armed && rule_set && read_back && rule_x == 10,
+                format!(
+                    "{learnt}, rule set={rule_set}, read back={read_back}, move 3 + clip 7 = REL_X {rule_x}"
                 ),
             );
 
