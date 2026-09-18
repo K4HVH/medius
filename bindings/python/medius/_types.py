@@ -31,6 +31,8 @@ from ._enums import (
     LockTargetKind,
     LogLevel,
     PatchSection,
+    REWRITE_CLIP_DROP,
+    REWRITE_CLIP_EDGE,
     RewriteAction,
     RewriteClass,
     TrafficClass,
@@ -40,6 +42,7 @@ from ._enums import (
     Key,
     MediaKey,
 )
+from ._errors import check
 
 
 # Scalar checks for the parameters that reach ctypes. ctypes truncates silently, so an unchecked
@@ -81,6 +84,27 @@ def _i16(value, what):
     if not -0x8000 <= v <= 0x7FFF:
         raise ValueError(f"{what} must be -32768..32767, got {value!r}")
     return v
+
+
+def _as_bytes(data, what) -> bytes:
+    """`data` as bytes, or TypeError. `bytes(3)` is three zero bytes, so an int never reaches it."""
+    if isinstance(data, (bytes, bytearray, memoryview)):
+        return bytes(data)
+    refusal = f"{what} must be bytes-like or an iterable of ints, got {type(data).__name__}"
+    if isinstance(data, str) or hasattr(data, "__index__"):
+        raise TypeError(refusal)
+    try:
+        return bytes(data)
+    except TypeError:
+        raise TypeError(refusal) from None
+
+
+def _bytes_buf(data, what):
+    """A ``(c_uint8 * n)`` buffer copied from `data`, and its length, for a ``POINTER(u8)`` argument.
+    An empty payload is a real zero-length buffer the C side never reads (it maps len 0 to an empty
+    slice)."""
+    raw = _as_bytes(data, what)
+    return (ctypes.c_uint8 * len(raw)).from_buffer_copy(raw), len(raw)
 
 
 def _window_ms(window_ms):
@@ -402,12 +426,27 @@ class TransferOutcome:
 
 
 @dataclass
+class ClipVerb:
+    """What a ``CLIP`` rewrite rule does (`RewriteRule.clip_verb`)."""
+
+    action: ClipAction
+    #: Every packet the rule wins is dropped.
+    drop: bool = False
+    #: The verb runs on the first packet of a run of matching ones.
+    edge: bool = False
+    #: How many leading match bytes pick the run's stream.
+    selector_len: int = 0
+
+
+@dataclass
 class RewriteRule:
     """A rewrite rule (§3.14), keyed by ``(rewrite_class, id, direction, match_bytes, mask)``.
 
     ``match_bytes`` and ``mask`` are the masked head compare and must be the same length (an empty
     match matches every packet on the address); ``payload`` is the bytes an action that carries one
     supplies; ``offset`` is where a ``PATCH``/``REPLY_PATCH`` writes.
+
+    Build a ``CLIP`` rule with `clip`, which writes the payload.
     """
 
     rewrite_class: RewriteClass
@@ -418,6 +457,59 @@ class RewriteRule:
     match_bytes: bytes = b""
     mask: bytes = b""
     payload: bytes = b""
+
+    @classmethod
+    def clip(
+        cls,
+        rewrite_class: RewriteClass,
+        id: int,
+        direction: Direction,
+        verb: ClipAction,
+        match_bytes: bytes = b"",
+        mask: bytes = b"",
+        drop: bool = False,
+        on_edge: Optional[int] = None,
+    ) -> "RewriteRule":
+        """A rule that runs clip verb ``verb`` on the box's next tick for every packet it wins.
+
+        ``drop`` drops each packet the rule wins; the box refuses it on ``CONTROL`` and ``ANY``.
+        ``on_edge`` is a selector length: the verb runs on the first packet of a run of matching ones,
+        so a device that repeats a held state every poll fires once per hold. The first ``on_edge``
+        match bytes pick the run's stream out of the address (a report ID) and the rest are the
+        condition. It needs a report class, a concrete ``id`` and ``IN`` or ``OUT``.
+        """
+        flags = (REWRITE_CLIP_DROP if drop else 0) | (REWRITE_CLIP_EDGE if on_edge is not None else 0)
+        c = _native.MediusRewriteRule()
+        check(
+            _native.lib.medius_rewrite_rule_clip(
+                ctypes.byref(c),
+                int(_enum(rewrite_class, RewriteClass, "rewrite_class")),
+                _u16(id, "id"),
+                int(_enum(direction, Direction, "direction")),
+                int(_enum(verb, ClipAction, "verb")),
+                flags,
+                _u8(on_edge or 0, "on_edge"),
+            )
+        )
+        rule = rewrite_rule_from_c(c)
+        rule.match_bytes = _as_bytes(match_bytes, "match_bytes")
+        rule.mask = _as_bytes(mask, "mask")
+        return rule
+
+    def clip_verb(self) -> Optional[ClipVerb]:
+        """What a ``CLIP`` rule does; `None` for any other rule, or a payload that is not a clip rule's."""
+        c = rewrite_rule_to_c(self)
+        action, flags, selector_len = _native.u8(), _native.u8(), _native.u8()
+        if not _native.lib.medius_rewrite_rule_clip_verb(
+            ctypes.byref(c), ctypes.byref(action), ctypes.byref(flags), ctypes.byref(selector_len)
+        ):
+            return None
+        return ClipVerb(
+            ClipAction(action.value),
+            bool(flags.value & REWRITE_CLIP_DROP),
+            bool(flags.value & REWRITE_CLIP_EDGE),
+            int(selector_len.value),
+        )
 
 
 @dataclass
@@ -662,7 +754,7 @@ class BusEvent:
 @dataclass
 class TrafficEvent:
     """One byte-oriented catch event: HID reports, vendor endpoints, control transactions, the bytes
-    the clone emitted, or bus lifecycle.
+    the clone emitted, bus lifecycle, or a clip's control transfers.
 
     `bytes` is as much of the packet as the subscription's capture kept; `true_len` is its length
     before that truncation, so set both when building one by hand.
@@ -681,13 +773,13 @@ class TrafficEvent:
         return bool(_native.lib.medius_traffic_event_truncated(ctypes.byref(c)))
 
     def setup(self) -> Optional[bytes]:
-        """The 8-byte setup packet of a CONTROL event; `None` for another class or a shorter capture."""
+        """The 8-byte setup packet of a CONTROL or CLIP_TRANSFER event; `None` for another class or a shorter capture."""
         c = traffic_event_to_c(self)
         p = _native.lib.medius_traffic_event_setup(ctypes.byref(c))
         return bytes(p[:8]) if p else None
 
     def data(self) -> bytes:
-        """The data stage of a CONTROL event, the whole packet for any other class."""
+        """The data stage of a CONTROL or CLIP_TRANSFER event, the whole packet for any other class."""
         c = traffic_event_to_c(self)
         n = _native.usize()
         p = _native.lib.medius_traffic_event_data(ctypes.byref(c), ctypes.byref(n))
@@ -700,6 +792,17 @@ class TrafficEvent:
         if _native.lib.medius_traffic_event_control_status(ctypes.byref(c), ctypes.byref(out)):
             return ControlStatus(out.value)
         return None
+
+    def transfer_status(self) -> "Optional[TransferStatus | int]":
+        """How the transfer ended; `None` for any class but CLIP_TRANSFER. `NAK` when no answer came, and the raw byte for a status no member names."""
+        c = traffic_event_to_c(self)
+        out = _native.u8()
+        if not _native.lib.medius_traffic_event_transfer_status(ctypes.byref(c), ctypes.byref(out)):
+            return None
+        try:
+            return TransferStatus(out.value)
+        except ValueError:
+            return int(out.value)
 
     def bus_event(self) -> Optional[BusEvent]:
         """The lifecycle event; `None` for any class but BUS or an unknown kind."""
@@ -1351,15 +1454,23 @@ def imperfect_to_c(i) -> "_native.MediusImperfectStatus":
     )
 
 
-# The advanced control layer (§3.14). Over-capacity byte fields raise here rather than reach ctypes, which
-# would truncate silently; the crate-level refusals (mask length, action/class, payload size, relative
-# direction) are values that DO marshal and come back as their own status.
+# The advanced control layer (§3.14). A byte field over its ABI capacity raises here, because ctypes
+# would cut it to fit; the crate-level refusals (mask length, match length, action/class, payload
+# size, relative direction) are values that DO marshal and come back as their own status.
 def _fixed_bytes(dst, src: bytes, cap: int, what: str) -> int:
     if len(src) > cap:
         raise ValueError(f"{what} is {len(src)} bytes, over the {cap}-byte ABI limit")
     for i, byte in enumerate(src):
         dst[i] = byte
     return len(src)
+
+
+# A match or mask crosses with its whole length and as many bytes as the array holds, so one past
+# `MEDIUS_MAX_REWRITE_MATCH` comes back as the library's status.
+def _match_field(dst, src: bytes, what: str) -> int:
+    for i, byte in enumerate(src[: _native.MEDIUS_MAX_REWRITE_MATCH]):
+        dst[i] = byte
+    return _u16(len(src), what)
 
 
 def setup_to_c(s) -> "_native.MediusSetup":
@@ -1388,12 +1499,10 @@ def rewrite_rule_to_c(r) -> "_native.MediusRewriteRule":
     c.direction = int(_enum(r.direction, Direction, "direction"))
     c.action = int(_enum(r.action, RewriteAction, "action"))
     c.offset = _u16(r.offset, "offset")
-    c.match_len = _fixed_bytes(
-        c.match_bytes, bytes(r.match_bytes), _native.MEDIUS_MAX_REWRITE_MATCH, "match_bytes"
-    )
-    c.mask_len = _fixed_bytes(c.mask, bytes(r.mask), _native.MEDIUS_MAX_REWRITE_MATCH, "mask")
+    c.match_len = _match_field(c.match_bytes, _as_bytes(r.match_bytes, "match_bytes"), "match_bytes")
+    c.mask_len = _match_field(c.mask, _as_bytes(r.mask, "mask"), "mask")
     c.payload_len = _fixed_bytes(
-        c.payload, bytes(r.payload), _native.MEDIUS_MAX_DEV_PAYLOAD, "payload"
+        c.payload, _as_bytes(r.payload, "payload"), _native.MEDIUS_MAX_DEV_PAYLOAD, "payload"
     )
     return c
 
@@ -1439,7 +1548,7 @@ def patch_to_c(p) -> "_native.MediusPatch":
     c.cfg = _u8(p.cfg, "cfg")
     c.index = _u8(p.index, "index")
     c.offset = _u16(p.offset, "offset")
-    c.len = _fixed_bytes(c.bytes, bytes(p.bytes), _native.MEDIUS_MAX_DEV_PAYLOAD, "bytes")
+    c.len = _fixed_bytes(c.bytes, _as_bytes(p.bytes, "bytes"), _native.MEDIUS_MAX_DEV_PAYLOAD, "bytes")
     return c
 
 
@@ -1536,6 +1645,13 @@ class ClipStatus:
     underruns: int
     overruns: int
     seq_gaps: int
+    #: Clip transfers the device completed.
+    xfers: int
+    #: Clip transfers that ended any other way: a refusal, no answer, no room in the box's queue, or
+    #: dropped behind one the device did not answer.
+    xfer_errs: int
+    #: Raw reports and transfers the box discarded because the imperfect-clone opt-in was off.
+    gated: int
     held: List["Usage"] = field(default_factory=list)
 
     def is_held(self, usage: "Usage") -> bool:
@@ -1554,6 +1670,9 @@ def clip_status_from_c(c) -> ClipStatus:
         c.underruns,
         c.overruns,
         c.seq_gaps,
+        c.xfers,
+        c.xfer_errs,
+        c.gated,
         held,
     )
 
@@ -1568,6 +1687,9 @@ def clip_status_to_c(s) -> "_native.MediusClipStatus":
     c.underruns = s.underruns
     c.overruns = s.overruns
     c.seq_gaps = s.seq_gaps
+    c.xfers = s.xfers
+    c.xfer_errs = s.xfer_errs
+    c.gated = s.gated
     n = min(len(s.held), _native.MEDIUS_MAX_USAGES)
     c.held_n = n
     for i in range(n):
@@ -1718,7 +1840,7 @@ def traffic_event_to_c(t) -> "_native.MediusTrafficEvent":
     c.direction = int(_enum(t.direction, Direction, "direction"))
     c.flags = _u8(t.flags, "flags")
     c.true_len = _u16(t.true_len, "true_len")
-    raw = bytes(t.bytes)[: _native.MEDIUS_MAX_TRAFFIC_BYTES]
+    raw = _as_bytes(t.bytes, "bytes")[: _native.MEDIUS_MAX_TRAFFIC_BYTES]
     c.len = len(raw)
     for i, b in enumerate(raw):
         c.bytes[i] = b

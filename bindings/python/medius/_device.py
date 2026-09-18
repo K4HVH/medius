@@ -17,6 +17,7 @@ from ._types import (
     FirmwareInfo,
     firmware_info_from_c,
     _as_lock_target,
+    _bytes_buf,
     _enum,
     _i16,
     _u8,
@@ -82,14 +83,6 @@ def _require_mock():
             "the loaded medius_capi library was built without the mock feature "
             "(rebuild with --features mock)"
         )
-
-
-def _bytes_buf(data: bytes):
-    """A ``(c_uint8 * n)`` buffer copied from `data`, and its length, for a ``POINTER(u8)`` argument.
-    An empty payload is a real zero-length buffer the C side never reads (it maps len 0 to an empty
-    slice)."""
-    raw = bytes(data)
-    return (ctypes.c_uint8 * len(raw)).from_buffer_copy(raw), len(raw)
 
 
 class Device:
@@ -501,7 +494,7 @@ class Device:
         returns. `query_imperfect()` reports the state.
         """
         direction = _enum(direction, Direction, "direction")
-        buf, n = _bytes_buf(data)
+        buf, n = _bytes_buf(data, "data")
         check(_native.lib.medius_device_raw(self._handle, _u8(ep, "ep"), int(direction), buf, n))
 
     def transfer(
@@ -516,7 +509,7 @@ class Device:
         up on a transfer after its own ~800 ms window, so a shorter one abandons the wait before a slow
         device answers.
         """
-        buf, n = _bytes_buf(out)
+        buf, n = _bytes_buf(out, "out")
         outcome = _native.MediusTransferOutcome()
         if timeout_ms is None:
             check(
@@ -541,10 +534,12 @@ class Device:
     def set_rewrite(self, rule: RewriteRule) -> None:
         """`REWRITE` (§3.14): install (add or overwrite) one rewrite rule. Needs the opt-in.
 
-        `match_bytes` and `mask` must be the same length (`RewriteMaskLengthError`), the action must be
-        valid for the class (`RewriteActionClassError`), the direction must not be bearing-relative
-        (`RelativeDirectionError`), and the payload must fit the box's head
-        (`RewritePayloadTooLargeError`). `query_rewrite` confirms what the box holds.
+        `match_bytes` and `mask` must be the same length (`RewriteMaskLengthError`) and at most
+        16 bytes (`RewriteMatchTooLongError`), the action must be valid for the class
+        (`RewriteActionClassError`), the direction must not be bearing-relative
+        (`RelativeDirectionError`), the payload must fit the box's head
+        (`RewritePayloadTooLargeError`), and a ``CLIP`` rule must be one the box admits
+        (`RewriteClipRuleError`). `query_rewrite` confirms what the box holds.
         """
         c = rewrite_rule_to_c(rule)
         check(_native.lib.medius_device_set_rewrite(self._handle, ctypes.byref(c)))

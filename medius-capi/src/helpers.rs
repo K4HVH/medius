@@ -1,7 +1,8 @@
 //! Pure, device-free helpers: parameter constructors and inspectors mirroring the `medius` value-type methods.
 
+use crate::convert::{clip_action_from_c, clip_action_to_c, rewrite_rule_from_c};
 use crate::ctypes::*;
-use crate::error::guard;
+use crate::error::{MediusStatus, clear_error, fail, guard, guard_status};
 
 const SETUP_LEN: u16 = 8;
 
@@ -378,10 +379,18 @@ pub extern "C" fn medius_catch_class_is_input(class: MediusCatchClass) -> bool {
     class <= MEDIUS_CATCH_CLASS_AXIS
 }
 
-/// Whether `class` is one of the seven byte-oriented traffic classes.
+/// Whether `class` is one of the eight byte-oriented traffic classes.
 #[unsafe(no_mangle)]
 pub extern "C" fn medius_catch_class_is_traffic(class: MediusCatchClass) -> bool {
-    (MEDIUS_CATCH_CLASS_HID_IN..=MEDIUS_CATCH_CLASS_BUS).contains(&class)
+    (MEDIUS_CATCH_CLASS_HID_IN..=MEDIUS_CATCH_CLASS_CLIP_TRANSFER).contains(&class)
+}
+
+// The two classes whose bytes are `[setup 8][data]`.
+fn is_control_shaped(e: &MediusTrafficEvent) -> bool {
+    matches!(
+        e.class,
+        MEDIUS_CATCH_CLASS_CONTROL | MEDIUS_CATCH_CLASS_CLIP_TRANSFER
+    )
 }
 
 /// Whether the capture cut this packet short. Without checking, a truncated capture and a genuinely
@@ -397,8 +406,9 @@ pub unsafe extern "C" fn medius_traffic_event_truncated(event: *const MediusTraf
     })
 }
 
-/// The 8-byte setup packet of a CONTROL event, or NULL for another class or a capture cut shorter
-/// than the setup stage. Points into `event`. Mirrors `medius::TrafficEvent::setup`.
+/// The 8-byte setup packet of a CONTROL or CLIP_TRANSFER event, or NULL for another class or a
+/// capture cut shorter than the setup stage. Points into `event`. Mirrors
+/// `medius::TrafficEvent::setup`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_traffic_event_setup(event: *const MediusTrafficEvent) -> *const u8 {
     guard(std::ptr::null(), || {
@@ -406,7 +416,7 @@ pub unsafe extern "C" fn medius_traffic_event_setup(event: *const MediusTrafficE
             return std::ptr::null();
         }
         let e = unsafe { &*event };
-        if e.class == MEDIUS_CATCH_CLASS_CONTROL && e.len >= SETUP_LEN {
+        if is_control_shaped(e) && e.len >= SETUP_LEN {
             e.bytes.as_ptr()
         } else {
             std::ptr::null()
@@ -414,8 +424,8 @@ pub unsafe extern "C" fn medius_traffic_event_setup(event: *const MediusTrafficE
     })
 }
 
-/// The data stage of a CONTROL event, the whole packet for any other class; its length goes to
-/// `*out_len`. Points into `event`. Mirrors `medius::TrafficEvent::data`.
+/// The data stage of a CONTROL or CLIP_TRANSFER event, the whole packet for any other class; its
+/// length goes to `*out_len`. Points into `event`. Mirrors `medius::TrafficEvent::data`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_traffic_event_data(
     event: *const MediusTrafficEvent,
@@ -430,7 +440,7 @@ pub unsafe extern "C" fn medius_traffic_event_data(
         // A control event whose own setup packet was cut short has no data stage at all.
         // Falling through to "the whole buffer is the data" handed a decoder the surviving setup
         // bytes: a GET_DESCRIPTOR request labelled as the descriptor it asked for.
-        let (skip, n) = if e.class != MEDIUS_CATCH_CLASS_CONTROL {
+        let (skip, n) = if !is_control_shaped(e) {
             (0usize, n)
         } else if e.len >= SETUP_LEN {
             (SETUP_LEN as usize, n)
@@ -467,6 +477,30 @@ pub unsafe extern "C" fn medius_traffic_event_control_status(
         };
         if !out.is_null() {
             unsafe { *out = status };
+        }
+        true
+    })
+}
+
+/// How the transfer ended, written to `*out` as a `MEDIUS_TRANSFER_STATUS_*` value; false for any
+/// class but CLIP_TRANSFER. `MEDIUS_TRANSFER_STATUS_NAK` when no answer came, and a byte no constant
+/// names is carried through. A null `out` is skipped and the return still answers. Mirrors
+/// `medius::TrafficEvent::transfer_status`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn medius_traffic_event_transfer_status(
+    event: *const MediusTrafficEvent,
+    out: *mut u8,
+) -> bool {
+    guard(false, || {
+        if event.is_null() {
+            return false;
+        }
+        let e = unsafe { &*event };
+        if e.class != MEDIUS_CATCH_CLASS_CLIP_TRANSFER {
+            return false;
+        }
+        if !out.is_null() {
+            unsafe { *out = medius::TransferStatus::from_u8(e.flags).as_u8() };
         }
         true
     })
@@ -557,6 +591,95 @@ pub unsafe extern "C" fn medius_traffic_event_bulk_zlp(event: *const MediusTraff
         }
         let e = unsafe { &*event };
         e.class == MEDIUS_CATCH_CLASS_VENDOR_BULK && e.flags & 0x02 != 0
+    })
+}
+
+/// Fill `*rule_out` with a rule that runs clip verb `clip_action` on the box's next tick for every
+/// packet it wins, and zero the rest of it; set `match_bytes`/`mask` afterwards to narrow it.
+/// `flags` is `MEDIUS_REWRITE_CLIP_*` bits: `DROP` drops each packet the rule wins, `EDGE` runs the
+/// verb on the first packet of a run only, with the first `selector_len` match bytes picking the
+/// run's stream. Any other bit is `MEDIUS_STATUS_ERR_REWRITE_CLIP_RULE` and `*rule_out` is left as
+/// it was. `class` takes a `MEDIUS_REWRITE_CLASS_*` constant, `direction` a `MEDIUS_DIRECTION_*` one
+/// and `clip_action` a `MEDIUS_CLIP_ACTION_*` one; any other value is
+/// `MEDIUS_STATUS_ERR_INVALID_ARG`. Mirrors `medius::RewriteRule::clip`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn medius_rewrite_rule_clip(
+    rule_out: *mut MediusRewriteRule,
+    class: u8,
+    id: u16,
+    direction: u8,
+    clip_action: u8,
+    flags: u8,
+    selector_len: u8,
+) -> MediusStatus {
+    guard_status(|| {
+        if rule_out.is_null() {
+            return fail(MediusStatus::ErrInvalidArg, "null pointer");
+        }
+        let (Some(class), Some(direction), Some(verb)) = (
+            medius::RewriteClass::from_u8(class),
+            medius::Direction::from_u8(direction),
+            clip_action_from_c(clip_action),
+        ) else {
+            return fail(
+                MediusStatus::ErrInvalidArg,
+                "invalid rewrite class, direction or clip action",
+            );
+        };
+        if flags & !(MEDIUS_REWRITE_CLIP_DROP | MEDIUS_REWRITE_CLIP_EDGE) != 0 {
+            return fail(
+                MediusStatus::ErrRewriteClipRule,
+                "a clip rewrite rule takes only the drop and edge flags",
+            );
+        }
+        let mut rule = medius::RewriteRule::clip(class, id, direction, verb);
+        if let [_, f, slen] = rule.payload.as_mut_slice() {
+            *f = flags;
+            *slen = selector_len;
+        }
+        unsafe { *rule_out = rule.into() };
+        clear_error();
+        MediusStatus::Ok
+    })
+}
+
+/// What a clip rule does: the verb to `*out_action` as a `MEDIUS_CLIP_ACTION_*` value, the
+/// `MEDIUS_REWRITE_CLIP_*` bits to `*out_flags` and the selector length to `*out_selector_len`; false
+/// for any other rule. A null out is skipped and the return still answers. Mirrors
+/// `medius::RewriteRule::clip_verb`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn medius_rewrite_rule_clip_verb(
+    rule: *const MediusRewriteRule,
+    out_action: *mut u8,
+    out_flags: *mut u8,
+    out_selector_len: *mut u8,
+) -> bool {
+    guard(false, || {
+        if rule.is_null() {
+            return false;
+        }
+        let Some(verb) = rewrite_rule_from_c(unsafe { &*rule }).and_then(|r| r.clip_verb()) else {
+            return false;
+        };
+        let mut flags = 0;
+        if verb.drop {
+            flags |= MEDIUS_REWRITE_CLIP_DROP;
+        }
+        if verb.edge {
+            flags |= MEDIUS_REWRITE_CLIP_EDGE;
+        }
+        unsafe {
+            if !out_action.is_null() {
+                *out_action = clip_action_to_c(verb.action);
+            }
+            if !out_flags.is_null() {
+                *out_flags = flags;
+            }
+            if !out_selector_len.is_null() {
+                *out_selector_len = verb.selector_len;
+            }
+        }
+        true
     })
 }
 

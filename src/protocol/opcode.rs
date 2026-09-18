@@ -125,6 +125,11 @@ pub const CLIP_TAG_GAP: u8 = 0x00;
 pub const CLIP_F_XY: u8 = 0x01;
 pub const CLIP_F_WHEEL: u8 = 0x02;
 pub const CLIP_F_EDGES: u8 = 0x04;
+pub const CLIP_F_PAN: u8 = 0x08;
+pub const CLIP_F_RAW: u8 = 0x10;
+pub const CLIP_F_XFER: u8 = 0x20;
+/// `RESP(CLIP)`: the scalar prefix length, whose last byte is the held-usage count (§4.15).
+pub const RESP_CLIP_HDR: usize = 31;
 
 pub const BTN_LEFT: u8 = 0;
 pub const BTN_RIGHT: u8 = 1;
@@ -193,6 +198,8 @@ pub const CATCH_CLS_CONTROL: u8 = 8;
 pub const CATCH_CLS_EMIT: u8 = 9;
 /// `CATCH` class: bus lifecycle events (§3.9).
 pub const CATCH_CLS_BUS: u8 = 10;
+/// `CATCH` class: a control transfer a clip ran against the device (§3.9).
+pub const CATCH_CLS_CLIP_XFER: u8 = 11;
 /// `CATCH` class wildcard: every class (§3.9).
 pub const CATCH_CLS_ANY: u8 = 0xFF;
 /// `CATCH` id wildcard: every id within the class (§3.9), the same sentinel `LOCK` uses.
@@ -235,6 +242,12 @@ pub const RW_NAK: u8 = 6;
 pub const RW_REPLY_PATCH: u8 = 7;
 /// Control IN: replace the device's reply with the payload.
 pub const RW_REPLY_REPLACE: u8 = 8;
+/// Run a clip verb; the payload is `[op][flags][slen]`.
+pub const RW_CLIP: u8 = 9;
+/// `RW_CLIP` flag: every packet the rule wins is dropped.
+pub const RW_CLIP_F_DROP: u8 = 0x01;
+/// `RW_CLIP` flag: the verb runs on the first packet of a run of matching ones.
+pub const RW_CLIP_F_EDGE: u8 = 0x02;
 
 // `PATCH` section byte (§3.14): which descriptor a patch overwrites. `APPLY`/`CLEAR` are engine verbs
 // carried in the same byte, handled before the store rather than kept as section keys.

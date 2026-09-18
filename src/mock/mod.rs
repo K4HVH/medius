@@ -13,6 +13,12 @@ use crate::protocol::opcode::{
     Q_FIRMWARE, RATE_CONFIDENT,
 };
 use crate::protocol::opcode::{
+    CATCH_CLS_ANY, CATCH_CLS_CONTROL, CATCH_CLS_EMIT, CATCH_CLS_HID_IN, CATCH_CLS_HID_OUT,
+    CATCH_CLS_VEND_BULK, CATCH_CLS_VEND_INTR, CATCH_ID_ANY, CLIP_OP_TOGGLE, RW_ANSWER, RW_CLIP,
+    RW_CLIP_F_DROP, RW_CLIP_F_EDGE, RW_DROP, RW_NAK, RW_PASS, RW_PATCH, RW_REPLACE, RW_REPLY_PATCH,
+    RW_REPLY_REPLACE, RW_STALL,
+};
+use crate::protocol::opcode::{
     CATCH_CLS_AXIS, CATCH_CLS_BTN, CATCH_CLS_KEY, CATCH_CLS_MEDIA, Q_TRANSFORMS, TF_F_FULL,
     TF_OP_COUNT, TF_REMAP, TF_SWAP, TRANSFORM_MAX_ENTRIES,
 };
@@ -470,12 +476,19 @@ impl State {
 
     // Apply a REWRITE frame the way the box would: keyed add/overwrite/remove, a monotonic gen, a
     // whole-table clear, and the caps that raise `full`. Dropped whole while the opt-in is off.
+    // The gates run in the box's order: the frame's own lengths, the opt-in (which the clear-all
+    // sentinel passes), then the table's checks.
     fn apply_rewrite_frame(&mut self, p: &[u8]) {
-        if !self.imperfect.allowed {
-            return; // the box drops a REWRITE frame with the opt-in off
-        }
         if p.len() < 9 {
             return;
+        }
+        let framed = p[8] as usize;
+        if p.len() < 9 + 2 * framed || 11 + p.len() - 9 > crate::protocol::opcode::MAX_PAYLOAD {
+            return; // a truncated match, or a rule its own read-back reply cannot carry
+        }
+        let clear_all = p[4] == 0 && p[0] == 0xFF && p[1] == 0xFF && p[2] == 0xFF;
+        if !self.imperfect.allowed && !clear_all {
+            return; // the box drops a REWRITE frame with the opt-in off
         }
         let cls = p[0];
         let id = u16::from_le_bytes([p[1], p[2]]);
@@ -493,14 +506,30 @@ impl State {
             self.rewrite_full = false;
             return;
         }
-        if mlen > REWRITE_MATCH_MAX || p.len() < 9 + 2 * mlen {
-            return; // the box refuses an over-long or truncated match
+        let rewritable = matches!(
+            cls,
+            CATCH_CLS_HID_IN
+                | CATCH_CLS_HID_OUT
+                | CATCH_CLS_VEND_INTR
+                | CATCH_CLS_VEND_BULK
+                | CATCH_CLS_CONTROL
+                | CATCH_CLS_EMIT
+                | CATCH_CLS_ANY
+        );
+        if !rewritable || dir > LOCK_DIR_NEG {
+            return; // the box refuses a class that is never rewritten and a relative direction
+        }
+        if mlen > REWRITE_MATCH_MAX {
+            return; // the box compares at most this many bytes
         }
         let match_bytes = p[9..9 + mlen].to_vec();
         let mask = p[9 + mlen..9 + 2 * mlen].to_vec();
         let payload = p[9 + 2 * mlen..].to_vec();
         let key = (cls, id, dir, match_bytes.clone(), mask.clone());
         let pos = self.rewrites.iter().position(|r| r.key() == key);
+        if state != 0 && !rewrite_admissible(cls, id, dir, action, offset, mlen, &payload) {
+            return; // refused whole, and an existing rule on the key stays as it was
+        }
         if state == 0 {
             if let Some(i) = pos {
                 self.rewrites.remove(i);
@@ -1023,6 +1052,9 @@ fn clip_status_payload(c: &ClipStatus, cfg: &ClipSettings) -> Vec<u8> {
     p.extend_from_slice(&c.underruns.to_le_bytes());
     p.extend_from_slice(&c.overruns.to_le_bytes());
     p.extend_from_slice(&c.seq_gaps.to_le_bytes());
+    p.extend_from_slice(&c.xfers.to_le_bytes());
+    p.extend_from_slice(&c.xfer_errs.to_le_bytes());
+    p.extend_from_slice(&c.gated.to_le_bytes());
     // ctrl_clip_held_append stops at CTRL_CLIP_HELD_MAX, ctrl_clip_trig_append at CLIP_TRIG_MAX.
     let held = &c.held[..c.held.len().min(CLIP_HELD_MAX)];
     p.push(held.len() as u8);
@@ -1050,6 +1082,54 @@ fn clip_status_payload(c: &ClipStatus, cfg: &ClipSettings) -> Vec<u8> {
         p.push(t.consume as u8);
     }
     p
+}
+
+// Whether the box stores the rule, mirroring rewrite_action_ok and rewrite_clip_ok in rewrite_tab.h.
+fn rewrite_admissible(
+    cls: u8,
+    id: u16,
+    dir: u8,
+    action: u8,
+    offset: u16,
+    mlen: usize,
+    payload: &[u8],
+) -> bool {
+    let ctl = cls == CATCH_CLS_CONTROL;
+    let any = cls == CATCH_CLS_ANY;
+    // The head the box holds for the class: a 64-byte report, or an 8+2048-byte control image.
+    const HEAD_CONTROL: usize = 8 + 2048;
+    let head = if ctl { HEAD_CONTROL } else { 64 };
+    let fits = match action {
+        RW_PATCH | RW_REPLY_PATCH => offset as usize + payload.len() <= head,
+        RW_REPLACE => payload.len() <= head,
+        RW_ANSWER | RW_REPLY_REPLACE => payload.len() <= HEAD_CONTROL,
+        _ => true,
+    };
+    if !fits {
+        return false;
+    }
+    match action {
+        RW_PASS | RW_PATCH | RW_REPLACE => true,
+        RW_DROP => !ctl && !any,
+        RW_ANSWER | RW_STALL | RW_NAK | RW_REPLY_PATCH | RW_REPLY_REPLACE => ctl,
+        RW_CLIP => {
+            let &[op, flags, slen] = payload else {
+                return false;
+            };
+            if offset != 0 || op > CLIP_OP_TOGGLE || flags & !(RW_CLIP_F_DROP | RW_CLIP_F_EDGE) != 0
+            {
+                return false;
+            }
+            if flags & RW_CLIP_F_DROP != 0 && (ctl || any) {
+                return false;
+            }
+            if flags & RW_CLIP_F_EDGE == 0 {
+                return slen == 0;
+            }
+            !ctl && !any && id != CATCH_ID_ANY && dir != LOCK_DIR_BOTH && (slen as usize) < mlen
+        }
+        _ => false,
+    }
 }
 
 // Which (op, class pair) a transform can take, mirroring transform_pair_ok in the firmware.

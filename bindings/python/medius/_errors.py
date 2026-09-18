@@ -132,6 +132,27 @@ class RawDirectionError(MediusError):
     """A raw injection direction that is neither `Direction.IN` nor `Direction.OUT`."""
 
 
+class ClipFrameCountError(MediusError):
+    """A clip frame with more than `CLIP_EDGES_MAX` edges or `CLIP_RAW_MAX` raw reports."""
+
+
+class ClipFrameTooLongError(MediusError):
+    """A clip frame that encodes to more than `CLIP_ENTRY_MAX` bytes."""
+
+
+class ClipTransferDataError(MediusError):
+    """A clip transfer whose data is not what its setup packet announces: `length` bytes for an OUT
+    request, none for an IN one."""
+
+
+class RewriteClipRuleError(MediusError):
+    """A `RewriteAction.CLIP` rule the box would refuse; the message says why."""
+
+
+class RewriteMatchTooLongError(MediusError):
+    """A rewrite rule with more than 16 match bytes."""
+
+
 _STATUS_EXC = {
     Status.ERR_IO: IoError,
     Status.ERR_NOT_FOUND: NotFoundError,
@@ -161,6 +182,11 @@ _STATUS_EXC = {
     Status.ERR_TRANSFORM_OP_FIELDS: TransformOpFieldsError,
     Status.ERR_TRANSFORM_TABLE_FULL: TransformTableFullError,
     Status.ERR_RAW_DIRECTION: RawDirectionError,
+    Status.ERR_CLIP_FRAME_COUNT: ClipFrameCountError,
+    Status.ERR_CLIP_FRAME_TOO_LONG: ClipFrameTooLongError,
+    Status.ERR_CLIP_TRANSFER_DATA: ClipTransferDataError,
+    Status.ERR_REWRITE_CLIP_RULE: RewriteClipRuleError,
+    Status.ERR_REWRITE_MATCH_TOO_LONG: RewriteMatchTooLongError,
 }
 
 

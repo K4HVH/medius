@@ -441,7 +441,7 @@ fn the_class_predicates_split_the_address_space_the_same_way() {
         assert!(!medius_catch_class_is_traffic(c));
         assert!(medius::CatchClass::from_u8(c).unwrap().is_input());
     }
-    for c in MEDIUS_CATCH_CLASS_HID_IN..=MEDIUS_CATCH_CLASS_BUS {
+    for c in MEDIUS_CATCH_CLASS_HID_IN..=MEDIUS_CATCH_CLASS_CLIP_TRANSFER {
         assert!(medius_catch_class_is_traffic(c));
         assert!(!medius_catch_class_is_input(c));
         assert!(medius::CatchClass::from_u8(c).unwrap().is_traffic());
@@ -490,6 +490,15 @@ fn traffic_event_splits_setup_from_the_data_stage() {
     let d = unsafe { medius_traffic_event_data(&short, &mut len) };
     assert_eq!(len, 0, "a cut setup packet has no data stage");
     let _ = d;
+
+    // A clip transfer has the same shape.
+    let mut xfer = e;
+    xfer.class = MEDIUS_CATCH_CLASS_CLIP_TRANSFER;
+    let p = unsafe { medius_traffic_event_setup(&xfer) };
+    assert!(!p.is_null());
+    assert_eq!(unsafe { std::slice::from_raw_parts(p, 8) }, &setup);
+    let _ = unsafe { medius_traffic_event_data(&xfer, &mut len) };
+    assert_eq!(len, 4);
 
     // Any other class keeps the whole packet as data.
     let mut hid = control_event(&[1, 2, 3, 4, 5, 6, 7, 8, 9], 0);

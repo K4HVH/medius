@@ -1,7 +1,10 @@
 use crate::error::{Error, Result};
 use crate::link::reconcile::StoredRewrite;
 use crate::protocol::command::rewrite_payload;
-use crate::protocol::opcode::{Q_REWRITE, Q_REWRITE_ENTRY, REWRITE_MAX_ENTRIES};
+use crate::protocol::opcode::{
+    CATCH_ID_ANY, MAX_PAYLOAD, Q_REWRITE, Q_REWRITE_ENTRY, REWRITE_MATCH_MAX, REWRITE_MAX_ENTRIES,
+    RW_CLIP_F_DROP, RW_CLIP_F_EDGE,
+};
 use crate::protocol::{FrameType, Resp, parse_resp};
 use crate::types::rewrite::{REWRITE_CLEAR_ID, rewrite_entry_from_payload};
 use crate::types::{Direction, RewriteAction, RewriteClass, RewriteRule, RewriteTable};
@@ -178,11 +181,56 @@ pub(crate) fn to_stored(rule: &RewriteRule) -> StoredRewrite {
     }
 }
 
+// What the box asks of a CLIP rule beyond its class (rewrite_clip_ok in rewrite_tab.h). A rule it
+// refuses is one DesiredState would keep and the box would not hold.
+fn validate_clip_rule(rule: &RewriteRule) -> Result<()> {
+    let refuse = |reason| Err(Error::RewriteClipRule { reason });
+    if rule.payload.len() != 3 {
+        return refuse("carries three payload bytes: a clip verb, its flags and a selector length");
+    }
+    let Some(verb) = rule.clip_verb() else {
+        return refuse("runs a clip verb from 0 (start) to 5 (toggle)");
+    };
+    if rule.offset != 0 || rule.payload[1] & !(RW_CLIP_F_DROP | RW_CLIP_F_EDGE) != 0 {
+        return refuse("takes offset 0 and only the drop and edge flags");
+    }
+    if verb.drop && !RewriteAction::Drop.is_valid_for(rule.class) {
+        return refuse("cannot drop a Control or Any packet");
+    }
+    if !verb.edge {
+        return if verb.selector_len == 0 {
+            Ok(())
+        } else {
+            refuse("has a selector length only with the edge flag")
+        };
+    }
+    let one_stream = !matches!(rule.class, RewriteClass::Control | RewriteClass::Any)
+        && rule.id != CATCH_ID_ANY
+        && rule.direction != Direction::Both;
+    if !one_stream {
+        return refuse(
+            "needs one stream for the edge flag to have a run over: a report class, a concrete id, and IN or OUT",
+        );
+    }
+    if verb.selector_len as usize >= rule.match_bytes.len() {
+        return refuse(
+            "needs match bytes past its selector: they are the condition the run is over",
+        );
+    }
+    Ok(())
+}
+
 pub(crate) fn validate_rule(rule: &RewriteRule) -> Result<()> {
     if rule.match_bytes.len() != rule.mask.len() {
         return Err(Error::RewriteMaskLength {
             match_len: rule.match_bytes.len(),
             mask_len: rule.mask.len(),
+        });
+    }
+    if rule.match_bytes.len() > REWRITE_MATCH_MAX {
+        return Err(Error::RewriteMatchTooLong {
+            len: rule.match_bytes.len(),
+            limit: REWRITE_MATCH_MAX,
         });
     }
     // REWRITE's direction byte is Both/Positive/Negative only; the box rejects the bearing-relative
@@ -198,6 +246,22 @@ pub(crate) fn validate_rule(rule: &RewriteRule) -> Result<()> {
             action: rule.action,
             class: rule.class,
         });
+    }
+    // The box refuses a rule its own read-back reply cannot carry: that reply's header is two bytes
+    // wider than the command's, so a rule can fit the frame it is sent in and still be refused.
+    const ENTRY_HDR: usize = 11;
+    let room = MAX_PAYLOAD - ENTRY_HDR - 2 * rule.match_bytes.len();
+    if rule.payload.len() > room {
+        return Err(Error::RewritePayloadTooLarge {
+            action: rule.action,
+            class: rule.class,
+            len: rule.payload.len(),
+            offset: rule.offset as usize,
+            cap: room,
+        });
+    }
+    if rule.action == RewriteAction::Clip {
+        return validate_clip_rule(rule);
     }
     // Mirror the box's head-cap admission (rewrite_tab.h): a report surface holds 64 bytes and a
     // control image 8+2048, so a rule whose payload cannot land is refused there. Reject it here

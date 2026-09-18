@@ -56,7 +56,7 @@
 #define MEDIUS_MAX_DEV_PAYLOAD 512
 
 // CATCH classes, the `class` of a `MediusCatchFilter`. 0-3 are the classes `LOCK` and `INJECT`
-// address; 4-10 are the traffic the box relays.
+// address; 4-11 are byte-oriented traffic.
 #define MEDIUS_CATCH_CLASS_BTN 0
 
 #define MEDIUS_CATCH_CLASS_KEY 1
@@ -86,6 +86,9 @@
 // Bus lifecycle: reset, suspend, configuration and interface changes, attach and detach.
 #define MEDIUS_CATCH_CLASS_BUS 10
 
+// A control transfer a clip ran against the real device, keyed by endpoint number (0 = EP0).
+#define MEDIUS_CATCH_CLASS_CLIP_TRANSFER 11
+
 // Wildcard: every class.
 #define MEDIUS_CATCH_CLASS_ANY 255
 
@@ -113,8 +116,23 @@
 // The bearing window the box holds before any host sets one, in ms.
 #define MEDIUS_BEARING_WINDOW_DEFAULT_MS 20
 
+// `medius_rewrite_rule_clip` flag: every packet the rule wins is dropped.
+#define MEDIUS_REWRITE_CLIP_DROP 1
+
+// `medius_rewrite_rule_clip` flag: the verb runs on the first packet of a run of matching ones.
+#define MEDIUS_REWRITE_CLIP_EDGE 2
+
 // The max clip trigger bindings in a `MediusClipSettings` (matches the firmware `CLIP_TRIG_MAX`).
 #define MEDIUS_CLIP_TRIG_MAX 8
+
+// The most edges one `MediusClipFrame` carries (the firmware `CLIP_EDGES_MAX`).
+#define MEDIUS_CLIP_EDGES_MAX 8
+
+// The most raw reports one `MediusClipFrame` carries (the firmware `CLIP_RAW_MAX`).
+#define MEDIUS_CLIP_RAW_MAX 8
+
+// The most bytes one `MediusClipFrame` encodes to: one `CLIP_APPEND` payload.
+#define MEDIUS_CLIP_ENTRY_MAX 512
 
 // The result of a fallible `medius_*` call. `MEDIUS_OK` is zero; everything else is a failure.
 enum MediusStatus
@@ -171,6 +189,17 @@ enum MediusStatus
     MEDIUS_STATUS_ERR_TRANSFORM_TABLE_FULL = 28,
     // A raw injection direction other than `MEDIUS_DIRECTION_POSITIVE` (IN) or `MEDIUS_DIRECTION_NEGATIVE` (OUT).
     MEDIUS_STATUS_ERR_RAW_DIRECTION = 29,
+    // A clip frame with more than `MEDIUS_CLIP_EDGES_MAX` edges or `MEDIUS_CLIP_RAW_MAX` raw reports.
+    MEDIUS_STATUS_ERR_CLIP_FRAME_COUNT = 30,
+    // A clip frame that encodes to more than `MEDIUS_CLIP_ENTRY_MAX` bytes.
+    MEDIUS_STATUS_ERR_CLIP_FRAME_TOO_LONG = 31,
+    // A clip transfer whose data is not what its setup packet announces: `length` bytes for an OUT
+    // request, none for an IN one.
+    MEDIUS_STATUS_ERR_CLIP_TRANSFER_DATA = 32,
+    // A `MEDIUS_REWRITE_ACTION_CLIP` rule the box would refuse; `medius_last_error_message` says why.
+    MEDIUS_STATUS_ERR_REWRITE_CLIP_RULE = 33,
+    // A rewrite rule with more than `MEDIUS_MAX_REWRITE_MATCH` match bytes.
+    MEDIUS_STATUS_ERR_REWRITE_MATCH_TOO_LONG = 34,
 };
 #ifndef __cplusplus
 #if __STDC_VERSION__ >= 202311L
@@ -774,7 +803,8 @@ typedef uint8_t MediusRebootTarget;
 
 // What the winning rewrite rule does to a matched packet (§3.14). Crosses the ABI as the `action`
 // byte. `Drop` is a report surface only; `Answer`/`Stall`/`Nak` and the two reply rewrites are
-// control-only, mirroring the box's own admissibility check.
+// control-only, mirroring the box's own admissibility check. `Clip` runs a clip verb on any class;
+// `medius_rewrite_rule_clip` builds one.
 enum MediusRewriteAction
 #if defined(__cplusplus) || __STDC_VERSION__ >= 202311L
   : uint8_t
@@ -789,6 +819,7 @@ enum MediusRewriteAction
     MEDIUS_REWRITE_ACTION_NAK = 6,
     MEDIUS_REWRITE_ACTION_REPLY_PATCH = 7,
     MEDIUS_REWRITE_ACTION_REPLY_REPLACE = 8,
+    MEDIUS_REWRITE_ACTION_CLIP = 9,
 };
 #ifndef __cplusplus
 #if __STDC_VERSION__ >= 202311L
@@ -869,6 +900,9 @@ typedef struct MediusClip MediusClip;
 // An opaque builder for a clip entry stream.
 typedef struct MediusClipBuilder MediusClipBuilder;
 
+// An opaque clip frame: everything the box does on one tick.
+typedef struct MediusClipFrame MediusClipFrame;
+
 // An open connection to one medius box; create with `medius_device_open`/`_find` and free with `medius_device_free`.
 typedef struct MediusDevice MediusDevice;
 
@@ -901,6 +935,17 @@ typedef struct MediusUsage {
     uint16_t id;
 } MediusUsage;
 
+// A USB control-transfer setup packet: the eight `<BBHHH>` little-endian bytes of `bmRequestType`,
+// `bRequest`, `wValue`, `wIndex`, `wLength` (§9.3 of the USB spec). `length` is the data-stage
+// length: bytes to read for an IN request, the length of the OUT data you pass otherwise.
+typedef struct MediusSetup {
+    uint8_t request_type;
+    uint8_t request;
+    uint16_t value;
+    uint16_t index;
+    uint16_t length;
+} MediusSetup;
+
 // One clip trigger binding: `on`'s `edge` drives `action`; `consume` suppresses the input from the game.
 typedef struct MediusClipTrigger {
     struct MediusUsage on;
@@ -924,6 +969,13 @@ typedef struct MediusClipStatus {
     uint16_t underruns;
     uint16_t overruns;
     uint16_t seq_gaps;
+    // Clip transfers the device completed.
+    uint16_t xfers;
+    // Clip transfers that ended any other way: a refusal, no answer, no room in the box's queue, or
+    // dropped behind one the device did not answer.
+    uint16_t xfer_errs;
+    // Raw reports and transfers the box discarded because the imperfect-clone opt-in was off.
+    uint16_t gated;
     uint16_t held_n;
     struct MediusUsage held[MEDIUS_MAX_USAGES];
 } MediusClipStatus;
@@ -998,17 +1050,6 @@ typedef struct MediusLockTarget {
     uint8_t kind;
     struct MediusUsage usage;
 } MediusLockTarget;
-
-// A USB control-transfer setup packet: the eight `<BBHHH>` little-endian bytes of `bmRequestType`,
-// `bRequest`, `wValue`, `wIndex`, `wLength` (§9.3 of the USB spec). `length` is the data-stage
-// length: bytes to read for an IN request, the length of the OUT data you pass otherwise.
-typedef struct MediusSetup {
-    uint8_t request_type;
-    uint8_t request;
-    uint16_t value;
-    uint16_t index;
-    uint16_t length;
-} MediusSetup;
 
 // The real device's answer to a `medius_device_transfer`: its status and the IN data in
 // `data[0..len]`. A `status` other than `MEDIUS_TRANSFER_STATUS_OK` is a real protocol outcome, not
@@ -1427,7 +1468,8 @@ typedef struct MediusUsageEvent {
 } MediusUsageEvent;
 
 // One byte-oriented catch event: HID reports, vendor endpoints, control transactions, the bytes the
-// clone emitted, or bus lifecycle. `bytes[0..len]` is as much of the packet as `capture` kept.
+// clone emitted, bus lifecycle, or a clip's control transfers. `bytes[0..len]` is as much of the
+// packet as `capture` kept.
 typedef struct MediusTrafficEvent {
     // One of `MEDIUS_CATCH_CLASS_*`.
     MediusCatchClass class_;
@@ -1438,7 +1480,8 @@ typedef struct MediusTrafficEvent {
     // as one; C++ renders the enum as `enum : uint8_t`, so assigning this to a `MediusDirection`
     // there needs a cast.
     uint8_t direction;
-    // Class-specific; read it with `medius_traffic_event_control_status` or `..._bus_event`.
+    // Class-specific; read it with `medius_traffic_event_control_status`, `..._bus_event` or
+    // `..._transfer_status`.
     uint8_t flags;
     // The packet's length before `capture` truncated it.
     uint16_t true_len;
@@ -1689,6 +1732,67 @@ typedef struct MediusLogLine {
 extern "C" {
 #endif // __cplusplus
 
+// A new empty clip frame. The caller owns it and must free it with `medius_clip_frame_free`.
+struct MediusClipFrame *medius_clip_frame_new(void);
+
+// Free a clip frame. Null is a no-op.
+void medius_clip_frame_free(struct MediusClipFrame *f);
+
+// Clear the frame to reuse it.
+MediusStatus medius_clip_frame_clear(struct MediusClipFrame *f);
+
+// Set the frame's cursor motion (`dx`/`dy`).
+MediusStatus medius_clip_frame_move(struct MediusClipFrame *f, int16_t dx, int16_t dy);
+
+// Set the frame's wheel motion.
+MediusStatus medius_clip_frame_wheel(struct MediusClipFrame *f, int16_t dz);
+
+// Set the frame's pan (horizontal scroll) motion.
+MediusStatus medius_clip_frame_pan(struct MediusClipFrame *f, int16_t dpan);
+
+// Add an edge on any usage with an explicit `action`. `action` takes a `MEDIUS_ACTION_*` constant;
+// any other value is `MEDIUS_STATUS_ERR_INVALID_ARG`. `medius_clip_append` checks the edge count: a
+// frame past `MEDIUS_CLIP_EDGES_MAX` is `MEDIUS_STATUS_ERR_CLIP_FRAME_COUNT` there.
+MediusStatus medius_clip_frame_edge(struct MediusClipFrame *f,
+                                    struct MediusUsage usage,
+                                    uint8_t action);
+
+// Add an edge that presses a usage (a button, key, or media usage).
+MediusStatus medius_clip_frame_press(struct MediusClipFrame *f, struct MediusUsage usage);
+
+// Add an edge that soft-releases a usage (clears the injected press; a physical hold is left intact).
+MediusStatus medius_clip_frame_release(struct MediusClipFrame *f,
+                                       struct MediusUsage usage);
+
+// Add an edge that force-releases a usage (masks a physical hold too).
+MediusStatus medius_clip_frame_force_release(struct MediusClipFrame *f, struct MediusUsage usage);
+
+// Add a raw report, as `medius_device_raw` sends one: `bytes[0..len]` verbatim on endpoint number
+// `ep_num` in `dir`. `dir` takes a `MEDIUS_DIRECTION_*` constant; any other value is
+// `MEDIUS_STATUS_ERR_INVALID_ARG`. `medius_clip_append` checks the rest: a direction that is neither
+// IN nor OUT, and a frame past `MEDIUS_CLIP_RAW_MAX` raw reports, which is
+// `MEDIUS_STATUS_ERR_CLIP_FRAME_COUNT`. The box plays it only while the imperfect-clone opt-in is on.
+MediusStatus medius_clip_frame_raw(struct MediusClipFrame *f,
+                                   uint8_t ep_num,
+                                   uint8_t dir,
+                                   const uint8_t *bytes,
+                                   uintptr_t len);
+
+// Add a control transfer against the real device, as `medius_device_transfer` runs one.
+// `out_data[0..out_len]` is the OUT data stage: `setup.length` bytes for an OUT request, none for an
+// IN one, checked by `medius_clip_append`. The answer arrives as a
+// `MEDIUS_CATCH_CLASS_CLIP_TRANSFER` event. The box runs it only while the imperfect-clone opt-in
+// is on.
+MediusStatus medius_clip_frame_transfer(struct MediusClipFrame *f,
+                                        uint8_t ep,
+                                        struct MediusSetup setup,
+                                        const uint8_t *out_data,
+                                        uintptr_t out_len);
+
+// The bytes the frame takes in the ring, at most `MEDIUS_CLIP_ENTRY_MAX` for one
+// `medius_clip_append` accepts. 0 for a null frame.
+uintptr_t medius_clip_frame_byte_len(const struct MediusClipFrame *f);
+
 // A new empty clip-entry builder. The caller owns it and must free it with `medius_clip_builder_free`.
 struct MediusClipBuilder *medius_clip_builder_new(void);
 
@@ -1698,6 +1802,10 @@ void medius_clip_builder_free(struct MediusClipBuilder *b);
 // Clear the builder to reuse it after an append.
 MediusStatus medius_clip_builder_clear(struct MediusClipBuilder *b);
 
+// The bytes the builder's entries take in the ring: what to hold against `MediusClipStatus::free`
+// before a `medius_clip_append`. 0 for a null builder.
+uintptr_t medius_clip_builder_byte_len(const struct MediusClipBuilder *b);
+
 // A gap run: emit nothing for `frames` native frames (a zero count is a no-op).
 MediusStatus medius_clip_builder_gap(struct MediusClipBuilder *b, uint16_t frames);
 
@@ -1706,6 +1814,9 @@ MediusStatus medius_clip_builder_move(struct MediusClipBuilder *b, int16_t dx, i
 
 // A wheel frame.
 MediusStatus medius_clip_builder_wheel(struct MediusClipBuilder *b, int16_t dz);
+
+// A pan (horizontal scroll) frame.
+MediusStatus medius_clip_builder_pan(struct MediusClipBuilder *b, int16_t dpan);
 
 // A frame that presses a usage (a button, key, or media usage).
 MediusStatus medius_clip_builder_press(struct MediusClipBuilder *b, struct MediusUsage usage);
@@ -1723,16 +1834,23 @@ MediusStatus medius_clip_builder_edge(struct MediusClipBuilder *b,
                                       struct MediusUsage usage,
                                       uint8_t action);
 
-// A general content frame: a motion delta (`dx`/`dy`, `wheel`) plus `n` edges from parallel
-// `inputs`/`actions` arrays. Each `actions` entry takes a `MEDIUS_ACTION_*` constant; any other
-// value is `MEDIUS_STATUS_ERR_INVALID_ARG`.
+// A frame carrying one raw report (see `medius_clip_frame_raw`).
+MediusStatus medius_clip_builder_raw(struct MediusClipBuilder *b,
+                                     uint8_t ep_num,
+                                     uint8_t dir,
+                                     const uint8_t *bytes,
+                                     uintptr_t len);
+
+// A frame carrying one control transfer (see `medius_clip_frame_transfer`).
+MediusStatus medius_clip_builder_transfer(struct MediusClipBuilder *b,
+                                          uint8_t ep,
+                                          struct MediusSetup setup,
+                                          const uint8_t *out_data,
+                                          uintptr_t out_len);
+
+// One frame carrying whatever `frame` holds. The builder takes a copy, so `frame` stays usable.
 MediusStatus medius_clip_builder_frame(struct MediusClipBuilder *b,
-                                       int16_t dx,
-                                       int16_t dy,
-                                       int16_t wheel,
-                                       const struct MediusUsage *inputs,
-                                       const uint8_t *actions,
-                                       uintptr_t n);
+                                       const struct MediusClipFrame *frame);
 
 // A handle to this box's buffered-clip playback; free it with `medius_clip_free`.
 MediusStatus medius_device_clip(struct MediusDevice *dev, struct MediusClip **out);
@@ -1741,6 +1859,12 @@ MediusStatus medius_device_clip(struct MediusDevice *dev, struct MediusClip **ou
 void medius_clip_free(struct MediusClip *clip);
 
 // Append the builder's entries to the ring (whole-entry frames, each with the next append sequence).
+// Every entry is checked before the first frame goes out, so a refusal sends nothing: a frame past
+// `MEDIUS_CLIP_EDGES_MAX` edges or `MEDIUS_CLIP_RAW_MAX` raw reports
+// (`MEDIUS_STATUS_ERR_CLIP_FRAME_COUNT`), one that encodes past `MEDIUS_CLIP_ENTRY_MAX` bytes
+// (`..._CLIP_FRAME_TOO_LONG`), a raw report whose direction is neither IN nor OUT
+// (`..._RAW_DIRECTION`, or `..._RELATIVE_DIRECTION` for the bearing-relative pair), or a transfer
+// whose data does not match its setup packet (`..._CLIP_TRANSFER_DATA`).
 MediusStatus medius_clip_append(struct MediusClip *clip,
                                 const struct MediusClipBuilder *builder);
 
@@ -1758,7 +1882,7 @@ MediusStatus medius_clip_set_loop(struct MediusClip *clip, uint8_t on);
 MediusStatus medius_clip_set_retain(struct MediusClip *clip,
                                     uint8_t on);
 
-// Make the clip's motion wait to ride a native report (0 = the box's own clock, the default); only its wheel while rendering is on with a profile armed.
+// Make the clip's motion wait to ride a native report (0 = the box's own clock, the default); only its wheel and pan while rendering is on with a profile armed.
 MediusStatus medius_clip_set_ride(struct MediusClip *clip,
                                   uint8_t on);
 
@@ -2006,10 +2130,12 @@ MediusStatus medius_device_transfer_timeout(struct MediusDevice *dev,
 // opt-in. `rule->class` takes a `MEDIUS_REWRITE_CLASS_*` constant, `rule->action` a
 // `MEDIUS_REWRITE_ACTION_*` one and `rule->direction` a `MEDIUS_DIRECTION_*` one; any other value is
 // `MEDIUS_STATUS_ERR_INVALID_ARG`. `match_len` must equal `mask_len`
-// (`MEDIUS_STATUS_ERR_REWRITE_MASK_LENGTH`), the action must be valid for the class
+// (`MEDIUS_STATUS_ERR_REWRITE_MASK_LENGTH`) and be at most `MEDIUS_MAX_REWRITE_MATCH`
+// (`..._REWRITE_MATCH_TOO_LONG`), the action must be valid for the class
 // (`..._REWRITE_ACTION_CLASS`), the direction must not be bearing-relative
-// (`..._RELATIVE_DIRECTION`), and the payload must fit the box's head
-// (`..._REWRITE_PAYLOAD_TOO_LARGE`). `medius_device_query_rewrite` confirms what the box holds.
+// (`..._RELATIVE_DIRECTION`), the payload must fit the box's head
+// (`..._REWRITE_PAYLOAD_TOO_LARGE`), and a `MEDIUS_REWRITE_ACTION_CLIP` rule must be one the box
+// admits (`..._REWRITE_CLIP_RULE`). `medius_device_query_rewrite` confirms what the box holds.
 MediusStatus medius_device_set_rewrite(struct MediusDevice *dev,
                                        const struct MediusRewriteRule *rule);
 
@@ -2331,19 +2457,20 @@ bool medius_catch_filter_same_address(struct MediusCatchFilter a, struct MediusC
 // Whether `class` is one of the four parsed-input classes, which arrive decoded and carry no packet.
 bool medius_catch_class_is_input(MediusCatchClass class_);
 
-// Whether `class` is one of the seven byte-oriented traffic classes.
+// Whether `class` is one of the eight byte-oriented traffic classes.
 bool medius_catch_class_is_traffic(MediusCatchClass class_);
 
 // Whether the capture cut this packet short. Without checking, a truncated capture and a genuinely
 // short packet are indistinguishable. Mirrors `medius::TrafficEvent::truncated`.
 bool medius_traffic_event_truncated(const struct MediusTrafficEvent *event);
 
-// The 8-byte setup packet of a CONTROL event, or NULL for another class or a capture cut shorter
-// than the setup stage. Points into `event`. Mirrors `medius::TrafficEvent::setup`.
+// The 8-byte setup packet of a CONTROL or CLIP_TRANSFER event, or NULL for another class or a
+// capture cut shorter than the setup stage. Points into `event`. Mirrors
+// `medius::TrafficEvent::setup`.
 const uint8_t *medius_traffic_event_setup(const struct MediusTrafficEvent *event);
 
-// The data stage of a CONTROL event, the whole packet for any other class; its length goes to
-// `*out_len`. Points into `event`. Mirrors `medius::TrafficEvent::data`.
+// The data stage of a CONTROL or CLIP_TRANSFER event, the whole packet for any other class; its
+// length goes to `*out_len`. Points into `event`. Mirrors `medius::TrafficEvent::data`.
 const uint8_t *medius_traffic_event_data(const struct MediusTrafficEvent *event,
                                          uintptr_t *out_len);
 
@@ -2351,6 +2478,12 @@ const uint8_t *medius_traffic_event_data(const struct MediusTrafficEvent *event,
 // `medius::TrafficEvent::control_status`.
 bool medius_traffic_event_control_status(const struct MediusTrafficEvent *event,
                                          MediusControlStatus *out);
+
+// How the transfer ended, written to `*out` as a `MEDIUS_TRANSFER_STATUS_*` value; false for any
+// class but CLIP_TRANSFER. `MEDIUS_TRANSFER_STATUS_NAK` when no answer came, and a byte no constant
+// names is carried through. A null `out` is skipped and the return still answers. Mirrors
+// `medius::TrafficEvent::transfer_status`.
+bool medius_traffic_event_transfer_status(const struct MediusTrafficEvent *event, uint8_t *out);
 
 // The lifecycle event, written to `*out`; false for any class but BUS or an unknown kind. Mirrors
 // `medius::TrafficEvent::bus_event`.
@@ -2365,6 +2498,31 @@ bool medius_traffic_event_bulk_end_of_transfer(const struct MediusTrafficEvent *
 // whose length is an exact multiple of the packet size, so it carries no bytes and still matters.
 // Mirrors `medius::TrafficEvent::bulk_zlp`.
 bool medius_traffic_event_bulk_zlp(const struct MediusTrafficEvent *event);
+
+// Fill `*rule_out` with a rule that runs clip verb `clip_action` on the box's next tick for every
+// packet it wins, and zero the rest of it; set `match_bytes`/`mask` afterwards to narrow it.
+// `flags` is `MEDIUS_REWRITE_CLIP_*` bits: `DROP` drops each packet the rule wins, `EDGE` runs the
+// verb on the first packet of a run only, with the first `selector_len` match bytes picking the
+// run's stream. Any other bit is `MEDIUS_STATUS_ERR_REWRITE_CLIP_RULE` and `*rule_out` is left as
+// it was. `class` takes a `MEDIUS_REWRITE_CLASS_*` constant, `direction` a `MEDIUS_DIRECTION_*` one
+// and `clip_action` a `MEDIUS_CLIP_ACTION_*` one; any other value is
+// `MEDIUS_STATUS_ERR_INVALID_ARG`. Mirrors `medius::RewriteRule::clip`.
+MediusStatus medius_rewrite_rule_clip(struct MediusRewriteRule *rule_out,
+                                      uint8_t class_,
+                                      uint16_t id,
+                                      uint8_t direction,
+                                      uint8_t clip_action,
+                                      uint8_t flags,
+                                      uint8_t selector_len);
+
+// What a clip rule does: the verb to `*out_action` as a `MEDIUS_CLIP_ACTION_*` value, the
+// `MEDIUS_REWRITE_CLIP_*` bits to `*out_flags` and the selector length to `*out_selector_len`; false
+// for any other rule. A null out is skipped and the return still answers. Mirrors
+// `medius::RewriteRule::clip_verb`.
+bool medius_rewrite_rule_clip_verb(const struct MediusRewriteRule *rule,
+                                   uint8_t *out_action,
+                                   uint8_t *out_flags,
+                                   uint8_t *out_selector_len);
 
 // Whether the clip is currently holding `usage` down. Mirrors `medius::ClipStatus::is_held`.
 bool medius_clip_status_is_held(const struct MediusClipStatus *status, struct MediusUsage usage);

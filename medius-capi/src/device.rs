@@ -9,8 +9,8 @@ use medius::{UpdateProgress, UpdateTarget};
 
 use crate::convert::{
     action_from_c, axis_from_c, blanket_from_c, emit_pace_from_c, input_to_medius, led_mode_from_c,
-    led_target_from_c, lock_target_to_medius, motion_from_c, move_timing_from_c, patch_from_c,
-    pending_motion_from_c, reboot_target_from_c, rewrite_rule_from_c, setup_from_c,
+    led_target_from_c, lock_target_to_medius, motion_from_c, move_timing_from_c, opt_slice,
+    patch_from_c, pending_motion_from_c, reboot_target_from_c, rewrite_rule_from_c, setup_from_c,
     transform_from_c,
 };
 use crate::ctypes::*;
@@ -567,19 +567,6 @@ pub unsafe extern "C" fn medius_device_allow_imperfect_clones(
     with_device(dev, |d| d.allow_imperfect_clones(allow))
 }
 
-// A read-only byte slice from a caller pointer + length. `from_raw_parts` needs a non-null aligned
-// pointer even for a zero length, so an empty request maps to a real empty slice, and a null pointer
-// with a non-zero length is refused before it is read.
-unsafe fn opt_slice<'a>(ptr: *const u8, len: usize) -> Option<&'a [u8]> {
-    if len == 0 {
-        Some(&[])
-    } else if ptr.is_null() {
-        None
-    } else {
-        Some(unsafe { std::slice::from_raw_parts(ptr, len) })
-    }
-}
-
 /// `RAW` (§3.14): put `bytes[0..len]` verbatim on cloned endpoint number `ep_num` in `dir`,
 /// fire-and-forget. `ep_num` is the bare endpoint number (0 to 15); `dir` is a `MEDIUS_DIRECTION_*`
 /// value, and only `MEDIUS_DIRECTION_POSITIVE` (IN, toward the game PC) and `MEDIUS_DIRECTION_NEGATIVE`
@@ -698,6 +685,15 @@ fn with_rewrite_rule(
                 "invalid rewrite class, action or direction",
             );
         };
+        // The arrays hold `MEDIUS_MAX_REWRITE_MATCH` bytes, so a longer key is refused here for a set
+        // and a remove alike. An unequal pair goes on to the crate, which checks the mask length first.
+        let len = r.match_bytes.len();
+        if len == r.mask.len() && len > MEDIUS_MAX_REWRITE_MATCH {
+            return record(&medius::Error::RewriteMatchTooLong {
+                len,
+                limit: MEDIUS_MAX_REWRITE_MATCH,
+            });
+        }
         status_of(f(unsafe { &(*dev).inner }, r))
     })
 }
@@ -706,10 +702,12 @@ fn with_rewrite_rule(
 /// opt-in. `rule->class` takes a `MEDIUS_REWRITE_CLASS_*` constant, `rule->action` a
 /// `MEDIUS_REWRITE_ACTION_*` one and `rule->direction` a `MEDIUS_DIRECTION_*` one; any other value is
 /// `MEDIUS_STATUS_ERR_INVALID_ARG`. `match_len` must equal `mask_len`
-/// (`MEDIUS_STATUS_ERR_REWRITE_MASK_LENGTH`), the action must be valid for the class
+/// (`MEDIUS_STATUS_ERR_REWRITE_MASK_LENGTH`) and be at most `MEDIUS_MAX_REWRITE_MATCH`
+/// (`..._REWRITE_MATCH_TOO_LONG`), the action must be valid for the class
 /// (`..._REWRITE_ACTION_CLASS`), the direction must not be bearing-relative
-/// (`..._RELATIVE_DIRECTION`), and the payload must fit the box's head
-/// (`..._REWRITE_PAYLOAD_TOO_LARGE`). `medius_device_query_rewrite` confirms what the box holds.
+/// (`..._RELATIVE_DIRECTION`), the payload must fit the box's head
+/// (`..._REWRITE_PAYLOAD_TOO_LARGE`), and a `MEDIUS_REWRITE_ACTION_CLIP` rule must be one the box
+/// admits (`..._REWRITE_CLIP_RULE`). `medius_device_query_rewrite` confirms what the box holds.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_device_set_rewrite(
     dev: *mut MediusDevice,

@@ -13,6 +13,7 @@ from ._types import (
     Bearing,
     Caps,
     _enum,
+    _as_bytes,
     _u8,
     _u16,
     _window_ms,
@@ -118,7 +119,7 @@ class MockBox:
     def set_transfer_reply(self, status, data: bytes = b""):
         """Set the canned (status, IN data) the mock answers a TRANSFER with while the opt-in is on;
         with it off it answers REFUSED. `status` is a `TransferStatus` or a raw wire byte."""
-        raw = bytes(data)
+        raw = _as_bytes(data, "data")
         buf = (_native.u8 * len(raw)).from_buffer_copy(raw)
         _native.lib.medius_mock_set_transfer_reply(
             self._handle, _u8(int(status), "status"), buf, len(raw)
