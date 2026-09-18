@@ -2502,8 +2502,8 @@ fn a_patch_survives_the_query_roundtrip() {
 }
 
 #[test]
-fn the_gated_dev_layer_calls_are_refused_with_the_opt_in_off() {
-    let mock = medius_mock_new(); // imperfect off by default
+fn raw_sends_with_the_opt_in_off() {
+    let mock = medius_mock_new(); // imperfect off by default: the box drops the frame, the crate sends it
     let mut dev: *mut MediusDevice = ptr::null_mut();
     assert_eq!(
         unsafe { medius_device_with_mock(mock, &mut dev) },
@@ -2520,7 +2520,21 @@ fn the_gated_dev_layer_calls_are_refused_with_the_opt_in_off() {
                 bytes.len(),
             )
         },
-        MediusStatus::ErrImperfectRequired
+        MediusStatus::Ok
+    );
+    unsafe {
+        medius_device_free(dev);
+        medius_mock_free(mock);
+    }
+}
+
+#[test]
+fn the_gated_dev_layer_calls_are_refused_with_the_opt_in_off() {
+    let mock = medius_mock_new(); // imperfect off by default
+    let mut dev: *mut MediusDevice = ptr::null_mut();
+    assert_eq!(
+        unsafe { medius_device_with_mock(mock, &mut dev) },
+        MediusStatus::Ok
     );
     let rule = c_rewrite(
         MediusRewriteClass::Emit as u8,

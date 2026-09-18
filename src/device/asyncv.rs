@@ -543,10 +543,10 @@ impl AsyncDevice {
     }
 
     /// `RAW`: put raw bytes on a cloned endpoint number in a direction. See [`Device::raw`].
+    // Nothing to await since the send stopped reading the opt-in, but it stays a future: every caller
+    // awaits it.
     pub async fn raw(&self, ep: u8, direction: Direction, bytes: &[u8]) -> Result<()> {
-        crate::device::raw::validate_raw_direction(direction)?;
-        self.require_imperfect().await?;
-        self.dev().raw_frame(ep, direction, bytes)
+        self.dev().raw(ep, direction, bytes)
     }
 
     /// `TRANSFER`: run one control transfer against the device. See [`Device::transfer`].

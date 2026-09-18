@@ -25,6 +25,18 @@ fn async_logs_recv_async_yields_pushed_lines() {
 }
 
 #[test]
+fn async_raw_sends_without_reading_the_opt_in() {
+    use crate::protocol::FrameType;
+    use crate::types::Direction;
+
+    let mock = MockBox::new(); // opt-in off: the box drops the frame, the crate still sends it
+    let device = Device::with_mock(mock.clone()).into_async();
+    block_on(device.raw(1, Direction::IN, &[0x00, 0x01])).unwrap();
+    assert!(mock.saw(FrameType::Raw));
+    assert!(!mock.saw(FrameType::Query));
+}
+
+#[test]
 fn async_movement_verbs_send_the_same_frames_as_the_sync_ones() {
     use crate::protocol::FrameType;
     use crate::{Motion, MoveTiming, PendingMotion};

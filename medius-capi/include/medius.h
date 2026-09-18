@@ -155,7 +155,7 @@ enum MediusStatus
     // A negative (reversing) lock scale on a button, key or media usage, which carries one bit and has
     // nothing to reverse.
     MEDIUS_STATUS_ERR_LOCK_SCALE_USAGE = 21,
-    // An advanced control layer call with the imperfect-clone opt-in off, which gates the whole layer.
+    // `medius_device_set_rewrite` or `medius_device_apply_patch` with the imperfect-clone opt-in off.
     MEDIUS_STATUS_ERR_IMPERFECT_REQUIRED = 22,
     // A rewrite rule whose `match` and `mask` are different lengths.
     MEDIUS_STATUS_ERR_REWRITE_MASK_LENGTH = 23,
@@ -1097,7 +1097,7 @@ typedef struct MediusPatch {
     // One of `MEDIUS_PATCH_SECTION_*`. A byte rather than `MediusPatchSection`, so the boundary can
     // validate it; C++ renders the enum as `enum : uint8_t`, so assigning this to one needs a cast.
     uint8_t section;
-    // The configuration index, for `Config`/`Report`.
+    // The configuration index for `Config`/`Report`: 0 is the first configuration, not bConfigurationValue.
     uint8_t cfg;
     // The interface or string index, for `Report`/`String`.
     uint8_t index;
@@ -1970,9 +1970,9 @@ MediusStatus medius_device_allow_imperfect_clones(struct MediusDevice *dev, bool
 // fire-and-forget. `ep_num` is the bare endpoint number (0 to 15); `dir` is a `MEDIUS_DIRECTION_*`
 // value, and only `MEDIUS_DIRECTION_POSITIVE` (IN, toward the game PC) and `MEDIUS_DIRECTION_NEGATIVE`
 // (OUT, to the real device) address one, so any other is `MEDIUS_STATUS_ERR_RAW_DIRECTION` (or
-// `MEDIUS_STATUS_ERR_RELATIVE_DIRECTION` for the bearing-relative pair). Gated on
-// `medius_device_allow_imperfect_clones`: with the opt-in off this is
-// `MEDIUS_STATUS_ERR_IMPERFECT_REQUIRED` rather than a frame the box would drop.
+// `MEDIUS_STATUS_ERR_RELATIVE_DIRECTION` for the bearing-relative pair). Admitted by
+// `medius_device_allow_imperfect_clones`: with the opt-in off the box drops the frame and says
+// nothing, so this is still `MEDIUS_STATUS_OK`; `medius_device_query_imperfect` reports the state.
 MediusStatus medius_device_raw(struct MediusDevice *dev,
                                uint8_t ep_num,
                                uint8_t dir,

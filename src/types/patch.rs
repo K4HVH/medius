@@ -18,9 +18,9 @@ pub enum PatchSection {
     /// The 18-byte device descriptor. `cfg`/`index` are ignored.
     #[default]
     Device = PATCH_SEC_DEVICE,
-    /// A configuration descriptor; `cfg` is the configuration index.
+    /// A configuration descriptor; `cfg` is the configuration index, counting from 0.
     Config = PATCH_SEC_CONFIG,
-    /// An interface's report descriptor; `cfg` + `index` are the interface number.
+    /// An interface's report descriptor; `cfg` is the configuration index and `index` the interface number.
     Report = PATCH_SEC_REPORT,
     /// A string descriptor; `index` is the string index. A string patch replaces the whole string.
     String = PATCH_SEC_STRING,
@@ -70,7 +70,8 @@ impl PatchSection {
 pub struct Patch {
     /// The descriptor section this patch targets.
     pub section: PatchSection,
-    /// The configuration index, for [`Config`](PatchSection::Config)/[`Report`](PatchSection::Report).
+    /// The configuration index for [`Config`](PatchSection::Config)/[`Report`](PatchSection::Report): `0` is
+    /// the first configuration, not `bConfigurationValue`.
     pub cfg: u8,
     /// The interface or string index, for [`Report`](PatchSection::Report)/[`String`](PatchSection::String).
     pub index: u8,
@@ -94,7 +95,7 @@ impl Patch {
         }
     }
 
-    /// A [`Config`](PatchSection::Config) patch in configuration `cfg`.
+    /// A [`Config`](PatchSection::Config) patch in configuration index `cfg` (`0` is the first).
     pub fn in_config(cfg: u8, offset: u16, bytes: impl Into<Vec<u8>>) -> Patch {
         Patch {
             section: PatchSection::Config,
@@ -105,7 +106,7 @@ impl Patch {
         }
     }
 
-    /// A [`Report`](PatchSection::Report) patch on `interface` in configuration `cfg`.
+    /// A [`Report`](PatchSection::Report) patch on `interface` in configuration index `cfg` (`0` is the first).
     pub fn in_interface(cfg: u8, interface: u8, offset: u16, bytes: impl Into<Vec<u8>>) -> Patch {
         Patch {
             section: PatchSection::Report,

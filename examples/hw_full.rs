@@ -1907,18 +1907,27 @@ mod linux {
                 ),
             );
 
-            // RAW: a null report on the clone's interrupt-IN endpoint, then the opt-in gate.
+            // RAW: a null report on the clone's interrupt-IN endpoint. It sends without reading the
+            // opt-in, so the gate is checked on set_rewrite, which does read it.
             let raw_on = dev.raw(1, Direction::IN, &[0, 0, 0, 0]).is_ok();
             let _ = dev.allow_imperfect_clones(false);
-            let raw_gated = matches!(
-                dev.raw(1, Direction::IN, &[0, 0, 0, 0]),
+            let raw_off = dev.raw(1, Direction::IN, &[0, 0, 0, 0]).is_ok();
+            let gated = matches!(
+                dev.set_rewrite(&RewriteRule::new(
+                    RewriteClass::Emit,
+                    1,
+                    Direction::IN,
+                    RewriteAction::Pass
+                )),
                 Err(medius::Error::ImperfectRequired)
             );
             let _ = dev.allow_imperfect_clones(true);
             check(
                 "advanced control: raw",
-                raw_on && raw_gated,
-                format!("sent when allowed={raw_on}, refused with opt-in off={raw_gated}"),
+                raw_on && raw_off && gated,
+                format!(
+                    "sent when allowed={raw_on}, sent with opt-in off={raw_off}, set_rewrite gated={gated}"
+                ),
             );
 
             // REWRITE: a no-op PASS rule on the emit wire; read it back, then clear.
