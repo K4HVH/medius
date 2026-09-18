@@ -1991,6 +1991,17 @@ MediusStatus medius_device_transfer(struct MediusDevice *dev,
                                     uintptr_t out_len,
                                     struct MediusTransferOutcome *out);
 
+// [`medius_device_transfer`] with an explicit reply timeout in milliseconds. The box gives up on a
+// control transfer after its own ~800 ms window, so keep `timeout_ms` at or above
+// `medius_default_transfer_timeout_ms()`; a shorter one abandons the wait before a slow device answers.
+MediusStatus medius_device_transfer_timeout(struct MediusDevice *dev,
+                                            uint8_t ep,
+                                            struct MediusSetup setup,
+                                            const uint8_t *out_data,
+                                            uintptr_t out_len,
+                                            uint32_t timeout_ms,
+                                            struct MediusTransferOutcome *out);
+
 // `REWRITE` (§3.14): install (add or overwrite) one rewrite rule. Gated on the imperfect-clone
 // opt-in. `rule->class` takes a `MEDIUS_REWRITE_CLASS_*` constant, `rule->action` a
 // `MEDIUS_REWRITE_ACTION_*` one and `rule->direction` a `MEDIUS_DIRECTION_*` one; any other value is
@@ -2185,6 +2196,9 @@ MediusStatus medius_device_counters(struct MediusDevice *dev, struct MediusCount
 
 // Default RESP wait before a query times out, in milliseconds.
 uint32_t medius_default_query_timeout_ms(void);
+
+// Default reply wait for `medius_device_transfer`, in milliseconds.
+uint32_t medius_default_transfer_timeout_ms(void);
 
 // Default keepalive cadence for held overrides, in milliseconds.
 uint32_t medius_default_keepalive_cadence_ms(void);
