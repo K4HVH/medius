@@ -101,7 +101,7 @@ class LockScaleUsageError(MediusError):
 
 
 class ImperfectRequiredError(MediusError):
-    """An advanced control layer call with the imperfect-clone opt-in off, which gates the whole layer."""
+    """`set_rewrite` or `apply_patch` with the imperfect-clone opt-in off."""
 
 
 class RewriteMaskLengthError(MediusError):

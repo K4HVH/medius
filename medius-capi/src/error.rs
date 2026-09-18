@@ -43,7 +43,7 @@ pub enum MediusStatus {
     /// A negative (reversing) lock scale on a button, key or media usage, which carries one bit and has
     /// nothing to reverse.
     ErrLockScaleUsage = 21,
-    /// An advanced control layer call with the imperfect-clone opt-in off, which gates the whole layer.
+    /// `medius_device_set_rewrite` or `medius_device_apply_patch` with the imperfect-clone opt-in off.
     ErrImperfectRequired = 22,
     /// A rewrite rule whose `match` and `mask` are different lengths.
     ErrRewriteMaskLength = 23,

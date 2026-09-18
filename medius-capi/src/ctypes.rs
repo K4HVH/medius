@@ -836,7 +836,7 @@ pub struct MediusPatch {
     /// One of `MEDIUS_PATCH_SECTION_*`. A byte rather than `MediusPatchSection`, so the boundary can
     /// validate it; C++ renders the enum as `enum : uint8_t`, so assigning this to one needs a cast.
     pub section: u8,
-    /// The configuration index, for `Config`/`Report`.
+    /// The configuration index for `Config`/`Report`: 0 is the first configuration, not bConfigurationValue.
     pub cfg: u8,
     /// The interface or string index, for `Report`/`String`.
     pub index: u8,

@@ -15,7 +15,8 @@ pub const DEFAULT_TRANSFER_TIMEOUT: Duration = Duration::from_millis(1500);
 impl Device {
     /// Return [`Error::ImperfectRequired`] unless the box reports the imperfect-clone opt-in on. The
     /// advanced control layer (§3.14) is admitted by that opt-in and nothing else; a frame sent with it off is
-    /// silently dropped box-side, so the crate reads the state first and turns that into a real error.
+    /// silently dropped box-side, so the config-rate setters read the state first and turn that into a real
+    /// error. [`raw`](Device::raw) does not: it runs per report, and a query per call costs a round trip.
     pub(crate) fn require_imperfect(&self) -> Result<()> {
         if self.query_imperfect()?.allowed {
             Ok(())
@@ -35,8 +36,10 @@ impl Device {
     /// `wMaxPacketSize` is dropped box-side; a bulk transfer splits at the packet size and terminates
     /// with a short packet.
     ///
-    /// Gated on [`allow_imperfect_clones`](Device::allow_imperfect_clones): with the opt-in off this
-    /// returns [`Error::ImperfectRequired`] rather than sending a frame the box would silently drop.
+    /// Admitted by [`allow_imperfect_clones`](Device::allow_imperfect_clones): with the opt-in off the
+    /// box drops the frame and says nothing, so this still returns `Ok`.
+    /// [`query_imperfect`](Device::query_imperfect) reports the state; read it once at setup rather than
+    /// per call, which is a round trip each time.
     ///
     /// ```no_run
     /// # use medius::{Device, Direction, Result};
@@ -48,12 +51,6 @@ impl Device {
     /// ```
     pub fn raw(&self, ep: u8, direction: Direction, bytes: &[u8]) -> Result<()> {
         validate_raw_direction(direction)?;
-        self.require_imperfect()?;
-        self.raw_frame(ep, direction, bytes)
-    }
-
-    /// The `RAW` send with no opt-in pre-check, so the async wrapper can gate on the async query path.
-    pub(crate) fn raw_frame(&self, ep: u8, direction: Direction, bytes: &[u8]) -> Result<()> {
         self.link
             .send(FrameType::Raw, &raw_payload(ep, direction, bytes))
     }

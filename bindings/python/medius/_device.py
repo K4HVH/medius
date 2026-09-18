@@ -495,8 +495,9 @@ class Device:
 
         `ep` is the bare endpoint number (0 to 15). `Direction.IN` emits toward the game PC;
         `Direction.OUT` relays to the real device. Only those two address one: `Direction.BOTH` raises
-        `RawDirectionError` and the bearing-relative pair raises `RelativeDirectionError`. Needs the
-        imperfect-clone opt-in, or it raises `ImperfectRequiredError`.
+        `RawDirectionError` and the bearing-relative pair raises `RelativeDirectionError`. Admitted by
+        the imperfect-clone opt-in: with it off the box drops the frame and says nothing, so this still
+        returns. `query_imperfect()` reports the state.
         """
         direction = _enum(direction, Direction, "direction")
         buf, n = _bytes_buf(data)

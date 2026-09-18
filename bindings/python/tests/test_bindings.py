@@ -1470,11 +1470,17 @@ def test_raw_reaches_the_wire_verbatim():
 def test_gated_dev_layer_calls_need_the_opt_in():
     with MockBox() as mock, Device.with_mock(mock) as d:
         with pytest.raises(ImperfectRequiredError):
-            d.raw(1, Direction.IN, b"\x00\x01")
-        with pytest.raises(ImperfectRequiredError):
             d.set_rewrite(RewriteRule(RewriteClass.EMIT, 1, Direction.IN, RewriteAction.DROP))
         with pytest.raises(ImperfectRequiredError):
             d.apply_patch()
+
+
+def test_raw_sends_without_reading_the_opt_in():
+    with MockBox() as mock, Device.with_mock(mock) as d:
+        d.raw(1, Direction.IN, b"\x00\x01")
+        assert any(
+            mock.recorded_frame(i).type == FrameType.RAW for i in range(mock.recorded())
+        )
 
 
 def test_raw_rejects_a_direction_that_is_not_a_flow():

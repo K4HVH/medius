@@ -446,7 +446,8 @@ class Patch:
     """A descriptor patch (§3.14), keyed by ``(section, cfg, index, offset)``.
 
     ``bytes`` overwrites the descriptor from ``offset``; an empty ``bytes`` removes the patch at that
-    key. A patch never changes a descriptor's byte count.
+    key. A patch never changes a descriptor's byte count. ``cfg`` is the configuration index: 0 is the
+    first configuration, not ``bConfigurationValue``.
     """
 
     section: PatchSection
