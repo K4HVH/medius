@@ -1,6 +1,6 @@
 use super::opcode::{
-    INJ_MOTION_CURSOR, INJ_MOTION_PAN, INJ_MOTION_WHEEL, OPT_BEARING, OPT_EMIT, OPT_IMPERFECT,
-    OPT_MOVE_RIDE, OPT_NAME, OPT_RENDER, OPT_SPREAD, PATCH_APPLY, PATCH_CLEAR,
+    CLIP_PKT_TRIG_HDR, INJ_MOTION_CURSOR, INJ_MOTION_PAN, INJ_MOTION_WHEEL, OPT_BEARING, OPT_EMIT,
+    OPT_IMPERFECT, OPT_MOVE_RIDE, OPT_NAME, OPT_RENDER, OPT_SPREAD, PATCH_APPLY, PATCH_CLEAR,
 };
 use crate::types::{Direction, Setup};
 
@@ -100,6 +100,29 @@ pub fn clip_set_payload(id: u8, value: u8) -> [u8; 2] {
 pub fn clip_trigger_payload(class: u8, id: u16, edge: u8, action: u8, flags: u8) -> [u8; 6] {
     let u = id.to_le_bytes();
     [class, u[0], u[1], edge, action, flags]
+}
+
+/// `CLIP_TRIGGER` with a traffic class, which makes the binding a packet trigger:
+/// `[class u8][id u16 LE][dir u8][action u8][flags u8][slen u8][mlen u8][match mlen][mask mlen]`.
+/// `match_bytes` and `mask` are one length, at most `PKT_MATCH_MAX`.
+#[allow(clippy::too_many_arguments)]
+pub fn clip_packet_trigger_payload(
+    class: u8,
+    id: u16,
+    dir: u8,
+    action: u8,
+    flags: u8,
+    slen: u8,
+    match_bytes: &[u8],
+    mask: &[u8],
+) -> Vec<u8> {
+    let mut v = Vec::with_capacity(CLIP_PKT_TRIG_HDR + match_bytes.len() + mask.len());
+    v.extend_from_slice(&clip_trigger_payload(class, id, dir, action, flags));
+    v.push(slen);
+    v.push(match_bytes.len() as u8);
+    v.extend_from_slice(match_bytes);
+    v.extend_from_slice(mask);
+    v
 }
 
 /// `OPTION(NAME)` set value: the id byte followed by the name's ASCII bytes; empty `name` clears to the default.

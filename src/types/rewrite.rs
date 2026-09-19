@@ -8,10 +8,10 @@
 
 use crate::protocol::opcode::{
     CATCH_CLS_CONTROL, CATCH_CLS_EMIT, CATCH_CLS_HID_IN, CATCH_CLS_HID_OUT, CATCH_CLS_VEND_BULK,
-    CATCH_CLS_VEND_INTR, CATCH_ID_ANY, RW_ANSWER, RW_CLIP, RW_CLIP_F_DROP, RW_CLIP_F_EDGE, RW_DROP,
-    RW_NAK, RW_PASS, RW_PATCH, RW_REPLACE, RW_REPLY_PATCH, RW_REPLY_REPLACE, RW_STALL,
+    CATCH_CLS_VEND_INTR, CATCH_ID_ANY, RW_ANSWER, RW_DROP, RW_NAK, RW_PASS, RW_PATCH, RW_REPLACE,
+    RW_REPLY_PATCH, RW_REPLY_REPLACE, RW_STALL,
 };
-use crate::types::{ClipAction, Direction};
+use crate::types::Direction;
 
 /// A traffic class a rewrite rule may address (§3.14).
 ///
@@ -74,9 +74,8 @@ impl RewriteClass {
 /// [`Emit`](RewriteClass::Emit), the vendor classes) may [`Pass`](RewriteAction::Pass),
 /// [`Drop`](RewriteAction::Drop), [`Patch`](RewriteAction::Patch) or [`Replace`](RewriteAction::Replace).
 /// The control class adds [`Answer`](RewriteAction::Answer), [`Stall`](RewriteAction::Stall),
-/// [`Nak`](RewriteAction::Nak) and the two reply rewrites. Every class takes
-/// [`Clip`](RewriteAction::Clip). [`is_valid_for`](RewriteAction::is_valid_for) mirrors the box's own
-/// admissibility check.
+/// [`Nak`](RewriteAction::Nak) and the two reply rewrites. [`is_valid_for`](RewriteAction::is_valid_for)
+/// mirrors the box's own admissibility check.
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Default)]
 pub enum RewriteAction {
@@ -100,8 +99,6 @@ pub enum RewriteAction {
     ReplyPatch = RW_REPLY_PATCH,
     /// Control IN: replace the device's reply with the payload.
     ReplyReplace = RW_REPLY_REPLACE,
-    /// Run a clip verb. Build the rule with [`RewriteRule::clip`], which writes the payload.
-    Clip = RW_CLIP,
 }
 
 impl RewriteAction {
@@ -122,7 +119,6 @@ impl RewriteAction {
             RW_NAK => RewriteAction::Nak,
             RW_REPLY_PATCH => RewriteAction::ReplyPatch,
             RW_REPLY_REPLACE => RewriteAction::ReplyReplace,
-            RW_CLIP => RewriteAction::Clip,
             _ => return None,
         })
     }
@@ -136,7 +132,6 @@ impl RewriteAction {
                 | RewriteAction::Answer
                 | RewriteAction::ReplyPatch
                 | RewriteAction::ReplyReplace
-                | RewriteAction::Clip
         )
     }
 
@@ -146,10 +141,7 @@ impl RewriteAction {
         let ctl = class.is_control();
         let any = matches!(class, RewriteClass::Any);
         match self {
-            RewriteAction::Pass
-            | RewriteAction::Patch
-            | RewriteAction::Replace
-            | RewriteAction::Clip => true,
+            RewriteAction::Pass | RewriteAction::Patch | RewriteAction::Replace => true,
             RewriteAction::Drop => !ctl && !any,
             RewriteAction::Answer
             | RewriteAction::Stall
@@ -158,19 +150,6 @@ impl RewriteAction {
             | RewriteAction::ReplyReplace => ctl,
         }
     }
-}
-
-/// What a [`Clip`](RewriteAction::Clip) rule does ([`RewriteRule::clip_verb`]).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct ClipVerb {
-    /// The clip verb the rule runs.
-    pub action: ClipAction,
-    /// Every packet the rule wins is dropped.
-    pub drop: bool,
-    /// The verb runs on the first packet of a run, not on each.
-    pub edge: bool,
-    /// How many leading match bytes pick the run's stream.
-    pub selector_len: u8,
 }
 
 /// A rewrite rule the host installs on the box.
@@ -257,76 +236,6 @@ impl RewriteRule {
     pub fn with_payload(mut self, payload: impl Into<Vec<u8>>) -> Self {
         self.payload = payload.into();
         self
-    }
-
-    /// A rule that runs clip verb `verb` on the box's next tick for every packet it wins, which passes
-    /// untouched. Narrow it with [`matching`](Self::matching); add [`dropping`](Self::dropping) or
-    /// [`on_edge`](Self::on_edge).
-    ///
-    /// ```no_run
-    /// # use medius::{ClipAction, Device, Direction, Result, RewriteClass, RewriteRule};
-    /// # fn main() -> Result<()> {
-    /// let device = Device::find()?;
-    /// device.allow_imperfect_clones(true)?;
-    /// // Report ID 7 on interface 2 carries a button in bit 5 of its second byte. Hold it to play.
-    /// let held = RewriteRule::clip(RewriteClass::HidIn, 2, Direction::IN, ClipAction::Start)
-    ///     .matching([0x07, 0x20], [0xFF, 0x20])
-    ///     .on_edge(1);
-    /// let let_go = RewriteRule::clip(RewriteClass::HidIn, 2, Direction::IN, ClipAction::Stop)
-    ///     .matching([0x07, 0x00], [0xFF, 0x20])
-    ///     .on_edge(1);
-    /// device.set_rewrite(&held)?;
-    /// device.set_rewrite(&let_go)?;
-    /// # Ok(()) }
-    /// ```
-    pub fn clip(
-        class: RewriteClass,
-        id: u16,
-        direction: Direction,
-        verb: ClipAction,
-    ) -> RewriteRule {
-        RewriteRule::new(class, id, direction, RewriteAction::Clip).with_payload([
-            verb.as_u8(),
-            0,
-            0,
-        ])
-    }
-
-    /// Drop every packet this [`clip`](Self::clip) rule wins. Refused where
-    /// [`Drop`](RewriteAction::Drop) is: on `Control` and `Any`.
-    pub fn dropping(mut self) -> Self {
-        if let (RewriteAction::Clip, [_, flags, _]) = (self.action, self.payload.as_mut_slice()) {
-            *flags |= RW_CLIP_F_DROP;
-        }
-        self
-    }
-
-    /// Run this [`clip`](Self::clip) rule's verb only on the first packet of a run of matching ones, so
-    /// a device that repeats a held state every poll fires once per hold. The first `selector_len`
-    /// match bytes pick the run's stream out of the address (a report ID) and the rest are the
-    /// condition, so it is below the match length. Needs a report class, a concrete `id` and
-    /// [`IN`](crate::Direction::IN) or [`OUT`](crate::Direction::OUT).
-    pub fn on_edge(mut self, selector_len: u8) -> Self {
-        if let (RewriteAction::Clip, [_, flags, slen]) = (self.action, self.payload.as_mut_slice())
-        {
-            *flags |= RW_CLIP_F_EDGE;
-            *slen = selector_len;
-        }
-        self
-    }
-
-    /// What a [`Clip`](RewriteAction::Clip) rule does, decoded from its payload. `None` for any other
-    /// rule, or a payload that is not a clip rule's.
-    pub fn clip_verb(&self) -> Option<ClipVerb> {
-        match (self.action, self.payload.as_slice()) {
-            (RewriteAction::Clip, &[op, flags, selector_len]) => Some(ClipVerb {
-                action: ClipAction::from_u8(op)?,
-                drop: flags & RW_CLIP_F_DROP != 0,
-                edge: flags & RW_CLIP_F_EDGE != 0,
-                selector_len,
-            }),
-            _ => None,
-        }
     }
 
     /// The `(class, id, direction, match, mask)` key that identifies this rule in the table.

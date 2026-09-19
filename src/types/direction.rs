@@ -75,8 +75,9 @@ impl Direction {
     ///
     /// Only the relative-axis class reads one. A catch subscription is addressed before there is any
     /// injection to be with or against, and a button, key or media lock has no bearing at all, so both
-    /// refuse one with [`Error::RelativeDirection`](crate::Error::RelativeDirection). A clip trigger
-    /// cannot express one at all: its edge is the separate three-variant [`Edge`](crate::Edge).
+    /// refuse one with [`Error::RelativeDirection`](crate::Error::RelativeDirection), as a clip packet
+    /// trigger does. A clip input trigger cannot express one at all: its edge is the separate
+    /// three-variant [`Edge`](crate::Edge).
     pub fn is_relative(self) -> bool {
         matches!(self, Direction::With | Direction::Against)
     }

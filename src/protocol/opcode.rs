@@ -106,6 +106,17 @@ pub const CLIP_SET_RIDE: u8 = 3;
 pub const CLIP_TRIG_MAX: usize = 8;
 pub const CLIP_TRIG_F_PRESENT: u8 = 0x01;
 pub const CLIP_TRIG_F_CONSUME: u8 = 0x02;
+/// Packet trigger: the verb runs on the first packet of a run of matching ones.
+pub const CLIP_TRIG_F_RUN: u8 = 0x04;
+/// Packet triggers the box holds beside its input bindings (`CLIP_PKT_TRIG_MAX`).
+pub const CLIP_PKT_TRIG_MAX: usize = 8;
+/// Match bytes the box holds across every packet trigger (`CLIP_PKT_MATCH_POOL`); it bounds
+/// `RESP(CLIP)` to one frame.
+pub const CLIP_PKT_MATCH_POOL: usize = 112;
+/// `CLIP_TRIGGER` bytes ahead of a packet trigger's match: `[class][id u16][dir][action][flags][slen][mlen]`.
+pub const CLIP_PKT_TRIG_HDR: usize = 8;
+/// `RESP(CLIP)` bytes ahead of a packet trigger entry's match: the command's eight and `hits u16`.
+pub const CLIP_PKT_TRIG_ENTRY: usize = 10;
 /// `RESP(CLIP)` config-section flags byte.
 pub const CLIP_CFG_F_LOOP: u8 = 0x01;
 pub const CLIP_CFG_F_RETAIN: u8 = 0x02;
@@ -242,12 +253,6 @@ pub const RW_NAK: u8 = 6;
 pub const RW_REPLY_PATCH: u8 = 7;
 /// Control IN: replace the device's reply with the payload.
 pub const RW_REPLY_REPLACE: u8 = 8;
-/// Run a clip verb; the payload is `[op][flags][slen]`.
-pub const RW_CLIP: u8 = 9;
-/// `RW_CLIP` flag: every packet the rule wins is dropped.
-pub const RW_CLIP_F_DROP: u8 = 0x01;
-/// `RW_CLIP` flag: the verb runs on the first packet of a run of matching ones.
-pub const RW_CLIP_F_EDGE: u8 = 0x02;
 
 // `PATCH` section byte (§3.14): which descriptor a patch overwrites. `APPLY`/`CLEAR` are engine verbs
 // carried in the same byte, handled before the store rather than kept as section keys.
@@ -270,8 +275,11 @@ pub const PATCH_CLEAR: u8 = 0xFF;
 pub const REWRITE_MAX_ENTRIES: usize = 32;
 /// Entries the box's descriptor-patch store holds (`PATCH_MAX`); past it a patch is refused and `RESP(PATCHES).table_full` says so.
 pub const PATCH_MAX_ENTRIES: usize = 16;
+/// The most `match`/`mask` bytes the box compares against a packet head (`PKT_MATCH_MAX`), for a
+/// rewrite rule and a clip packet trigger alike.
+pub const PKT_MATCH_MAX: usize = 16;
 /// The most `match`/`mask` bytes one rewrite rule compares (`REWRITE_MATCH_MAX`).
-pub const REWRITE_MATCH_MAX: usize = 16;
+pub const REWRITE_MATCH_MAX: usize = PKT_MATCH_MAX;
 
 // `TRANSFORM` op byte (§3.15, `CTRL_XF_*`): a field operation on the semantic path. `sclass`/`dclass`
 // reuse the input classes ([`CATCH_CLS_AXIS`]/`_BTN`/`_KEY`/`_MEDIA`). Shared wire values with the
@@ -401,7 +409,8 @@ pub enum FrameType {
     ClipCtrl = 0x13,
     /// `CLIP_SET`: a clip scalar setting `[id][value]` (autolock/loop/retain) (PC→box).
     ClipSet = 0x14,
-    /// `CLIP_TRIGGER`: add/remove a clip trigger binding `[class][id u16][edge][action][flags]` (PC→box).
+    /// `CLIP_TRIGGER`: add/remove a clip trigger. An input binding is `[class][id u16][edge][action][flags]`;
+    /// a packet trigger names a traffic class and carries `[slen][mlen][match][mask]` after those six bytes (PC→box).
     ClipTrigger = 0x15,
     /// `UPDATE`: stage and activate firmware on either chip (PC→box) (§3.13).
     Update = 0x17,

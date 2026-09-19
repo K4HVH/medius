@@ -64,9 +64,6 @@ pub enum Error {
     #[error("the box holds {limit} rewrite rules and they are all in use; remove one first")]
     RewriteTableFull { limit: usize },
 
-    #[error("a clip rewrite rule {reason}")]
-    RewriteClipRule { reason: &'static str },
-
     #[error("{action:?} is not a valid action for a {class:?} rewrite rule")]
     RewriteActionClass {
         action: crate::types::RewriteAction,
@@ -148,6 +145,9 @@ pub enum Error {
          request, none for an IN one. This one needs {want} and has {got}"
     )]
     ClipTransferData { want: usize, got: usize },
+
+    #[error("a clip packet trigger {reason}")]
+    ClipPacketTrigger { reason: &'static str },
 
     #[error(
         "id 0x{id:04X} is the blanket sentinel on the wire, so an exact {class:?} subscription to it \
