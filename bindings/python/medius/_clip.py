@@ -9,6 +9,7 @@ from . import _native
 from ._enums import Action, Blanket, ClipAction, Direction, Edge
 from ._errors import check
 from ._types import (
+    ClipPacketTrigger,
     ClipSettings,
     ClipStatus,
     ClipTrigger,
@@ -19,6 +20,7 @@ from ._types import (
     _i16,
     _u8,
     _u16,
+    clip_packet_trigger_to_c,
     clip_settings_from_c,
     clip_status_from_c,
     setup_to_c,
@@ -156,7 +158,13 @@ class ClipBuilder:
 
 
 class ClipHandle:
-    """A handle to one box's buffered-clip playback, from `Device.clip`; keep one handle per clip session."""
+    """A handle to one box's buffered-clip playback, from `Device.clip`; keep one handle per clip session.
+
+    A trigger runs a clip verb on the box, with no host round trip. There are two kinds in one set: an
+    input trigger (`bind`) fires on a button, key or media edge, and a packet trigger (`bind_packet`)
+    fires on a packet crossing a traffic surface. `clear_triggers` removes both and `query_config`
+    reads both back.
+    """
 
     def __init__(self, handle, device=None):
         self._handle = handle
@@ -208,7 +216,7 @@ class ClipHandle:
         check(_native.lib.medius_clip_set_ride(self._handle, 1 if on else 0))
 
     def bind(self, trigger: ClipTrigger):
-        """Add or overwrite a trigger binding: `trigger.on`'s edge fires its action on the box, no host round-trip."""
+        """Add or overwrite an input trigger: `trigger.on`'s edge fires its action on the box, no host round-trip."""
         t = _native.MediusClipTrigger(
             trigger.on._c,
             int(_enum(trigger.edge, Edge, "edge")),
@@ -218,12 +226,47 @@ class ClipHandle:
         check(_native.lib.medius_clip_bind(self._handle, t))
 
     def unbind(self, usage: Usage, edge: Edge):
-        """Remove the trigger binding on `usage`'s `edge`."""
+        """Remove the input trigger on `usage`'s `edge`."""
         edge = _enum(edge, Edge, "edge")
         check(_native.lib.medius_clip_unbind(self._handle, usage._c, int(edge)))
 
+    def bind_packet(self, trigger: ClipPacketTrigger):
+        """Add or overwrite a packet trigger: a packet `trigger` matches fires its action on the box's
+        next tick, no host round trip. Binding a key the box holds overwrites it.
+
+        What the box would refuse is `ClipPacketTriggerError` before anything is sent, and the message
+        says which:
+
+        - a `traffic_class` that is ``BUS`` or ``CLIP_TRANSFER``;
+        - a match past `PKT_MATCH_MAX` bytes, or unlike its mask in length;
+        - a direction the class never carries: ``OUT`` on ``HID_IN`` or ``EMIT``, ``IN`` on
+          ``HID_OUT``;
+        - a match bit outside its mask, which no packet can equal;
+        - ``consume`` on ``CONTROL``;
+        - a ``selector_len`` without ``once_per_run``;
+        - ``once_per_run`` without one stream (a class other than ``CONTROL``, a concrete ``id``, and
+          ``IN`` or ``OUT``), without match bytes past its selector, or with no masked bit in them.
+
+        A bearing-relative direction is `RelativeDirectionError`.
+
+        The box makes three checks this call cannot. A consuming trigger needs
+        `Device.allow_imperfect_clones`, the set holds `CLIP_PKT_TRIG_MAX` triggers, and their match
+        bytes share a pool of `CLIP_PKT_MATCH_POOL`. A trigger the box refused is absent from
+        `query_config`.
+        """
+        c = clip_packet_trigger_to_c(trigger)
+        check(_native.lib.medius_clip_bind_packet(self._handle, ctypes.byref(c)))
+
+    def unbind_packet(self, trigger: ClipPacketTrigger):
+        """Remove the packet trigger keyed by `trigger`'s ``(traffic_class, id, direction,
+        match_bytes, mask)``; its other fields are ignored. A key the box cannot hold is refused as
+        `bind_packet` refuses it: the class, the lengths, the direction, and a match bit outside the
+        mask."""
+        c = clip_packet_trigger_to_c(trigger, key_only=True)
+        check(_native.lib.medius_clip_unbind_packet(self._handle, ctypes.byref(c)))
+
     def clear_triggers(self):
-        """Remove every trigger binding."""
+        """Remove every trigger of both kinds: the input triggers and the packet triggers."""
         check(_native.lib.medius_clip_clear_triggers(self._handle))
 
     def start(self):
@@ -265,7 +308,7 @@ class ClipHandle:
         return clip_status_from_c(out)
 
     def query_config(self) -> ClipSettings:
-        """The clip configuration: autolock, loop, retain, finalized, and the trigger set."""
+        """The clip configuration: autolock, loop, retain, finalized, and both kinds of trigger."""
         out = _native.MediusClipSettings()
         check(_native.lib.medius_clip_query_config(self._handle, ctypes.byref(out)))
         return clip_settings_from_c(out)

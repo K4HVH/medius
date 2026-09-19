@@ -699,15 +699,14 @@ fn with_rewrite_rule(
 }
 
 /// `REWRITE` (§3.14): install (add or overwrite) one rewrite rule. Gated on the imperfect-clone
-/// opt-in. `rule->class` takes a `MEDIUS_REWRITE_CLASS_*` constant, `rule->action` a
+/// opt-in. `rule->class_` takes a `MEDIUS_REWRITE_CLASS_*` constant, `rule->action` a
 /// `MEDIUS_REWRITE_ACTION_*` one and `rule->direction` a `MEDIUS_DIRECTION_*` one; any other value is
 /// `MEDIUS_STATUS_ERR_INVALID_ARG`. `match_len` must equal `mask_len`
 /// (`MEDIUS_STATUS_ERR_REWRITE_MASK_LENGTH`) and be at most `MEDIUS_MAX_REWRITE_MATCH`
 /// (`..._REWRITE_MATCH_TOO_LONG`), the action must be valid for the class
 /// (`..._REWRITE_ACTION_CLASS`), the direction must not be bearing-relative
-/// (`..._RELATIVE_DIRECTION`), the payload must fit the box's head
-/// (`..._REWRITE_PAYLOAD_TOO_LARGE`), and a `MEDIUS_REWRITE_ACTION_CLIP` rule must be one the box
-/// admits (`..._REWRITE_CLIP_RULE`). `medius_device_query_rewrite` confirms what the box holds.
+/// (`..._RELATIVE_DIRECTION`), and the payload must fit the box's head
+/// (`..._REWRITE_PAYLOAD_TOO_LARGE`). `medius_device_query_rewrite` confirms what the box holds.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_device_set_rewrite(
     dev: *mut MediusDevice,

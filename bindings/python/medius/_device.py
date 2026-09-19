@@ -538,9 +538,8 @@ class Device:
         `match_bytes` and `mask` must be the same length (`RewriteMaskLengthError`) and at most
         16 bytes (`RewriteMatchTooLongError`), the action must be valid for the class
         (`RewriteActionClassError`), the direction must not be bearing-relative
-        (`RelativeDirectionError`), the payload must fit the box's head
-        (`RewritePayloadTooLargeError`), and a ``CLIP`` rule must be one the box admits
-        (`RewriteClipRuleError`). `query_rewrite` confirms what the box holds.
+        (`RelativeDirectionError`), and the payload must fit the box's head
+        (`RewritePayloadTooLargeError`). `query_rewrite` confirms what the box holds.
         """
         c = rewrite_rule_to_c(rule)
         check(_native.lib.medius_device_set_rewrite(self._handle, ctypes.byref(c)))

@@ -10,6 +10,7 @@ from pathlib import Path
 
 MEDIUS_MAX_USAGES = 256
 MEDIUS_CLIP_TRIG_MAX = 8
+MEDIUS_CLIP_PKT_TRIG_MAX = 8
 MEDIUS_MAX_LOCKS = 256
 MEDIUS_MAX_LOG_TEXT = 512
 MEDIUS_MAX_PATH = 512
@@ -22,6 +23,7 @@ MEDIUS_MAX_REWRITE_ENTRIES = 32
 MEDIUS_MAX_PATCH_ENTRIES = 16
 MEDIUS_MAX_TRANSFORM_ENTRIES = 32
 MEDIUS_MAX_REWRITE_MATCH = 16
+MEDIUS_MAX_PKT_MATCH = 16
 MEDIUS_MAX_DEV_PAYLOAD = 512
 
 # The CATCH wildcards are sentinel values, not a separate flag byte.
@@ -66,6 +68,23 @@ class MediusClipTrigger(ctypes.Structure):
     _fields_ = [("on", MediusUsage), ("edge", u8), ("action", u8), ("consume", u8)]
 
 
+class MediusClipPacketTrigger(ctypes.Structure):
+    _fields_ = [
+        ("class_", u8),
+        ("id", u16),
+        ("direction", u8),
+        ("action", u8),
+        ("consume", u8),
+        ("once_per_run", u8),
+        ("selector_len", u8),
+        ("match_len", u16),
+        ("mask_len", u16),
+        ("match_bytes", u8 * MEDIUS_MAX_PKT_MATCH),
+        ("mask", u8 * MEDIUS_MAX_PKT_MATCH),
+        ("hits", u16),
+    ]
+
+
 class MediusClipSettings(ctypes.Structure):
     _fields_ = [
         ("autolock_bits", u8),
@@ -75,6 +94,8 @@ class MediusClipSettings(ctypes.Structure):
         ("ride", u8),
         ("triggers", MediusClipTrigger * MEDIUS_CLIP_TRIG_MAX),
         ("n", u8),
+        ("packet_triggers", MediusClipPacketTrigger * MEDIUS_CLIP_PKT_TRIG_MAX),
+        ("packet_n", u8),
     ]
 
 
@@ -670,16 +691,6 @@ _decl(
 )
 _decl("medius_traffic_event_bulk_end_of_transfer", c_bool, [ctypes.POINTER(MediusTrafficEvent)])
 _decl("medius_traffic_event_bulk_zlp", c_bool, [ctypes.POINTER(MediusTrafficEvent)])
-_decl(
-    "medius_rewrite_rule_clip",
-    i32,
-    [ctypes.POINTER(MediusRewriteRule), u8, u16, u8, u8, u8, u8],
-)
-_decl(
-    "medius_rewrite_rule_clip_verb",
-    c_bool,
-    [ctypes.POINTER(MediusRewriteRule), ctypes.POINTER(u8), ctypes.POINTER(u8), ctypes.POINTER(u8)],
-)
 _decl("medius_clip_status_is_held", c_bool, [ctypes.POINTER(MediusClipStatus), MediusUsage])
 _decl("medius_caps_has_mouse", c_bool, [MediusCaps])
 _decl("medius_caps_has_keyboard", c_bool, [MediusCaps])
@@ -771,6 +782,8 @@ _decl("medius_clip_set_retain", i32, [HANDLE, u8])
 _decl("medius_clip_set_ride", i32, [HANDLE, u8])
 _decl("medius_clip_bind", i32, [HANDLE, MediusClipTrigger])
 _decl("medius_clip_unbind", i32, [HANDLE, MediusUsage, u8])
+_decl("medius_clip_bind_packet", i32, [HANDLE, ctypes.POINTER(MediusClipPacketTrigger)])
+_decl("medius_clip_unbind_packet", i32, [HANDLE, ctypes.POINTER(MediusClipPacketTrigger)])
 _decl("medius_clip_clear_triggers", i32, [HANDLE])
 _decl("medius_clip_start", i32, [HANDLE])
 _decl("medius_clip_stop", i32, [HANDLE])
@@ -817,6 +830,11 @@ if HAS_MOCK:
     _decl("medius_mock_set_spread_learned", None, [HANDLE, u32])
     _decl("medius_mock_set_clip_status", None, [HANDLE, MediusClipStatus])
     _decl("medius_mock_set_clip_settings", None, [HANDLE, MediusClipSettings])
+    _decl(
+        "medius_mock_clip_packet",
+        c_bool,
+        [HANDLE, u8, u16, u8, ctypes.POINTER(u8), usize, ctypes.POINTER(u8), ctypes.POINTER(c_bool)],
+    )
     _decl("medius_mock_silent", None, [HANDLE])
     _decl("medius_mock_push_raw", None, [HANDLE, ctypes.POINTER(u8), usize])
     _decl("medius_mock_push_log", None, [HANDLE, u8, ctypes.c_char_p])

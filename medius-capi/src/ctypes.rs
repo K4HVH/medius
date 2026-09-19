@@ -373,7 +373,7 @@ pub enum MediusEdge {
     Release = 2,
 }
 
-/// The engine action a trigger binding drives.
+/// The engine action a `MediusClipTrigger` or a `MediusClipPacketTrigger` drives.
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MediusClipAction {
@@ -385,7 +385,8 @@ pub enum MediusClipAction {
     Toggle = 5,
 }
 
-/// One clip trigger binding: `on`'s `edge` drives `action`; `consume` suppresses the input from the game.
+/// One clip input trigger: `on`'s `edge` drives `action`; `consume` suppresses the input from the
+/// game. The trigger set's other kind is the `MediusClipPacketTrigger`.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MediusClipTrigger {
@@ -689,8 +690,7 @@ pub enum MediusRewriteClass {
 
 /// What the winning rewrite rule does to a matched packet (§3.14). Crosses the ABI as the `action`
 /// byte. `Drop` is a report surface only; `Answer`/`Stall`/`Nak` and the two reply rewrites are
-/// control-only, mirroring the box's own admissibility check. `Clip` runs a clip verb on any class;
-/// `medius_rewrite_rule_clip` builds one.
+/// control-only, mirroring the box's own admissibility check.
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MediusRewriteAction {
@@ -703,15 +703,7 @@ pub enum MediusRewriteAction {
     Nak = 6,
     ReplyPatch = 7,
     ReplyReplace = 8,
-    Clip = 9,
 }
-
-const _: () = assert!(MediusRewriteAction::Clip as u8 == medius::RewriteAction::Clip as u8);
-
-/// `medius_rewrite_rule_clip` flag: every packet the rule wins is dropped.
-pub const MEDIUS_REWRITE_CLIP_DROP: u8 = 0x01;
-/// `medius_rewrite_rule_clip` flag: the verb runs on the first packet of a run of matching ones.
-pub const MEDIUS_REWRITE_CLIP_EDGE: u8 = 0x02;
 
 /// Which descriptor a patch overwrites (§3.14). Crosses the ABI as the `section` byte of a
 /// `MediusPatch`/`MediusPatchEntry`.
@@ -1024,8 +1016,15 @@ pub struct MediusClipStatus {
     pub held: [MediusUsage; MEDIUS_MAX_USAGES],
 }
 
-/// The max clip trigger bindings in a `MediusClipSettings` (matches the firmware `CLIP_TRIG_MAX`).
+/// The max clip input triggers in a `MediusClipSettings` (matches the firmware `CLIP_TRIG_MAX`).
 pub const MEDIUS_CLIP_TRIG_MAX: usize = 8;
+/// The max clip packet triggers in a `MediusClipSettings` (the firmware `CLIP_PKT_TRIG_MAX`).
+pub const MEDIUS_CLIP_PKT_TRIG_MAX: usize = 8;
+/// The match bytes the box holds across every clip packet trigger (the firmware
+/// `CLIP_PKT_MATCH_POOL`).
+pub const MEDIUS_CLIP_PKT_MATCH_POOL: usize = 112;
+/// The most `match`/`mask` bytes one clip packet trigger compares (the firmware `PKT_MATCH_MAX`).
+pub const MEDIUS_MAX_PKT_MATCH: usize = 16;
 /// The most edges one `MediusClipFrame` carries (the firmware `CLIP_EDGES_MAX`).
 pub const MEDIUS_CLIP_EDGES_MAX: usize = 8;
 /// The most raw reports one `MediusClipFrame` carries (the firmware `CLIP_RAW_MAX`).
@@ -1037,9 +1036,75 @@ const _: () = {
     assert!(MEDIUS_CLIP_EDGES_MAX == medius::CLIP_EDGES_MAX);
     assert!(MEDIUS_CLIP_RAW_MAX == medius::CLIP_RAW_MAX);
     assert!(MEDIUS_CLIP_ENTRY_MAX == medius::CLIP_ENTRY_MAX);
+    assert!(MEDIUS_CLIP_PKT_TRIG_MAX == medius::CLIP_PKT_TRIG_MAX);
+    assert!(MEDIUS_CLIP_PKT_MATCH_POOL == medius::CLIP_PKT_MATCH_POOL);
+    assert!(MEDIUS_MAX_PKT_MATCH == medius::PKT_MATCH_MAX);
 };
 
-/// The clip configuration read back from `RESP(CLIP)`: autolock scope, loop/retain scalars, and triggers.
+/// One clip packet trigger, keyed by `(class, id, direction, match, mask)`: a packet on a traffic
+/// surface whose head matches under the mask drives `action` on the box's next tick, with no host
+/// round trip. The trigger set's other kind is the input `MediusClipTrigger`.
+///
+/// `match_bytes[0..match_len]` and `mask[0..mask_len]` are the masked head compare (they must be the
+/// same length; an empty match takes every packet on the address): a packet matches when
+/// `head[i] & mask[i] == match_bytes[i]` for each. For `MEDIUS_CATCH_CLASS_CONTROL` the head is the 8
+/// setup bytes, then the first 8 bytes of OUT data. A `MEDIUS_CATCH_CLASS_EMIT` trigger sees the
+/// clip's own frames as well as native and injected ones, and none of the clip's raw reports.
+///
+/// A trigger no packet can match is refused, by `medius_clip_bind_packet` and by the box: a match bit
+/// outside its mask, since a packet byte is masked before it is compared, and a direction the class
+/// never carries. `HID_IN` and `EMIT` flow `POSITIVE` (IN) and `HID_OUT` flows `NEGATIVE` (OUT); the
+/// vendor classes and `CONTROL` carry either, and every class takes `MEDIUS_DIRECTION_BOTH`.
+///
+/// The box reads a packet for its triggers as the packet arrived, ahead of the rewrite table, and the
+/// two are independent: one packet can fire a trigger and win a rewrite rule. One trigger wins a
+/// packet, most specific first: an exact `id` beats `MEDIUS_CATCH_ID_ANY`, more masked bits beat
+/// fewer, `POSITIVE` or `NEGATIVE` beats `MEDIUS_DIRECTION_BOTH`, then the trigger bound earlier.
+///
+/// The same shape `medius_clip_query_config` reads back, so a read trigger replays as a bind.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MediusClipPacketTrigger {
+    /// The traffic surface the packet crosses: one of `MEDIUS_CATCH_CLASS_HID_IN`, `_HID_OUT`,
+    /// `_VENDOR_INTERRUPT`, `_VENDOR_BULK`, `_CONTROL` and `_EMIT`.
+    pub class: u8,
+    /// The address within the class: the interface number for `HID_IN`, the endpoint number for the
+    /// rest, or `MEDIUS_CATCH_ID_ANY`.
+    pub id: u16,
+    /// A `MEDIUS_DIRECTION_*` value: `BOTH`, or the one of `POSITIVE` (IN) and `NEGATIVE` (OUT) the
+    /// class carries.
+    pub direction: u8,
+    /// A `MEDIUS_CLIP_ACTION_*` value.
+    pub action: u8,
+    /// Drop every packet the trigger wins, before the rewrite table sees it. Dropping traffic alters
+    /// the wire, so the box holds a consuming trigger only under
+    /// `medius_device_allow_imperfect_clones`, on any class but `CONTROL`.
+    pub consume: u8,
+    /// Drive `action` on the first packet of a run of matching ones, so a device that repeats a held
+    /// state every poll fires once per hold; 0 drives it on each packet. A run is over one stream:
+    /// a class other than `CONTROL`, a concrete `id`, and `POSITIVE` or `NEGATIVE`.
+    pub once_per_run: u8,
+    /// With `once_per_run`, how many leading match bytes select the run's stream within the address
+    /// (a report ID). The rest are the condition, so it is below `match_len` and the mask past it has
+    /// at least one bit set: a condition every packet of the stream meets is a run that never ends.
+    /// 0 without.
+    pub selector_len: u8,
+    /// Valid bytes in `match_bytes` (must equal `mask_len`).
+    pub match_len: u16,
+    /// Valid bytes in `mask` (must equal `match_len`).
+    pub mask_len: u16,
+    /// Every set bit of `match_bytes[0..match_len]` is set in `mask`. The two go to the box as given.
+    pub match_bytes: [u8; MEDIUS_MAX_PKT_MATCH],
+    pub mask: [u8; MEDIUS_MAX_PKT_MATCH],
+    /// Packets the trigger has won since it was bound or overwritten (saturating). A `once_per_run`
+    /// trigger wins every packet of a run and drives its action on the first. Filled by
+    /// `medius_clip_query_config` and read by `medius_mock_set_clip_settings`;
+    /// `medius_clip_bind_packet` sends the trigger without it.
+    pub hits: u16,
+}
+
+/// The clip configuration read back from `RESP(CLIP)`: autolock scope, loop/retain scalars, and both
+/// kinds of trigger.
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub struct MediusClipSettings {
@@ -1050,9 +1115,14 @@ pub struct MediusClipSettings {
     pub finalized: u8,
     /// Whether the clip's motion waits to ride a native report (`medius_clip_set_ride`).
     pub ride: u8,
+    /// The input triggers.
     pub triggers: [MediusClipTrigger; MEDIUS_CLIP_TRIG_MAX],
     /// The number of valid entries in `triggers`.
     pub n: u8,
+    /// The packet triggers, in the order the box holds them, each with its `hits`.
+    pub packet_triggers: [MediusClipPacketTrigger; MEDIUS_CLIP_PKT_TRIG_MAX],
+    /// The number of valid entries in `packet_triggers`.
+    pub packet_n: u8,
 }
 
 /// Host-side always-on counters.
