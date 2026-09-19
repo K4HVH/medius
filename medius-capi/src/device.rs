@@ -151,7 +151,7 @@ pub unsafe extern "C" fn medius_find_ports(
     })
 }
 
-/// Enumerate every connected box into `out` (up to `cap`), opening each in turn; writes the total to `*out_total` and returns the number written.
+/// Enumerate every connected box into `out` (up to `cap`), reading each in turn; writes the total to `*out_total` and returns the number written. A box on another control protocol is listed with `has_device` 0.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_list(
     out: *mut MediusBoxInfo,
@@ -178,7 +178,7 @@ pub unsafe extern "C" fn medius_list(
     })
 }
 
-/// Open the box whose identity matches `id` (device MAC hex or CH343 serial), handshake, and write the handle to `*out`.
+/// Open the box whose identity matches `id` (device MAC hex or CH343 serial), handshake, and write the handle to `*out`. `MEDIUS_STATUS_ERR_BAD_PROTO_VER` when that box speaks another control protocol.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_device_open_by_id(
     id: *const c_char,
@@ -202,7 +202,7 @@ pub unsafe extern "C" fn medius_device_open_by_id(
     })
 }
 
-/// Open the first box whose clone is a mouse, handshake, and write the handle to `*out`.
+/// Open the first box whose clone is a mouse, handshake, and write the handle to `*out`. `MEDIUS_STATUS_ERR_BAD_PROTO_VER` when no other box clones a mouse and a box on another control protocol, whose clone is unread, is connected.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_device_find_mouse_box(out: *mut *mut MediusDevice) -> MediusStatus {
     guard_status(|| {
@@ -220,7 +220,7 @@ pub unsafe extern "C" fn medius_device_find_mouse_box(out: *mut *mut MediusDevic
     })
 }
 
-/// Open the first box whose clone is a keyboard, handshake, and write the handle to `*out`.
+/// Open the first box whose clone is a keyboard, handshake, and write the handle to `*out`. `MEDIUS_STATUS_ERR_BAD_PROTO_VER` when no other box clones a keyboard and a box on another control protocol, whose clone is unread, is connected.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_device_find_keyboard_box(
     out: *mut *mut MediusDevice,
@@ -1257,7 +1257,7 @@ pub extern "C" fn medius_default_keepalive_cadence_ms() -> u32 {
 /// The C ABI version, bumped on any breaking change to this header.
 #[unsafe(no_mangle)]
 pub extern "C" fn medius_abi_version() -> u32 {
-    7
+    8
 }
 
 /// The medius-capi crate version as a static NUL-terminated string.

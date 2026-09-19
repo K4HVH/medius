@@ -1153,7 +1153,11 @@ pub struct MediusPortInfo {
 pub struct MediusBoxInfo {
     pub port: MediusPortInfo,
     pub version: MediusVersion,
+    /// Zeroed when `has_device` is 0.
     pub device: MediusDeviceInfo,
+    /// 0 for a box on another control protocol (`version.proto_ver`): opening it answers
+    /// `MEDIUS_STATUS_ERR_BAD_PROTO_VER`.
+    pub has_device: u8,
 }
 
 /// One relative-axis catch event: the user's real motion at the merge point, before lock suppression or injection.

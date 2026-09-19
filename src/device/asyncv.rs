@@ -704,7 +704,7 @@ impl AsyncDevice {
         Ok(Device::find()?.into_async())
     }
 
-    /// Enumerate every connected box; blocks (scan + per-box handshake). See [`Device::list`].
+    /// Enumerate every connected box; blocks (scan + a version read per box). See [`Device::list`].
     pub fn list() -> Vec<BoxInfo> {
         Device::list()
     }

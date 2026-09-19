@@ -1786,7 +1786,7 @@ impl MockBox {
                         Some(0) => encode(FrameType::Resp, seq, &version_payload(&st.version))
                             .expect("resp fits"),
                         Some(1) => {
-                            // HEALTH is a u16 LE (proto 7); rewrite_on/patch_on/transform_on reflect live state.
+                            // HEALTH is a u16 LE since proto 7; rewrite_on/patch_on/transform_on reflect live state.
                             let mut h = st.health;
                             h.rewrite_on |= !st.rewrites.is_empty();
                             h.patch_on |= st.patch_applied;

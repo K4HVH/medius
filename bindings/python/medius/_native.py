@@ -8,6 +8,10 @@ import sys
 from ctypes.util import find_library
 from pathlib import Path
 
+# The medius_abi_version() of the header these ctypes mirrors were written from. Import refuses a
+# library that reports any other number.
+ABI_VERSION = 8
+
 MEDIUS_MAX_USAGES = 256
 MEDIUS_CLIP_TRIG_MAX = 8
 MEDIUS_CLIP_PKT_TRIG_MAX = 8
@@ -169,6 +173,7 @@ class MediusBoxInfo(ctypes.Structure):
         ("port", MediusPortInfo),
         ("version", MediusVersion),
         ("device", MediusDeviceInfo),
+        ("has_device", u8),
     ]
 
 
@@ -524,7 +529,23 @@ def _load_library():
     )
 
 
+def _check_abi(library):
+    # The structs above are a hand-written copy of medius.h. A library built from another header lays
+    # them out differently, and a call through a changed struct misreads it or overruns its buffer.
+    fn = library.medius_abi_version
+    fn.restype = u32
+    fn.argtypes = []
+    got = int(fn())
+    if got != ABI_VERSION:
+        raise ImportError(
+            f"{library._name} speaks medius C ABI {got}, and this medius package is built for ABI "
+            f"{ABI_VERSION}; install the medius package that matches the library, or point "
+            "MEDIUS_LIB at a library built from the same release"
+        )
+
+
 lib = _load_library()
+_check_abi(lib)
 
 
 def _decl(name, restype, argtypes, optional=False):

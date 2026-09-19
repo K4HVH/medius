@@ -1433,6 +1433,7 @@ pub(crate) fn box_to_medius(b: &BoxInfo) -> Option<MediusBoxInfo> {
     Some(MediusBoxInfo {
         port: port_to_medius(&b.port)?,
         version: b.version.clone().into(),
-        device: b.device.clone().into(),
+        device: b.device.clone().unwrap_or_default().into(),
+        has_device: u8::from(b.device.is_some()),
     })
 }

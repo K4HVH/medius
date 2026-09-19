@@ -169,7 +169,8 @@ def find_ports(cap: int = 16) -> List[PortInfo]:
 
 
 def list_boxes(cap: int = 16) -> List[BoxInfo]:
-    """Enumerate every connected box: opens each, handshakes, and reads its version + device info."""
+    """Enumerate every connected box, reading its version and device info. A box on another control
+    protocol is listed with `device` None."""
     import ctypes
 
     arr = (_native.MediusBoxInfo * cap)()

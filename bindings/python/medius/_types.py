@@ -618,7 +618,9 @@ class PortInfo:
 class BoxInfo:
     port: PortInfo
     version: Version
-    device: "DeviceInfo"
+    #: None for a box on another control protocol (`version.proto_ver`); opening it raises
+    #: `BadProtoVerError`.
+    device: Optional["DeviceInfo"]
 
     @property
     def id(self) -> str:
@@ -1242,7 +1244,8 @@ def port_from_c(c) -> PortInfo:
 
 
 def box_from_c(c) -> BoxInfo:
-    return BoxInfo(port_from_c(c.port), version_from_c(c.version), device_info_from_c(c.device))
+    device = device_info_from_c(c.device) if c.has_device else None
+    return BoxInfo(port_from_c(c.port), version_from_c(c.version), device)
 
 
 def mouse_caps_from_c(c) -> MouseCaps:

@@ -44,32 +44,7 @@ impl Device {
         let _span =
             trace_span!(target: "medius::device", tracing::Level::INFO, "connect").entered();
 
-        let mut version = None;
-        for _ in 0..HANDSHAKE_ATTEMPTS {
-            match self
-                .link
-                .query_timeout(Q_VERSION, HANDSHAKE_ATTEMPT_TIMEOUT)
-            {
-                Ok(payload) => match parse_resp(&payload) {
-                    Some(Resp::Version(v)) => {
-                        version = Some(v);
-                        break;
-                    }
-                    _ => {
-                        trace_event!(target: "medius::device", tracing::Level::DEBUG, "handshake: unparseable version reply, retrying");
-                    }
-                },
-                Err(Error::QueryTimeout) => {
-                    trace_event!(target: "medius::device", tracing::Level::DEBUG, "handshake: version probe timed out, retrying");
-                }
-                Err(e) => return Err(e),
-            }
-        }
-
-        let Some(version) = version else {
-            trace_event!(target: "medius::device", tracing::Level::WARN, attempts = HANDSHAKE_ATTEMPTS, "handshake: no reply to version query");
-            return Err(Error::NoReply);
-        };
+        let version = self.read_version()?;
         if version.proto_ver != PROTO_VER {
             trace_event!(
                 target: "medius::device",
@@ -106,6 +81,30 @@ impl Device {
                 .note_declared_buttons(caps.mouse.n_buttons);
         }
         Ok(version)
+    }
+
+    // The box's `RESP(VERSION)`, whatever protocol it reports. Discovery reads it to list a box this
+    // build does not speak to; the handshake reads it and then checks the number.
+    pub(crate) fn read_version(&self) -> Result<Version> {
+        for _ in 0..HANDSHAKE_ATTEMPTS {
+            match self
+                .link
+                .query_timeout(Q_VERSION, HANDSHAKE_ATTEMPT_TIMEOUT)
+            {
+                Ok(payload) => match parse_resp(&payload) {
+                    Some(Resp::Version(v)) => return Ok(v),
+                    _ => {
+                        trace_event!(target: "medius::device", tracing::Level::DEBUG, "handshake: unparseable version reply, retrying");
+                    }
+                },
+                Err(Error::QueryTimeout) => {
+                    trace_event!(target: "medius::device", tracing::Level::DEBUG, "handshake: version probe timed out, retrying");
+                }
+                Err(e) => return Err(e),
+            }
+        }
+        trace_event!(target: "medius::device", tracing::Level::WARN, attempts = HANDSHAKE_ATTEMPTS, "handshake: no reply to version query");
+        Err(Error::NoReply)
     }
 
     /// Discover the first medius box by VID/PID, open it, and handshake.
