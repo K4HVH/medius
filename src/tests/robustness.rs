@@ -73,8 +73,9 @@ fn truncated_frame_does_not_panic_and_reader_recovers() {
 // same way: unbounded, the count byte wraps past 255 or the payload outgrows a frame, and the
 // `encode` failure unwinds out of the caller's own query instead of answering it.
 use crate::types::{
-    CatchClass, CatchEntry, CatchFilter, CatchState, ClipAction, ClipSettings, ClipStatus,
-    ClipTrigger, ClockDomain, DeviceInfo, Direction, Edge, Key, MediaKey, Usage, Version,
+    CatchClass, CatchEntry, CatchFilter, CatchState, ClipAction, ClipPacketTrigger,
+    ClipPacketTriggerEntry, ClipSettings, ClipStatus, ClipTrigger, ClockDomain, DeviceInfo,
+    Direction, Edge, Key, MediaKey, TrafficClass, Usage, Version,
 };
 
 fn many_usages(n: usize) -> Vec<Usage> {
@@ -156,18 +157,58 @@ fn a_clip_status_past_the_wire_caps_still_answers() {
         held: many_usages(256),
         ..ClipStatus::default()
     });
+    // CLIP_PKT_TRIG_MAX is 8 and CLIP_PKT_MATCH_POOL is 112, which seven 16-byte matches spend. With
+    // the held list and the input triggers full, that is the longest reply the box sends: 507 bytes.
+    let packet_triggers: Vec<ClipPacketTriggerEntry> = (0..256u16)
+        .map(|i| ClipPacketTriggerEntry {
+            trigger: ClipPacketTrigger::new(
+                TrafficClass::HidIn,
+                i,
+                Direction::IN,
+                ClipAction::Start,
+            )
+            .matching([i as u8; 16], [0xFF; 16]),
+            hits: i,
+        })
+        .chain(
+            [
+                // Entries the box could never hold: a match past its compare length, and one unlike its mask.
+                ClipPacketTrigger::new(TrafficClass::Emit, 1, Direction::IN, ClipAction::Stop)
+                    .matching([0; 17], [0; 17]),
+                ClipPacketTrigger::new(TrafficClass::Emit, 2, Direction::IN, ClipAction::Stop)
+                    .matching([0; 2], [0; 1]),
+                ClipPacketTrigger::new(TrafficClass::Emit, 3, Direction::IN, ClipAction::Stop),
+            ]
+            .map(|trigger| ClipPacketTriggerEntry { trigger, hits: 0 }),
+        )
+        .collect();
     mock.set_clip_settings(ClipSettings {
         triggers,
+        packet_triggers,
         ..ClipSettings::default()
     });
-    let device = Device::with_mock(mock);
+    let device = Device::with_mock(mock.clone());
     let clip = device.clip();
     let status = clip.query_status().unwrap();
     assert_eq!(status.held.len(), 40);
     assert_eq!(status.ticks, 99);
     assert!(status.is_held(MediaKey::new(0x100)));
     assert!(!status.is_held(MediaKey::new(0x128)));
-    assert_eq!(clip.query_config().unwrap().triggers.len(), 8);
+    let config = clip.query_config().unwrap();
+    assert_eq!(config.triggers.len(), 8);
+    let ids: Vec<u16> = config
+        .packet_triggers
+        .iter()
+        .map(|e| e.trigger.id)
+        .collect();
+    assert_eq!(
+        ids,
+        [0, 1, 2, 3, 4, 5, 6, 3],
+        "seven spend the pool; one bare entry fits after"
+    );
+    assert_eq!(config.packet_triggers[6].hits, 6);
+    let reply = mock.replied_frames().pop().unwrap().payload;
+    assert_eq!(reply.len(), 507);
 }
 
 #[test]

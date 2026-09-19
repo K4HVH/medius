@@ -441,7 +441,7 @@ fn the_class_predicates_split_the_address_space_the_same_way() {
         assert!(!medius_catch_class_is_traffic(c));
         assert!(medius::CatchClass::from_u8(c).unwrap().is_input());
     }
-    for c in MEDIUS_CATCH_CLASS_HID_IN..=MEDIUS_CATCH_CLASS_BUS {
+    for c in MEDIUS_CATCH_CLASS_HID_IN..=MEDIUS_CATCH_CLASS_CLIP_TRANSFER {
         assert!(medius_catch_class_is_traffic(c));
         assert!(!medius_catch_class_is_input(c));
         assert!(medius::CatchClass::from_u8(c).unwrap().is_traffic());
@@ -490,6 +490,15 @@ fn traffic_event_splits_setup_from_the_data_stage() {
     let d = unsafe { medius_traffic_event_data(&short, &mut len) };
     assert_eq!(len, 0, "a cut setup packet has no data stage");
     let _ = d;
+
+    // A clip transfer has the same shape.
+    let mut xfer = e;
+    xfer.class = MEDIUS_CATCH_CLASS_CLIP_TRANSFER;
+    let p = unsafe { medius_traffic_event_setup(&xfer) };
+    assert!(!p.is_null());
+    assert_eq!(unsafe { std::slice::from_raw_parts(p, 8) }, &setup);
+    let _ = unsafe { medius_traffic_event_data(&xfer, &mut len) };
+    assert_eq!(len, 4);
 
     // Any other class keeps the whole packet as data.
     let mut hid = control_event(&[1, 2, 3, 4, 5, 6, 7, 8, 9], 0);
@@ -577,4 +586,50 @@ fn last_error_message_truncates_and_reports_full_length() {
     let mut buf = [0i8; 8];
     let _ = unsafe { medius_last_error_message(buf.as_mut_ptr(), buf.len()) };
     assert_eq!(buf[7], 0);
+}
+
+#[test]
+fn a_listed_box_on_another_protocol_carries_no_device() {
+    let port = medius::PortInfo {
+        path: "/dev/ttyACM0".into(),
+        vid: 0x1A86,
+        pid: 0x55D3,
+        serial: None,
+    };
+    // v3.4.0 firmware answers protocol 7.
+    let version = medius::Version {
+        proto_ver: 7,
+        fw_major: 3,
+        fw_minor: 4,
+        fw_patch: 0,
+        mac: [0x5A, 0x4E, 0, 0, 0, 1],
+        name: "old".into(),
+    };
+    let old = crate::convert::box_to_medius(&medius::BoxInfo {
+        port: port.clone(),
+        version: version.clone(),
+        device: None,
+    })
+    .unwrap();
+    assert_eq!(old.has_device, 0);
+    assert_eq!(old.version.proto_ver, 7);
+    assert_eq!(old.device.vid, 0);
+    assert_eq!(old.device.kind, MediusDeviceKind::Unknown as u8);
+
+    let current = crate::convert::box_to_medius(&medius::BoxInfo {
+        port,
+        version: medius::Version {
+            proto_ver: medius::PROTO_VER,
+            ..version
+        },
+        device: Some(medius::DeviceInfo {
+            vid: 0x046D,
+            kind: medius::DeviceKind::Mouse,
+            ..Default::default()
+        }),
+    })
+    .unwrap();
+    assert_eq!(current.has_device, 1);
+    assert_eq!(current.device.vid, 0x046D);
+    assert_eq!(current.device.kind, MediusDeviceKind::Mouse as u8);
 }

@@ -68,12 +68,12 @@ mod mock_roundtrip {
     use crate::{Device, FrameType, MockBox};
 
     #[test]
-    fn raw_requires_the_opt_in() {
-        let device = Device::with_mock(MockBox::new());
-        assert!(matches!(
-            device.raw(1, Direction::IN, &[0x00]),
-            Err(Error::ImperfectRequired)
-        ));
+    fn raw_sends_without_reading_the_opt_in() {
+        let mock = MockBox::new(); // opt-in off: the box drops the frame, the crate still sends it
+        let device = Device::with_mock(mock.clone());
+        device.raw(1, Direction::IN, &[0x00]).unwrap();
+        assert!(mock.saw(FrameType::Raw));
+        assert!(!mock.saw(FrameType::Query));
     }
 
     #[test]
@@ -90,7 +90,7 @@ mod mock_roundtrip {
     fn raw_rejects_a_direction_that_is_not_a_flow() {
         let device = Device::with_mock(MockBox::new().with_imperfect(true));
         // Both names two flows at once; the bearing-relative pair has no bearing here. Both are
-        // refused before the wire, ahead of the opt-in check.
+        // refused before the wire.
         assert!(matches!(
             device.raw(1, Direction::Both, &[0x00]),
             Err(Error::RawDirection { .. })

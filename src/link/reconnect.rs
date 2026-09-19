@@ -8,10 +8,10 @@ use crate::error::{Error, Result};
 use crate::protocol::command::{
     catch_payload, inject_payload, lock_payload, rewrite_payload, transform_payload,
 };
-use crate::protocol::opcode::{Q_CAPS, Q_VERSION};
-use crate::protocol::{FrameDecoder, FrameType, Resp, encode, parse_resp};
+use crate::protocol::opcode::{Q_CAPS, Q_CLIP, Q_VERSION};
+use crate::protocol::{FrameDecoder, FrameType, PROTO_VER, Resp, encode, parse_resp};
 use crate::transport::Transport;
-use crate::types::Version;
+use crate::types::{ClipSettings, ClipStatus, Version};
 
 use super::counters::Counters;
 use super::reconcile::DesiredState;
@@ -53,13 +53,20 @@ pub(crate) struct ReconnectCtx {
     pub(crate) updates_rx: flume::Receiver<Vec<u8>>,
 }
 
-// Runs its own query loop (the reader thread isn't up yet) so a rescan confirms the MAC before adopting.
-fn probe_version(transport: &dyn Transport) -> Option<Version> {
-    let frame = encode(FrameType::Query, 0, &[Q_VERSION]).ok()?;
+// Asks the reopened port one `QUERY` and reads the answer off the local handle before it is swapped
+// in, so the read never races the reader thread (which is on the disconnected slot here). The first
+// reply for the selector decides: the box answers the same way to every re-send, so a reply `read`
+// cannot use ends the probe at once, and a later reply never replaces one already taken.
+pub(crate) fn probe<T>(
+    transport: &dyn Transport,
+    what: u8,
+    read: impl Fn(&[u8]) -> Option<T>,
+) -> Option<T> {
+    let frame = encode(FrameType::Query, 0, &[what]).ok()?;
     let mut decoder = FrameDecoder::new();
     let start = Instant::now();
     let mut last_query: Option<Instant> = None;
-    let mut found = None;
+    let mut found: Option<Option<T>> = None;
     let mut rx = [0u8; 256];
     while found.is_none() && start.elapsed() < PROBE_DEADLINE {
         if last_query.is_none_or(|t| t.elapsed() >= PROBE_QUERY_GAP) {
@@ -71,49 +78,40 @@ fn probe_version(transport: &dyn Transport) -> Option<Version> {
         match transport.read(&mut rx) {
             Ok(0) => {}
             Ok(n) => decoder.feed(&rx[..n], |f| {
-                if f.ty == FrameType::Resp {
-                    if let Some(Resp::Version(v)) = parse_resp(&f.payload) {
-                        found = Some(v);
-                    }
+                if found.is_none() && f.ty == FrameType::Resp && f.payload.first() == Some(&what) {
+                    found = Some(read(&f.payload));
                 }
             }),
             Err(_) => return None,
         }
     }
-    found
+    found.flatten()
 }
 
-// Reads the reopened clone's declared button count off the local handle before it is swapped in, so
-// the read never races the reader thread (which is on the disconnected slot here, exactly as it is
-// during `probe_version`). `None` for a box that does not answer or reports no buttons; a wide-button
-// blanket then keeps whatever count the handshake or a prior reconnect cached.
+// A rescan confirms the MAC before adopting a port.
+fn probe_version(transport: &dyn Transport) -> Option<Version> {
+    probe(transport, Q_VERSION, |p| match parse_resp(p) {
+        Some(Resp::Version(v)) => Some(v),
+        _ => None,
+    })
+}
+
+// The reopened clone's declared button count. `None` for a box that does not answer or reports no
+// buttons; a wide-button blanket then keeps whatever count the handshake or a prior reconnect cached.
 fn probe_caps(transport: &dyn Transport) -> Option<u8> {
-    let frame = encode(FrameType::Query, 0, &[Q_CAPS]).ok()?;
-    let mut decoder = FrameDecoder::new();
-    let start = Instant::now();
-    let mut last_query: Option<Instant> = None;
-    let mut found = None;
-    let mut rx = [0u8; 256];
-    while found.is_none() && start.elapsed() < PROBE_DEADLINE {
-        if last_query.is_none_or(|t| t.elapsed() >= PROBE_QUERY_GAP) {
-            if transport.write_all(&frame).is_err() {
-                return None;
-            }
-            last_query = Some(Instant::now());
-        }
-        match transport.read(&mut rx) {
-            Ok(0) => {}
-            Ok(n) => decoder.feed(&rx[..n], |f| {
-                if f.ty == FrameType::Resp
-                    && let Some(Resp::Caps(c)) = parse_resp(&f.payload)
-                {
-                    found = Some(c.mouse.n_buttons);
-                }
-            }),
-            Err(_) => return None,
-        }
-    }
-    found.filter(|&n| n > 0)
+    probe(transport, Q_CAPS, |p| match parse_resp(p) {
+        Some(Resp::Caps(c)) => Some(c.mouse.n_buttons),
+        _ => None,
+    })
+    .filter(|&n| n > 0)
+}
+
+// What the box holds of a clip after the blip. A drop shorter than the box's silence window leaves the
+// clip, its settings and its triggers standing; a longer one clears them.
+pub(crate) fn probe_clip(transport: &dyn Transport) -> Option<(ClipStatus, ClipSettings)> {
+    probe(transport, Q_CLIP, |p| {
+        Some((ClipStatus::from_payload(p)?, ClipSettings::from_payload(p)?))
+    })
 }
 
 fn reconnect(ctx: &ReconnectCtx) -> Result<()> {
@@ -141,45 +139,91 @@ fn reconnect(ctx: &ReconnectCtx) -> Result<()> {
     ctx.transport.swap(Arc::new(crate::transport::Disconnected));
     std::thread::sleep(Duration::from_millis(200));
 
-    for port in candidates {
+    let opened = candidates.into_iter().filter_map(|port| {
         let serial =
-            match crate::transport::serial::SerialTransport::open(std::path::Path::new(&port.path))
-            {
-                Ok(s) => s,
-                Err(_) => continue,
-            };
+            crate::transport::serial::SerialTransport::open(std::path::Path::new(&port.path))
+                .ok()?;
+        Some((port.path, Arc::new(serial) as Arc<dyn Transport>))
+    });
+    adopt_first(ctx, identity.as_ref(), opened)
+}
+
+// Takes back the first reopened port that is this box on this build's protocol. A box that answers on
+// another protocol is refused with it, as the handshake refuses one.
+#[cfg_attr(not(feature = "tracing"), allow(unused_variables))] // `path` is only read by trace_event!
+fn adopt_first(
+    ctx: &ReconnectCtx,
+    identity: Option<&BoxIdentity>,
+    opened: impl Iterator<Item = (String, Arc<dyn Transport>)>,
+) -> Result<()> {
+    let mut refused = None;
+    for (path, port) in opened {
+        let version = probe_version(&*port);
         // With an identity on record, confirm the MAC before committing so a rescan never adopts the
         // wrong box. Without one (a transport opened bare, e.g. a mock), accept the first that opens.
-        if let Some(id) = &identity {
-            match probe_version(&serial) {
-                Some(v) if v.mac == id.mac => {}
-                _ => continue,
-            }
+        if let Some(id) = identity
+            && version.as_ref().is_none_or(|v| v.mac != id.mac)
+        {
+            continue;
+        }
+        // A box reflashed while held comes back on its new protocol, whose replies this build would
+        // misread from the clip probe on.
+        if let Some(got) = version
+            .as_ref()
+            .map(|v| v.proto_ver)
+            .filter(|&p| p != PROTO_VER)
+        {
+            trace_event!(
+                target: "medius::device",
+                tracing::Level::WARN,
+                port = %path,
+                got,
+                expected = PROTO_VER,
+                "reconnect: unsupported protocol version",
+            );
+            refused = Some(got);
+            continue;
         }
         // Refresh the declared button count off the reopened clone before the replay, so a wide-button
         // blanket re-asserts onto the count the box reports now and a device swapped in during the blip
         // re-asserts onto the new device's count.
-        if let Some(n) = probe_caps(&serial) {
+        if let Some(n) = probe_caps(&*port) {
             ctx.desired.lock().note_declared_buttons(n);
         }
-        ctx.transport.swap(Arc::new(serial));
+        // Held from the read of the box's clip to the end of the replay. A clip call sends and records
+        // under this lock, so it lands whole on one side of the read and its adoption.
+        let _reassert = ctx.catch_lock.lock();
+        let clip = probe_clip(&*port);
+        ctx.transport.swap(port);
         ctx.held_updates.lock().clear();
         while ctx.updates_rx.try_recv().is_ok() {}
         ctx.counters.inc_reconnects();
         trace_event!(
             target: "medius::device",
             tracing::Level::INFO,
-            port = %port.path,
+            port = %path,
             reason = "rescan",
             "reconnected",
         );
-        return reapply_held(ctx);
+        // A clip is the caller's to reload, so the replay sends none of it. The keepalive holds
+        // whatever of it the box still has.
+        if let Some((status, settings)) = clip {
+            ctx.desired.lock().clip_adopt(&status, &settings);
+        }
+        return reapply_held_locked(ctx);
     }
-    Err(Error::NotFound)
+    Err(match refused {
+        Some(got) => Error::BadProtoVer { got },
+        None => Error::NotFound,
+    })
 }
 
 fn reapply_held(ctx: &ReconnectCtx) -> Result<()> {
     let _serial = ctx.catch_lock.lock();
+    reapply_held_locked(ctx)
+}
+
+fn reapply_held_locked(ctx: &ReconnectCtx) -> Result<()> {
     let (held, held_locks, catch, rewrites, transforms) = {
         let d = ctx.desired.lock();
         (
@@ -306,6 +350,15 @@ impl Link {
 
     pub(crate) fn reconnect(&self) -> Result<()> {
         reconnect(&self.reconnect_ctx())
+    }
+
+    // The rescan's adoption over ports a test has already opened.
+    #[cfg(test)]
+    pub(crate) fn adopt_reopened(&self, opened: Vec<(String, Arc<dyn Transport>)>) -> Result<()> {
+        let ctx = self.reconnect_ctx();
+        let _guard = ctx.reconnect_lock.lock();
+        let identity = ctx.identity.lock().clone();
+        adopt_first(&ctx, identity.as_ref(), opened.into_iter())
     }
 
     pub(crate) fn reapply(&self) -> Result<()> {

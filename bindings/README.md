@@ -18,13 +18,13 @@ Build the library and use the generated header:
 
 ```sh
 cargo build -p medius-capi --release          # target/release/libmedius_capi.{so,a}
-cargo build -p medius-capi --release --features mock,flash   # opt-in surfaces
+cargo build -p medius-capi --release --features mock   # the mock box, for tests
 ```
 
 The header is `medius-capi/include/medius.h`, committed and regenerated with
-`tools/gen-header.sh` (cbindgen). It compiles as C99, C23, and C++. The mock and
-flash surfaces are wrapped in `#ifdef MEDIUS_FEATURE_MOCK` / `MEDIUS_FEATURE_FLASH`;
-define those macros when you built the library with the matching cargo feature.
+`tools/gen-header.sh` (cbindgen). It compiles as C99, C23, and C++. The mock
+surface is wrapped in `#if defined(MEDIUS_FEATURE_MOCK)`; define that macro when
+you built the library with the `mock` cargo feature.
 
 Conventions: every fallible call returns a `MediusStatus` (`MEDIUS_STATUS_OK` is 0)
 and writes its result through an out-param. `medius_last_error_message()` gives the
@@ -33,9 +33,15 @@ last failure's text on the calling thread. Handles (`MediusDevice`, `MediusEvent
 and log lines are fixed-size PODs sized to the protocol's own limits, so there is
 nothing to free per event.
 
+Check the ABI once at start-up. `medius_abi_version()` is the loaded library's number
+and `MEDIUS_ABI_VERSION` is the header's. On a mismatch, call nothing else: the
+header's structs are laid out differently from the library's, so rebuild against
+the header that ships with that library.
+
 ```c
 #include <medius.h>
 
+if (medius_abi_version() != MEDIUS_ABI_VERSION) { /* rebuild against the library's header */ }
 MediusDevice *dev = NULL;
 if (medius_device_find(&dev) != MEDIUS_STATUS_OK) { /* medius_last_error_message(...) */ }
 MediusVersion v;
@@ -72,7 +78,10 @@ with medius.Device.find() as dev:
 The wheel bundles its own `libmedius_capi`, so `pip install` needs no Rust
 toolchain. For development, point `MEDIUS_LIB` at a locally built library
 (e.g. `target/debug/libmedius_capi.so`, built with `--features mock` for the
-test suite).
+test suite). Import compares the library's `medius_abi_version()` with the ABI
+the package's ctypes mirrors were written for and raises `ImportError`, naming
+both numbers, when they differ, so a library from another release fails at
+import.
 
 ## Differences from the Rust API
 

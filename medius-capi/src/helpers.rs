@@ -378,10 +378,18 @@ pub extern "C" fn medius_catch_class_is_input(class: MediusCatchClass) -> bool {
     class <= MEDIUS_CATCH_CLASS_AXIS
 }
 
-/// Whether `class` is one of the seven byte-oriented traffic classes.
+/// Whether `class` is one of the eight byte-oriented traffic classes.
 #[unsafe(no_mangle)]
 pub extern "C" fn medius_catch_class_is_traffic(class: MediusCatchClass) -> bool {
-    (MEDIUS_CATCH_CLASS_HID_IN..=MEDIUS_CATCH_CLASS_BUS).contains(&class)
+    (MEDIUS_CATCH_CLASS_HID_IN..=MEDIUS_CATCH_CLASS_CLIP_TRANSFER).contains(&class)
+}
+
+// The two classes whose bytes are `[setup 8][data]`.
+fn is_control_shaped(e: &MediusTrafficEvent) -> bool {
+    matches!(
+        e.class,
+        MEDIUS_CATCH_CLASS_CONTROL | MEDIUS_CATCH_CLASS_CLIP_TRANSFER
+    )
 }
 
 /// Whether the capture cut this packet short. Without checking, a truncated capture and a genuinely
@@ -397,8 +405,9 @@ pub unsafe extern "C" fn medius_traffic_event_truncated(event: *const MediusTraf
     })
 }
 
-/// The 8-byte setup packet of a CONTROL event, or NULL for another class or a capture cut shorter
-/// than the setup stage. Points into `event`. Mirrors `medius::TrafficEvent::setup`.
+/// The 8-byte setup packet of a CONTROL or CLIP_TRANSFER event, or NULL for another class or a
+/// capture cut shorter than the setup stage. Points into `event`. Mirrors
+/// `medius::TrafficEvent::setup`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_traffic_event_setup(event: *const MediusTrafficEvent) -> *const u8 {
     guard(std::ptr::null(), || {
@@ -406,7 +415,7 @@ pub unsafe extern "C" fn medius_traffic_event_setup(event: *const MediusTrafficE
             return std::ptr::null();
         }
         let e = unsafe { &*event };
-        if e.class == MEDIUS_CATCH_CLASS_CONTROL && e.len >= SETUP_LEN {
+        if is_control_shaped(e) && e.len >= SETUP_LEN {
             e.bytes.as_ptr()
         } else {
             std::ptr::null()
@@ -414,8 +423,8 @@ pub unsafe extern "C" fn medius_traffic_event_setup(event: *const MediusTrafficE
     })
 }
 
-/// The data stage of a CONTROL event, the whole packet for any other class; its length goes to
-/// `*out_len`. Points into `event`. Mirrors `medius::TrafficEvent::data`.
+/// The data stage of a CONTROL or CLIP_TRANSFER event, the whole packet for any other class; its
+/// length goes to `*out_len`. Points into `event`. Mirrors `medius::TrafficEvent::data`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_traffic_event_data(
     event: *const MediusTrafficEvent,
@@ -430,7 +439,7 @@ pub unsafe extern "C" fn medius_traffic_event_data(
         // A control event whose own setup packet was cut short has no data stage at all.
         // Falling through to "the whole buffer is the data" handed a decoder the surviving setup
         // bytes: a GET_DESCRIPTOR request labelled as the descriptor it asked for.
-        let (skip, n) = if e.class != MEDIUS_CATCH_CLASS_CONTROL {
+        let (skip, n) = if !is_control_shaped(e) {
             (0usize, n)
         } else if e.len >= SETUP_LEN {
             (SETUP_LEN as usize, n)
@@ -467,6 +476,30 @@ pub unsafe extern "C" fn medius_traffic_event_control_status(
         };
         if !out.is_null() {
             unsafe { *out = status };
+        }
+        true
+    })
+}
+
+/// How the transfer ended, written to `*out` as a `MEDIUS_TRANSFER_STATUS_*` value; false for any
+/// class but CLIP_TRANSFER. `MEDIUS_TRANSFER_STATUS_NAK` when no answer came, and a byte no constant
+/// names is carried through. A null `out` is skipped and the return still answers. Mirrors
+/// `medius::TrafficEvent::transfer_status`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn medius_traffic_event_transfer_status(
+    event: *const MediusTrafficEvent,
+    out: *mut u8,
+) -> bool {
+    guard(false, || {
+        if event.is_null() {
+            return false;
+        }
+        let e = unsafe { &*event };
+        if e.class != MEDIUS_CATCH_CLASS_CLIP_TRANSFER {
+            return false;
+        }
+        if !out.is_null() {
+            unsafe { *out = medius::TransferStatus::from_u8(e.flags).as_u8() };
         }
         true
     })

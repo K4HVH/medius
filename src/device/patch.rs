@@ -12,7 +12,8 @@ impl Device {
     ///
     /// A patch overwrites bytes in what the clone presents at enumeration, persisted per device
     /// (VID:PID) in the box's NVS. A patch with empty [`bytes`](Patch::bytes) removes the patch at that
-    /// key. Unlike a rewrite rule a patch is configuration, not session state: it survives a reconnect
+    /// key. The set belongs to the attached device, so a patch stored with none attached is dropped.
+    /// Unlike a rewrite rule a patch is configuration, not session state: it survives a reconnect
     /// and clears only on [`clear_patch`](Device::clear_patch). Storing a patch is **not** gated on the
     /// opt-in (the box always stores it), but it takes effect only once
     /// [`apply_patch`](Device::apply_patch) re-presents the clone under

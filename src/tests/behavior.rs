@@ -80,6 +80,25 @@ fn handshake_rejects_wrong_proto_ver() {
 }
 
 #[test]
+fn handshake_refuses_a_v3_4_0_box() {
+    // v3.4.0 firmware answers protocol 7; this build speaks 8.
+    let mock = MockBox::new().with_version(Version {
+        proto_ver: 7,
+        fw_major: 3,
+        fw_minor: 4,
+        fw_patch: 0,
+        mac: [0; 6],
+        name: String::new(),
+    });
+    let err = Device::open_mock(mock).unwrap_err();
+    assert!(matches!(err, Error::BadProtoVer { got: 7 }), "got {err:?}");
+    assert_eq!(
+        err.to_string(),
+        "unsupported protocol version 7 (expected 8)"
+    );
+}
+
+#[test]
 fn handshake_on_silent_box_is_no_reply() {
     let err = Device::open_mock(MockBox::new().silent()).unwrap_err();
     assert!(matches!(err, Error::NoReply), "got {err:?}");

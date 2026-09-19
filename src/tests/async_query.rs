@@ -25,6 +25,18 @@ fn async_logs_recv_async_yields_pushed_lines() {
 }
 
 #[test]
+fn async_raw_sends_without_reading_the_opt_in() {
+    use crate::protocol::FrameType;
+    use crate::types::Direction;
+
+    let mock = MockBox::new(); // opt-in off: the box drops the frame, the crate still sends it
+    let device = Device::with_mock(mock.clone()).into_async();
+    block_on(device.raw(1, Direction::IN, &[0x00, 0x01])).unwrap();
+    assert!(mock.saw(FrameType::Raw));
+    assert!(!mock.saw(FrameType::Query));
+}
+
+#[test]
 fn async_movement_verbs_send_the_same_frames_as_the_sync_ones() {
     use crate::protocol::FrameType;
     use crate::{Motion, MoveTiming, PendingMotion};
@@ -109,6 +121,44 @@ fn async_clip_set_ride_sends_the_ride_id() {
         .map(|f| f.payload)
         .collect();
     assert_eq!(sent, vec![vec![3, 1]]);
+}
+
+#[test]
+fn async_packet_trigger_calls_send_the_same_frames_as_the_sync_ones() {
+    use crate::protocol::FrameType;
+    use crate::{ClipAction, ClipPacketTrigger, Direction, TrafficClass};
+
+    let trigger = ClipPacketTrigger::new(TrafficClass::HidIn, 2, Direction::IN, ClipAction::Start)
+        .matching([0x07, 0x20], [0xFF, 0x20])
+        .once_per_run(1);
+    let sent = |mock: &MockBox| -> Vec<Vec<u8>> {
+        mock.recorded_frames()
+            .into_iter()
+            .filter(|f| f.ty == FrameType::ClipTrigger)
+            .map(|f| f.payload)
+            .collect()
+    };
+    let sync_mock = MockBox::new();
+    let sync = Device::with_mock(sync_mock.clone()).clip();
+    sync.bind_packet(&trigger).unwrap();
+    sync.unbind_packet(&trigger).unwrap();
+
+    let mock = MockBox::new();
+    let device = Device::with_mock(mock.clone()).into_async();
+    let clip = device.clip();
+    clip.bind_packet(&trigger).unwrap();
+    let read = block_on(clip.query_config()).unwrap().packet_triggers;
+    assert_eq!(read.len(), 1);
+    assert_eq!(read[0].trigger, trigger);
+    clip.unbind_packet(&trigger).unwrap();
+    assert!(
+        block_on(clip.query_config())
+            .unwrap()
+            .packet_triggers
+            .is_empty()
+    );
+    assert_eq!(sent(&mock), sent(&sync_mock));
+    assert_eq!(sent(&mock).len(), 2);
 }
 
 #[test]

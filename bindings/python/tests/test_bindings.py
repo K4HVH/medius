@@ -30,11 +30,21 @@ from medius import (
     CatchState,
     Action,
     Blanket,
+    CLIP_EDGES_MAX,
+    CLIP_ENTRY_MAX,
+    CLIP_PKT_MATCH_POOL,
+    CLIP_PKT_TRIG_MAX,
+    CLIP_RAW_MAX,
     ClipAction,
     ClipBuilder,
+    ClipFrameCountError,
+    ClipFrameTooLongError,
+    ClipPacketTrigger,
+    ClipPacketTriggerError,
     ClipSettings,
     ClipState,
     ClipStatus,
+    ClipTransferDataError,
     ClipTrigger,
     ClockDomain,
     ClockEstimate,
@@ -85,11 +95,13 @@ from medius import (
     PatchEntry,
     PatchSet,
     PatchSection,
+    PKT_MATCH_MAX,
     RewriteRule,
     RewriteEntry,
     RewriteTable,
     RewriteClass,
     RewriteAction,
+    RewriteMatchTooLongError,
     Setup,
     TransferOutcome,
     TransferStatus,
@@ -114,10 +126,55 @@ def test_mock_feature_present():
 def test_meta_functions():
     # These are a hand-written mirror of the C structs, so a bumped ABI means they are stale until
     # someone re-reads the header. Pin it rather than accept anything newer.
-    assert medius.abi_version() == 7
+    assert medius.abi_version() == 8
+    assert medius._native.ABI_VERSION == 8
     assert medius.version_string()
     assert medius.default_query_timeout_ms() > 0
     assert medius.default_keepalive_cadence_ms() > 0
+
+
+def test_the_abi_version_is_the_header_s():
+    import re
+
+    header = pathlib.Path(__file__).resolve().parents[3] / "medius-capi" / "include" / "medius.h"
+    declared = re.search(r"^#define MEDIUS_ABI_VERSION (\d+)$", header.read_text(), re.M)
+    assert declared, "the header declares MEDIUS_ABI_VERSION"
+    assert int(declared.group(1)) == medius.abi_version() == medius._native.ABI_VERSION
+
+
+# Runs the loader module again, as a fresh module, over the real library with its ABI number replaced.
+def _load_native_against(monkeypatch, reported):
+    import ctypes
+    import importlib.util
+
+    from medius import _native
+
+    class ReportsAbi(ctypes.CDLL):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.medius_abi_version = lambda: reported
+
+    monkeypatch.setattr(ctypes, "CDLL", ReportsAbi)
+    spec = importlib.util.spec_from_file_location("_medius_native_abi_probe", _native.__file__)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+@pytest.mark.parametrize("step", [-1, 1])
+def test_import_refuses_a_library_of_another_abi(monkeypatch, step):
+    # An old package over a new library, and the reverse: both are the layout drift the number exists
+    # to catch, so both refuse at import and name the two numbers.
+    want = medius._native.ABI_VERSION
+    with pytest.raises(ImportError) as ei:
+        _load_native_against(monkeypatch, want + step)
+    assert f"C ABI {want + step}," in str(ei.value)
+    assert f"built for ABI {want};" in str(ei.value)
+
+
+def test_import_takes_a_library_of_the_same_abi(monkeypatch):
+    module = _load_native_against(monkeypatch, medius._native.ABI_VERSION)
+    assert module.lib.medius_version_string().decode() == medius.version_string()
 
 
 def test_configure_version_then_open_mock_matches():
@@ -162,6 +219,28 @@ def test_bad_proto_version_reports_status_and_proto_ver():
     assert ei.value.status == Status.ERR_BAD_PROTO_VER
     assert ei.value.proto_ver == 99
     mock.close()
+
+
+def test_a_listed_box_on_another_protocol_has_no_device():
+    from medius import DeviceKind, _native
+    from medius._types import box_from_c
+
+    c = _native.MediusBoxInfo()
+    c.port.path = b"/dev/ttyACM0"
+    c.version.proto_ver = 7  # v3.4.0 firmware
+    c.version.mac[:] = [0x5A, 0x4E, 0x00, 0x00, 0x00, 0x01]
+    c.has_device = 0
+    old = box_from_c(c)
+    assert old.device is None
+    assert old.version.proto_ver == 7
+    assert old.id == "5a4e00000001"
+
+    c.version.proto_ver = 8
+    c.device.vid = 0x046D
+    c.device.kind = DeviceKind.MOUSE
+    c.has_device = 1
+    assert box_from_c(c).device.kind == DeviceKind.MOUSE
+    assert box_from_c(c).device.vid == 0x046D
 
 
 def test_recorded_frame_payload_readable():
@@ -884,6 +963,41 @@ def test_traffic_event_control_accessors():
     assert answered.data() == b"\x12\x01"
 
 
+def test_clip_transfer_event_accessors():
+    setup = bytes([0xA1, 0x01, 0x00, 0x03, 0x00, 0x00, 0x02, 0x00])
+    answered = TrafficEvent(
+        catch_class=CatchClass.CLIP_TRANSFER,
+        id=0,
+        direction=Direction.IN,
+        flags=TransferStatus.OK,
+        true_len=10,
+        bytes=setup + b"\x04\x01",
+    )
+    with MockBox() as mock, Device.with_mock(mock) as d:
+        with d.catch_events(CatchFilter.traffic_class(TrafficClass.CLIP_TRANSFER)) as stream:
+            ev = _push_and_recv(mock, stream, answered)
+    assert ev.traffic == answered
+    assert ev.traffic.catch_class.is_traffic()
+    assert ev.traffic.setup() == setup
+    assert ev.traffic.data() == b"\x04\x01"
+    assert ev.traffic.transfer_status() == TransferStatus.OK
+    assert ev.traffic.transfer_status().is_ok
+    # The flags byte is a transfer status on this class, so the control reading does not apply.
+    assert ev.traffic.control_status() is None
+
+    stalled = TrafficEvent(CatchClass.CLIP_TRANSFER, 0, Direction.IN, 0xFD, 8, setup)
+    assert stalled.transfer_status() == TransferStatus.STALL
+    assert stalled.data() == b""
+    unanswered = TrafficEvent(CatchClass.CLIP_TRANSFER, 0, Direction.IN, 0xFE, 8, setup)
+    assert unanswered.transfer_status() == TransferStatus.NAK
+    # A status no member names is kept as its byte.
+    unknown = TrafficEvent(CatchClass.CLIP_TRANSFER, 0, Direction.IN, 0x42, 8, setup)
+    assert unknown.transfer_status() == 0x42
+    # Any other class reads as None.
+    control = TrafficEvent(CatchClass.CONTROL, 0, Direction.IN, 0x00, 8, setup)
+    assert control.transfer_status() is None
+
+
 def test_traffic_event_bus_event():
     with MockBox() as mock, Device.with_mock(mock) as d:
         with d.catch_events(CatchFilter.traffic_class(TrafficClass.BUS)) as stream:
@@ -1063,7 +1177,7 @@ def test_clip_append_encodes_and_chunks():
 def test_clip_builder_frame_edges():
     with MockBox() as mock, Device.with_mock(mock) as d:
         b = ClipBuilder()
-        b.frame(1, 2, -1, [(Usage.button(Button.LEFT), Action.PRESS), (Usage.key(0x04), Action.PRESS)])
+        b.frame(1, 2, -1, edges=[(Usage.button(Button.LEFT), Action.PRESS), (Usage.key(0x04), Action.PRESS)])
         d.clip().append(b)
         b.close()
         appends = _clip_frames(d, mock, FrameType.CLIP_APPEND)
@@ -1073,10 +1187,221 @@ def test_clip_builder_frame_edges():
     )
 
 
+def test_clip_frame_carries_pan_raw_reports_and_transfers():
+    set_report = Setup(0x21, 0x09, 0x0300, 0, 2)
+    get_report = Setup(0xA1, 0x01, 0x0300, 0, 8)
+    with MockBox() as mock, Device.with_mock(mock) as d:
+        with ClipBuilder() as b:
+            b.frame(
+                dx=4,
+                dy=-2,
+                wheel=1,
+                pan=-3,
+                edges=[(Usage.button(Button.LEFT), Action.PRESS)],
+                raw=[(2, Direction.OUT, b"\x10\xFF\x05"), (1, Direction.IN, b"")],
+                transfers=[(3, set_report, b"\x04\x01"), (4, get_report)],
+            )
+            d.clip().append(b)
+        appends = _clip_frames(d, mock, FrameType.CLIP_APPEND)
+    assert appends == [
+        bytes(
+            [0x3F, 0x04, 0x00, 0xFE, 0xFF]              # flags XY|WHEEL|EDGES|PAN|RAW|XFER, dx=4 dy=-2
+            + [0x01, 0x00]                              # wheel=1
+            + [0xFD, 0xFF]                              # pan=-3
+            + [0x01, 0x00, 0x00, 0x00, 0x01]            # n=1, [btn left press]
+            + [0x02]                                    # 2 raw reports
+            + [0x02, 0x02, 0x03, 0x00, 0x10, 0xFF, 0x05]  # ep 2 OUT, 3 bytes
+            + [0x01, 0x01, 0x00, 0x00]                  # ep 1 IN, 0 bytes
+            + [0x02]                                    # 2 transfers
+            + [0x03, 0x21, 0x09, 0x00, 0x03, 0x00, 0x00, 0x02, 0x00, 0x04, 0x01]  # ep 3, setup, 2 OUT bytes
+            + [0x04, 0xA1, 0x01, 0x00, 0x03, 0x00, 0x00, 0x08, 0x00]              # ep 4, setup, no data
+        )
+    ]
+
+
+def test_clip_builder_one_field_pan_raw_and_transfer_frames():
+    with MockBox() as mock, Device.with_mock(mock) as d:
+        with ClipBuilder() as b:
+            b.pan(7).raw(2, Direction.OUT, b"\xAA").transfer(5, Setup(0x21, 0x09, 0x0300, 0, 1), b"\x05")
+            b.transfer(6, Setup(0xA1, 0x01, 0x0300, 0, 8))
+            assert b.byte_len() == 3 + 7 + 12 + 11
+            d.clip().append(b)
+        joined = b"".join(_clip_frames(d, mock, FrameType.CLIP_APPEND))
+    assert joined == bytes(
+        [0x08, 0x07, 0x00]                                                        # PAN, dpan=7
+        + [0x10, 0x01, 0x02, 0x02, 0x01, 0x00, 0xAA]                              # RAW, n=1, ep 2 OUT, 1 byte
+        + [0x20, 0x01, 0x05, 0x21, 0x09, 0x00, 0x03, 0x00, 0x00, 0x01, 0x00, 0x05]  # XFER, n=1, ep 5, setup, data
+        + [0x20, 0x01, 0x06, 0xA1, 0x01, 0x00, 0x03, 0x00, 0x00, 0x08, 0x00]      # XFER, n=1, ep 6, setup
+    )
+
+
+def test_clip_builder_byte_len_is_what_an_append_puts_in_the_ring():
+    left = Usage.button(Button.LEFT)
+    with MockBox() as mock, Device.with_mock(mock) as d:
+        with ClipBuilder() as b:
+            assert b.byte_len() == 0
+            b.frame()
+            assert b.byte_len() == 5  # a frame carrying nothing is a zero XY tick
+            b.gap(4).wheel(1).press(left)
+            assert b.byte_len() == 5 + 3 + 3 + 6
+            for _ in range(150):
+                b.move(3, -2)
+            b.frame(dx=1, raw=[(2, Direction.OUT, b"\x10\xFF")], transfers=[(3, Setup(0xA1, 0x01, 0x0300, 0, 8))])
+            want = b.byte_len()
+            d.clip().append(b)
+            b.clear()
+            assert b.byte_len() == 0
+        appends = _clip_frames(d, mock, FrameType.CLIP_APPEND)
+    assert len(appends) >= 2
+    assert want == sum(len(p) for p in appends)
+
+
+def test_clip_frame_transfers_take_a_pair_or_a_triple():
+    get_report = Setup(0xA1, 0x01, 0x0300, 0, 8)
+    set_report = Setup(0x21, 0x09, 0x0300, 0, 1)
+    with MockBox() as mock, Device.with_mock(mock) as d:
+        with ClipBuilder() as b:
+            b.frame(transfers=[(3, get_report), [4, set_report, b"\x05"]])
+            for bad in ([(3,)], [(3, get_report, b"", 0)], [get_report], [3]):
+                with pytest.raises(ValueError, match=r"\(ep, setup\) or \(ep, setup, out_bytes\)"):
+                    b.frame(transfers=bad)
+            d.clip().append(b)
+        appends = _clip_frames(d, mock, FrameType.CLIP_APPEND)
+    assert appends == [
+        bytes(
+            [0x20, 0x02]
+            + [0x03, 0xA1, 0x01, 0x00, 0x03, 0x00, 0x00, 0x08, 0x00]
+            + [0x04, 0x21, 0x09, 0x00, 0x03, 0x00, 0x00, 0x01, 0x00, 0x05]
+        )
+    ]
+
+
+@pytest.mark.parametrize("bad", [3, 0, True, "abc", None, 1.5, ["a"]])
+def test_a_byte_argument_that_is_not_bytes_is_refused(bad):
+    # bytes(3) is three zero bytes, which would go out as a report nobody wrote.
+    setup = Setup(0x21, 0x09, 0x0300, 0, 3)
+    with MockBox() as mock:
+        mock.set_imperfect_status(_allowed())
+        with Device.with_mock(mock) as d, ClipBuilder() as b:
+            calls = [
+                lambda: d.raw(1, Direction.OUT, bad),
+                lambda: d.transfer(0, setup, bad),
+                lambda: d.transfer(0, setup, bad, timeout_ms=1000),
+                lambda: b.raw(1, Direction.OUT, bad),
+                lambda: b.transfer(0, setup, bad),
+                lambda: b.frame(raw=[(1, Direction.OUT, bad)]),
+                lambda: b.frame(transfers=[(0, setup, bad)]),
+                lambda: d.set_rewrite(RewriteRule(RewriteClass.EMIT, 1, Direction.IN, RewriteAction.REPLACE, payload=bad)),
+                lambda: d.set_rewrite(RewriteRule(RewriteClass.EMIT, 1, Direction.IN, RewriteAction.PASS, match_bytes=bad, mask=b"")),
+                lambda: d.set_rewrite(RewriteRule(RewriteClass.EMIT, 1, Direction.IN, RewriteAction.PASS, match_bytes=b"", mask=bad)),
+                lambda: d.clip().bind_packet(ClipPacketTrigger(*_HELD[:4], match_bytes=bad, mask=b"")),
+                lambda: d.clip().bind_packet(ClipPacketTrigger(*_HELD[:4], match_bytes=b"", mask=bad)),
+                lambda: d.clip().unbind_packet(ClipPacketTrigger(*_HELD[:4], match_bytes=bad, mask=b"")),
+                lambda: d.clip().unbind_packet(ClipPacketTrigger(*_HELD[:4], match_bytes=b"", mask=bad)),
+                lambda: mock.set_clip_settings(ClipSettings(packet_triggers=[ClipPacketTrigger(*_HELD[:4], match_bytes=bad)])),
+                lambda: mock.clip_packet(TrafficClass.HID_IN, 2, Direction.IN, bad),
+                lambda: d.set_patch(Patch(PatchSection.DEVICE, 0, 0, 0, bad)),
+                lambda: mock.set_transfer_reply(TransferStatus.OK, bad),
+                lambda: mock.push_traffic(0, 0, ClockDomain.DEVICE_CHIP, TrafficEvent(CatchClass.HID_IN, 1, Direction.IN, 0, 3, bad)),
+            ]
+            for i, call in enumerate(calls):
+                with pytest.raises(TypeError):
+                    call()
+                    pytest.fail(f"call {i} took {bad!r}")
+            assert b.byte_len() == 0
+            sent = {mock.recorded_frame(i).type for i in range(mock.recorded())}
+    assert sent <= {FrameType.QUERY}
+
+
+def test_a_byte_argument_takes_every_bytes_like_and_an_iterable_of_ints():
+    with MockBox() as mock:
+        mock.set_imperfect_status(_allowed())
+        with Device.with_mock(mock) as d:
+            for data in (b"\x01\x02", bytearray(b"\x01\x02"), memoryview(b"\x01\x02"), [1, 2], (1, 2), range(1, 3)):
+                d.raw(1, Direction.OUT, data)
+            raws = [
+                mock.recorded_frame(i).payload
+                for i in range(mock.recorded())
+                if mock.recorded_frame(i).type == FrameType.RAW
+            ]
+            with pytest.raises(ValueError):
+                d.raw(1, Direction.OUT, [1, 300])
+    assert len(raws) == 6
+    assert all(r.endswith(b"\x01\x02") for r in raws)
+    assert len(set(raws)) == 1
+
+
+def test_a_refused_clip_frame_raises_its_own_exception_and_sends_nothing():
+    left = Usage.button(Button.LEFT)
+    set_report = Setup(0x21, 0x09, 0x0300, 0, 2)
+    refusals = [
+        (ClipFrameCountError, dict(edges=[(left, Action.PRESS)] * (CLIP_EDGES_MAX + 1))),
+        (ClipFrameCountError, dict(raw=[(1, Direction.OUT, b"\x00")] * (CLIP_RAW_MAX + 1))),
+        (ClipFrameTooLongError, dict(raw=[(1, Direction.OUT, bytes(CLIP_ENTRY_MAX))])),
+        (ClipTransferDataError, dict(transfers=[(0, set_report, b"\x04")])),
+        (ClipTransferDataError, dict(transfers=[(0, Setup(0xA1, 0x01, 0x0300, 0, 8), b"\x04")])),
+        (RawDirectionError, dict(raw=[(1, Direction.BOTH, b"\x00")])),
+        (RelativeDirectionError, dict(raw=[(1, Direction.WITH, b"\x00")])),
+    ]
+    with MockBox() as mock, Device.with_mock(mock) as d:
+        clip = d.clip()
+        for exc, fields in refusals:
+            with ClipBuilder() as b:
+                b.move(1, 1).frame(**fields)  # a good entry ahead of the bad one
+                with pytest.raises(exc):
+                    clip.append(b)
+        assert _clip_frames(d, mock, FrameType.CLIP_APPEND) == []
+        # The limits themselves are admitted.
+        with ClipBuilder() as b:
+            b.frame(
+                edges=[(left, Action.PRESS)] * CLIP_EDGES_MAX,
+                raw=[(1, Direction.OUT, b"\x00")] * CLIP_RAW_MAX,
+            )
+            clip.append(b)
+        assert len(_clip_frames(d, mock, FrameType.CLIP_APPEND)) == 1
+
+
+def test_a_bad_clip_frame_field_leaves_the_builder_as_it_was():
+    with MockBox() as mock, Device.with_mock(mock) as d:
+        with ClipBuilder() as b:
+            b.move(1, 1)
+            with pytest.raises(ValueError):
+                b.frame(dx=2, raw=[(1, 200, b"\x00")])
+            with pytest.raises(ValueError):
+                b.frame(dx=2, raw=[(300, Direction.OUT, b"\x00")])
+            with pytest.raises(ValueError):
+                b.frame(dx=2, transfers=[(0, Setup(0x21, 0x09, 0x0300, 0, 70_000), b"")])
+            with pytest.raises(ValueError):
+                b.frame(pan=70_000)
+            with pytest.raises(ValueError):
+                b.raw(1, 200, b"\x00")
+            with pytest.raises(ValueError):
+                b.pan(70_000)
+            d.clip().append(b)
+        assert _clip_frames(d, mock, FrameType.CLIP_APPEND) == [bytes([0x01, 0x01, 0x00, 0x01, 0x00])]
+
+
+def test_the_clip_limits_are_the_header_s():
+    import re
+
+    header = pathlib.Path(__file__).resolve().parents[3] / "medius-capi" / "include" / "medius.h"
+    if not header.exists():
+        pytest.skip(f"{header} not present")
+    defines = dict(re.findall(r"^#define (MEDIUS_\w+) (\d+)$", header.read_text(), re.M))
+    assert int(defines["MEDIUS_CLIP_EDGES_MAX"]) == CLIP_EDGES_MAX
+    assert int(defines["MEDIUS_CLIP_RAW_MAX"]) == CLIP_RAW_MAX
+    assert int(defines["MEDIUS_CLIP_ENTRY_MAX"]) == CLIP_ENTRY_MAX
+    assert int(defines["MEDIUS_CLIP_PKT_TRIG_MAX"]) == CLIP_PKT_TRIG_MAX
+    assert int(defines["MEDIUS_CLIP_PKT_MATCH_POOL"]) == CLIP_PKT_MATCH_POOL
+    assert int(defines["MEDIUS_MAX_PKT_MATCH"]) == PKT_MATCH_MAX
+    assert int(defines["MEDIUS_CATCH_CLASS_CLIP_TRANSFER"]) == CatchClass.CLIP_TRANSFER == TrafficClass.CLIP_TRANSFER
+
+
 def test_clip_status_and_config_roundtrip():
     status = ClipStatus(
         ClipState.PLAYING, free=512, total=40, played=8, ticks=99, underruns=2, overruns=0,
-        seq_gaps=1, held=[Usage.button(Button.SIDE1), Usage.key(Key.A)],
+        seq_gaps=1, xfers=7, xfer_errs=3, gated=5,
+        held=[Usage.button(Button.SIDE1), Usage.key(Key.A)],
     )
     settings = ClipSettings(
         autolock=[Blanket.AIM, Blanket.KEYS],
@@ -1088,19 +1413,527 @@ def test_clip_status_and_config_roundtrip():
             ClipTrigger(Usage.button(Button.RIGHT), Edge.BOTH, ClipAction.TOGGLE),
             ClipTrigger(Usage.key(0x3A), Edge.RELEASE, ClipAction.STOP, consume=True),
         ],
+        packet_triggers=_packet_rows()[:3],
     )
     with MockBox() as mock:
+        # Packet rows 0 and 2 consume, which the box holds only under the opt-in.
+        mock.set_imperfect_status(_allowed())
         mock.set_clip_status(status)
         mock.set_clip_settings(settings)
         with Device.with_mock(mock) as d:
             got = d.clip().query_status()
             cfg = d.clip().query_config()
     assert got == status
+    assert (got.xfers, got.xfer_errs, got.gated) == (7, 3, 5)
     assert got.state == ClipState.PLAYING
     assert got.is_held(Usage.button(Button.SIDE1))
     assert got.is_held(Usage.key(Key.A))
     assert not got.is_held(Usage.button(Button.LEFT))
     assert cfg == settings
+
+
+# The protocol's own example: HID_IN interface 2, IN, START, consume and once per run, selector 1,
+# match 07 20 under mask FF 20.
+_HELD = (TrafficClass.HID_IN, 2, Direction.IN, ClipAction.START, b"\x07\x20", b"\xFF\x20", True, True, 1)
+
+
+def _packet_rows():
+    """Eight packet triggers that differ in every field. Row 0 consumes only, row 1 is once per run
+    only, rows 2 and 6 are both, and row 7 fills the match array. Each is a trigger a packet can
+    match: a direction its class carries, every match bit under its mask, and a masked bit past a
+    once-per-run selector. The vendor classes take IN, OUT and both."""
+    masks = [0xFF, 0xF0, 0x0F, 0x20, 0x81, 0x7E, 0xC3, 0x01]
+    rows = [
+        (TrafficClass.HID_IN, 0x0102, Direction.IN, ClipAction.START, 1, True, None, 0),
+        (TrafficClass.HID_OUT, 0x0001, Direction.OUT, ClipAction.STOP, 2, False, 1, 1),
+        (TrafficClass.VENDOR_INTERRUPT, 0x0083, Direction.IN, ClipAction.PAUSE, 3, True, 2, 0xFFFF),
+        (TrafficClass.VENDOR_BULK, ClipPacketTrigger.ANY_ID, Direction.BOTH, ClipAction.RESUME, 4, False, None, 0x1234),
+        (TrafficClass.CONTROL, 0, Direction.BOTH, ClipAction.RESTART, 5, False, None, 0x00FF),
+        (TrafficClass.EMIT, 0x0081, Direction.IN, ClipAction.TOGGLE, 0, False, None, 0xFF00),
+        (TrafficClass.VENDOR_BULK, 0x0003, Direction.OUT, ClipAction.START, 7, True, 3, 65534),
+        (TrafficClass.EMIT, 0x0082, Direction.IN, ClipAction.STOP, PKT_MATCH_MAX, False, None, 9),
+    ]
+    return [
+        ClipPacketTrigger(
+            traffic_class,
+            id,
+            direction,
+            action,
+            match_bytes=bytes((0x35 + 0x1B * i + 0x47 * j) & masks[(i + j) % 8] for j in range(n)),
+            mask=bytes(masks[(i + j) % 8] for j in range(n)),
+            consume=consume,
+            once_per_run=selector is not None,
+            selector_len=selector or 0,
+            hits=hits,
+        )
+        for i, (traffic_class, id, direction, action, n, consume, selector, hits) in enumerate(rows)
+    ]
+
+
+def test_a_packet_trigger_goes_out_as_the_bytes_the_protocol_names():
+    held = ClipPacketTrigger(*_HELD)
+    # A removal sends the key alone, whatever the other fields hold.
+    stale = ClipPacketTrigger(*_HELD[:3], 200, *_HELD[4:6], consume=True, once_per_run=True, selector_len=9, hits=77)
+    with MockBox() as mock, Device.with_mock(mock) as d:
+        clip = d.clip()
+        clip.bind_packet(held)
+        clip.unbind_packet(stale)
+        clip.bind_packet(ClipPacketTrigger(TrafficClass.VENDOR_BULK, ClipPacketTrigger.ANY_ID, Direction.BOTH, ClipAction.PAUSE, consume=True))
+        clip.bind_packet(
+            ClipPacketTrigger(
+                TrafficClass.HID_OUT, 1, Direction.OUT, ClipAction.RESUME,
+                b"\x01\x02\x03", b"\xFF\xFF\x0F", once_per_run=True, selector_len=2,
+            )
+        )
+        clip.bind_packet(
+            ClipPacketTrigger(TrafficClass.CONTROL, 0, Direction.BOTH, ClipAction.TOGGLE, bytes(range(16)), bytes([0xFF] * 16), hits=500)
+        )
+        clip.bind_packet(ClipPacketTrigger(TrafficClass.EMIT, 0x0181, Direction.IN, ClipAction.STOP, [0x80], (0xF0,)))
+        clip.clear_triggers()
+        trig = _clip_frames(d, mock, FrameType.CLIP_TRIGGER)
+    # [class][id u16][dir][action][flags: 1 present, 2 consume, 4 once per run][slen][mlen][match][mask]
+    assert trig == [
+        bytes.fromhex("04 02 00 01 00 07 01 02 07 20 FF 20"),
+        bytes.fromhex("04 02 00 01 00 00 00 02 07 20 FF 20"),
+        bytes.fromhex("07 FF FF 00 02 03 00 00"),
+        bytes.fromhex("05 01 00 02 03 05 02 03 01 02 03 FF FF 0F"),
+        bytes.fromhex("08 00 00 00 05 01 00 10") + bytes(range(16)) + bytes([0xFF] * 16),
+        bytes.fromhex("09 81 01 01 01 01 00 01 80 F0"),
+        bytes.fromhex("FF FF FF 00 00 00"),
+    ]
+
+
+def test_packet_triggers_read_back_field_for_field():
+    rows = _packet_rows()
+    assert rows[2].hits == 0xFFFF, "one row reads back a saturated count"
+    inputs = [ClipTrigger(Usage.button(Button.RIGHT), Edge.PRESS, ClipAction.START)]
+    for n in (0, 1, 8):
+        with MockBox() as mock:
+            # Rows 0, 2 and 6 consume, which the box holds only under the opt-in.
+            mock.set_imperfect_status(_allowed())
+            mock.set_clip_settings(ClipSettings(triggers=inputs, packet_triggers=rows[:n]))
+            with Device.with_mock(mock) as d:
+                cfg = d.clip().query_config()
+        assert cfg.packet_triggers == rows[:n]
+        assert cfg.triggers == inputs, "the input triggers keep their own count"
+
+    # The protocol's read-back example: HID_IN id 0x0102, IN, TOGGLE, consume and once per run,
+    # selector 1, hits saturated.
+    spec = ClipPacketTrigger(TrafficClass.HID_IN, 0x0102, Direction.IN, ClipAction.TOGGLE, b"\x07\x20", b"\xFF\x20", True, True, 1, 0xFFFF)
+    with MockBox() as mock:
+        mock.set_imperfect_status(_allowed())
+        mock.set_clip_settings(ClipSettings(packet_triggers=[spec]))
+        with Device.with_mock(mock) as d:
+            clip = d.clip()
+            (got,) = clip.query_config().packet_triggers
+            assert got == spec
+            assert (got.consume, got.once_per_run, got.selector_len, got.hits) == (True, True, 1, 0xFFFF)
+            assert (got.match_bytes, got.mask) == (b"\x07\x20", b"\xFF\x20")
+            # A read trigger replays as a bind, its hits left behind.
+            clip.bind_packet(got)
+            assert _clip_frames(d, mock, FrameType.CLIP_TRIGGER) == [
+                bytes.fromhex("04 02 01 01 05 07 01 02 07 20 FF 20")
+            ]
+
+
+def test_a_read_back_packet_trigger_carries_each_length_in_its_own_field():
+    # The box holds a match and a mask of one length, so only a hand-built struct tells the two apart.
+    from medius import _native
+    from medius._types import clip_packet_trigger_from_c
+
+    c = _native.MediusClipPacketTrigger()
+    c.class_, c.id, c.direction, c.action = TrafficClass.HID_IN, 2, Direction.IN, ClipAction.START
+    for i in range(PKT_MATCH_MAX):
+        c.match_bytes[i] = i + 1
+        c.mask[i] = 0xF0 + i
+    c.match_len, c.mask_len = 3, 1
+    got = clip_packet_trigger_from_c(c)
+    assert (got.match_bytes, got.mask) == (b"\x01\x02\x03", b"\xF0")
+    # A length past the array reads the array.
+    c.match_len, c.mask_len = 1, 40
+    got = clip_packet_trigger_from_c(c)
+    assert (got.match_bytes, got.mask) == (b"\x01", bytes(range(0xF0, 0x100)))
+
+
+def test_a_consuming_trigger_scripted_with_the_opt_in_off_is_left_out():
+    consuming = ClipPacketTrigger(*_HELD, hits=7)
+    watching = ClipPacketTrigger(TrafficClass.HID_IN, 3, Direction.IN, ClipAction.START, b"\x07\x20", b"\xFF\x20", False, True, 1, 5)
+    inputs = [ClipTrigger(Usage.button(Button.RIGHT), Edge.PRESS, ClipAction.START, consume=True)]
+    settings = ClipSettings(triggers=inputs, packet_triggers=[consuming, watching])
+    with MockBox() as mock, Device.with_mock(mock) as d:
+        clip = d.clip()
+        mock.set_clip_settings(settings)
+        cfg = clip.query_config()
+        assert cfg.triggers == inputs, "an input trigger that consumes is held whatever the opt-in"
+        assert cfg.packet_triggers == [watching]
+
+        # Scripted under the opt-in, both are held, and turning it off takes the consuming one away.
+        mock.set_imperfect_status(_allowed())
+        mock.set_clip_settings(settings)
+        assert clip.query_config().packet_triggers == [consuming, watching]
+        mock.set_imperfect_status(ImperfectStatus(allowed=False, over_capacity=False, clone_imperfect=False))
+        assert clip.query_config().packet_triggers == [watching]
+
+
+def test_a_bound_packet_trigger_reads_back_as_it_was_bound():
+    rows = _packet_rows()
+    with MockBox() as mock:
+        mock.set_imperfect_status(_allowed())
+        with Device.with_mock(mock) as d:
+            clip = d.clip()
+            for t in rows:
+                clip.bind_packet(t)
+            cfg = clip.query_config()
+            # Each flag reads back on its own: row 0 consumes, row 1 is once per run.
+            assert [(t.consume, t.once_per_run) for t in cfg.packet_triggers[:2]] == [(True, False), (False, True)]
+            # A bind starts its count at zero, whatever hits the trigger held.
+            assert [t.hits for t in cfg.packet_triggers] == [0] * 8
+            for t in rows:
+                t.hits = 0
+            assert cfg.packet_triggers == rows
+
+            clip.unbind_packet(rows[2])
+            clip.unbind_packet(rows[7])
+            assert clip.query_config().packet_triggers == rows[:2] + rows[3:7]
+
+
+def test_settings_past_the_arrays_are_clamped_to_them():
+    # The C struct holds eight of each kind, as the box does.
+    inputs = [ClipTrigger(Usage.key(0x04 + i), Edge.PRESS, ClipAction.START) for i in range(CLIP_PKT_TRIG_MAX + 1)]
+    packets = [
+        ClipPacketTrigger(TrafficClass.HID_IN, i, Direction.IN, ClipAction.START, bytes([i]), b"\xFF", hits=i)
+        for i in range(CLIP_PKT_TRIG_MAX + 1)
+    ]
+    with MockBox() as mock:
+        mock.set_clip_settings(ClipSettings(triggers=inputs, packet_triggers=packets))
+        with Device.with_mock(mock) as d:
+            cfg = d.clip().query_config()
+    assert cfg.triggers == inputs[:8]
+    assert cfg.packet_triggers == packets[:CLIP_PKT_TRIG_MAX]
+
+
+def test_the_public_names_are_the_packet_trigger_ones():
+    added = {
+        "ClipPacketTrigger",
+        "ClipPacketTriggerError",
+        "CLIP_PKT_TRIG_MAX",
+        "CLIP_PKT_MATCH_POOL",
+        "PKT_MATCH_MAX",
+    }
+    removed = {"ClipVerb", "RewriteClipRuleError", "REWRITE_CLIP_DROP", "REWRITE_CLIP_EDGE"}
+    assert added <= set(medius.__all__)
+    assert all(hasattr(medius, name) for name in added)
+    assert removed.isdisjoint(medius.__all__)
+    assert not [name for name in removed if hasattr(medius, name)]
+    assert len(medius.__all__) == len(set(medius.__all__))
+    assert not [name for name in medius.__all__ if not hasattr(medius, name)]
+    assert "CLIP" not in RewriteAction.__members__
+    assert not hasattr(RewriteRule, "clip") and not hasattr(RewriteRule, "clip_verb")
+    assert "ERR_REWRITE_CLIP_RULE" not in Status.__members__
+    assert {"bind_packet", "unbind_packet"} <= set(dir(medius.ClipHandle))
+    assert "clip_packet" in dir(MockBox)
+
+
+def test_clear_triggers_removes_both_kinds():
+    rows = _packet_rows()
+    inputs = [ClipTrigger(Usage.button(Button.RIGHT), Edge.PRESS, ClipAction.START)]
+    with MockBox() as mock:
+        mock.set_clip_settings(ClipSettings(triggers=inputs, packet_triggers=[rows[1]]))
+        with Device.with_mock(mock) as d:
+            clip = d.clip()
+            clip.bind_packet(rows[5])
+            held = clip.query_config()
+            assert (len(held.triggers), len(held.packet_triggers)) == (1, 2)
+            clip.clear_triggers()
+            cleared = clip.query_config()
+            assert (cleared.triggers, cleared.packet_triggers) == ([], [])
+
+
+def test_a_packet_trigger_the_box_would_refuse_has_its_own_exception():
+    def base(**changes):
+        fields = dict(
+            traffic_class=TrafficClass.HID_IN, id=2, direction=Direction.IN, action=ClipAction.START,
+            match_bytes=b"\x07\x20", mask=b"\xFF\x20",
+        )
+        fields.update(changes)
+        return ClipPacketTrigger(**fields)
+
+    # (trigger, the reason the message carries, whether the key is at fault)
+    refused = [
+        (base(traffic_class=TrafficClass.BUS), "names a surface packets cross", True),
+        (base(traffic_class=TrafficClass.CLIP_TRANSFER), "names a surface packets cross", True),
+        (base(mask=b"\xFF"), "a match and a mask of one length", True),
+        (base(match_bytes=b"\x07"), "a match and a mask of one length", True),
+        (base(match_bytes=bytes(17), mask=bytes(17)), "at most 16 match bytes", True),
+        (base(match_bytes=bytes(0xFFFF), mask=bytes(0xFFFF)), "at most 16 match bytes", True),
+        (base(traffic_class=TrafficClass.CONTROL, consume=True), "takes consume on a report or vendor class", False),
+        (base(selector_len=1), "a selector length only with once_per_run", False),
+        (base(traffic_class=TrafficClass.CONTROL, once_per_run=True), "needs one stream", False),
+        (base(id=ClipPacketTrigger.ANY_ID, once_per_run=True), "needs one stream", False),
+        (base(direction=Direction.BOTH, once_per_run=True), "needs one stream", False),
+        (base(once_per_run=True, selector_len=2), "needs match bytes past its selector", False),
+        (base(match_bytes=b"", mask=b"", once_per_run=True), "needs match bytes past its selector", False),
+    ]
+    with MockBox() as mock, Device.with_mock(mock) as d:
+        clip = d.clip()
+        for trigger, reason, key_fault in refused:
+            with pytest.raises(ClipPacketTriggerError) as e:
+                clip.bind_packet(trigger)
+            assert e.value.status == Status.ERR_CLIP_PACKET_TRIGGER == 33
+            assert e.value.message.startswith("a clip packet trigger ") and reason in e.value.message, trigger
+            # A removal reads the key alone, so it refuses a bad key and takes anything else.
+            if key_fault:
+                with pytest.raises(ClipPacketTriggerError) as e:
+                    clip.unbind_packet(trigger)
+                assert reason in e.value.message
+            else:
+                clip.unbind_packet(trigger)
+        for relative in (Direction.WITH, Direction.AGAINST):
+            with pytest.raises(RelativeDirectionError):
+                clip.bind_packet(base(direction=relative))
+            with pytest.raises(RelativeDirectionError):
+                clip.unbind_packet(base(direction=relative))
+        # The removals of the seven sound keys are all that went out.
+        sent = _clip_frames(d, mock, FrameType.CLIP_TRIGGER)
+        assert len(sent) == sum(1 for r in refused if not r[2])
+        assert all(p[4:7] == bytes(3) for p in sent)
+        assert clip.query_config().packet_triggers == []
+
+        # The longest match the box compares is bound and read back whole.
+        full = base(match_bytes=bytes([0x11] * PKT_MATCH_MAX), mask=bytes([0xFF] * PKT_MATCH_MAX))
+        clip.bind_packet(full)
+        assert clip.query_config().packet_triggers == [full]
+
+
+def _refused_for(call, reason):
+    """`call` raises the packet trigger refusal and its message carries `reason`."""
+    with pytest.raises(ClipPacketTriggerError) as e:
+        call()
+    assert e.value.status == Status.ERR_CLIP_PACKET_TRIGGER
+    assert e.value.message.startswith("a clip packet trigger ") and reason in e.value.message, e.value.message
+
+
+def test_a_packet_trigger_on_a_direction_its_class_never_carries_is_refused():
+    reason = "names a direction its class never carries: HidIn and Emit flow IN, HidOut flows OUT"
+
+    def on(traffic_class, direction):
+        return ClipPacketTrigger(traffic_class, 1, direction, ClipAction.START, b"\x07", b"\xFF")
+
+    with MockBox() as mock, Device.with_mock(mock) as d:
+        clip = d.clip()
+        for traffic_class, direction in (
+            (TrafficClass.HID_IN, Direction.OUT),
+            (TrafficClass.EMIT, Direction.OUT),
+            (TrafficClass.HID_OUT, Direction.IN),
+        ):
+            _refused_for(lambda: clip.bind_packet(on(traffic_class, direction)), reason)
+            _refused_for(lambda: clip.unbind_packet(on(traffic_class, direction)), reason)
+        assert _clip_frames(d, mock, FrameType.CLIP_TRIGGER) == []
+
+        # Every flow a class carries is bound, and every class takes both.
+        carried = [
+            on(TrafficClass.HID_IN, Direction.IN),
+            on(TrafficClass.HID_IN, Direction.BOTH),
+            on(TrafficClass.HID_OUT, Direction.OUT),
+            on(TrafficClass.HID_OUT, Direction.BOTH),
+            on(TrafficClass.VENDOR_INTERRUPT, Direction.IN),
+            on(TrafficClass.VENDOR_INTERRUPT, Direction.OUT),
+            on(TrafficClass.VENDOR_BULK, Direction.BOTH),
+            on(TrafficClass.EMIT, Direction.IN),
+        ]
+        for t in carried:
+            clip.bind_packet(t)
+        assert clip.query_config().packet_triggers == carried
+
+
+def test_a_packet_trigger_with_a_match_bit_outside_its_mask_is_refused():
+    reason = "has a match bit outside its mask, which no packet can equal"
+
+    def hid_in(match_bytes, mask):
+        return ClipPacketTrigger(TrafficClass.HID_IN, 2, Direction.IN, ClipAction.START, match_bytes, mask)
+
+    with MockBox() as mock, Device.with_mock(mock) as d:
+        clip = d.clip()
+        for t in (
+            hid_in(b"\x07\x21", b"\xFF\x20"),
+            hid_in(b"\x01", b"\x00"),
+            # The last byte the box compares.
+            hid_in(bytes(PKT_MATCH_MAX - 1) + b"\x80", bytes([0xFF] * (PKT_MATCH_MAX - 1)) + b"\x7F"),
+        ):
+            _refused_for(lambda: clip.bind_packet(t), reason)
+            _refused_for(lambda: clip.unbind_packet(t), reason)
+        assert _clip_frames(d, mock, FrameType.CLIP_TRIGGER) == []
+
+        # Every match bit under its mask is a key the box holds, as given.
+        held = hid_in(b"\x07\x20", b"\xFF\x20")
+        clip.bind_packet(held)
+        assert _clip_frames(d, mock, FrameType.CLIP_TRIGGER) == [bytes.fromhex("04 02 00 01 00 01 00 02 07 20 FF 20")]
+        assert clip.query_config().packet_triggers == [held]
+
+
+def test_a_once_per_run_trigger_with_no_masked_bit_past_its_selector_is_refused():
+    reason = "needs a masked bit past its selector"
+
+    def run(selector_len, match_bytes, mask, once_per_run=True):
+        return ClipPacketTrigger(
+            TrafficClass.HID_IN, 2, Direction.IN, ClipAction.START, match_bytes, mask,
+            once_per_run=once_per_run, selector_len=selector_len if once_per_run else 0,
+        )
+
+    refused = [
+        (1, b"\x07\x00", b"\xFF\x00"),
+        (0, b"\x00\x00", b"\x00\x00"),
+        (2, b"\x07\x01\x00\x00", b"\xFF\xFF\x00\x00"),
+    ]
+    with MockBox() as mock, Device.with_mock(mock) as d:
+        clip = d.clip()
+        for shape in refused:
+            _refused_for(lambda: clip.bind_packet(run(*shape)), reason)
+        assert _clip_frames(d, mock, FrameType.CLIP_TRIGGER) == []
+        # The key is sound, so a removal goes out, and so does the same trigger bound on each packet.
+        for shape in refused:
+            clip.unbind_packet(run(*shape))
+            clip.bind_packet(run(*shape, once_per_run=False))
+        # One masked bit past the selector is a condition.
+        one_bit = run(1, b"\x07\x00\x00", b"\xFF\x00\x01")
+        clip.bind_packet(one_bit)
+        held = clip.query_config().packet_triggers
+        assert held == [run(*shape, once_per_run=False) for shape in refused] + [one_bit]
+
+
+def test_a_packet_that_cannot_exist_fires_nothing_in_the_mock():
+    surfaces = [
+        TrafficClass.HID_IN,
+        TrafficClass.HID_OUT,
+        TrafficClass.VENDOR_INTERRUPT,
+        TrafficClass.VENDOR_BULK,
+        TrafficClass.CONTROL,
+        TrafficClass.EMIT,
+    ]
+    with MockBox() as mock, Device.with_mock(mock) as d:
+        clip = d.clip()
+        # One trigger on every packet of each surface, so any packet the mock takes fires.
+        for traffic_class in surfaces:
+            clip.bind_packet(ClipPacketTrigger(traffic_class, ClipPacketTrigger.ANY_ID, Direction.BOTH, ClipAction.TOGGLE))
+        no_packet = [
+            (TrafficClass.HID_IN, Direction.OUT),
+            (TrafficClass.EMIT, Direction.OUT),
+            (TrafficClass.HID_OUT, Direction.IN),
+            (TrafficClass.BUS, Direction.IN),
+            (TrafficClass.CLIP_TRANSFER, Direction.IN),
+        ] + [(c, direction) for c in surfaces for direction in (Direction.BOTH, Direction.WITH, Direction.AGAINST)]
+        for traffic_class, direction in no_packet:
+            assert mock.clip_packet(traffic_class, 1, direction, b"\x07") == (None, False), (traffic_class, direction)
+        assert [t.hits for t in clip.query_config().packet_triggers] == [0] * 6
+
+        # Each flow a surface carries is a packet, and its trigger counts it.
+        for traffic_class, direction in (
+            (TrafficClass.HID_IN, Direction.IN),
+            (TrafficClass.HID_OUT, Direction.OUT),
+            (TrafficClass.VENDOR_INTERRUPT, Direction.IN),
+            (TrafficClass.VENDOR_INTERRUPT, Direction.OUT),
+            (TrafficClass.VENDOR_BULK, Direction.IN),
+            (TrafficClass.VENDOR_BULK, Direction.OUT),
+            (TrafficClass.CONTROL, Direction.IN),
+            (TrafficClass.CONTROL, Direction.OUT),
+            (TrafficClass.EMIT, Direction.IN),
+        ):
+            assert mock.clip_packet(traffic_class, 1, direction, b"\x07") == (ClipAction.TOGGLE, False)
+        assert [t.hits for t in clip.query_config().packet_triggers] == [1, 1, 2, 2, 2, 1]
+
+
+def test_a_consuming_packet_trigger_needs_the_imperfect_opt_in_and_goes_when_it_is_turned_off():
+    consuming = ClipPacketTrigger(*_HELD)
+    watching = ClipPacketTrigger(TrafficClass.HID_IN, 3, Direction.IN, ClipAction.START, b"\x07\x20", b"\xFF\x20")
+    with MockBox() as mock, Device.with_mock(mock) as d:
+        clip = d.clip()
+        # The bind goes out either way; the box holds the consuming one only under the opt-in.
+        clip.bind_packet(consuming)
+        clip.bind_packet(watching)
+        assert clip.query_config().packet_triggers == [watching]
+        d.allow_imperfect_clones(True)
+        clip.bind_packet(consuming)
+        assert clip.query_config().packet_triggers == [watching, consuming]
+        d.allow_imperfect_clones(False)
+        assert clip.query_config().packet_triggers == [watching]
+
+
+def test_the_mock_runs_a_packet_through_its_triggers():
+    hid_in = (TrafficClass.HID_IN, 2, Direction.IN)
+    held = ClipPacketTrigger(*_HELD)
+    let_go = ClipPacketTrigger(*hid_in, ClipAction.STOP, b"\x07\x00", b"\xFF\x20", once_per_run=True, selector_len=1)
+    wide = ClipPacketTrigger(TrafficClass.HID_IN, ClipPacketTrigger.ANY_ID, Direction.BOTH, ClipAction.TOGGLE)
+    with MockBox() as mock:
+        mock.set_imperfect_status(_allowed())
+        with Device.with_mock(mock) as d:
+            clip = d.clip()
+            for t in (wide, held, let_go):
+                clip.bind_packet(t)
+            # The held report starts the clip once, and every packet of the hold is consumed.
+            assert mock.clip_packet(*hid_in, b"\x07\x20\x55") == (ClipAction.START, True)
+            assert mock.clip_packet(*hid_in, b"\x07\x20\x56") == (None, True)
+            # Another report ID leaves the run as it was.
+            assert mock.clip_packet(*hid_in, b"\x09\x20") == (ClipAction.TOGGLE, False)
+            assert mock.clip_packet(*hid_in, [0x07, 0x20]) == (None, True)
+            # The release ends it, and the next hold starts it again.
+            assert mock.clip_packet(*hid_in, b"\x07\x00") == (ClipAction.STOP, False)
+            assert mock.clip_packet(*hid_in, b"\x07\x20") == (ClipAction.START, True)
+            # The id wildcard takes what the exact triggers leave, and an empty head matches it.
+            assert mock.clip_packet(TrafficClass.HID_IN, 5, Direction.IN, b"\x07\x20") == (ClipAction.TOGGLE, False)
+            assert mock.clip_packet(TrafficClass.HID_IN, 5, Direction.IN, b"") == (ClipAction.TOGGLE, False)
+            # Nothing wins on another class.
+            assert mock.clip_packet(TrafficClass.HID_OUT, 2, Direction.OUT, b"\x07\x20") == (None, False)
+            assert [t.hits for t in clip.query_config().packet_triggers] == [3, 4, 1]
+            with pytest.raises(ValueError):
+                mock.clip_packet(200, 2, Direction.IN, b"")
+            with pytest.raises(ValueError):
+                mock.clip_packet(CatchClass.KEY, 2, Direction.IN, b"")
+            with pytest.raises(ValueError):
+                mock.clip_packet(TrafficClass.HID_IN, 2, 200, b"")
+            with pytest.raises(ValueError):
+                mock.clip_packet(TrafficClass.HID_IN, 70_000, Direction.IN, b"")
+
+
+def test_clip_packet_trigger_parameters_are_checked():
+    hid_in = (TrafficClass.HID_IN, 2, Direction.IN, ClipAction.START)
+    bad = [
+        ClipPacketTrigger(200, 2, Direction.IN, ClipAction.START),
+        ClipPacketTrigger(CatchClass.KEY, 2, Direction.IN, ClipAction.START),
+        ClipPacketTrigger(TrafficClass.HID_IN, 70_000, Direction.IN, ClipAction.START),
+        ClipPacketTrigger(TrafficClass.HID_IN, 2, 200, ClipAction.START),
+        ClipPacketTrigger(*hid_in, match_bytes=[1, 300], mask=b"\xFF\xFF"),
+    ]
+    with MockBox() as mock, Device.with_mock(mock) as d:
+        clip = d.clip()
+        for t in bad:
+            with pytest.raises(ValueError):
+                clip.bind_packet(t)
+            with pytest.raises(ValueError):
+                clip.unbind_packet(t)
+            with pytest.raises(ValueError):
+                mock.set_clip_settings(ClipSettings(packet_triggers=[t]))
+        for t in (
+            ClipPacketTrigger(TrafficClass.HID_IN, 2, Direction.IN, 200),
+            ClipPacketTrigger(*hid_in, selector_len=300),
+            ClipPacketTrigger(*hid_in, hits=70_000),
+        ):
+            with pytest.raises(ValueError):
+                clip.bind_packet(t)
+        assert _clip_frames(d, mock, FrameType.CLIP_TRIGGER) == []
+
+
+def test_the_status_codes_are_the_header_s():
+    import re
+
+    header = pathlib.Path(__file__).resolve().parents[3] / "medius-capi" / "include" / "medius.h"
+    if not header.exists():
+        pytest.skip(f"{header} not present")
+    declared = {
+        name: int(value)
+        for name, value in re.findall(r"^    MEDIUS_STATUS_(\w+) = (\d+),$", header.read_text(), re.M)
+    }
+    assert declared == {s.name: s.value for s in Status}
+    assert declared["ERR_CLIP_PACKET_TRIGGER"] == 33
 
 
 def test_clip_builder_gap_zero_is_noop():
@@ -1143,8 +1976,15 @@ def test_ctypes_structs_match_the_c_header():
     # and a nested member is indented, so neither is picked up.
     probe = pathlib.Path(tempfile.mkdtemp()) / "sizes.c"
     present = re.findall(r"^\} (Medius\w+);$", text, re.M)
-    for must in ("MediusLockEntry", "MediusLocks", "MediusBearing", "MediusClipSettings"):
+    for must in (
+        "MediusLockEntry",
+        "MediusLocks",
+        "MediusBearing",
+        "MediusClipSettings",
+        "MediusClipPacketTrigger",
+    ):
         assert must in present, f"the header no longer declares {must}"
+        assert hasattr(_native, must), f"{must} has no ctypes mirror to compare"
     # sizeof alone lets a same-size field REORDER through, which is a silent misread of every event
     # rather than a crash. Compare each field's offset too.
     fields = {
@@ -1392,7 +2232,7 @@ def test_mock_and_stream_enum_parameters_are_checked():
         with pytest.raises(ValueError):
             mock.set_clip_status(
                 ClipStatus(200, free=0, total=0, played=0, ticks=0, underruns=0, overruns=0,
-                           seq_gaps=0, held=[])
+                           seq_gaps=0, xfers=0, xfer_errs=0, gated=0, held=[])
             )
         with pytest.raises(ValueError):
             mock.push_usages(0, 0, UsageSnapshot([], 200, Direction.POSITIVE))
@@ -1470,11 +2310,17 @@ def test_raw_reaches_the_wire_verbatim():
 def test_gated_dev_layer_calls_need_the_opt_in():
     with MockBox() as mock, Device.with_mock(mock) as d:
         with pytest.raises(ImperfectRequiredError):
-            d.raw(1, Direction.IN, b"\x00\x01")
-        with pytest.raises(ImperfectRequiredError):
             d.set_rewrite(RewriteRule(RewriteClass.EMIT, 1, Direction.IN, RewriteAction.DROP))
         with pytest.raises(ImperfectRequiredError):
             d.apply_patch()
+
+
+def test_raw_sends_without_reading_the_opt_in():
+    with MockBox() as mock, Device.with_mock(mock) as d:
+        d.raw(1, Direction.IN, b"\x00\x01")
+        assert any(
+            mock.recorded_frame(i).type == FrameType.RAW for i in range(mock.recorded())
+        )
 
 
 def test_raw_rejects_a_direction_that_is_not_a_flow():
@@ -1499,6 +2345,20 @@ def test_transfer_roundtrips_the_answer():
     assert out.status == TransferStatus.OK
     assert out.is_ok
     assert out.data == reply
+
+
+def test_transfer_takes_its_own_reply_wait():
+    reply = bytes([0x12, 0x01])
+    with MockBox() as mock:
+        mock.set_imperfect_status(_allowed())
+        mock.set_transfer_reply(TransferStatus.OK, reply)
+        with Device.with_mock(mock) as d:
+            out = d.transfer(
+                0, Setup(0x80, 0x06, 0x0100, 0, 2), timeout_ms=medius.default_transfer_timeout_ms()
+            )
+    assert out.status == TransferStatus.OK
+    assert out.data == reply
+    assert medius.default_transfer_timeout_ms() >= 800
 
 
 def test_transfer_is_refused_without_the_opt_in():
@@ -1584,6 +2444,9 @@ def test_rewrite_validation_errors_have_their_own_exception():
                 )
             with pytest.raises(RewriteActionClassError):
                 d.set_rewrite(RewriteRule(RewriteClass.CONTROL, 0, Direction.BOTH, RewriteAction.DROP))
+            # REPLY_REPLACE is the last action the box names.
+            with pytest.raises(ValueError):
+                d.set_rewrite(RewriteRule(RewriteClass.HID_IN, 2, Direction.IN, RewriteAction.REPLY_REPLACE + 1))
             with pytest.raises(RelativeDirectionError):
                 d.set_rewrite(RewriteRule(RewriteClass.EMIT, 1, Direction.WITH, RewriteAction.DROP))
             with pytest.raises(RewritePayloadTooLargeError):
@@ -1599,24 +2462,54 @@ def test_rewrite_validation_errors_have_their_own_exception():
 
 
 def test_over_capacity_bytes_are_refused_before_ctypes():
-    # The C struct holds a fixed 16 match bytes and 512 payload bytes; over that raises here rather than
-    # letting ctypes truncate a rule to a wrong-length one that the box would silently misapply.
+    # The C struct holds a fixed 512 payload bytes. A longer payload raises here, because ctypes would
+    # cut it to fit and the box would apply the shorter rule.
     with MockBox() as mock:
         mock.set_imperfect_status(_allowed())
         with Device.with_mock(mock) as d:
             with pytest.raises(ValueError):
                 d.set_rewrite(
                     RewriteRule(
-                        RewriteClass.EMIT,
-                        1,
-                        Direction.IN,
-                        RewriteAction.DROP,
-                        match_bytes=bytes(17),
-                        mask=bytes(17),
+                        RewriteClass.CONTROL,
+                        0,
+                        Direction.BOTH,
+                        RewriteAction.ANSWER,
+                        payload=bytes(513),
                     )
                 )
             with pytest.raises(ValueError):
                 d.set_patch(Patch(PatchSection.DEVICE, 0, 0, 0, bytes(513)))
+
+
+def test_a_rewrite_match_past_the_limit_has_its_own_exception():
+    def rule(match_len, mask_len):
+        return RewriteRule(
+            RewriteClass.HID_IN,
+            2,
+            Direction.IN,
+            RewriteAction.PASS,
+            match_bytes=bytes([0x11]) * match_len,
+            mask=bytes([0xFF]) * mask_len,
+        )
+
+    with MockBox() as mock:
+        mock.set_imperfect_status(_allowed())
+        with Device.with_mock(mock) as d:
+            for n in (17, 40, 0xFFFF):
+                with pytest.raises(RewriteMatchTooLongError) as e:
+                    d.set_rewrite(rule(n, n))
+                assert e.value.status == Status.ERR_REWRITE_MATCH_TOO_LONG
+                with pytest.raises(RewriteMatchTooLongError):
+                    d.remove_rewrite(rule(n, n))
+            # The mask length is checked first.
+            with pytest.raises(RewriteMaskLengthError):
+                d.set_rewrite(rule(17, 16))
+            with pytest.raises(RewriteMaskLengthError):
+                d.set_rewrite(rule(16, 17))
+            assert d.query_rewrite().entries == []
+
+            d.set_rewrite(rule(16, 16))
+            assert d.query_rewrite_entry(0) == rule(16, 16)
 
 
 def test_patch_survives_the_query_roundtrip():

@@ -9,8 +9,8 @@ use medius::{UpdateProgress, UpdateTarget};
 
 use crate::convert::{
     action_from_c, axis_from_c, blanket_from_c, emit_pace_from_c, input_to_medius, led_mode_from_c,
-    led_target_from_c, lock_target_to_medius, motion_from_c, move_timing_from_c, patch_from_c,
-    pending_motion_from_c, reboot_target_from_c, rewrite_rule_from_c, setup_from_c,
+    led_target_from_c, lock_target_to_medius, motion_from_c, move_timing_from_c, opt_slice,
+    patch_from_c, pending_motion_from_c, reboot_target_from_c, rewrite_rule_from_c, setup_from_c,
     transform_from_c,
 };
 use crate::ctypes::*;
@@ -151,7 +151,7 @@ pub unsafe extern "C" fn medius_find_ports(
     })
 }
 
-/// Enumerate every connected box into `out` (up to `cap`), opening each in turn; writes the total to `*out_total` and returns the number written.
+/// Enumerate every connected box into `out` (up to `cap`), reading each in turn; writes the total to `*out_total` and returns the number written. A box on another control protocol is listed with `has_device` 0.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_list(
     out: *mut MediusBoxInfo,
@@ -178,7 +178,7 @@ pub unsafe extern "C" fn medius_list(
     })
 }
 
-/// Open the box whose identity matches `id` (device MAC hex or CH343 serial), handshake, and write the handle to `*out`.
+/// Open the box whose identity matches `id` (device MAC hex or CH343 serial), handshake, and write the handle to `*out`. `MEDIUS_STATUS_ERR_BAD_PROTO_VER` when that box speaks another control protocol.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_device_open_by_id(
     id: *const c_char,
@@ -202,7 +202,7 @@ pub unsafe extern "C" fn medius_device_open_by_id(
     })
 }
 
-/// Open the first box whose clone is a mouse, handshake, and write the handle to `*out`.
+/// Open the first box whose clone is a mouse, handshake, and write the handle to `*out`. `MEDIUS_STATUS_ERR_BAD_PROTO_VER` when no other box clones a mouse and a box on another control protocol, whose clone is unread, is connected.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_device_find_mouse_box(out: *mut *mut MediusDevice) -> MediusStatus {
     guard_status(|| {
@@ -220,7 +220,7 @@ pub unsafe extern "C" fn medius_device_find_mouse_box(out: *mut *mut MediusDevic
     })
 }
 
-/// Open the first box whose clone is a keyboard, handshake, and write the handle to `*out`.
+/// Open the first box whose clone is a keyboard, handshake, and write the handle to `*out`. `MEDIUS_STATUS_ERR_BAD_PROTO_VER` when no other box clones a keyboard and a box on another control protocol, whose clone is unread, is connected.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_device_find_keyboard_box(
     out: *mut *mut MediusDevice,
@@ -544,6 +544,8 @@ pub unsafe extern "C" fn medius_device_reapply(dev: *mut MediusDevice) -> Medius
     with_device(dev, |d| d.reapply())
 }
 
+/// Rescan by VID/PID, reopen this box, and re-apply held state. `MEDIUS_STATUS_ERR_BAD_PROTO_VER` when
+/// the box answers on another control protocol; it stays disconnected.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_device_reconnect(dev: *mut MediusDevice) -> MediusStatus {
     with_device(dev, |d| d.reconnect())
@@ -567,26 +569,13 @@ pub unsafe extern "C" fn medius_device_allow_imperfect_clones(
     with_device(dev, |d| d.allow_imperfect_clones(allow))
 }
 
-// A read-only byte slice from a caller pointer + length. `from_raw_parts` needs a non-null aligned
-// pointer even for a zero length, so an empty request maps to a real empty slice, and a null pointer
-// with a non-zero length is refused before it is read.
-unsafe fn opt_slice<'a>(ptr: *const u8, len: usize) -> Option<&'a [u8]> {
-    if len == 0 {
-        Some(&[])
-    } else if ptr.is_null() {
-        None
-    } else {
-        Some(unsafe { std::slice::from_raw_parts(ptr, len) })
-    }
-}
-
 /// `RAW` (§3.14): put `bytes[0..len]` verbatim on cloned endpoint number `ep_num` in `dir`,
 /// fire-and-forget. `ep_num` is the bare endpoint number (0 to 15); `dir` is a `MEDIUS_DIRECTION_*`
 /// value, and only `MEDIUS_DIRECTION_POSITIVE` (IN, toward the game PC) and `MEDIUS_DIRECTION_NEGATIVE`
 /// (OUT, to the real device) address one, so any other is `MEDIUS_STATUS_ERR_RAW_DIRECTION` (or
-/// `MEDIUS_STATUS_ERR_RELATIVE_DIRECTION` for the bearing-relative pair). Gated on
-/// `medius_device_allow_imperfect_clones`: with the opt-in off this is
-/// `MEDIUS_STATUS_ERR_IMPERFECT_REQUIRED` rather than a frame the box would drop.
+/// `MEDIUS_STATUS_ERR_RELATIVE_DIRECTION` for the bearing-relative pair). Admitted by
+/// `medius_device_allow_imperfect_clones`: with the opt-in off the box drops the frame and says
+/// nothing, so this is still `MEDIUS_STATUS_OK`; `medius_device_query_imperfect` reports the state.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_device_raw(
     dev: *mut MediusDevice,
@@ -644,6 +633,45 @@ pub unsafe extern "C" fn medius_device_transfer(
     })
 }
 
+/// [`medius_device_transfer`] with an explicit reply timeout in milliseconds. The box gives up on a
+/// control transfer after its own ~800 ms window, so keep `timeout_ms` at or above
+/// `medius_default_transfer_timeout_ms()`; a shorter one abandons the wait before a slow device answers.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn medius_device_transfer_timeout(
+    dev: *mut MediusDevice,
+    ep: u8,
+    setup: MediusSetup,
+    out_data: *const u8,
+    out_len: usize,
+    timeout_ms: u32,
+    out: *mut MediusTransferOutcome,
+) -> MediusStatus {
+    guard_status(|| {
+        if dev.is_null() || out.is_null() {
+            return fail(MediusStatus::ErrInvalidArg, "null pointer");
+        }
+        let Some(data) = (unsafe { opt_slice(out_data, out_len) }) else {
+            return fail(
+                MediusStatus::ErrInvalidArg,
+                "null out_data with out_len > 0",
+            );
+        };
+        match unsafe { &(*dev).inner }.transfer_timeout(
+            ep,
+            setup_from_c(setup),
+            data,
+            Duration::from_millis(timeout_ms as u64),
+        ) {
+            Ok(outcome) => {
+                unsafe { *out = outcome.into() };
+                clear_error();
+                MediusStatus::Ok
+            }
+            Err(e) => record(&e),
+        }
+    })
+}
+
 fn with_rewrite_rule(
     dev: *mut MediusDevice,
     rule: *const MediusRewriteRule,
@@ -659,15 +687,25 @@ fn with_rewrite_rule(
                 "invalid rewrite class, action or direction",
             );
         };
+        // The arrays hold `MEDIUS_MAX_REWRITE_MATCH` bytes, so a longer key is refused here for a set
+        // and a remove alike. An unequal pair goes on to the crate, which checks the mask length first.
+        let len = r.match_bytes.len();
+        if len == r.mask.len() && len > MEDIUS_MAX_REWRITE_MATCH {
+            return record(&medius::Error::RewriteMatchTooLong {
+                len,
+                limit: MEDIUS_MAX_REWRITE_MATCH,
+            });
+        }
         status_of(f(unsafe { &(*dev).inner }, r))
     })
 }
 
 /// `REWRITE` (§3.14): install (add or overwrite) one rewrite rule. Gated on the imperfect-clone
-/// opt-in. `rule->class` takes a `MEDIUS_REWRITE_CLASS_*` constant, `rule->action` a
+/// opt-in. `rule->class_` takes a `MEDIUS_REWRITE_CLASS_*` constant, `rule->action` a
 /// `MEDIUS_REWRITE_ACTION_*` one and `rule->direction` a `MEDIUS_DIRECTION_*` one; any other value is
 /// `MEDIUS_STATUS_ERR_INVALID_ARG`. `match_len` must equal `mask_len`
-/// (`MEDIUS_STATUS_ERR_REWRITE_MASK_LENGTH`), the action must be valid for the class
+/// (`MEDIUS_STATUS_ERR_REWRITE_MASK_LENGTH`) and be at most `MEDIUS_MAX_REWRITE_MATCH`
+/// (`..._REWRITE_MATCH_TOO_LONG`), the action must be valid for the class
 /// (`..._REWRITE_ACTION_CLASS`), the direction must not be bearing-relative
 /// (`..._RELATIVE_DIRECTION`), and the payload must fit the box's head
 /// (`..._REWRITE_PAYLOAD_TOO_LARGE`). `medius_device_query_rewrite` confirms what the box holds.
@@ -977,7 +1015,8 @@ pub unsafe extern "C" fn medius_device_set_render(
 
 /// Set the percent of the host's command interval an injected delta is released across. 0 puts the
 /// whole delta on the next report the box emits, 100 releases that delta across one command
-/// interval, and above 100 overlaps. The box releases nothing across an interval until it has learned the host's
+/// interval, and above 100 overlaps. A loop at the native report rate keeps each command whole, on a
+/// report of its own. The box releases nothing across an interval until it has learned the host's
 /// command period from `MOVE` arrivals.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_device_set_spread(
@@ -1205,16 +1244,29 @@ pub extern "C" fn medius_default_query_timeout_ms() -> u32 {
     dur_ms(medius::DEFAULT_QUERY_TIMEOUT)
 }
 
+/// Default reply wait for `medius_device_transfer`, in milliseconds.
+#[unsafe(no_mangle)]
+pub extern "C" fn medius_default_transfer_timeout_ms() -> u32 {
+    dur_ms(medius::DEFAULT_TRANSFER_TIMEOUT)
+}
+
 /// Default keepalive cadence for held overrides, in milliseconds.
 #[unsafe(no_mangle)]
 pub extern "C" fn medius_default_keepalive_cadence_ms() -> u32 {
     dur_ms(medius::DEFAULT_KEEPALIVE_CADENCE)
 }
 
-/// The C ABI version, bumped on any breaking change to this header.
+/// The C ABI version this header declares, bumped on any breaking change to it. Compare it with
+/// `medius_abi_version()` once at start-up.
+pub const MEDIUS_ABI_VERSION: u32 = 8;
+
+/// The C ABI version of the loaded library, bumped on any breaking change to this header. Call it once
+/// at start-up and compare it with `MEDIUS_ABI_VERSION`. On a mismatch, call nothing else: the structs
+/// in this header are laid out differently from the library's, so rebuild against the header that
+/// ships with that library.
 #[unsafe(no_mangle)]
 pub extern "C" fn medius_abi_version() -> u32 {
-    7
+    MEDIUS_ABI_VERSION
 }
 
 /// The medius-capi crate version as a static NUL-terminated string.

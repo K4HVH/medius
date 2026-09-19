@@ -17,10 +17,12 @@ from ._types import (
     FirmwareInfo,
     firmware_info_from_c,
     _as_lock_target,
+    _bytes_buf,
     _enum,
     _i16,
     _u8,
     _u16,
+    _u32,
     _window_ms,
     Caps,
     CatchFilter,
@@ -83,14 +85,6 @@ def _require_mock():
         )
 
 
-def _bytes_buf(data: bytes):
-    """A ``(c_uint8 * n)`` buffer copied from `data`, and its length, for a ``POINTER(u8)`` argument.
-    An empty payload is a real zero-length buffer the C side never reads (it maps len 0 to an empty
-    slice)."""
-    raw = bytes(data)
-    return (ctypes.c_uint8 * len(raw)).from_buffer_copy(raw), len(raw)
-
-
 class Device:
     """An open connection to one medius box."""
 
@@ -111,21 +105,29 @@ class Device:
 
     @classmethod
     def open_by_id(cls, box_id: str) -> "Device":
-        """Open the box whose identity matches `box_id` (device MAC hex or CH343 serial)."""
+        """Open the box whose identity matches `box_id` (device MAC hex or CH343 serial).
+
+        Raises `BadProtoVerError` when that box speaks another control protocol."""
         out = ctypes.c_void_p()
         check(_native.lib.medius_device_open_by_id(box_id.encode("utf-8"), ctypes.byref(out)))
         return cls(out.value)
 
     @classmethod
     def find_mouse_box(cls) -> "Device":
-        """Open the first box whose clone is a mouse."""
+        """Open the first box whose clone is a mouse.
+
+        Raises `BadProtoVerError` when no other box clones a mouse and a box on another control
+        protocol, whose clone is unread, is connected."""
         out = ctypes.c_void_p()
         check(_native.lib.medius_device_find_mouse_box(ctypes.byref(out)))
         return cls(out.value)
 
     @classmethod
     def find_keyboard_box(cls) -> "Device":
-        """Open the first box whose clone is a keyboard."""
+        """Open the first box whose clone is a keyboard.
+
+        Raises `BadProtoVerError` when no other box clones a keyboard and a box on another control
+        protocol, whose clone is unread, is connected."""
         out = ctypes.c_void_p()
         check(_native.lib.medius_device_find_keyboard_box(ctypes.byref(out)))
         return cls(out.value)
@@ -282,6 +284,10 @@ class Device:
         check(_native.lib.medius_device_reapply(self._handle))
 
     def reconnect(self):
+        """Rescan, reopen this box, and re-apply held state.
+
+        Raises `BadProtoVerError` when the box answers on another control protocol; it stays
+        disconnected."""
         check(_native.lib.medius_device_reconnect(self._handle))
 
     def reboot(self, target: RebootTarget):
@@ -353,7 +359,8 @@ class Device:
     def set_spread(self, percent: int):
         """Set the percent of the host's command interval an injected delta is released across. 0
         puts the whole delta on the next report the box emits, 100 releases that delta across one
-        command interval, and above 100 overlaps. The box releases nothing across an interval until it has
+        command interval, and above 100 overlaps. A loop at the native report rate keeps each command
+        whole, on a report of its own. The box releases nothing across an interval until it has
         learned the host's command period from MOVE arrivals (`SpreadStatus.span_us`)."""
         check(_native.lib.medius_device_set_spread(self._handle, int(percent)))
 
@@ -495,34 +502,54 @@ class Device:
 
         `ep` is the bare endpoint number (0 to 15). `Direction.IN` emits toward the game PC;
         `Direction.OUT` relays to the real device. Only those two address one: `Direction.BOTH` raises
-        `RawDirectionError` and the bearing-relative pair raises `RelativeDirectionError`. Needs the
-        imperfect-clone opt-in, or it raises `ImperfectRequiredError`.
+        `RawDirectionError` and the bearing-relative pair raises `RelativeDirectionError`. Admitted by
+        the imperfect-clone opt-in: with it off the box drops the frame and says nothing, so this still
+        returns. `query_imperfect()` reports the state.
         """
         direction = _enum(direction, Direction, "direction")
-        buf, n = _bytes_buf(data)
+        buf, n = _bytes_buf(data, "data")
         check(_native.lib.medius_device_raw(self._handle, _u8(ep, "ep"), int(direction), buf, n))
 
-    def transfer(self, ep: int, setup: Setup, out: bytes = b"") -> TransferOutcome:
+    def transfer(
+        self, ep: int, setup: Setup, out: bytes = b"", timeout_ms: Optional[int] = None
+    ) -> TransferOutcome:
         """`TRANSFER` (§3.14): run one control transfer against the real device and return its answer.
 
         `ep` is 0 for EP0 or a control endpoint the device declares; `out` is the OUT data stage
         (empty for an IN transfer). A `TransferOutcome.status` other than `TransferStatus.OK` is a real
         protocol outcome returned rather than raised; the box answers `REFUSED` while the opt-in is off.
+        `timeout_ms` is the reply wait; the default is `default_transfer_timeout_ms()`, and the box gives
+        up on a transfer after its own ~800 ms window, so a shorter one abandons the wait before a slow
+        device answers.
         """
-        buf, n = _bytes_buf(out)
+        buf, n = _bytes_buf(out, "out")
         outcome = _native.MediusTransferOutcome()
-        check(
-            _native.lib.medius_device_transfer(
-                self._handle, _u8(ep, "ep"), setup_to_c(setup), buf, n, ctypes.byref(outcome)
+        if timeout_ms is None:
+            check(
+                _native.lib.medius_device_transfer(
+                    self._handle, _u8(ep, "ep"), setup_to_c(setup), buf, n, ctypes.byref(outcome)
+                )
             )
-        )
+        else:
+            check(
+                _native.lib.medius_device_transfer_timeout(
+                    self._handle,
+                    _u8(ep, "ep"),
+                    setup_to_c(setup),
+                    buf,
+                    n,
+                    _u32(timeout_ms, "timeout_ms"),
+                    ctypes.byref(outcome),
+                )
+            )
         return transfer_outcome_from_c(outcome)
 
     def set_rewrite(self, rule: RewriteRule) -> None:
         """`REWRITE` (§3.14): install (add or overwrite) one rewrite rule. Needs the opt-in.
 
-        `match_bytes` and `mask` must be the same length (`RewriteMaskLengthError`), the action must be
-        valid for the class (`RewriteActionClassError`), the direction must not be bearing-relative
+        `match_bytes` and `mask` must be the same length (`RewriteMaskLengthError`) and at most
+        16 bytes (`RewriteMatchTooLongError`), the action must be valid for the class
+        (`RewriteActionClassError`), the direction must not be bearing-relative
         (`RelativeDirectionError`), and the payload must fit the box's head
         (`RewritePayloadTooLargeError`). `query_rewrite` confirms what the box holds.
         """

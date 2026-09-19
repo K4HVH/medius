@@ -1,7 +1,7 @@
 //! The three catch event frames (§4.10) and what they decode to.
 
 use crate::protocol::opcode::{CATCH_CTRL_NAK, CATCH_CTRL_OK, CATCH_CTRL_STALL};
-use crate::types::{Axis, CatchClass, Class, ClockDomain, Direction, Usage};
+use crate::types::{Axis, CatchClass, Class, ClockDomain, Direction, TransferStatus, Usage};
 
 /// Byte width of the header every catch event frame leads with: `ts_us` (u32) then the clock domain.
 pub(crate) const EVENT_HDR: usize = 5;
@@ -188,21 +188,27 @@ impl TrafficEvent {
         (self.bytes.len() as u16) < self.true_len
     }
 
-    /// The 8-byte setup packet, for a [`CatchClass::Control`] event.
+    // The two classes whose bytes are `[setup 8][data]`.
+    fn is_control_shaped(&self) -> bool {
+        matches!(self.class, CatchClass::Control | CatchClass::ClipTransfer)
+    }
+
+    /// The 8-byte setup packet, for a [`CatchClass::Control`] or [`CatchClass::ClipTransfer`] event.
     pub fn setup(&self) -> Option<&[u8]> {
-        if self.class == CatchClass::Control && self.bytes.len() >= 8 {
+        if self.is_control_shaped() && self.bytes.len() >= 8 {
             Some(&self.bytes[..8])
         } else {
             None
         }
     }
 
-    /// The data stage, for a [`CatchClass::Control`] event; the whole packet for any other class.
+    /// The data stage, for a [`CatchClass::Control`] or [`CatchClass::ClipTransfer`] event; the whole
+    /// packet for any other class.
     ///
     /// Empty when the capture cut the setup packet itself short. The surviving bytes are the request,
     /// and returning them would label a GET_DESCRIPTOR request as the descriptor.
     pub fn data(&self) -> &[u8] {
-        if self.class != CatchClass::Control {
+        if !self.is_control_shaped() {
             return &self.bytes;
         }
         if self.bytes.len() >= 8 {
@@ -223,6 +229,12 @@ impl TrafficEvent {
             CATCH_CTRL_NAK => ControlStatus::Naked,
             v => ControlStatus::Other(v),
         })
+    }
+
+    /// How the transfer ended, for a [`CatchClass::ClipTransfer`] event: the status a
+    /// [`transfer`](crate::Device::transfer) returns, or [`Nak`](TransferStatus::Nak) when no answer came.
+    pub fn transfer_status(&self) -> Option<TransferStatus> {
+        (self.class == CatchClass::ClipTransfer).then(|| TransferStatus::from_u8(self.flags))
     }
 
     /// The lifecycle event, for a [`CatchClass::Bus`] event.

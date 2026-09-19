@@ -58,6 +58,9 @@ pub enum Error {
     )]
     RewriteMaskLength { match_len: usize, mask_len: usize },
 
+    #[error("a rewrite rule compares at most {limit} match bytes, and this one has {len}")]
+    RewriteMatchTooLong { len: usize, limit: usize },
+
     #[error("the box holds {limit} rewrite rules and they are all in use; remove one first")]
     RewriteTableFull { limit: usize },
 
@@ -122,6 +125,29 @@ pub enum Error {
          Direction::OUT; {direction:?} names neither"
     )]
     RawDirection { direction: crate::types::Direction },
+
+    #[error("a clip frame carries at most {limit} {what} and this one has {count}")]
+    ClipFrameCount {
+        what: &'static str,
+        count: usize,
+        limit: usize,
+    },
+
+    #[error(
+        "a clip frame encodes to {len} bytes and one append carries at most {max}; split it across \
+         frames",
+        max = crate::types::CLIP_ENTRY_MAX
+    )]
+    ClipFrameTooLong { len: usize },
+
+    #[error(
+        "a clip transfer carries exactly the bytes its setup packet announces: wLength for an OUT \
+         request, none for an IN one. This one needs {want} and has {got}"
+    )]
+    ClipTransferData { want: usize, got: usize },
+
+    #[error("a clip packet trigger {reason}")]
+    ClipPacketTrigger { reason: &'static str },
 
     #[error(
         "id 0x{id:04X} is the blanket sentinel on the wire, so an exact {class:?} subscription to it \

@@ -8,9 +8,14 @@ pub const SOF: u8 = 0xA5;
 /// Maximum payload length (§2); a larger `LEN` is rejected as bogus.
 pub const MAX_PAYLOAD: usize = 512;
 
-/// Protocol version in `RESP(VERSION)` (§4.1); the handshake requires this exact value. Bumped to 7
-/// for the v3.4.0 advanced control layer (`RAW`/`TRANSFER`/`REWRITE`/`PATCH`) and the `u16` `HEALTH` flags.
-pub const PROTO_VER: u8 = 7;
+/// Protocol version in `RESP(VERSION)` (§4.1); the handshake requires this exact value. Bumped to 8
+/// for v3.4.1, which reshapes `RESP(CLIP)` and `CLIP_TRIGGER` and matches an interrupt OUT packet on
+/// a vendor interface as `VendorInterrupt`, which protocol 7 matched as `HidOut`. Protocol 7 is
+/// v3.4.0: the advanced control layer (`RAW`/`TRANSFER`/`REWRITE`/`PATCH`) and the `u16` `HEALTH`
+/// flags. The handshake refuses a v3.4.0 box with [`Error::BadProtoVer`](crate::Error::BadProtoVer);
+/// update its firmware from the dashboard at <https://medius.k4tech.net/dashboard> before opening it
+/// here.
+pub const PROTO_VER: u8 = 8;
 
 /// `INJECT` class byte: the momentary-usage field kind.
 pub const INJ_BTN: u8 = 0;
@@ -106,6 +111,17 @@ pub const CLIP_SET_RIDE: u8 = 3;
 pub const CLIP_TRIG_MAX: usize = 8;
 pub const CLIP_TRIG_F_PRESENT: u8 = 0x01;
 pub const CLIP_TRIG_F_CONSUME: u8 = 0x02;
+/// Packet trigger: the verb runs on the first packet of a run of matching ones.
+pub const CLIP_TRIG_F_RUN: u8 = 0x04;
+/// Packet triggers the box holds beside its input bindings (`CLIP_PKT_TRIG_MAX`).
+pub const CLIP_PKT_TRIG_MAX: usize = 8;
+/// Match bytes the box holds across every packet trigger (`CLIP_PKT_MATCH_POOL`); it bounds
+/// `RESP(CLIP)` to one frame.
+pub const CLIP_PKT_MATCH_POOL: usize = 112;
+/// `CLIP_TRIGGER` bytes ahead of a packet trigger's match: `[class][id u16][dir][action][flags][slen][mlen]`.
+pub const CLIP_PKT_TRIG_HDR: usize = 8;
+/// `RESP(CLIP)` bytes ahead of a packet trigger entry's match: the command's eight and `hits u16`.
+pub const CLIP_PKT_TRIG_ENTRY: usize = 10;
 /// `RESP(CLIP)` config-section flags byte.
 pub const CLIP_CFG_F_LOOP: u8 = 0x01;
 pub const CLIP_CFG_F_RETAIN: u8 = 0x02;
@@ -125,6 +141,11 @@ pub const CLIP_TAG_GAP: u8 = 0x00;
 pub const CLIP_F_XY: u8 = 0x01;
 pub const CLIP_F_WHEEL: u8 = 0x02;
 pub const CLIP_F_EDGES: u8 = 0x04;
+pub const CLIP_F_PAN: u8 = 0x08;
+pub const CLIP_F_RAW: u8 = 0x10;
+pub const CLIP_F_XFER: u8 = 0x20;
+/// `RESP(CLIP)`: the scalar prefix length, whose last byte is the held-usage count (§4.15).
+pub const RESP_CLIP_HDR: usize = 31;
 
 pub const BTN_LEFT: u8 = 0;
 pub const BTN_RIGHT: u8 = 1;
@@ -193,6 +214,8 @@ pub const CATCH_CLS_CONTROL: u8 = 8;
 pub const CATCH_CLS_EMIT: u8 = 9;
 /// `CATCH` class: bus lifecycle events (§3.9).
 pub const CATCH_CLS_BUS: u8 = 10;
+/// `CATCH` class: a control transfer a clip ran against the device (§3.9).
+pub const CATCH_CLS_CLIP_XFER: u8 = 11;
 /// `CATCH` class wildcard: every class (§3.9).
 pub const CATCH_CLS_ANY: u8 = 0xFF;
 /// `CATCH` id wildcard: every id within the class (§3.9), the same sentinel `LOCK` uses.
@@ -257,8 +280,11 @@ pub const PATCH_CLEAR: u8 = 0xFF;
 pub const REWRITE_MAX_ENTRIES: usize = 32;
 /// Entries the box's descriptor-patch store holds (`PATCH_MAX`); past it a patch is refused and `RESP(PATCHES).table_full` says so.
 pub const PATCH_MAX_ENTRIES: usize = 16;
+/// The most `match`/`mask` bytes the box compares against a packet head (`PKT_MATCH_MAX`), for a
+/// rewrite rule and a clip packet trigger alike.
+pub const PKT_MATCH_MAX: usize = 16;
 /// The most `match`/`mask` bytes one rewrite rule compares (`REWRITE_MATCH_MAX`).
-pub const REWRITE_MATCH_MAX: usize = 16;
+pub const REWRITE_MATCH_MAX: usize = PKT_MATCH_MAX;
 
 // `TRANSFORM` op byte (§3.15, `CTRL_XF_*`): a field operation on the semantic path. `sclass`/`dclass`
 // reuse the input classes ([`CATCH_CLS_AXIS`]/`_BTN`/`_KEY`/`_MEDIA`). Shared wire values with the
@@ -388,7 +414,8 @@ pub enum FrameType {
     ClipCtrl = 0x13,
     /// `CLIP_SET`: a clip scalar setting `[id][value]` (autolock/loop/retain) (PC→box).
     ClipSet = 0x14,
-    /// `CLIP_TRIGGER`: add/remove a clip trigger binding `[class][id u16][edge][action][flags]` (PC→box).
+    /// `CLIP_TRIGGER`: add/remove a clip trigger. An input binding is `[class][id u16][edge][action][flags]`;
+    /// a packet trigger names a traffic class and carries `[slen][mlen][match][mask]` after those six bytes (PC→box).
     ClipTrigger = 0x15,
     /// `UPDATE`: stage and activate firmware on either chip (PC→box) (§3.13).
     Update = 0x17,

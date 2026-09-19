@@ -3,16 +3,17 @@
 from __future__ import annotations
 
 import ctypes
-from typing import Optional
+from typing import Optional, Tuple
 
 from . import _native
 from ._device import Device
-from ._enums import (BearingMode, ClipState, ClockDomain, DeviceKind, EmitMode, FrameType, LogLevel,
-                     RenderMode)
+from ._enums import (BearingMode, ClipAction, ClipState, ClockDomain, DeviceKind, Direction, EmitMode,
+                     FrameType, LogLevel, RenderMode, TrafficClass)
 from ._types import (
     Bearing,
     Caps,
     _enum,
+    _as_bytes,
     _u8,
     _u16,
     _window_ms,
@@ -113,12 +114,15 @@ class MockBox:
         _native.lib.medius_mock_set_catch_state(self._handle, catch_state_to_c(state))
 
     def set_imperfect_status(self, status: ImperfectStatus):
+        """Set the `ImperfectStatus` the mock answers to `Device.query_imperfect`. With the opt-in
+        off the mock drops its consuming clip packet triggers, as the box does when the opt-in goes
+        off."""
         _native.lib.medius_mock_set_imperfect_status(self._handle, imperfect_to_c(status))
 
     def set_transfer_reply(self, status, data: bytes = b""):
         """Set the canned (status, IN data) the mock answers a TRANSFER with while the opt-in is on;
         with it off it answers REFUSED. `status` is a `TransferStatus` or a raw wire byte."""
-        raw = bytes(data)
+        raw = _as_bytes(data, "data")
         buf = (_native.u8 * len(raw)).from_buffer_copy(raw)
         _native.lib.medius_mock_set_transfer_reply(
             self._handle, _u8(int(status), "status"), buf, len(raw)
@@ -166,8 +170,46 @@ class MockBox:
         _native.lib.medius_mock_set_clip_status(self._handle, clip_status_to_c(status))
 
     def set_clip_settings(self, settings: "ClipSettings"):
-        """Set the `ClipSettings` the mock answers to `ClipHandle.query_config`."""
+        """Set the `ClipSettings` the mock answers to `ClipHandle.query_config`.
+
+        Its packet triggers are bound in order, as `ClipHandle.bind_packet` binds them, under the
+        opt-in the mock holds when they are scripted. The mock holds the ones the box would take, each
+        with its scripted ``hits``, and leaves out the rest as the box's own answer would: a direction
+        the class never carries, a match bit outside the mask, a run with no condition, ``consume`` on
+        ``CONTROL`` or with the opt-in off, and entries past the match pool. Script the opt-in with
+        `set_imperfect_status` before a consuming trigger. The triggers held are the set
+        `ClipHandle.bind_packet` adds to and `clip_packet` runs a packet through."""
         _native.lib.medius_mock_set_clip_settings(self._handle, clip_settings_to_c(settings))
+
+    def clip_packet(
+        self, traffic_class: TrafficClass, id: int, direction: Direction, head: bytes
+    ) -> Tuple[Optional[ClipAction], bool]:
+        """Run one packet through the packet triggers, as the box does for a packet crossing
+        `traffic_class` at `id` in `direction` whose first bytes are `head`. The most specific trigger
+        `head` matches wins it and counts it in its ``hits``.
+
+        Returns the action the winner drives on this packet, and whether the winner consumes the
+        packet. The action is `None` when no trigger wins, and when the winner is ``once_per_run`` and
+        the packet continues a run.
+
+        A packet travels ``IN`` or ``OUT`` across a surface that carries that flow: ``IN`` for
+        ``HID_IN`` and ``EMIT``, ``OUT`` for ``HID_OUT``, either for the vendor classes and
+        ``CONTROL``. Any other `traffic_class` and `direction` is no packet: it returns
+        ``(None, False)``, counts in no ``hits`` and leaves every run as it was."""
+        raw = _as_bytes(head, "head")
+        buf = (_native.u8 * len(raw)).from_buffer_copy(raw)
+        action, consumed = _native.u8(), _native.c_bool()
+        fired = _native.lib.medius_mock_clip_packet(
+            self._handle,
+            int(_enum(traffic_class, TrafficClass, "traffic_class")),
+            _u16(id, "id"),
+            int(_enum(direction, Direction, "direction")),
+            buf,
+            len(raw),
+            ctypes.byref(action),
+            ctypes.byref(consumed),
+        )
+        return (ClipAction(action.value) if fired else None, bool(consumed.value))
 
     def silent(self):
         """Make the mock stop answering queries (one-way, for timeout tests)."""
