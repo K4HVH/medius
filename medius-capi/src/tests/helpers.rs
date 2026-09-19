@@ -587,3 +587,49 @@ fn last_error_message_truncates_and_reports_full_length() {
     let _ = unsafe { medius_last_error_message(buf.as_mut_ptr(), buf.len()) };
     assert_eq!(buf[7], 0);
 }
+
+#[test]
+fn a_listed_box_on_another_protocol_carries_no_device() {
+    let port = medius::PortInfo {
+        path: "/dev/ttyACM0".into(),
+        vid: 0x1A86,
+        pid: 0x55D3,
+        serial: None,
+    };
+    // v3.4.0 firmware answers protocol 7.
+    let version = medius::Version {
+        proto_ver: 7,
+        fw_major: 3,
+        fw_minor: 4,
+        fw_patch: 0,
+        mac: [0x5A, 0x4E, 0, 0, 0, 1],
+        name: "old".into(),
+    };
+    let old = crate::convert::box_to_medius(&medius::BoxInfo {
+        port: port.clone(),
+        version: version.clone(),
+        device: None,
+    })
+    .unwrap();
+    assert_eq!(old.has_device, 0);
+    assert_eq!(old.version.proto_ver, 7);
+    assert_eq!(old.device.vid, 0);
+    assert_eq!(old.device.kind, MediusDeviceKind::Unknown as u8);
+
+    let current = crate::convert::box_to_medius(&medius::BoxInfo {
+        port,
+        version: medius::Version {
+            proto_ver: medius::PROTO_VER,
+            ..version
+        },
+        device: Some(medius::DeviceInfo {
+            vid: 0x046D,
+            kind: medius::DeviceKind::Mouse,
+            ..Default::default()
+        }),
+    })
+    .unwrap();
+    assert_eq!(current.has_device, 1);
+    assert_eq!(current.device.vid, 0x046D);
+    assert_eq!(current.device.kind, MediusDeviceKind::Mouse as u8);
+}

@@ -126,10 +126,46 @@ def test_mock_feature_present():
 def test_meta_functions():
     # These are a hand-written mirror of the C structs, so a bumped ABI means they are stale until
     # someone re-reads the header. Pin it rather than accept anything newer.
-    assert medius.abi_version() == 7
+    assert medius.abi_version() == 8
+    assert medius._native.ABI_VERSION == 8
     assert medius.version_string()
     assert medius.default_query_timeout_ms() > 0
     assert medius.default_keepalive_cadence_ms() > 0
+
+
+# Runs the loader module again, as a fresh module, over the real library with its ABI number replaced.
+def _load_native_against(monkeypatch, reported):
+    import ctypes
+    import importlib.util
+
+    from medius import _native
+
+    class ReportsAbi(ctypes.CDLL):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.medius_abi_version = lambda: reported
+
+    monkeypatch.setattr(ctypes, "CDLL", ReportsAbi)
+    spec = importlib.util.spec_from_file_location("_medius_native_abi_probe", _native.__file__)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+@pytest.mark.parametrize("step", [-1, 1])
+def test_import_refuses_a_library_of_another_abi(monkeypatch, step):
+    # An old package over a new library, and the reverse: both are the layout drift the number exists
+    # to catch, so both refuse at import and name the two numbers.
+    want = medius._native.ABI_VERSION
+    with pytest.raises(ImportError) as ei:
+        _load_native_against(monkeypatch, want + step)
+    assert f"C ABI {want + step}," in str(ei.value)
+    assert f"built for ABI {want};" in str(ei.value)
+
+
+def test_import_takes_a_library_of_the_same_abi(monkeypatch):
+    module = _load_native_against(monkeypatch, medius._native.ABI_VERSION)
+    assert module.lib.medius_version_string().decode() == medius.version_string()
 
 
 def test_configure_version_then_open_mock_matches():
@@ -174,6 +210,28 @@ def test_bad_proto_version_reports_status_and_proto_ver():
     assert ei.value.status == Status.ERR_BAD_PROTO_VER
     assert ei.value.proto_ver == 99
     mock.close()
+
+
+def test_a_listed_box_on_another_protocol_has_no_device():
+    from medius import DeviceKind, _native
+    from medius._types import box_from_c
+
+    c = _native.MediusBoxInfo()
+    c.port.path = b"/dev/ttyACM0"
+    c.version.proto_ver = 7  # v3.4.0 firmware
+    c.version.mac[:] = [0x5A, 0x4E, 0x00, 0x00, 0x00, 0x01]
+    c.has_device = 0
+    old = box_from_c(c)
+    assert old.device is None
+    assert old.version.proto_ver == 7
+    assert old.id == "5a4e00000001"
+
+    c.version.proto_ver = 8
+    c.device.vid = 0x046D
+    c.device.kind = DeviceKind.MOUSE
+    c.has_device = 1
+    assert box_from_c(c).device.kind == DeviceKind.MOUSE
+    assert box_from_c(c).device.vid == 0x046D
 
 
 def test_recorded_frame_payload_readable():

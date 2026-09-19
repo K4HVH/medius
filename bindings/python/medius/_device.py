@@ -105,21 +105,29 @@ class Device:
 
     @classmethod
     def open_by_id(cls, box_id: str) -> "Device":
-        """Open the box whose identity matches `box_id` (device MAC hex or CH343 serial)."""
+        """Open the box whose identity matches `box_id` (device MAC hex or CH343 serial).
+
+        Raises `BadProtoVerError` when that box speaks another control protocol."""
         out = ctypes.c_void_p()
         check(_native.lib.medius_device_open_by_id(box_id.encode("utf-8"), ctypes.byref(out)))
         return cls(out.value)
 
     @classmethod
     def find_mouse_box(cls) -> "Device":
-        """Open the first box whose clone is a mouse."""
+        """Open the first box whose clone is a mouse.
+
+        Raises `BadProtoVerError` when no other box clones a mouse and a box on another control
+        protocol, whose clone is unread, is connected."""
         out = ctypes.c_void_p()
         check(_native.lib.medius_device_find_mouse_box(ctypes.byref(out)))
         return cls(out.value)
 
     @classmethod
     def find_keyboard_box(cls) -> "Device":
-        """Open the first box whose clone is a keyboard."""
+        """Open the first box whose clone is a keyboard.
+
+        Raises `BadProtoVerError` when no other box clones a keyboard and a box on another control
+        protocol, whose clone is unread, is connected."""
         out = ctypes.c_void_p()
         check(_native.lib.medius_device_find_keyboard_box(ctypes.byref(out)))
         return cls(out.value)

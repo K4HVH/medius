@@ -516,7 +516,7 @@ mod mock_roundtrip {
 #[test]
 fn health_u16_high_bits_decode() {
     use crate::types::Health;
-    // proto 7 HEALTH is a u16 LE: link_up (b0) plus rewrite_on (b8), patch_on (b9), transform_on (b10).
+    // HEALTH is a u16 LE since proto 7: link_up (b0) plus rewrite_on (b8), patch_on (b9), transform_on (b10).
     let h = Health::from_flags(0x0701);
     assert!(h.link_up && !h.mouse_attached);
     assert!(h.rewrite_on && h.patch_on && h.transform_on);

@@ -7,23 +7,31 @@ fn main() -> medius::Result<()> {
         return Ok(());
     }
     for b in &boxes {
+        let clone = match &b.device {
+            Some(d) => format!("{:<8} {d}", d.kind),
+            None => format!(
+                "protocol {}, this build speaks {}: update the box",
+                b.version.proto_ver,
+                medius::PROTO_VER
+            ),
+        };
         println!(
-            "{}  name={:<16} {:<16} serial={:<12} {:<8} {}  ({})",
+            "{}  name={:<16} {:<16} serial={:<12} {clone}  ({})",
             b.id(),
             b.name(),
             b.port.path,
             b.serial().unwrap_or("-"),
-            b.device.kind,
-            b.device,
             b.version,
         );
     }
 
-    if let Ok(m) = medius::Device::find_mouse_box() {
-        println!("find_mouse_box    -> {}", m.device_info()?);
+    match medius::Device::find_mouse_box() {
+        Ok(m) => println!("find_mouse_box    -> {}", m.device_info()?),
+        Err(e) => println!("find_mouse_box    -> {e}"),
     }
-    if let Ok(k) = medius::Device::find_keyboard_box() {
-        println!("find_keyboard_box -> {}", k.device_info()?);
+    match medius::Device::find_keyboard_box() {
+        Ok(k) => println!("find_keyboard_box -> {}", k.device_info()?),
+        Err(e) => println!("find_keyboard_box -> {e}"),
     }
 
     let id = boxes[0].id();

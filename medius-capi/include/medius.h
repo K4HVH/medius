@@ -1100,7 +1100,11 @@ typedef struct MediusDeviceInfo {
 typedef struct MediusBoxInfo {
     struct MediusPortInfo port;
     struct MediusVersion version;
+    // Zeroed when `has_device` is 0.
     struct MediusDeviceInfo device;
+    // 0 for a box on another control protocol (`version.proto_ver`): opening it answers
+    // `MEDIUS_STATUS_ERR_BAD_PROTO_VER`.
+    uint8_t has_device;
 } MediusBoxInfo;
 
 // A relative-axis drive for `medius_device_move_axis`; build with the `medius_motion_*` helpers.
@@ -2053,19 +2057,19 @@ uintptr_t medius_find_ports(struct MediusPortInfo *out,
                             uintptr_t cap,
                             uintptr_t *out_total);
 
-// Enumerate every connected box into `out` (up to `cap`), opening each in turn; writes the total to `*out_total` and returns the number written.
+// Enumerate every connected box into `out` (up to `cap`), reading each in turn; writes the total to `*out_total` and returns the number written. A box on another control protocol is listed with `has_device` 0.
 uintptr_t medius_list(struct MediusBoxInfo *out,
                       uintptr_t cap,
                       uintptr_t *out_total);
 
-// Open the box whose identity matches `id` (device MAC hex or CH343 serial), handshake, and write the handle to `*out`.
+// Open the box whose identity matches `id` (device MAC hex or CH343 serial), handshake, and write the handle to `*out`. `MEDIUS_STATUS_ERR_BAD_PROTO_VER` when that box speaks another control protocol.
 MediusStatus medius_device_open_by_id(const char *id,
                                       struct MediusDevice **out);
 
-// Open the first box whose clone is a mouse, handshake, and write the handle to `*out`.
+// Open the first box whose clone is a mouse, handshake, and write the handle to `*out`. `MEDIUS_STATUS_ERR_BAD_PROTO_VER` when no other box clones a mouse and a box on another control protocol, whose clone is unread, is connected.
 MediusStatus medius_device_find_mouse_box(struct MediusDevice **out);
 
-// Open the first box whose clone is a keyboard, handshake, and write the handle to `*out`.
+// Open the first box whose clone is a keyboard, handshake, and write the handle to `*out`. `MEDIUS_STATUS_ERR_BAD_PROTO_VER` when no other box clones a keyboard and a box on another control protocol, whose clone is unread, is connected.
 MediusStatus medius_device_find_keyboard_box(struct MediusDevice **out);
 
 MediusStatus medius_device_move_rel(struct MediusDevice *dev, int16_t dx, int16_t dy);
