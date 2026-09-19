@@ -138,6 +138,10 @@
 // The most bytes one `MediusClipFrame` encodes to: one `CLIP_APPEND` payload.
 #define MEDIUS_CLIP_ENTRY_MAX 512
 
+// The C ABI version this header declares, bumped on any breaking change to it. Compare it with
+// `medius_abi_version()` once at start-up.
+#define MEDIUS_ABI_VERSION 8
+
 // The result of a fallible `medius_*` call. `MEDIUS_OK` is zero; everything else is a failure.
 enum MediusStatus
 #if defined(__cplusplus) || __STDC_VERSION__ >= 202311L
@@ -2190,6 +2194,8 @@ MediusStatus medius_device_reset(struct MediusDevice *dev);
 
 MediusStatus medius_device_reapply(struct MediusDevice *dev);
 
+// Rescan by VID/PID, reopen this box, and re-apply held state. `MEDIUS_STATUS_ERR_BAD_PROTO_VER` when
+// the box answers on another control protocol; it stays disconnected.
 MediusStatus medius_device_reconnect(struct MediusDevice *dev);
 
 // Reboot a chip. `target` takes a `MEDIUS_REBOOT_TARGET_*` constant; any other value is
@@ -2436,7 +2442,10 @@ uint32_t medius_default_transfer_timeout_ms(void);
 // Default keepalive cadence for held overrides, in milliseconds.
 uint32_t medius_default_keepalive_cadence_ms(void);
 
-// The C ABI version, bumped on any breaking change to this header.
+// The C ABI version of the loaded library, bumped on any breaking change to this header. Call it once
+// at start-up and compare it with `MEDIUS_ABI_VERSION`. On a mismatch, call nothing else: the structs
+// in this header are laid out differently from the library's, so rebuild against the header that
+// ships with that library.
 uint32_t medius_abi_version(void);
 
 // The medius-capi crate version as a static NUL-terminated string.

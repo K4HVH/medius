@@ -133,6 +133,15 @@ def test_meta_functions():
     assert medius.default_keepalive_cadence_ms() > 0
 
 
+def test_the_abi_version_is_the_header_s():
+    import re
+
+    header = pathlib.Path(__file__).resolve().parents[3] / "medius-capi" / "include" / "medius.h"
+    declared = re.search(r"^#define MEDIUS_ABI_VERSION (\d+)$", header.read_text(), re.M)
+    assert declared, "the header declares MEDIUS_ABI_VERSION"
+    assert int(declared.group(1)) == medius.abi_version() == medius._native.ABI_VERSION
+
+
 # Runs the loader module again, as a fresh module, over the real library with its ABI number replaced.
 def _load_native_against(monkeypatch, reported):
     import ctypes

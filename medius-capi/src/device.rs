@@ -544,6 +544,8 @@ pub unsafe extern "C" fn medius_device_reapply(dev: *mut MediusDevice) -> Medius
     with_device(dev, |d| d.reapply())
 }
 
+/// Rescan by VID/PID, reopen this box, and re-apply held state. `MEDIUS_STATUS_ERR_BAD_PROTO_VER` when
+/// the box answers on another control protocol; it stays disconnected.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_device_reconnect(dev: *mut MediusDevice) -> MediusStatus {
     with_device(dev, |d| d.reconnect())
@@ -1254,10 +1256,17 @@ pub extern "C" fn medius_default_keepalive_cadence_ms() -> u32 {
     dur_ms(medius::DEFAULT_KEEPALIVE_CADENCE)
 }
 
-/// The C ABI version, bumped on any breaking change to this header.
+/// The C ABI version this header declares, bumped on any breaking change to it. Compare it with
+/// `medius_abi_version()` once at start-up.
+pub const MEDIUS_ABI_VERSION: u32 = 8;
+
+/// The C ABI version of the loaded library, bumped on any breaking change to this header. Call it once
+/// at start-up and compare it with `MEDIUS_ABI_VERSION`. On a mismatch, call nothing else: the structs
+/// in this header are laid out differently from the library's, so rebuild against the header that
+/// ships with that library.
 #[unsafe(no_mangle)]
 pub extern "C" fn medius_abi_version() -> u32 {
-    8
+    MEDIUS_ABI_VERSION
 }
 
 /// The medius-capi crate version as a static NUL-terminated string.

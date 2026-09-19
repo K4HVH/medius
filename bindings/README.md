@@ -33,9 +33,15 @@ last failure's text on the calling thread. Handles (`MediusDevice`, `MediusEvent
 and log lines are fixed-size PODs sized to the protocol's own limits, so there is
 nothing to free per event.
 
+Check the ABI once at start-up. `medius_abi_version()` is the loaded library's number
+and `MEDIUS_ABI_VERSION` is the header's. On a mismatch, call nothing else: the
+header's structs are laid out differently from the library's, so rebuild against
+the header that ships with that library.
+
 ```c
 #include <medius.h>
 
+if (medius_abi_version() != MEDIUS_ABI_VERSION) { /* rebuild against the library's header */ }
 MediusDevice *dev = NULL;
 if (medius_device_find(&dev) != MEDIUS_STATUS_OK) { /* medius_last_error_message(...) */ }
 MediusVersion v;
