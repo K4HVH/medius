@@ -4,12 +4,15 @@ use std::sync::atomic::{AtomicU8, Ordering};
 use crate::device::raw::validate_raw_direction;
 use crate::error::{Error, Result};
 use crate::link::Link;
-use crate::protocol::command::{clip_op_payload, clip_set_payload, clip_trigger_payload};
+use crate::link::reconcile::clip_packet_key;
+use crate::protocol::command::{
+    clip_op_payload, clip_packet_trigger_payload, clip_set_payload, clip_trigger_payload,
+};
 use crate::protocol::opcode::{
     CLIP_COND_ANY_CLASS, CLIP_COND_ANY_ID, CLIP_OP_CLEAR, CLIP_OP_FINALIZE, CLIP_OP_PAUSE,
     CLIP_OP_RESTART, CLIP_OP_RESUME, CLIP_OP_START, CLIP_OP_STOP, CLIP_OP_TOGGLE,
     CLIP_SET_AUTOLOCK, CLIP_SET_LOOP, CLIP_SET_RETAIN, CLIP_SET_RIDE, CLIP_TRIG_F_CONSUME,
-    CLIP_TRIG_F_PRESENT, LOCK_DIR_BOTH, MAX_PAYLOAD, Q_CLIP,
+    CLIP_TRIG_F_PRESENT, LOCK_DIR_BOTH, MAX_PAYLOAD, PKT_MATCH_MAX, Q_CLIP,
 };
 use crate::protocol::opcode::{
     CLIP_F_EDGES, CLIP_F_PAN, CLIP_F_RAW, CLIP_F_WHEEL, CLIP_F_XFER, CLIP_F_XY, CLIP_TAG_GAP,
@@ -18,8 +21,8 @@ use crate::protocol::{FrameType, Resp, parse_resp};
 use crate::types::clip::ClipEntry;
 use crate::types::lock::blanket_scope;
 use crate::types::{
-    Blanket, CLIP_EDGES_MAX, CLIP_ENTRY_MAX, CLIP_RAW_MAX, ClipBuilder, ClipFrame, ClipSettings,
-    ClipStatus, ClipTrigger, Edge, Usage,
+    Blanket, CLIP_EDGES_MAX, CLIP_ENTRY_MAX, CLIP_RAW_MAX, ClipBuilder, ClipFrame,
+    ClipPacketTrigger, ClipSettings, ClipStatus, ClipTrigger, Direction, Edge, TrafficClass, Usage,
 };
 
 use super::Device;
@@ -149,6 +152,78 @@ pub(crate) fn encode_chunks(clip: &ClipBuilder, limit: usize) -> Result<Vec<Vec<
     Ok(out)
 }
 
+// The key a packet trigger is held under, checked the way the box checks it on a bind and a removal
+// alike (clip_ptrig_set in the firmware's clip_ptrig.h).
+pub(crate) fn validate_packet_key(t: &ClipPacketTrigger) -> Result<()> {
+    let refuse = |reason| Err(Error::ClipPacketTrigger { reason });
+    if !ClipPacketTrigger::is_surface(t.class) {
+        return refuse(
+            "names a surface packets cross: HidIn, HidOut, VendorInterrupt, VendorBulk, Control or Emit",
+        );
+    }
+    if t.direction.is_relative() {
+        return Err(Error::RelativeDirection {
+            direction: t.direction,
+            what: "clip packet trigger",
+        });
+    }
+    if t.match_bytes.len() != t.mask.len() {
+        return refuse("takes a match and a mask of one length");
+    }
+    if t.match_bytes.len() > PKT_MATCH_MAX {
+        return refuse("compares at most 16 match bytes");
+    }
+    if t.direction != Direction::Both && !ClipPacketTrigger::class_carries(t.class, t.direction) {
+        return refuse(
+            "names a direction its class never carries: HidIn and Emit flow IN, HidOut flows OUT",
+        );
+    }
+    if t.match_bytes.iter().zip(&t.mask).any(|(m, k)| m & !k != 0) {
+        return refuse(
+            "has a match bit outside its mask, which no packet can equal: a packet byte is masked before it is compared",
+        );
+    }
+    Ok(())
+}
+
+// What the box asks of a packet trigger it is to hold. One it refuses is one the keepalive would hold
+// the link open for and the box would not have.
+pub(crate) fn validate_packet_trigger(t: &ClipPacketTrigger) -> Result<()> {
+    let refuse = |reason| Err(Error::ClipPacketTrigger { reason });
+    validate_packet_key(t)?;
+    if t.consume && t.class == TrafficClass::Control {
+        return refuse(
+            "takes consume on a report or vendor class; a Control transfer always runs to completion",
+        );
+    }
+    if !t.once_per_run {
+        return if t.selector_len == 0 {
+            Ok(())
+        } else {
+            refuse("has a selector length only with once_per_run")
+        };
+    }
+    let one_stream = t.class != TrafficClass::Control
+        && t.id != ClipPacketTrigger::ANY_ID
+        && t.direction != Direction::Both;
+    if !one_stream {
+        return refuse(
+            "needs one stream for once_per_run to have a run over: a report class, a concrete id, and IN or OUT",
+        );
+    }
+    if t.selector_len as usize >= t.match_bytes.len() {
+        return refuse(
+            "needs match bytes past its selector: they are the condition the run is over",
+        );
+    }
+    if t.mask[t.selector_len as usize..].iter().all(|&k| k == 0) {
+        return refuse(
+            "needs a masked bit past its selector: a condition every packet of the stream meets is a run that never ends",
+        );
+    }
+    Ok(())
+}
+
 impl Device {
     /// A handle to this box's buffered-clip playback (§3.11): preload per-frame input into a device-side ring the box drains one entry per native frame.
     pub fn clip(&self) -> ClipHandle {
@@ -161,9 +236,15 @@ impl Device {
 
 /// A handle to one box's buffered-clip playback, from [`Device::clip`]. Cloning shares the append-sequence counter.
 ///
-/// The keepalive holds a loaded clip, a setting off its default and a bound trigger past the box's
-/// silence window. A reconnect re-sends none of it and keeps alive what the box still holds: a link
-/// down for longer than that window leaves nothing, so reload the clip and its config.
+/// A trigger runs a clip verb on the box, with no host round trip. There are two kinds in one set: an
+/// input trigger ([`bind`](Self::bind)) fires on a button, key or media edge, and a packet trigger
+/// ([`bind_packet`](Self::bind_packet)) fires on a packet crossing a traffic surface.
+/// [`clear_triggers`](Self::clear_triggers) removes both and [`query_config`](Self::query_config)
+/// reads both back.
+///
+/// The keepalive holds a loaded clip, a setting off its default and a bound trigger of either kind
+/// past the box's silence window. A reconnect re-sends none of it and keeps alive what the box still
+/// holds: a link down for longer than that window leaves nothing, so reload the clip and its config.
 #[derive(Clone, Debug)]
 pub struct ClipHandle {
     link: Link,
@@ -233,9 +314,10 @@ impl ClipHandle {
         self.set(CLIP_SET_RIDE, on as u8)
     }
 
-    // --- Trigger set (`CLIP_TRIGGER`), a managed set keyed by `(on, edge)`. ---
+    // --- Trigger set (`CLIP_TRIGGER`): input triggers keyed by `(on, edge)`, packet triggers keyed by
+    // `(class, id, direction, match, mask)`. ---
 
-    /// Add or overwrite a trigger binding: `trigger`'s edge fires its action on the box, no host round-trip. Fire-and-forget.
+    /// Add or overwrite an input trigger: `trigger`'s edge fires its action on the box, no host round-trip. Fire-and-forget.
     pub fn bind(&self, trigger: ClipTrigger) -> Result<()> {
         let (class, id) = trigger.on.class_id();
         let flags = CLIP_TRIG_F_PRESENT
@@ -262,7 +344,7 @@ impl ClipHandle {
         Ok(())
     }
 
-    /// Remove the binding on `usage`'s `edge`. Fire-and-forget.
+    /// Remove the input trigger on `usage`'s `edge`. Fire-and-forget.
     pub fn unbind(&self, usage: impl Into<Usage>, edge: Edge) -> Result<()> {
         let (class, id) = usage.into().class_id();
         let _serial = self.link.reassert_guard();
@@ -277,7 +359,83 @@ impl ClipHandle {
         Ok(())
     }
 
-    /// Remove every trigger binding. Fire-and-forget.
+    /// Add or overwrite a packet trigger: a packet `trigger` matches fires its action on the box's
+    /// next tick, no host round-trip. Fire-and-forget.
+    ///
+    /// What the box would refuse is refused here with
+    /// [`Error::ClipPacketTrigger`](crate::Error::ClipPacketTrigger) before anything is sent:
+    ///
+    /// - a class that is [`Bus`](TrafficClass::Bus) or [`ClipTransfer`](TrafficClass::ClipTransfer);
+    /// - a match past [`PKT_MATCH_MAX`](crate::PKT_MATCH_MAX) bytes, or unlike its mask in length;
+    /// - a direction the class never carries: [`OUT`](Direction::OUT) on
+    ///   [`HidIn`](TrafficClass::HidIn) or [`Emit`](TrafficClass::Emit), [`IN`](Direction::IN) on
+    ///   [`HidOut`](TrafficClass::HidOut);
+    /// - a match bit outside its mask, which no packet can equal;
+    /// - [`consume`](ClipPacketTrigger::consume) on [`Control`](TrafficClass::Control);
+    /// - a selector length without [`once_per_run`](ClipPacketTrigger::once_per_run);
+    /// - `once_per_run` without one stream (a report class, a concrete id, and `IN` or `OUT`),
+    ///   without match bytes past its selector, or with no masked bit in them.
+    ///
+    /// A bearing-relative direction is [`Error::RelativeDirection`](crate::Error::RelativeDirection).
+    /// The match and mask go to the box as given, so the key this trigger names is the key the box
+    /// holds.
+    ///
+    /// The box makes three checks this call cannot. A consuming trigger needs
+    /// [`allow_imperfect_clones(true)`](crate::Device::allow_imperfect_clones), the set holds
+    /// [`CLIP_PKT_TRIG_MAX`](crate::CLIP_PKT_TRIG_MAX) triggers, and their match bytes share a pool of
+    /// [`CLIP_PKT_MATCH_POOL`](crate::CLIP_PKT_MATCH_POOL). A trigger the box refused is absent from
+    /// [`query_config`](Self::query_config).
+    pub fn bind_packet(&self, trigger: &ClipPacketTrigger) -> Result<()> {
+        validate_packet_trigger(trigger)?;
+        let _serial = self.link.reassert_guard();
+        self.link.send(
+            FrameType::ClipTrigger,
+            &clip_packet_trigger_payload(
+                trigger.class.as_u8(),
+                trigger.id,
+                trigger.direction.as_u8(),
+                trigger.action.as_u8(),
+                CLIP_TRIG_F_PRESENT | trigger.flags(),
+                trigger.selector_len,
+                &trigger.match_bytes,
+                &trigger.mask,
+            ),
+        )?;
+        self.link
+            .desired()
+            .lock()
+            .clip_packet_trigger(clip_packet_key(trigger), true);
+        Ok(())
+    }
+
+    /// Remove the packet trigger keyed by `trigger`'s `(class, id, direction, match_bytes, mask)`; its
+    /// other fields are ignored. A key the box cannot hold is refused as
+    /// [`bind_packet`](Self::bind_packet) refuses it: the class, the lengths, the direction, and a
+    /// match bit outside the mask. Fire-and-forget.
+    pub fn unbind_packet(&self, trigger: &ClipPacketTrigger) -> Result<()> {
+        validate_packet_key(trigger)?;
+        let _serial = self.link.reassert_guard();
+        self.link.send(
+            FrameType::ClipTrigger,
+            &clip_packet_trigger_payload(
+                trigger.class.as_u8(),
+                trigger.id,
+                trigger.direction.as_u8(),
+                0,
+                0,
+                0,
+                &trigger.match_bytes,
+                &trigger.mask,
+            ),
+        )?;
+        self.link
+            .desired()
+            .lock()
+            .clip_packet_trigger(clip_packet_key(trigger), false);
+        Ok(())
+    }
+
+    /// Remove every trigger of both kinds. Fire-and-forget.
     pub fn clear_triggers(&self) -> Result<()> {
         let _serial = self.link.reassert_guard();
         self.link.send(
@@ -344,7 +502,7 @@ impl ClipHandle {
         }
     }
 
-    /// `QUERY(CLIP)`: the clip configuration (autolock, loop, retain, finalized, and the trigger set) (§4.15).
+    /// `QUERY(CLIP)`: the clip configuration (autolock, loop, retain, finalized, and both kinds of trigger) (§4.15).
     pub fn query_config(&self) -> Result<ClipSettings> {
         let payload = self.link.query(Q_CLIP)?;
         ClipSettings::from_payload(&payload).ok_or(Error::NoReply)

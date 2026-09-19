@@ -10,11 +10,12 @@ use crate::protocol::opcode::{
 use crate::protocol::{Resp, parse_resp};
 use crate::types::{
     Action, Axis, Bearing, BearingMode, Blanket, Caps, CatchFilter, CatchState, ClipBuilder,
-    ClipSettings, ClipStatus, ClipTrigger, CountersSnapshot, DeviceInfo, Direction, Edge, EmitPace,
-    EmitPaceStatus, FirmwareInfo, Health, ImperfectStatus, LedMode, LedTarget, LockTarget, Locks,
-    Motion, MoveTiming, Patch, PatchSet, PendingMotion, Rate, RebootTarget, RenderMode,
-    RenderStatus, RewriteRule, RewriteTable, Setup, SpreadStatus, Stats, TransferOutcome,
-    TransferStatus, Transform, Transforms, UpdateProgress, UpdateTarget, Usage, Version,
+    ClipPacketTrigger, ClipSettings, ClipStatus, ClipTrigger, CountersSnapshot, DeviceInfo,
+    Direction, Edge, EmitPace, EmitPaceStatus, FirmwareInfo, Health, ImperfectStatus, LedMode,
+    LedTarget, LockTarget, Locks, Motion, MoveTiming, Patch, PatchSet, PendingMotion, Rate,
+    RebootTarget, RenderMode, RenderStatus, RewriteRule, RewriteTable, Setup, SpreadStatus, Stats,
+    TransferOutcome, TransferStatus, Transform, Transforms, UpdateProgress, UpdateTarget, Usage,
+    Version,
 };
 
 use super::Device;
@@ -756,17 +757,27 @@ impl AsyncClipHandle {
         self.inner.set_ride(on)
     }
 
-    /// Add or overwrite a trigger binding. Instant; see [`ClipHandle::bind`](crate::ClipHandle::bind).
+    /// Add or overwrite an input trigger. Instant; see [`ClipHandle::bind`](crate::ClipHandle::bind).
     pub fn bind(&self, trigger: ClipTrigger) -> Result<()> {
         self.inner.bind(trigger)
     }
 
-    /// Remove a trigger binding. Instant; see [`ClipHandle::unbind`](crate::ClipHandle::unbind).
+    /// Remove an input trigger. Instant; see [`ClipHandle::unbind`](crate::ClipHandle::unbind).
     pub fn unbind(&self, usage: impl Into<Usage>, edge: Edge) -> Result<()> {
         self.inner.unbind(usage, edge)
     }
 
-    /// Remove every trigger binding. Instant; see [`ClipHandle::clear_triggers`](crate::ClipHandle::clear_triggers).
+    /// Add or overwrite a packet trigger. Instant; see [`ClipHandle::bind_packet`](crate::ClipHandle::bind_packet).
+    pub fn bind_packet(&self, trigger: &ClipPacketTrigger) -> Result<()> {
+        self.inner.bind_packet(trigger)
+    }
+
+    /// Remove a packet trigger. Instant; see [`ClipHandle::unbind_packet`](crate::ClipHandle::unbind_packet).
+    pub fn unbind_packet(&self, trigger: &ClipPacketTrigger) -> Result<()> {
+        self.inner.unbind_packet(trigger)
+    }
+
+    /// Remove every trigger of both kinds. Instant; see [`ClipHandle::clear_triggers`](crate::ClipHandle::clear_triggers).
     pub fn clear_triggers(&self) -> Result<()> {
         self.inner.clear_triggers()
     }

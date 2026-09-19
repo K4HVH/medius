@@ -124,6 +124,44 @@ fn async_clip_set_ride_sends_the_ride_id() {
 }
 
 #[test]
+fn async_packet_trigger_calls_send_the_same_frames_as_the_sync_ones() {
+    use crate::protocol::FrameType;
+    use crate::{ClipAction, ClipPacketTrigger, Direction, TrafficClass};
+
+    let trigger = ClipPacketTrigger::new(TrafficClass::HidIn, 2, Direction::IN, ClipAction::Start)
+        .matching([0x07, 0x20], [0xFF, 0x20])
+        .once_per_run(1);
+    let sent = |mock: &MockBox| -> Vec<Vec<u8>> {
+        mock.recorded_frames()
+            .into_iter()
+            .filter(|f| f.ty == FrameType::ClipTrigger)
+            .map(|f| f.payload)
+            .collect()
+    };
+    let sync_mock = MockBox::new();
+    let sync = Device::with_mock(sync_mock.clone()).clip();
+    sync.bind_packet(&trigger).unwrap();
+    sync.unbind_packet(&trigger).unwrap();
+
+    let mock = MockBox::new();
+    let device = Device::with_mock(mock.clone()).into_async();
+    let clip = device.clip();
+    clip.bind_packet(&trigger).unwrap();
+    let read = block_on(clip.query_config()).unwrap().packet_triggers;
+    assert_eq!(read.len(), 1);
+    assert_eq!(read[0].trigger, trigger);
+    clip.unbind_packet(&trigger).unwrap();
+    assert!(
+        block_on(clip.query_config())
+            .unwrap()
+            .packet_triggers
+            .is_empty()
+    );
+    assert_eq!(sent(&mock), sent(&sync_mock));
+    assert_eq!(sent(&mock).len(), 2);
+}
+
+#[test]
 fn async_scale_verbs_send_the_same_frames_as_the_sync_ones() {
     use crate::protocol::FrameType;
     use crate::protocol::opcode::{

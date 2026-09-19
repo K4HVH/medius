@@ -3,7 +3,8 @@
 use std::time::Duration;
 
 use crate::{
-    Button, CatchFilter, ClipAction, ClipBuilder, ClipTrigger, Device, Edge, FrameType, MockBox,
+    Button, CatchFilter, ClipAction, ClipBuilder, ClipPacketTrigger, ClipTrigger, Device,
+    Direction, Edge, FrameType, MockBox, TrafficClass,
 };
 
 const PAST_ONE_CADENCE: Duration = Duration::from_millis(650);
@@ -145,6 +146,14 @@ fn keepalive_follows_a_clip_setting_and_a_trigger_binding() {
     .unwrap();
     assert!(fires(), "a bound trigger is held");
     clip.unbind(Button::SIDE1, Edge::Press).unwrap();
+    assert!(!fires(), "and unbound it is not");
+
+    // A packet trigger waits on the device the way an input trigger waits on a button.
+    let packet = ClipPacketTrigger::new(TrafficClass::HidIn, 2, Direction::IN, ClipAction::Start)
+        .matching([0x07, 0x20], [0xFF, 0x20]);
+    clip.bind_packet(&packet).unwrap();
+    assert!(fires(), "a bound packet trigger is held");
+    clip.unbind_packet(&packet).unwrap();
     assert!(!fires(), "and unbound it is not");
     drop(device);
 }

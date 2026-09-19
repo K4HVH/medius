@@ -9,7 +9,10 @@ use crate::protocol::opcode::Q_CLIP;
 use crate::protocol::{FrameType, encode};
 use crate::transport::Disconnected;
 use crate::transport::mock::MockTransport;
-use crate::types::{Button, ClipAction, ClipBuilder, ClipTrigger, Edge, LogLevel};
+use crate::types::{
+    Button, ClipAction, ClipBuilder, ClipPacketTrigger, ClipTrigger, Direction, Edge, LogLevel,
+    TrafficClass,
+};
 
 #[test]
 fn transport_swap_resets_decoder() {
@@ -33,12 +36,12 @@ fn transport_swap_resets_decoder() {
     assert_eq!(line.text, "new");
 }
 
-// RESP(CLIP) with `total` bytes loaded, nothing held and no triggers.
+// RESP(CLIP) with `total` bytes loaded, nothing held and no triggers of either kind.
 fn clip_reply(total: u32) -> Vec<u8> {
     let mut p = vec![0u8; 31];
     p[0] = Q_CLIP;
     p[6..10].copy_from_slice(&total.to_le_bytes());
-    p.extend_from_slice(&[0, 0, 0]);
+    p.extend_from_slice(&[0, 0, 0, 0]);
     p
 }
 
@@ -72,6 +75,33 @@ fn the_clip_probe_takes_the_first_reply_for_its_selector() {
     assert_eq!(got.0.total, 40);
 }
 
+// What the probe reads is what the reconnect adopts, and a packet trigger the box still holds is
+// enough on its own to keep the keepalive running.
+#[test]
+fn the_clip_probe_reads_a_packet_trigger_the_reconnect_adopts() {
+    let mut reply = clip_reply(0);
+    *reply.last_mut().unwrap() = 1;
+    reply.extend_from_slice(&[
+        0x04, 0x02, 0x00, 0x01, 0x00, 0x04, 0x01, 0x02, 0x09, 0x00, 0x07, 0x20, 0xFF, 0x20,
+    ]);
+    let (status, settings) = probe_clip(&answering(vec![reply])).expect("a clip reply");
+    let held = ClipPacketTrigger::new(TrafficClass::HidIn, 2, Direction::IN, ClipAction::Start)
+        .matching([0x07, 0x20], [0xFF, 0x20])
+        .once_per_run(1);
+    assert_eq!(settings.packet_triggers.len(), 1);
+    assert_eq!(settings.packet_triggers[0].trigger, held);
+    assert_eq!(settings.packet_triggers[0].hits, 9);
+
+    let mock = Arc::new(MockTransport::new());
+    let device = Device::from_transport_with_cadence(mock, Duration::from_secs(60));
+    let idle = || device.link.desired().lock().is_idle();
+    device.link.desired().lock().clip_adopt(&status, &settings);
+    assert!(!idle(), "the adopted trigger is held");
+    // The adopted key is the one the caller's own trigger names, so its unbind lets the keepalive idle.
+    device.clip().unbind_packet(&held).unwrap();
+    assert!(idle());
+}
+
 // A box that answers in a shape this crate cannot read answers the same way to every re-send, so the
 // probe ends on the first one and the reconnect does not wait the deadline out.
 #[test]
@@ -99,11 +129,13 @@ fn a_clip_call_that_never_went_out_records_nothing() {
     let mut one = ClipBuilder::new();
     one.move_by(1, 0);
     let trigger = ClipTrigger::new(Button::SIDE1, Edge::Press, ClipAction::Start);
+    let packet = ClipPacketTrigger::new(TrafficClass::Emit, 1, Direction::IN, ClipAction::Start);
 
     device.link.transport_slot().swap(Arc::new(Disconnected));
     assert!(clip.append(&one).is_err());
     assert!(clip.set_ride(true).is_err());
     assert!(clip.bind(trigger).is_err());
+    assert!(clip.bind_packet(&packet).is_err());
     assert!(idle());
 
     device.link.transport_slot().swap(mock.clone());
@@ -115,7 +147,7 @@ fn a_clip_call_that_never_went_out_records_nothing() {
         "a clear that never went out leaves the clip loaded"
     );
 
-    device.link.transport_slot().swap(mock);
+    device.link.transport_slot().swap(mock.clone());
     clip.clear().unwrap();
     assert!(idle());
     clip.bind(trigger).unwrap();
@@ -126,4 +158,21 @@ fn a_clip_call_that_never_went_out_records_nothing() {
         !idle(),
         "an unbind that never went out leaves the trigger bound"
     );
+
+    // The same for a packet trigger, and one clear that went out forgets both kinds.
+    device.link.transport_slot().swap(mock.clone());
+    clip.unbind(Button::SIDE1, Edge::Press).unwrap();
+    clip.bind_packet(&packet).unwrap();
+    assert!(!idle());
+    device.link.transport_slot().swap(Arc::new(Disconnected));
+    assert!(clip.unbind_packet(&packet).is_err());
+    assert!(clip.clear_triggers().is_err());
+    assert!(
+        !idle(),
+        "an unbind that never went out leaves the packet trigger bound"
+    );
+    device.link.transport_slot().swap(mock);
+    clip.bind(trigger).unwrap();
+    clip.clear_triggers().unwrap();
+    assert!(idle());
 }

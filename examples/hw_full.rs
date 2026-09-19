@@ -20,10 +20,10 @@ mod linux {
 
     use medius::{
         Action, Axis, BearingMode, Blanket, Button, CatchClass, CatchFilter, Class, ClipAction,
-        ClipBuilder, ClipFrame, ClipState, ClipTrigger, Device, Direction, Edge, EmitPace, Input,
-        Key, LedMode, LedTarget, MediaKey, Patch, PatchSection, RebootTarget, RenderMode,
-        RewriteAction, RewriteClass, RewriteRule, Setup, Timeline, TrafficClass, TransferStatus,
-        Transform, TransformOp,
+        ClipBuilder, ClipFrame, ClipPacketTrigger, ClipState, ClipTrigger, Device, Direction, Edge,
+        EmitPace, Input, Key, LedMode, LedTarget, MediaKey, Patch, PatchSection, RebootTarget,
+        RenderMode, RewriteAction, RewriteClass, RewriteRule, Setup, Timeline, TrafficClass,
+        TransferStatus, Transform, TransformOp,
     };
     use medius::{BEARING_WINDOW_DEFAULT, PROTO_VER};
 
@@ -2086,41 +2086,60 @@ mod linux {
                 ),
             );
 
-            // A rewrite rule that runs a clip verb. The rule matches the learnt frame on the emit wire
-            // (the head of it, where a report is longer than a rule compares), so injecting the move
-            // again starts a retained one-frame clip, exactly once.
+            // A packet trigger that runs a clip verb. It matches the learnt frame on the emit wire
+            // (the head of it, where a report is longer than a trigger compares), so injecting the
+            // move again starts a retained one-frame clip, exactly once.
             let _ = clip.clear();
             let armed = frame.is_some() && clip.set_retain(true).is_ok() && {
                 let mut one = ClipBuilder::new();
                 one.move_by(7, 0);
                 clip.append(&one).is_ok() && clip.finalize().is_ok()
             };
-            let mut rule_set = false;
+            let mut bound = false;
             let mut read_back = false;
+            let mut trigger = None;
             if let (true, Some(frame)) = (armed, &frame) {
-                let head = &frame[..frame.len().min(medius::REWRITE_MATCH_MAX)];
-                let rule =
-                    RewriteRule::clip(RewriteClass::Emit, 1, Direction::IN, ClipAction::Start)
+                let head = &frame[..frame.len().min(medius::PKT_MATCH_MAX)];
+                let t =
+                    ClipPacketTrigger::new(TrafficClass::Emit, 1, Direction::IN, ClipAction::Start)
                         .matching(head.to_vec(), vec![0xFF; head.len()]);
-                rule_set = dev.set_rewrite(&rule).is_ok();
-                read_back = dev
-                    .query_rewrite_entry(0)
-                    .map(|r| r.clip_verb().map(|v| v.action) == Some(ClipAction::Start))
+                bound = clip.bind_packet(&t).is_ok();
+                read_back = clip
+                    .query_config()
+                    .map(|c| c.packet_triggers.iter().any(|e| e.trigger == t))
                     .unwrap_or(false);
+                trigger = Some(t);
             }
             reset_motion(&acc);
             let _ = dev.move_rel(3, 0);
             std::thread::sleep(Duration::from_millis(300));
-            let rule_x = acc.rel_x.load(Ordering::Relaxed);
-            let _ = dev.clear_rewrite();
+            let trig_x = acc.rel_x.load(Ordering::Relaxed);
+            let hits = clip
+                .query_config()
+                .ok()
+                .and_then(|c| {
+                    c.packet_triggers
+                        .iter()
+                        .find(|e| Some(&e.trigger) == trigger.as_ref())
+                        .map(|e| e.hits)
+                })
+                .unwrap_or(0);
+            let unbound = trigger.is_some_and(|t| {
+                clip.unbind_packet(&t).is_ok()
+                    && clip
+                        .query_config()
+                        .map(|c| c.packet_triggers.is_empty())
+                        .unwrap_or(false)
+            });
             let _ = clip.clear();
             let _ = clip.set_retain(false);
             let _ = dev.set_spread(spread_was);
             check(
-                "clip: a rewrite rule runs a clip verb",
-                armed && rule_set && read_back && rule_x == 10,
+                "clip: a packet trigger runs a clip verb",
+                armed && bound && read_back && trig_x == 10 && hits == 1 && unbound,
                 format!(
-                    "{learnt}, rule set={rule_set}, read back={read_back}, move 3 + clip 7 = REL_X {rule_x}"
+                    "{learnt}, bound={bound}, read back={read_back}, move 3 + clip 7 = REL_X {trig_x}, \
+                     hits={hits}, unbound={unbound}"
                 ),
             );
 
