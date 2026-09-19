@@ -383,8 +383,15 @@ impl ClipHandle {
     /// The box makes three checks this call cannot. A consuming trigger needs
     /// [`allow_imperfect_clones(true)`](crate::Device::allow_imperfect_clones), the set holds
     /// [`CLIP_PKT_TRIG_MAX`](crate::CLIP_PKT_TRIG_MAX) triggers, and their match bytes share a pool of
-    /// [`CLIP_PKT_MATCH_POOL`](crate::CLIP_PKT_MATCH_POOL). A trigger the box refused is absent from
-    /// [`query_config`](Self::query_config).
+    /// [`CLIP_PKT_MATCH_POOL`](crate::CLIP_PKT_MATCH_POOL). A bind the box refuses leaves its set as
+    /// it was: a new key is not held, and a key the box holds keeps the trigger that was there, with
+    /// its own action and flags. To confirm a bind, compare the fields
+    /// [`query_config`](Self::query_config) reads back with the ones bound.
+    ///
+    /// The crate records a bind once its frame is out, whether or not the box took it, and the
+    /// keepalive runs for what it records. A bind the box refused stays recorded until
+    /// [`unbind_packet`](Self::unbind_packet), [`clear_triggers`](Self::clear_triggers), or a reconnect
+    /// that reads back what the box holds and adopts that.
     pub fn bind_packet(&self, trigger: &ClipPacketTrigger) -> Result<()> {
         validate_packet_trigger(trigger)?;
         let _serial = self.link.reassert_guard();
@@ -404,7 +411,7 @@ impl ClipHandle {
         self.link
             .desired()
             .lock()
-            .clip_packet_trigger(clip_packet_key(trigger), true);
+            .clip_packet_bind(clip_packet_key(trigger), trigger.consume);
         Ok(())
     }
 
@@ -431,7 +438,7 @@ impl ClipHandle {
         self.link
             .desired()
             .lock()
-            .clip_packet_trigger(clip_packet_key(trigger), false);
+            .clip_packet_unbind(&clip_packet_key(trigger));
         Ok(())
     }
 

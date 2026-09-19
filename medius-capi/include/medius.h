@@ -1988,8 +1988,10 @@ MediusStatus medius_clip_unbind(struct MediusClip *clip, struct MediusUsage usag
 //
 // The box makes three checks this call cannot. A consuming trigger needs
 // `medius_device_allow_imperfect_clones`, the set holds `MEDIUS_CLIP_PKT_TRIG_MAX` triggers, and
-// their match bytes share a pool of `MEDIUS_CLIP_PKT_MATCH_POOL`. A trigger the box refused is absent
-// from `medius_clip_query_config`.
+// their match bytes share a pool of `MEDIUS_CLIP_PKT_MATCH_POOL`. A bind the box refuses leaves its
+// set as it was: a new key is not held, and a key the box holds keeps the trigger that was there,
+// with its own action and flags. To confirm a bind, compare the fields `medius_clip_query_config`
+// reads back with the ones bound.
 MediusStatus medius_clip_bind_packet(struct MediusClip *clip,
                                      const struct MediusClipPacketTrigger *trigger);
 
@@ -2845,7 +2847,9 @@ void medius_mock_set_catch_state(struct MediusMockBox *mock, struct MediusCatchS
 #endif
 
 #if defined(MEDIUS_FEATURE_MOCK)
-// Set the imperfect-clone status the mock answers to an OPTION(IMPERFECT) query.
+// Set the imperfect-clone status the mock answers to an OPTION(IMPERFECT) query. With the opt-in
+// off the mock drops its consuming clip packet triggers, as the box does when OPTION(IMPERFECT) goes
+// off.
 void medius_mock_set_imperfect_status(struct MediusMockBox *mock,
                                       struct MediusImperfectStatus value);
 #endif
@@ -2911,10 +2915,14 @@ void medius_mock_set_clip_status(struct MediusMockBox *mock, struct MediusClipSt
 
 #if defined(MEDIUS_FEATURE_MOCK)
 // Set the [`ClipSettings`](medius::ClipSettings) the mock answers to `medius_clip_query_config`.
-// `value.packet_triggers` become the set `medius_clip_bind_packet` adds to and
-// `medius_mock_clip_packet` runs a packet through, each starting at its `hits`. The mock holds them
-// to the bounds the box does, so a script past `MEDIUS_CLIP_PKT_MATCH_POOL` reads back the entries
-// that fit. A trigger with a byte no constant names is skipped.
+// `value.packet_triggers[0..packet_n]` are bound in order, as `medius_clip_bind_packet` binds them,
+// under the opt-in the mock holds when they are scripted. The mock holds the ones the box would
+// take, each with its scripted `hits`, and leaves out the rest as the box's own answer would: a
+// direction the class never carries, a match bit outside the mask, a run with no condition,
+// `consume` on `CONTROL` or with the opt-in off, and entries past the match pool. A trigger with a
+// byte no constant names is skipped. Script the opt-in with `medius_mock_set_imperfect_status`
+// before a consuming trigger. The triggers held are the set `medius_clip_bind_packet` adds to and
+// `medius_mock_clip_packet` runs a packet through.
 void medius_mock_set_clip_settings(struct MediusMockBox *mock, struct MediusClipSettings value);
 #endif
 

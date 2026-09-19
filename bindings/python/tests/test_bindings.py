@@ -1349,6 +1349,8 @@ def test_clip_status_and_config_roundtrip():
         packet_triggers=_packet_rows()[:3],
     )
     with MockBox() as mock:
+        # Packet rows 0 and 2 consume, which the box holds only under the opt-in.
+        mock.set_imperfect_status(_allowed())
         mock.set_clip_status(status)
         mock.set_clip_settings(settings)
         with Device.with_mock(mock) as d:
@@ -1440,6 +1442,8 @@ def test_packet_triggers_read_back_field_for_field():
     inputs = [ClipTrigger(Usage.button(Button.RIGHT), Edge.PRESS, ClipAction.START)]
     for n in (0, 1, 8):
         with MockBox() as mock:
+            # Rows 0, 2 and 6 consume, which the box holds only under the opt-in.
+            mock.set_imperfect_status(_allowed())
             mock.set_clip_settings(ClipSettings(triggers=inputs, packet_triggers=rows[:n]))
             with Device.with_mock(mock) as d:
                 cfg = d.clip().query_config()
@@ -1450,6 +1454,7 @@ def test_packet_triggers_read_back_field_for_field():
     # selector 1, hits saturated.
     spec = ClipPacketTrigger(TrafficClass.HID_IN, 0x0102, Direction.IN, ClipAction.TOGGLE, b"\x07\x20", b"\xFF\x20", True, True, 1, 0xFFFF)
     with MockBox() as mock:
+        mock.set_imperfect_status(_allowed())
         mock.set_clip_settings(ClipSettings(packet_triggers=[spec]))
         with Device.with_mock(mock) as d:
             clip = d.clip()
@@ -1481,6 +1486,26 @@ def test_a_read_back_packet_trigger_carries_each_length_in_its_own_field():
     c.match_len, c.mask_len = 1, 40
     got = clip_packet_trigger_from_c(c)
     assert (got.match_bytes, got.mask) == (b"\x01", bytes(range(0xF0, 0x100)))
+
+
+def test_a_consuming_trigger_scripted_with_the_opt_in_off_is_left_out():
+    consuming = ClipPacketTrigger(*_HELD, hits=7)
+    watching = ClipPacketTrigger(TrafficClass.HID_IN, 3, Direction.IN, ClipAction.START, b"\x07\x20", b"\xFF\x20", False, True, 1, 5)
+    inputs = [ClipTrigger(Usage.button(Button.RIGHT), Edge.PRESS, ClipAction.START, consume=True)]
+    settings = ClipSettings(triggers=inputs, packet_triggers=[consuming, watching])
+    with MockBox() as mock, Device.with_mock(mock) as d:
+        clip = d.clip()
+        mock.set_clip_settings(settings)
+        cfg = clip.query_config()
+        assert cfg.triggers == inputs, "an input trigger that consumes is held whatever the opt-in"
+        assert cfg.packet_triggers == [watching]
+
+        # Scripted under the opt-in, both are held, and turning it off takes the consuming one away.
+        mock.set_imperfect_status(_allowed())
+        mock.set_clip_settings(settings)
+        assert clip.query_config().packet_triggers == [consuming, watching]
+        mock.set_imperfect_status(ImperfectStatus(allowed=False, over_capacity=False, clone_imperfect=False))
+        assert clip.query_config().packet_triggers == [watching]
 
 
 def test_a_bound_packet_trigger_reads_back_as_it_was_bound():

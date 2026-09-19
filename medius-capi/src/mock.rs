@@ -153,7 +153,9 @@ pub unsafe extern "C" fn medius_mock_set_catch_state(
     });
 }
 
-/// Set the imperfect-clone status the mock answers to an OPTION(IMPERFECT) query.
+/// Set the imperfect-clone status the mock answers to an OPTION(IMPERFECT) query. With the opt-in
+/// off the mock drops its consuming clip packet triggers, as the box does when OPTION(IMPERFECT) goes
+/// off.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_mock_set_imperfect_status(
     mock: *mut MediusMockBox,
@@ -283,10 +285,14 @@ pub unsafe extern "C" fn medius_mock_set_clip_status(
 }
 
 /// Set the [`ClipSettings`](medius::ClipSettings) the mock answers to `medius_clip_query_config`.
-/// `value.packet_triggers` become the set `medius_clip_bind_packet` adds to and
-/// `medius_mock_clip_packet` runs a packet through, each starting at its `hits`. The mock holds them
-/// to the bounds the box does, so a script past `MEDIUS_CLIP_PKT_MATCH_POOL` reads back the entries
-/// that fit. A trigger with a byte no constant names is skipped.
+/// `value.packet_triggers[0..packet_n]` are bound in order, as `medius_clip_bind_packet` binds them,
+/// under the opt-in the mock holds when they are scripted. The mock holds the ones the box would
+/// take, each with its scripted `hits`, and leaves out the rest as the box's own answer would: a
+/// direction the class never carries, a match bit outside the mask, a run with no condition,
+/// `consume` on `CONTROL` or with the opt-in off, and entries past the match pool. A trigger with a
+/// byte no constant names is skipped. Script the opt-in with `medius_mock_set_imperfect_status`
+/// before a consuming trigger. The triggers held are the set `medius_clip_bind_packet` adds to and
+/// `medius_mock_clip_packet` runs a packet through.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_mock_set_clip_settings(
     mock: *mut MediusMockBox,

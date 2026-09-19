@@ -547,7 +547,9 @@ fn clip_status_and_config_roundtrip_through_the_mock() {
             },
         ],
     };
+    // The consuming trigger needs the opt-in held when it is scripted.
     let mock = MockBox::new()
+        .with_imperfect(true)
         .with_clip_status(status.clone())
         .with_clip_settings(settings.clone());
     let device = Device::with_mock(mock.clone());
@@ -1111,12 +1113,19 @@ mod packet_trigger {
             clip.bind_packet(&t).unwrap();
             clip.unbind_packet(&t).unwrap();
             clip.clear_triggers().unwrap();
+            // A removal names the key alone: the verb, the flags and the selector go as zeros.
+            let toggle = ClipPacketTrigger {
+                action: ClipAction::Toggle,
+                ..t
+            };
+            clip.unbind_packet(&toggle).unwrap();
             assert_eq!(
                 sent(&mock),
                 vec![
                     BIND.to_vec(),
                     REMOVE.to_vec(),
                     vec![0xFF, 0xFF, 0xFF, 0, 0, 0], // one sentinel clears both kinds
+                    REMOVE.to_vec(),
                 ]
             );
         }
@@ -1430,7 +1439,7 @@ mod packet_trigger {
             assert_eq!((reply[34], reply.len()), (1, 35 + 10 + 4));
         }
 
-        // Consuming a packet is dropping traffic, which rides the opt-in. Watching one does not.
+        // Consuming a packet is dropping traffic, which needs `OPTION(IMPERFECT)`. Watching one does not.
         #[test]
         fn a_consuming_trigger_needs_the_opt_in_and_goes_with_it() {
             let mock = MockBox::new();
@@ -1442,9 +1451,17 @@ mod packet_trigger {
             clip.bind_packet(&watching).unwrap();
             let read: Vec<_> = triggers(&device).into_iter().map(|e| e.trigger).collect();
             assert_eq!(read, vec![watching.clone()], "refused with the opt-in off");
-            // An overwrite that adds consume is refused too, and the trigger it named stays.
-            clip.bind_packet(&watching.clone().consume()).unwrap();
-            assert_eq!(triggers(&device)[0].trigger, watching);
+            // An overwrite that adds consume is refused too, and the trigger it named stays with its
+            // own action and flags: the read-back differs from what was bound.
+            let rebound = ClipPacketTrigger {
+                action: ClipAction::Stop,
+                ..watching.clone().consume()
+            };
+            clip.bind_packet(&rebound).unwrap();
+            let read = triggers(&device);
+            assert_eq!(read.len(), 1);
+            assert_eq!(read[0].trigger, watching);
+            assert_ne!(read[0].trigger, rebound);
 
             device.allow_imperfect_clones(true).unwrap();
             clip.bind_packet(&consuming).unwrap();
@@ -1452,6 +1469,235 @@ mod packet_trigger {
             device.allow_imperfect_clones(false).unwrap();
             let read: Vec<_> = triggers(&device).into_iter().map(|e| e.trigger).collect();
             assert_eq!(read, vec![watching]);
+        }
+
+        // The crate stops holding what the box drops when the opt-in goes off, and puts it back when
+        // the frame never went out.
+        #[test]
+        fn the_opt_in_going_off_leaves_only_the_watching_triggers_held() {
+            use crate::transport::Disconnected;
+            use std::sync::Arc;
+
+            let mock = MockBox::new().with_imperfect(true);
+            let device = Device::with_mock(mock.clone());
+            let clip = device.clip();
+            let idle = || device.link.desired().lock().is_idle();
+            let watching = held();
+            let consuming = ClipPacketTrigger { id: 3, ..held() }.consume();
+            clip.bind_packet(&consuming).unwrap();
+            clip.bind_packet(&watching).unwrap();
+
+            device.allow_imperfect_clones(false).unwrap();
+            let read: Vec<_> = triggers(&device).into_iter().map(|e| e.trigger).collect();
+            assert_eq!(read, vec![watching.clone()]);
+            assert!(!idle(), "the watching trigger is held");
+            clip.unbind_packet(&watching).unwrap();
+            assert!(idle(), "and nothing else is");
+
+            // Only consuming triggers: the opt-out leaves nothing to keep alive.
+            device.allow_imperfect_clones(true).unwrap();
+            clip.bind_packet(&consuming).unwrap();
+            assert!(!idle());
+            device.allow_imperfect_clones(false).unwrap();
+            assert!(idle());
+
+            // An opt-out that never reached the box leaves the consuming trigger held, as the box
+            // still holds it.
+            device.allow_imperfect_clones(true).unwrap();
+            clip.bind_packet(&consuming).unwrap();
+            device.link.transport_slot().swap(Arc::new(Disconnected));
+            assert!(device.allow_imperfect_clones(false).is_err());
+            assert!(!idle());
+            device.link.transport_slot().swap(mock.transport());
+            clip.unbind_packet(&consuming).unwrap();
+            assert!(idle());
+        }
+
+        // A scripted set is held as a box holds it: bound in order, under the opt-in as scripted.
+        #[test]
+        fn a_script_holds_only_what_the_box_would_take() {
+            let entry = |trigger: ClipPacketTrigger| ClipPacketTriggerEntry { trigger, hits: 5 };
+            let script = |imperfect: bool, t: ClipPacketTrigger| {
+                let mock =
+                    MockBox::new()
+                        .with_imperfect(imperfect)
+                        .with_clip_settings(ClipSettings {
+                            packet_triggers: vec![entry(held()), entry(t)],
+                            ..ClipSettings::default()
+                        });
+                let device = Device::with_mock(mock.clone());
+                // The count on the wire as well: the decode leaves out an entry it has no names for.
+                let on_the_wire = held_on_the_wire(&device, &mock);
+                let read = triggers(&device);
+                assert_eq!(on_the_wire as usize, read.len());
+                read
+            };
+            let other = ClipPacketTrigger { id: 3, ..held() };
+            let control =
+                ClipPacketTrigger::new(TrafficClass::Control, 0, Direction::IN, ClipAction::Start);
+            let blind = other.clone().matching([0x07, 0x00], [0xFF, 0x00]);
+            for (imperfect, refused) in [
+                (
+                    true,
+                    ClipPacketTrigger {
+                        direction: Direction::OUT,
+                        ..other.clone()
+                    },
+                ),
+                (
+                    true,
+                    ClipPacketTrigger::new(
+                        TrafficClass::HidOut,
+                        1,
+                        Direction::IN,
+                        ClipAction::Stop,
+                    ),
+                ),
+                (true, other.clone().matching([0x07, 0x21], K)),
+                (true, blind.clone().once_per_run(1)),
+                (true, control.clone().consume()),
+                (false, other.clone().consume()),
+                (
+                    true,
+                    ClipPacketTrigger {
+                        class: TrafficClass::Bus,
+                        ..other.clone()
+                    },
+                ),
+                (true, other.clone().matching([0x07, 0x20], [0xFF])),
+            ] {
+                let read = script(imperfect, refused.clone());
+                assert_eq!(read, vec![entry(held())], "{refused:?}");
+            }
+            // The shapes the box takes are held, with their scripted count.
+            for taken in [other.consume(), control, blind] {
+                let read = script(true, taken.clone());
+                assert_eq!(read, vec![entry(held()), entry(taken)]);
+            }
+        }
+
+        #[test]
+        fn a_scripted_opt_out_drops_the_consuming_triggers() {
+            let consuming = ClipPacketTrigger { id: 3, ..held() }.consume();
+            let scripted = ClipSettings {
+                packet_triggers: [held(), consuming]
+                    .map(|trigger| ClipPacketTriggerEntry { trigger, hits: 0 })
+                    .to_vec(),
+                ..ClipSettings::default()
+            };
+            let read = |mock: &MockBox| {
+                let held = triggers(&Device::with_mock(mock.clone()));
+                held.into_iter().map(|e| e.trigger).collect::<Vec<_>>()
+            };
+            let mock = MockBox::new()
+                .with_imperfect(true)
+                .with_clip_settings(scripted.clone());
+            assert_eq!(read(&mock).len(), 2);
+            mock.set_imperfect_status(crate::ImperfectStatus::default());
+            assert_eq!(read(&mock), vec![held()]);
+
+            let mock = MockBox::new()
+                .with_imperfect(true)
+                .with_clip_settings(scripted.clone())
+                .with_imperfect_status(crate::ImperfectStatus::default());
+            assert_eq!(read(&mock), vec![held()]);
+            let mock = MockBox::new()
+                .with_imperfect(true)
+                .with_clip_settings(scripted)
+                .with_imperfect(false);
+            assert_eq!(read(&mock), vec![held()]);
+        }
+
+        // A removal names a key. The box reads nothing else of the frame, so a removal whose verb,
+        // flags and selector are not zero still removes.
+        #[test]
+        fn a_removal_reads_only_the_key() {
+            let mock = MockBox::new();
+            let device = Device::with_mock(mock);
+            device.clip().bind_packet(&held()).unwrap();
+            let removal = clip_packet_trigger_payload(4, 2, 1, 5, 0x0E, 3, &M, &K);
+            device.link.send(FrameType::ClipTrigger, &removal).unwrap();
+            assert!(triggers(&device).is_empty());
+        }
+
+        // An overwrite that changes the selector alone is an overwrite: the count and the run start
+        // again.
+        #[test]
+        fn an_overwrite_of_the_selector_alone_restarts_the_count_and_the_run() {
+            let mock = MockBox::new();
+            let device = Device::with_mock(mock.clone());
+            let clip = device.clip();
+            let run = ClipPacketTrigger {
+                class: TrafficClass::VendorInterrupt,
+                ..held()
+            };
+            let fired = || {
+                mock.clip_packet(
+                    TrafficClass::VendorInterrupt,
+                    2,
+                    Direction::IN,
+                    &[0x07, 0x20],
+                )
+                .0
+            };
+            clip.bind_packet(&run.clone().once_per_run(1)).unwrap();
+            assert_eq!(fired(), Some(ClipAction::Start));
+            assert_eq!(fired(), None);
+            clip.bind_packet(&run.once_per_run(0)).unwrap();
+            let read = triggers(&device);
+            assert_eq!(read[0].trigger.selector_len, 0);
+            assert_eq!(read[0].hits, 0);
+            assert_eq!(fired(), Some(ClipAction::Start));
+        }
+
+        // A named direction outranks Both by less than one masked bit.
+        #[test]
+        fn one_more_masked_bit_beats_a_named_direction() {
+            let mock = MockBox::new();
+            let device = Device::with_mock(mock.clone());
+            let on = |direction, action| {
+                ClipPacketTrigger::new(TrafficClass::VendorInterrupt, 1, direction, action)
+            };
+            let named = on(Direction::IN, ClipAction::Start).matching([0x07], [0xFF]);
+            let wider = on(Direction::Both, ClipAction::Stop).matching([0x07, 0x00], [0xFF, 0x01]);
+            device.clip().bind_packet(&named).unwrap();
+            device.clip().bind_packet(&wider).unwrap();
+            let head = [0x07, 0x00];
+            assert_eq!(
+                mock.clip_packet(TrafficClass::VendorInterrupt, 1, Direction::IN, &head)
+                    .0,
+                Some(ClipAction::Stop)
+            );
+        }
+
+        // Removing a trigger keeps the order of the rest, which is both the read-back order and the
+        // tie-break between equally specific triggers.
+        #[test]
+        fn a_removal_keeps_the_order_of_the_rest() {
+            let mock = MockBox::new();
+            let device = Device::with_mock(mock.clone());
+            let clip = device.clip();
+            let bit = |b: u8, action| {
+                ClipPacketTrigger::new(TrafficClass::VendorInterrupt, 1, Direction::IN, action)
+                    .matching([b], [b])
+            };
+            let (a, b, c, d) = (
+                bit(0x01, ClipAction::Start),
+                bit(0x02, ClipAction::Stop),
+                bit(0x04, ClipAction::Pause),
+                bit(0x08, ClipAction::Resume),
+            );
+            for t in [&a, &b, &c, &d] {
+                clip.bind_packet(t).unwrap();
+            }
+            clip.unbind_packet(&b).unwrap();
+            let read: Vec<_> = triggers(&device).into_iter().map(|e| e.trigger).collect();
+            assert_eq!(read, vec![a, c, d]);
+            assert_eq!(
+                mock.clip_packet(TrafficClass::VendorInterrupt, 1, Direction::IN, &[0x0C])
+                    .0,
+                Some(ClipAction::Pause)
+            );
         }
 
         #[test]
@@ -1476,7 +1722,7 @@ mod packet_trigger {
             assert_eq!(triggers(&device).len(), 8);
             clip.bind_packet(&bare(8)).unwrap();
             assert_eq!(triggers(&device).len(), 8, "and so is the table");
-            // An overwrite costs nothing.
+            // An overwrite takes no pool bytes.
             clip.bind_packet(&wide(3, ClipAction::Stop)).unwrap();
             let read = triggers(&device);
             assert_eq!(read.len(), 8);

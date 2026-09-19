@@ -114,6 +114,9 @@ class MockBox:
         _native.lib.medius_mock_set_catch_state(self._handle, catch_state_to_c(state))
 
     def set_imperfect_status(self, status: ImperfectStatus):
+        """Set the `ImperfectStatus` the mock answers to `Device.query_imperfect`. With the opt-in
+        off the mock drops its consuming clip packet triggers, as the box does when the opt-in goes
+        off."""
         _native.lib.medius_mock_set_imperfect_status(self._handle, imperfect_to_c(status))
 
     def set_transfer_reply(self, status, data: bytes = b""):
@@ -167,10 +170,15 @@ class MockBox:
         _native.lib.medius_mock_set_clip_status(self._handle, clip_status_to_c(status))
 
     def set_clip_settings(self, settings: "ClipSettings"):
-        """Set the `ClipSettings` the mock answers to `ClipHandle.query_config`. Its packet triggers
-        become the set `ClipHandle.bind_packet` adds to and `clip_packet` runs a packet through, each
-        starting at its ``hits``. The mock holds them to the bounds the box does, so a script past
-        `CLIP_PKT_MATCH_POOL` reads back the entries that fit."""
+        """Set the `ClipSettings` the mock answers to `ClipHandle.query_config`.
+
+        Its packet triggers are bound in order, as `ClipHandle.bind_packet` binds them, under the
+        opt-in the mock holds when they are scripted. The mock holds the ones the box would take, each
+        with its scripted ``hits``, and leaves out the rest as the box's own answer would: a direction
+        the class never carries, a match bit outside the mask, a run with no condition, ``consume`` on
+        ``CONTROL`` or with the opt-in off, and entries past the match pool. Script the opt-in with
+        `set_imperfect_status` before a consuming trigger. The triggers held are the set
+        `ClipHandle.bind_packet` adds to and `clip_packet` runs a packet through."""
         _native.lib.medius_mock_set_clip_settings(self._handle, clip_settings_to_c(settings))
 
     def clip_packet(

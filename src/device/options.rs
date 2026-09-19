@@ -41,24 +41,29 @@ impl Device {
     ///
     /// Turning the opt-in off clears the box's rewrite table, so the held rules are dropped to match
     /// (restored if the frame never goes out); otherwise the keepalive re-asserts them the moment the
-    /// opt-in comes back on. Toggling the opt-in off concurrently with a `set_rewrite` on another thread
-    /// is not ordered: the rule may reach the box after the opt-off and be refused.
+    /// opt-in comes back on. The box also removes every clip packet trigger that
+    /// [consumes](crate::ClipPacketTrigger::consume), and the crate stops holding those the same way.
+    /// Toggling the opt-in off concurrently with a `set_rewrite` on another thread is not ordered: the
+    /// rule may reach the box after the opt-off and be refused.
     pub fn allow_imperfect_clones(&self, allow: bool) -> Result<()> {
         if !allow {
             // Serialised against the keepalive/reconnect re-assert like the rewrite mutators, and rolled
             // back on a failed send so DesiredState and the box stay in step.
             let _serial = self.link.reassert_guard();
-            let held = {
+            let (held, consuming) = {
                 let mut d = self.link.desired().lock();
                 let held = d.held_rewrites();
                 d.clear_rewrites();
-                held
+                (held, d.clip_packet_drop_consuming())
             };
             let sent = self.link.send(FrameType::Option, &imperfect_payload(false));
             if sent.is_err() {
                 let mut d = self.link.desired().lock();
                 for r in held {
                     d.apply_rewrite(r);
+                }
+                for k in consuming {
+                    d.clip_packet_bind(k, true);
                 }
             }
             return sent;

@@ -2170,6 +2170,8 @@ fn packet_triggers_the_box_holds_read_back_field_for_field() {
     );
     for n in [0usize, 1, 8] {
         let mock = medius_mock_new();
+        // Rows 0, 2 and 6 consume, which the box holds only under the opt-in.
+        unsafe { medius_mock_set_imperfect_status(mock, allowed_status()) };
         unsafe {
             (*mock).inner.set_clip_settings(medius::ClipSettings {
                 triggers: vec![input],
@@ -2198,6 +2200,7 @@ fn packet_triggers_the_box_holds_read_back_field_for_field() {
     // The protocol's read-back example: HID_IN id 0x0102, IN, TOGGLE, consume and once per run,
     // selector 1, hits saturated.
     let mock = medius_mock_new();
+    unsafe { medius_mock_set_imperfect_status(mock, allowed_status()) };
     let spec = medius::ClipPacketTrigger::new(
         medius::TrafficClass::HidIn,
         0x0102,
@@ -2307,6 +2310,7 @@ unsafe fn out_bytes<T>(fill: u8, query: impl FnOnce(*mut T) -> MediusStatus) -> 
 fn a_clip_read_back_is_defined_in_every_byte() {
     use std::mem::{offset_of, size_of};
     let mock = medius_mock_new();
+    unsafe { medius_mock_set_imperfect_status(mock, allowed_status()) };
     let rows = packet_rows();
     unsafe {
         (*mock).inner.set_clip_settings(medius::ClipSettings {
@@ -2430,10 +2434,69 @@ fn a_read_back_packet_trigger_carries_each_length_in_its_own_field() {
 }
 
 #[test]
+fn a_consuming_trigger_scripted_with_the_opt_in_off_is_left_out() {
+    let consuming = MediusClipPacketTrigger {
+        hits: 7,
+        ..spec_trigger()
+    };
+    let watching = MediusClipPacketTrigger {
+        id: 3,
+        consume: 0,
+        hits: 5,
+        ..spec_trigger()
+    };
+    let mut settings: MediusClipSettings = unsafe { std::mem::zeroed() };
+    settings.n = 1;
+    settings.triggers[0] = MediusClipTrigger {
+        on: medius_usage_button(MediusButton::Right as u8),
+        edge: MediusEdge::Press as u8,
+        action: MediusClipAction::Start as u8,
+        consume: 1,
+    };
+    settings.packet_n = 2;
+    settings.packet_triggers[0] = consuming;
+    settings.packet_triggers[1] = watching;
+
+    let (mock, dev, clip) = unsafe { mock_clip() };
+    unsafe { medius_mock_set_clip_settings(mock, settings) };
+    let out = unsafe { query_config(clip) };
+    assert_eq!(
+        out.n, 1,
+        "an input trigger that consumes is held whatever the opt-in"
+    );
+    assert_eq!(out.packet_n, 1);
+    assert_eq!(out.packet_triggers[0], watching);
+
+    // Scripted under the opt-in, both are held, and turning it off takes the consuming one away.
+    unsafe {
+        medius_mock_set_imperfect_status(mock, allowed_status());
+        medius_mock_set_clip_settings(mock, settings);
+    }
+    let out = unsafe { query_config(clip) };
+    assert_eq!(out.packet_n, 2);
+    assert_eq!(out.packet_triggers[..2], [consuming, watching]);
+    unsafe {
+        medius_mock_set_imperfect_status(
+            mock,
+            MediusImperfectStatus {
+                allowed: 0,
+                ..allowed_status()
+            },
+        )
+    };
+    let out = unsafe { query_config(clip) };
+    assert_eq!(out.packet_n, 1);
+    assert_eq!(out.packet_triggers[0], watching);
+    unsafe { free_mock_clip(mock, dev, clip) };
+}
+
+#[test]
 fn scripted_packet_triggers_reach_the_mock_field_for_field() {
     let rows = packet_rows();
     for n in [0usize, 1, 8] {
         let mock = medius_mock_new();
+        // Rows 0, 2 and 6 consume, which the box holds only under the opt-in.
+        unsafe { medius_mock_set_imperfect_status(mock, allowed_status()) };
         let mut settings: MediusClipSettings = unsafe { std::mem::zeroed() };
         settings.n = 1;
         settings.triggers[0] = MediusClipTrigger {
@@ -2459,6 +2522,7 @@ fn scripted_packet_triggers_reach_the_mock_field_for_field() {
     }
     // A count past the array reads the array, and a byte no constant names skips that trigger.
     let mock = medius_mock_new();
+    unsafe { medius_mock_set_imperfect_status(mock, allowed_status()) };
     let mut settings: MediusClipSettings = unsafe { std::mem::zeroed() };
     settings.packet_n = 200;
     for (slot, (_, c)) in settings.packet_triggers.iter_mut().zip(&rows) {

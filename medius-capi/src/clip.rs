@@ -584,8 +584,10 @@ fn with_packet_trigger(
 ///
 /// The box makes three checks this call cannot. A consuming trigger needs
 /// `medius_device_allow_imperfect_clones`, the set holds `MEDIUS_CLIP_PKT_TRIG_MAX` triggers, and
-/// their match bytes share a pool of `MEDIUS_CLIP_PKT_MATCH_POOL`. A trigger the box refused is absent
-/// from `medius_clip_query_config`.
+/// their match bytes share a pool of `MEDIUS_CLIP_PKT_MATCH_POOL`. A bind the box refuses leaves its
+/// set as it was: a new key is not held, and a key the box holds keeps the trigger that was there,
+/// with its own action and flags. To confirm a bind, compare the fields `medius_clip_query_config`
+/// reads back with the ones bound.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_clip_bind_packet(
     clip: *mut MediusClip,
