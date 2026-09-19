@@ -3,21 +3,27 @@
 from __future__ import annotations
 
 import ctypes
-from typing import Optional, Sequence, Tuple
+from typing import Iterable, Optional, Sequence, Tuple, Union
 
 from . import _native
-from ._enums import Action, Blanket, ClipAction, Edge
+from ._enums import Action, Blanket, ClipAction, Direction, Edge
 from ._errors import check
 from ._types import (
+    ClipPacketTrigger,
     ClipSettings,
     ClipStatus,
     ClipTrigger,
+    Setup,
     Usage,
+    _bytes_buf,
     _enum,
     _i16,
+    _u8,
     _u16,
+    clip_packet_trigger_to_c,
     clip_settings_from_c,
     clip_status_from_c,
+    setup_to_c,
 )
 
 
@@ -48,6 +54,10 @@ class ClipBuilder:
         check(_native.lib.medius_clip_builder_clear(self._ptr))
         return self
 
+    def byte_len(self) -> int:
+        """The bytes the entries take in the ring: what to hold against `ClipStatus.free` before an append."""
+        return int(_native.lib.medius_clip_builder_byte_len(self._ptr))
+
     def gap(self, frames: int) -> "ClipBuilder":
         """Emit nothing for `frames` native frames (a zero count is a no-op)."""
         check(_native.lib.medius_clip_builder_gap(self._ptr, _u16(frames, "frames")))
@@ -61,6 +71,11 @@ class ClipBuilder:
     def wheel(self, dz: int) -> "ClipBuilder":
         """A wheel frame."""
         check(_native.lib.medius_clip_builder_wheel(self._ptr, _i16(dz, "dz")))
+        return self
+
+    def pan(self, dpan: int) -> "ClipBuilder":
+        """A pan (horizontal scroll) frame."""
+        check(_native.lib.medius_clip_builder_pan(self._ptr, _i16(dpan, "dpan")))
         return self
 
     def press(self, usage: Usage) -> "ClipBuilder":
@@ -84,39 +99,72 @@ class ClipBuilder:
         check(_native.lib.medius_clip_builder_edge(self._ptr, usage._c, int(action)))
         return self
 
+    def raw(self, ep: int, direction: Direction, data: bytes) -> "ClipBuilder":
+        """A frame carrying one raw report, as `Device.raw` sends one."""
+        direction = _enum(direction, Direction, "direction")
+        buf, n = _bytes_buf(data, "data")
+        check(_native.lib.medius_clip_builder_raw(self._ptr, _u8(ep, "ep"), int(direction), buf, n))
+        return self
+
+    def transfer(self, ep: int, setup: Setup, out: bytes = b"") -> "ClipBuilder":
+        """A frame carrying one control transfer, as `Device.transfer` runs one; the answer arrives as a `TrafficClass.CLIP_TRANSFER` event."""
+        buf, n = _bytes_buf(out, "out")
+        check(
+            _native.lib.medius_clip_builder_transfer(self._ptr, _u8(ep, "ep"), setup_to_c(setup), buf, n)
+        )
+        return self
+
     def frame(
         self,
         dx: int = 0,
         dy: int = 0,
         wheel: int = 0,
-        edges: Optional[Sequence[Tuple[Usage, Action]]] = None,
+        pan: int = 0,
+        edges: Iterable[Tuple[Usage, Action]] = (),
+        raw: Iterable[Tuple[int, Direction, bytes]] = (),
+        transfers: Iterable[Union[Tuple[int, Setup], Tuple[int, Setup, bytes]]] = (),
     ) -> "ClipBuilder":
-        """A general content frame: a motion delta plus a list of `(Usage, Action)` edges on the same frame."""
-        edges = edges or []
-        n = len(edges)
-        inputs = (_native.MediusUsage * n)()
-        actions = (ctypes.c_uint8 * n)()
-        for i, (inp, action) in enumerate(edges):
-            inputs[i] = inp._c
-            actions[i] = int(_enum(action, Action, f"edges[{i}].action"))
-        iptr = ctypes.cast(inputs, ctypes.POINTER(_native.MediusUsage)) if n else None
-        aptr = ctypes.cast(actions, ctypes.POINTER(ctypes.c_uint8)) if n else None
-        check(
-            _native.lib.medius_clip_builder_frame(
-                self._ptr,
-                _i16(dx, "dx"),
-                _i16(dy, "dy"),
-                _i16(wheel, "wheel"),
-                iptr,
-                aptr,
-                n,
-            )
-        )
+        """A general content frame: motion, wheel and pan deltas plus `(Usage, Action)` edges, `(ep, direction, bytes)` raw reports and `(ep, setup)` or `(ep, setup, out_bytes)` transfers on the same frame."""
+        lib = _native.lib
+        frame = lib.medius_clip_frame_new()
+        if not frame:
+            raise MemoryError("clip frame allocation failed")
+        try:
+            check(lib.medius_clip_frame_move(frame, _i16(dx, "dx"), _i16(dy, "dy")))
+            check(lib.medius_clip_frame_wheel(frame, _i16(wheel, "wheel")))
+            check(lib.medius_clip_frame_pan(frame, _i16(pan, "pan")))
+            for i, (usage, action) in enumerate(edges or ()):
+                action = _enum(action, Action, f"edges[{i}].action")
+                check(lib.medius_clip_frame_edge(frame, usage._c, int(action)))
+            for i, (ep, direction, data) in enumerate(raw or ()):
+                direction = _enum(direction, Direction, f"raw[{i}].direction")
+                buf, n = _bytes_buf(data, f"raw[{i}].bytes")
+                ep = _u8(ep, f"raw[{i}].ep")
+                check(lib.medius_clip_frame_raw(frame, ep, int(direction), buf, n))
+            for i, item in enumerate(transfers or ()):
+                if not isinstance(item, (tuple, list)) or len(item) not in (2, 3):
+                    raise ValueError(
+                        f"transfers[{i}] must be (ep, setup) or (ep, setup, out_bytes), got {item!r}"
+                    )
+                ep, setup = item[0], item[1]
+                out = item[2] if len(item) == 3 else b""
+                buf, n = _bytes_buf(out, f"transfers[{i}].out")
+                ep = _u8(ep, f"transfers[{i}].ep")
+                check(lib.medius_clip_frame_transfer(frame, ep, setup_to_c(setup), buf, n))
+            check(lib.medius_clip_builder_frame(self._ptr, frame))
+        finally:
+            lib.medius_clip_frame_free(frame)
         return self
 
 
 class ClipHandle:
-    """A handle to one box's buffered-clip playback, from `Device.clip`; keep one handle per clip session."""
+    """A handle to one box's buffered-clip playback, from `Device.clip`; keep one handle per clip session.
+
+    A trigger runs a clip verb on the box, with no host round trip. There are two kinds in one set: an
+    input trigger (`bind`) fires on a button, key or media edge, and a packet trigger (`bind_packet`)
+    fires on a packet crossing a traffic surface. `clear_triggers` removes both and `query_config`
+    reads both back.
+    """
 
     def __init__(self, handle, device=None):
         self._handle = handle
@@ -137,7 +185,15 @@ class ClipHandle:
         self.close()
 
     def append(self, builder: ClipBuilder):
-        """Append the builder's entries to the ring (whole-entry frames, each with the next append seq)."""
+        """Append the builder's entries to the ring (whole-entry frames, each with the next append seq).
+
+        Every entry is checked before the first frame goes out, so a refusal sends nothing: a frame
+        past `CLIP_EDGES_MAX` edges or `CLIP_RAW_MAX` raw reports (`ClipFrameCountError`), one that
+        encodes past `CLIP_ENTRY_MAX` bytes (`ClipFrameTooLongError`), a raw report whose direction is
+        neither `Direction.IN` nor `Direction.OUT` (`RawDirectionError`, or `RelativeDirectionError`
+        for the bearing-relative pair), or a transfer whose data does not match its setup packet
+        (`ClipTransferDataError`).
+        """
         check(_native.lib.medius_clip_append(self._handle, builder._ptr))
 
     def set_autolock(self, scope: Optional[Sequence[Blanket]] = None):
@@ -156,11 +212,11 @@ class ClipHandle:
         check(_native.lib.medius_clip_set_retain(self._handle, 1 if on else 0))
 
     def set_ride(self, on: bool):
-        """Make the clip's motion wait to ride a native report (False = the box's own clock, the default); only its wheel while rendering is on with a profile armed."""
+        """Make the clip's motion wait to ride a native report (False = the box's own clock, the default); only its wheel and pan while rendering is on with a profile armed."""
         check(_native.lib.medius_clip_set_ride(self._handle, 1 if on else 0))
 
     def bind(self, trigger: ClipTrigger):
-        """Add or overwrite a trigger binding: `trigger.on`'s edge fires its action on the box, no host round-trip."""
+        """Add or overwrite an input trigger: `trigger.on`'s edge fires its action on the box, no host round-trip."""
         t = _native.MediusClipTrigger(
             trigger.on._c,
             int(_enum(trigger.edge, Edge, "edge")),
@@ -170,12 +226,49 @@ class ClipHandle:
         check(_native.lib.medius_clip_bind(self._handle, t))
 
     def unbind(self, usage: Usage, edge: Edge):
-        """Remove the trigger binding on `usage`'s `edge`."""
+        """Remove the input trigger on `usage`'s `edge`."""
         edge = _enum(edge, Edge, "edge")
         check(_native.lib.medius_clip_unbind(self._handle, usage._c, int(edge)))
 
+    def bind_packet(self, trigger: ClipPacketTrigger):
+        """Add or overwrite a packet trigger: a packet `trigger` matches fires its action on the box's
+        next tick, no host round trip. Binding a key the box holds overwrites it.
+
+        What the box would refuse is `ClipPacketTriggerError` before anything is sent, and the message
+        says which:
+
+        - a `traffic_class` that is ``BUS`` or ``CLIP_TRANSFER``;
+        - a match past `PKT_MATCH_MAX` bytes, or unlike its mask in length;
+        - a direction the class never carries: ``OUT`` on ``HID_IN`` or ``EMIT``, ``IN`` on
+          ``HID_OUT``;
+        - a match bit outside its mask, which no packet can equal;
+        - ``consume`` on ``CONTROL``;
+        - a ``selector_len`` without ``once_per_run``;
+        - ``once_per_run`` without one stream (a class other than ``CONTROL``, a concrete ``id``, and
+          ``IN`` or ``OUT``), without match bytes past its selector, or with no masked bit in them.
+
+        A bearing-relative direction is `RelativeDirectionError`.
+
+        The box makes three checks this call cannot. A consuming trigger needs
+        `Device.allow_imperfect_clones`, the set holds `CLIP_PKT_TRIG_MAX` triggers, and their match
+        bytes share a pool of `CLIP_PKT_MATCH_POOL`. A bind the box refuses leaves its set as it
+        was: a new key is not held, and a key the box holds keeps the trigger that was there, with its
+        own action and flags. To confirm a bind, compare the fields `query_config` reads back with the
+        ones bound.
+        """
+        c = clip_packet_trigger_to_c(trigger)
+        check(_native.lib.medius_clip_bind_packet(self._handle, ctypes.byref(c)))
+
+    def unbind_packet(self, trigger: ClipPacketTrigger):
+        """Remove the packet trigger keyed by `trigger`'s ``(traffic_class, id, direction,
+        match_bytes, mask)``; its other fields are ignored. A key the box cannot hold is refused as
+        `bind_packet` refuses it: the class, the lengths, the direction, and a match bit outside the
+        mask."""
+        c = clip_packet_trigger_to_c(trigger, key_only=True)
+        check(_native.lib.medius_clip_unbind_packet(self._handle, ctypes.byref(c)))
+
     def clear_triggers(self):
-        """Remove every trigger binding."""
+        """Remove every trigger of both kinds: the input triggers and the packet triggers."""
         check(_native.lib.medius_clip_clear_triggers(self._handle))
 
     def start(self):
@@ -217,7 +310,7 @@ class ClipHandle:
         return clip_status_from_c(out)
 
     def query_config(self) -> ClipSettings:
-        """The clip configuration: autolock, loop, retain, finalized, and the trigger set."""
+        """The clip configuration: autolock, loop, retain, finalized, and both kinds of trigger."""
         out = _native.MediusClipSettings()
         check(_native.lib.medius_clip_query_config(self._handle, ctypes.byref(out)))
         return clip_settings_from_c(out)

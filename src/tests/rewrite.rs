@@ -47,10 +47,12 @@ fn rewrite_class_and_action_wire() {
     assert_eq!(RewriteClass::from_u8(8), Some(RewriteClass::Control));
     assert_eq!(RewriteClass::from_u8(0), None); // a parsed-input class is not rewritable
     assert_eq!(RewriteClass::from_u8(10), None); // the bus class is not rewritable
+    assert_eq!(RewriteClass::from_u8(11), None); // nor are a clip's transfers
 
     assert_eq!(RewriteAction::ReplyReplace.as_u8(), 8);
     assert_eq!(RewriteAction::from_u8(2), Some(RewriteAction::Patch));
-    assert_eq!(RewriteAction::from_u8(9), None);
+    assert_eq!(RewriteAction::from_u8(8), Some(RewriteAction::ReplyReplace));
+    assert_eq!(RewriteAction::from_u8(9), None); // nine actions, 0 to 8
 }
 
 #[test]
@@ -514,7 +516,7 @@ mod mock_roundtrip {
 #[test]
 fn health_u16_high_bits_decode() {
     use crate::types::Health;
-    // proto 7 HEALTH is a u16 LE: link_up (b0) plus rewrite_on (b8), patch_on (b9), transform_on (b10).
+    // HEALTH is a u16 LE since proto 7: link_up (b0) plus rewrite_on (b8), patch_on (b9), transform_on (b10).
     let h = Health::from_flags(0x0701);
     assert!(h.link_up && !h.mouse_attached);
     assert!(h.rewrite_on && h.patch_on && h.transform_on);
@@ -532,4 +534,95 @@ fn resp_health_u16_roundtrips_through_parse() {
         panic!("not a RESP(HEALTH)");
     };
     assert!(h.rewrite_on && h.patch_on && !h.transform_on);
+}
+
+// What the box refuses of any rule: a match past its compare length, and a rule its own read-back
+// reply cannot carry.
+mod box_limits {
+    use crate::device::rewrite::validate_rule;
+    use crate::error::Error;
+    use crate::types::{Direction, RewriteAction, RewriteClass, RewriteRule};
+
+    const M: [u8; 2] = [0x07, 0x20];
+    const K: [u8; 2] = [0xFF, 0x20];
+
+    fn patch() -> RewriteRule {
+        RewriteRule::new(RewriteClass::HidIn, 2, Direction::IN, RewriteAction::Patch)
+            .matching(M, K)
+            .with_payload([0xAA])
+    }
+
+    // The box refuses a rule its read-back reply cannot carry, and that reply's header is two bytes
+    // wider than the command's.
+    #[test]
+    fn a_rule_the_box_cannot_read_back_is_refused() {
+        let answer = |n: usize| {
+            RewriteRule::new(
+                RewriteClass::Control,
+                0,
+                Direction::IN,
+                RewriteAction::Answer,
+            )
+            .with_payload(vec![0u8; n])
+        };
+        assert!(validate_rule(&answer(501)).is_ok());
+        assert!(matches!(
+            validate_rule(&answer(502)),
+            Err(Error::RewritePayloadTooLarge {
+                len: 502,
+                cap: 501,
+                ..
+            })
+        ));
+        assert!(matches!(
+            validate_rule(&answer(498).matching([1, 2], [0xFF, 0xFF])),
+            Err(Error::RewritePayloadTooLarge {
+                len: 498,
+                cap: 497,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn a_match_past_the_box_cap_is_refused() {
+        let fits = patch().matching([0x07; 16], [0xFF; 16]);
+        assert!(validate_rule(&fits).is_ok());
+        let over = patch().matching([0x07; 17], [0xFF; 17]);
+        assert!(matches!(
+            validate_rule(&over),
+            Err(Error::RewriteMatchTooLong { len: 17, limit: 16 })
+        ));
+    }
+
+    #[cfg(feature = "mock")]
+    #[test]
+    fn the_mock_refuses_what_the_box_does() {
+        use crate::protocol::FrameType;
+        use crate::protocol::command::rewrite_payload;
+        use crate::{Device, MockBox};
+
+        let mock = MockBox::new().with_imperfect(true);
+        let device = Device::with_mock(mock.clone());
+        let rule = patch();
+        device.set_rewrite(&rule).unwrap();
+
+        // Past the crate's own check, straight onto the link, where the mock refuses what the box does.
+        let gen_before = device.query_rewrite().unwrap().generation;
+        for bad in [
+            rewrite_payload(4, 3, 1, 1, 9, 0, &M, &K, &[0, 0, 0]), // nine actions, 0 to 8
+            rewrite_payload(4, 3, 1, 1, 10, 0, &M, &K, &[]),
+            rewrite_payload(11, 0, 1, 1, 0, 0, &[], &[], &[]), // a class that is never rewritten
+            rewrite_payload(4, 3, 3, 1, 0, 0, &M, &K, &[]),    // a relative direction
+            rewrite_payload(8, 0, 1, 1, 4, 0, &[], &[], &[0u8; 502]), // past its own read-back
+            rewrite_payload(4, 3, 1, 1, 2, 60, &M, &K, &[0u8; 5]), // a patch past the report head
+            rewrite_payload(4, 2, 1, 1, 2, 60, &M, &K, &[0u8; 5]), // onto the held key: it stays
+        ] {
+            device.link.send(FrameType::Rewrite, &bad).unwrap();
+        }
+        let table = device.query_rewrite().unwrap();
+        assert_eq!(table.entries.len(), 1);
+        assert_eq!(table.generation, gen_before);
+        assert_eq!(device.query_rewrite_entry(0).unwrap(), rule);
+    }
 }

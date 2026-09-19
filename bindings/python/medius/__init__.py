@@ -21,6 +21,11 @@ from ._enums import (
     Button,
     CatchClass,
     CatchEventKind,
+    CLIP_EDGES_MAX,
+    CLIP_ENTRY_MAX,
+    CLIP_PKT_MATCH_POOL,
+    CLIP_PKT_TRIG_MAX,
+    CLIP_RAW_MAX,
     ClipAction,
     ClipState,
     ClockDomain,
@@ -42,6 +47,7 @@ from ._enums import (
     MoveTiming,
     PatchSection,
     PendingMotion,
+    PKT_MATCH_MAX,
     RebootTarget,
     RewriteAction,
     RewriteClass,
@@ -55,6 +61,10 @@ from ._errors import (
     BadProtoVerError,
     CaptureNotApplicableError,
     CatchTableFullError,
+    ClipFrameCountError,
+    ClipFrameTooLongError,
+    ClipPacketTriggerError,
+    ClipTransferDataError,
     DisconnectedError,
     EmptySubscriptionError,
     UpdateError,
@@ -76,6 +86,7 @@ from ._errors import (
     ReservedIdError,
     RewriteActionClassError,
     RewriteMaskLengthError,
+    RewriteMatchTooLongError,
     RewritePayloadTooLargeError,
     TransformOpFieldsError,
     RewriteTableFullError,
@@ -99,6 +110,7 @@ from ._types import (
     CatchState,
     ClipSettings,
     ClipStatus,
+    ClipPacketTrigger,
     ClipTrigger,
     ClockEstimate,
     Counters,
@@ -157,7 +169,8 @@ def find_ports(cap: int = 16) -> List[PortInfo]:
 
 
 def list_boxes(cap: int = 16) -> List[BoxInfo]:
-    """Enumerate every connected box: opens each, handshakes, and reads its version + device info."""
+    """Enumerate every connected box, reading its version and device info. A box on another control
+    protocol is listed with `device` None."""
     import ctypes
 
     arr = (_native.MediusBoxInfo * cap)()
@@ -168,6 +181,10 @@ def list_boxes(cap: int = 16) -> List[BoxInfo]:
 
 def default_query_timeout_ms() -> int:
     return int(_native.lib.medius_default_query_timeout_ms())
+
+
+def default_transfer_timeout_ms() -> int:
+    return int(_native.lib.medius_default_transfer_timeout_ms())
 
 
 def default_keepalive_cadence_ms() -> int:
@@ -195,6 +212,11 @@ __all__ = [
     "Button",
     "CatchClass",
     "CatchEventKind",
+    "CLIP_EDGES_MAX",
+    "CLIP_ENTRY_MAX",
+    "CLIP_PKT_MATCH_POOL",
+    "CLIP_PKT_TRIG_MAX",
+    "CLIP_RAW_MAX",
     "ClipAction",
     "ClipState",
     "ClockDomain",
@@ -214,6 +236,7 @@ __all__ = [
     "MediaKey",
     "MotionKind",
     "PatchSection",
+    "PKT_MATCH_MAX",
     "RebootTarget",
     "RewriteAction",
     "RewriteClass",
@@ -259,6 +282,11 @@ __all__ = [
     "ReservedIdError",
     "RelativeDirectionError",
     "RawDirectionError",
+    "ClipFrameCountError",
+    "ClipFrameTooLongError",
+    "ClipPacketTriggerError",
+    "ClipTransferDataError",
+    "RewriteMatchTooLongError",
     "ImperfectRequiredError",
     "LockScaleRangeError",
     "LockScaleUsageError",
@@ -273,6 +301,7 @@ __all__ = [
     "Bearing",
     "ClipSettings",
     "ClipStatus",
+    "ClipPacketTrigger",
     "ClipTrigger",
     "ClockEstimate",
     "Counters",
@@ -318,6 +347,7 @@ __all__ = [
     "find_ports",
     "list_boxes",
     "default_query_timeout_ms",
+    "default_transfer_timeout_ms",
     "default_keepalive_cadence_ms",
     "abi_version",
     "version_string",

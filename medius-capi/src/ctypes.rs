@@ -49,7 +49,7 @@ const _: () = {
 pub const MEDIUS_MAX_DEV_PAYLOAD: usize = 512;
 
 /// CATCH classes, the `class` of a `MediusCatchFilter`. 0-3 are the classes `LOCK` and `INJECT`
-/// address; 4-10 are the traffic the box relays.
+/// address; 4-11 are byte-oriented traffic.
 pub const MEDIUS_CATCH_CLASS_BTN: u8 = 0;
 pub const MEDIUS_CATCH_CLASS_KEY: u8 = 1;
 pub const MEDIUS_CATCH_CLASS_MEDIA: u8 = 2;
@@ -68,6 +68,8 @@ pub const MEDIUS_CATCH_CLASS_CONTROL: u8 = 8;
 pub const MEDIUS_CATCH_CLASS_EMIT: u8 = 9;
 /// Bus lifecycle: reset, suspend, configuration and interface changes, attach and detach.
 pub const MEDIUS_CATCH_CLASS_BUS: u8 = 10;
+/// A control transfer a clip ran against the real device, keyed by endpoint number (0 = EP0).
+pub const MEDIUS_CATCH_CLASS_CLIP_TRANSFER: u8 = 11;
 /// Wildcard: every class.
 pub const MEDIUS_CATCH_CLASS_ANY: u8 = 0xFF;
 /// Wildcard: every id within a class.
@@ -371,7 +373,7 @@ pub enum MediusEdge {
     Release = 2,
 }
 
-/// The engine action a trigger binding drives.
+/// The engine action a `MediusClipTrigger` or a `MediusClipPacketTrigger` drives.
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MediusClipAction {
@@ -383,7 +385,8 @@ pub enum MediusClipAction {
     Toggle = 5,
 }
 
-/// One clip trigger binding: `on`'s `edge` drives `action`; `consume` suppresses the input from the game.
+/// One clip input trigger: `on`'s `edge` drives `action`; `consume` suppresses the input from the
+/// game. The trigger set's other kind is the `MediusClipPacketTrigger`.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MediusClipTrigger {
@@ -836,7 +839,7 @@ pub struct MediusPatch {
     /// One of `MEDIUS_PATCH_SECTION_*`. A byte rather than `MediusPatchSection`, so the boundary can
     /// validate it; C++ renders the enum as `enum : uint8_t`, so assigning this to one needs a cast.
     pub section: u8,
-    /// The configuration index, for `Config`/`Report`.
+    /// The configuration index for `Config`/`Report`: 0 is the first configuration, not bConfigurationValue.
     pub cfg: u8,
     /// The interface or string index, for `Report`/`String`.
     pub index: u8,
@@ -1002,14 +1005,106 @@ pub struct MediusClipStatus {
     pub underruns: u16,
     pub overruns: u16,
     pub seq_gaps: u16,
+    /// Clip transfers the device completed.
+    pub xfers: u16,
+    /// Clip transfers that ended any other way: a refusal, no answer, no room in the box's queue, or
+    /// dropped behind one the device did not answer.
+    pub xfer_errs: u16,
+    /// Raw reports and transfers the box discarded because the imperfect-clone opt-in was off.
+    pub gated: u16,
     pub held_n: u16,
     pub held: [MediusUsage; MEDIUS_MAX_USAGES],
 }
 
-/// The max clip trigger bindings in a `MediusClipSettings` (matches the firmware `CLIP_TRIG_MAX`).
+/// The max clip input triggers in a `MediusClipSettings` (matches the firmware `CLIP_TRIG_MAX`).
 pub const MEDIUS_CLIP_TRIG_MAX: usize = 8;
+/// The max clip packet triggers in a `MediusClipSettings` (the firmware `CLIP_PKT_TRIG_MAX`).
+pub const MEDIUS_CLIP_PKT_TRIG_MAX: usize = 8;
+/// The match bytes the box holds across every clip packet trigger (the firmware
+/// `CLIP_PKT_MATCH_POOL`).
+pub const MEDIUS_CLIP_PKT_MATCH_POOL: usize = 112;
+/// The most `match`/`mask` bytes one clip packet trigger compares (the firmware `PKT_MATCH_MAX`).
+pub const MEDIUS_MAX_PKT_MATCH: usize = 16;
+/// The most edges one `MediusClipFrame` carries (the firmware `CLIP_EDGES_MAX`).
+pub const MEDIUS_CLIP_EDGES_MAX: usize = 8;
+/// The most raw reports one `MediusClipFrame` carries (the firmware `CLIP_RAW_MAX`).
+pub const MEDIUS_CLIP_RAW_MAX: usize = 8;
+/// The most bytes one `MediusClipFrame` encodes to: one `CLIP_APPEND` payload.
+pub const MEDIUS_CLIP_ENTRY_MAX: usize = 512;
 
-/// The clip configuration read back from `RESP(CLIP)`: autolock scope, loop/retain scalars, and triggers.
+const _: () = {
+    assert!(MEDIUS_CLIP_EDGES_MAX == medius::CLIP_EDGES_MAX);
+    assert!(MEDIUS_CLIP_RAW_MAX == medius::CLIP_RAW_MAX);
+    assert!(MEDIUS_CLIP_ENTRY_MAX == medius::CLIP_ENTRY_MAX);
+    assert!(MEDIUS_CLIP_PKT_TRIG_MAX == medius::CLIP_PKT_TRIG_MAX);
+    assert!(MEDIUS_CLIP_PKT_MATCH_POOL == medius::CLIP_PKT_MATCH_POOL);
+    assert!(MEDIUS_MAX_PKT_MATCH == medius::PKT_MATCH_MAX);
+};
+
+/// One clip packet trigger, keyed by `(class, id, direction, match, mask)`: a packet on a traffic
+/// surface whose head matches under the mask drives `action` on the box's next tick, with no host
+/// round trip. The trigger set's other kind is the input `MediusClipTrigger`.
+///
+/// `match_bytes[0..match_len]` and `mask[0..mask_len]` are the masked head compare (they must be the
+/// same length; an empty match takes every packet on the address): a packet matches when
+/// `head[i] & mask[i] == match_bytes[i]` for each. For `MEDIUS_CATCH_CLASS_CONTROL` the head is the 8
+/// setup bytes, then the first 8 bytes of OUT data. A `MEDIUS_CATCH_CLASS_EMIT` trigger sees the
+/// clip's own frames as well as native and injected ones, and none of the clip's raw reports.
+///
+/// A trigger no packet can match is refused, by `medius_clip_bind_packet` and by the box: a match bit
+/// outside its mask, since a packet byte is masked before it is compared, and a direction the class
+/// never carries. `HID_IN` and `EMIT` flow `POSITIVE` (IN) and `HID_OUT` flows `NEGATIVE` (OUT); the
+/// vendor classes and `CONTROL` carry either, and every class takes `MEDIUS_DIRECTION_BOTH`.
+///
+/// The box reads a packet for its triggers as the packet arrived, ahead of the rewrite table, and the
+/// two are independent: one packet can fire a trigger and win a rewrite rule. One trigger wins a
+/// packet, most specific first: an exact `id` beats `MEDIUS_CATCH_ID_ANY`, more masked bits beat
+/// fewer, `POSITIVE` or `NEGATIVE` beats `MEDIUS_DIRECTION_BOTH`, then the trigger bound earlier.
+///
+/// The same shape `medius_clip_query_config` reads back, so a read trigger replays as a bind.
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MediusClipPacketTrigger {
+    /// The traffic surface the packet crosses: one of `MEDIUS_CATCH_CLASS_HID_IN`, `_HID_OUT`,
+    /// `_VENDOR_INTERRUPT`, `_VENDOR_BULK`, `_CONTROL` and `_EMIT`.
+    pub class: u8,
+    /// The address within the class: the interface number for `HID_IN`, the endpoint number for the
+    /// rest, or `MEDIUS_CATCH_ID_ANY`.
+    pub id: u16,
+    /// A `MEDIUS_DIRECTION_*` value: `BOTH`, or the one of `POSITIVE` (IN) and `NEGATIVE` (OUT) the
+    /// class carries.
+    pub direction: u8,
+    /// A `MEDIUS_CLIP_ACTION_*` value.
+    pub action: u8,
+    /// Drop every packet the trigger wins, before the rewrite table sees it. Dropping traffic alters
+    /// the wire, so the box holds a consuming trigger only under
+    /// `medius_device_allow_imperfect_clones`, on any class but `CONTROL`.
+    pub consume: u8,
+    /// Drive `action` on the first packet of a run of matching ones, so a device that repeats a held
+    /// state every poll fires once per hold; 0 drives it on each packet. A run is over one stream:
+    /// a class other than `CONTROL`, a concrete `id`, and `POSITIVE` or `NEGATIVE`.
+    pub once_per_run: u8,
+    /// With `once_per_run`, how many leading match bytes select the run's stream within the address
+    /// (a report ID). The rest are the condition, so it is below `match_len` and the mask past it has
+    /// at least one bit set: a condition every packet of the stream meets is a run that never ends.
+    /// 0 without.
+    pub selector_len: u8,
+    /// Valid bytes in `match_bytes` (must equal `mask_len`).
+    pub match_len: u16,
+    /// Valid bytes in `mask` (must equal `match_len`).
+    pub mask_len: u16,
+    /// Every set bit of `match_bytes[0..match_len]` is set in `mask`. The two go to the box as given.
+    pub match_bytes: [u8; MEDIUS_MAX_PKT_MATCH],
+    pub mask: [u8; MEDIUS_MAX_PKT_MATCH],
+    /// Packets the trigger has won since it was bound or overwritten (saturating). A `once_per_run`
+    /// trigger wins every packet of a run and drives its action on the first. Filled by
+    /// `medius_clip_query_config` and read by `medius_mock_set_clip_settings`;
+    /// `medius_clip_bind_packet` sends the trigger without it.
+    pub hits: u16,
+}
+
+/// The clip configuration read back from `RESP(CLIP)`: autolock scope, loop/retain scalars, and both
+/// kinds of trigger.
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub struct MediusClipSettings {
@@ -1020,9 +1115,14 @@ pub struct MediusClipSettings {
     pub finalized: u8,
     /// Whether the clip's motion waits to ride a native report (`medius_clip_set_ride`).
     pub ride: u8,
+    /// The input triggers.
     pub triggers: [MediusClipTrigger; MEDIUS_CLIP_TRIG_MAX],
     /// The number of valid entries in `triggers`.
     pub n: u8,
+    /// The packet triggers, in the order the box holds them, each with its `hits`.
+    pub packet_triggers: [MediusClipPacketTrigger; MEDIUS_CLIP_PKT_TRIG_MAX],
+    /// The number of valid entries in `packet_triggers`.
+    pub packet_n: u8,
 }
 
 /// Host-side always-on counters.
@@ -1053,7 +1153,11 @@ pub struct MediusPortInfo {
 pub struct MediusBoxInfo {
     pub port: MediusPortInfo,
     pub version: MediusVersion,
+    /// Zeroed when `has_device` is 0.
     pub device: MediusDeviceInfo,
+    /// 0 for a box on another control protocol (`version.proto_ver`): opening it answers
+    /// `MEDIUS_STATUS_ERR_BAD_PROTO_VER`.
+    pub has_device: u8,
 }
 
 /// One relative-axis catch event: the user's real motion at the merge point, before lock suppression or injection.
@@ -1090,7 +1194,8 @@ pub struct MediusUsageEvent {
 }
 
 /// One byte-oriented catch event: HID reports, vendor endpoints, control transactions, the bytes the
-/// clone emitted, or bus lifecycle. `bytes[0..len]` is as much of the packet as `capture` kept.
+/// clone emitted, bus lifecycle, or a clip's control transfers. `bytes[0..len]` is as much of the
+/// packet as `capture` kept.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MediusTrafficEvent {
@@ -1103,7 +1208,8 @@ pub struct MediusTrafficEvent {
     /// as one; C++ renders the enum as `enum : uint8_t`, so assigning this to a `MediusDirection`
     /// there needs a cast.
     pub direction: u8,
-    /// Class-specific; read it with `medius_traffic_event_control_status` or `..._bus_event`.
+    /// Class-specific; read it with `medius_traffic_event_control_status`, `..._bus_event` or
+    /// `..._transfer_status`.
     pub flags: u8,
     /// The packet's length before `capture` truncated it.
     pub true_len: u16,

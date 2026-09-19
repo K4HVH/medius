@@ -9,7 +9,8 @@ use crate::protocol::opcode::{CATCH_CLS_ANY, CATCH_ID_ANY, H_CATCH_ON};
 use crate::protocol::response::{Resp, parse_resp};
 use crate::types::{
     Axis, BusEvent, Capture, CatchClass, CatchFilter, CatchState, Class, ClockDomain,
-    ControlStatus, Direction, Health, MotionEvent, TrafficClass, TrafficEvent, UsageSnapshot,
+    ControlStatus, Direction, Health, MotionEvent, TrafficClass, TrafficEvent, TransferStatus,
+    UsageSnapshot,
 };
 use crate::{Button, Key};
 
@@ -43,8 +44,10 @@ fn catch_classes_match_the_wire() {
     assert_eq!(CatchClass::Control.as_u8(), 8);
     assert_eq!(CatchClass::Emit.as_u8(), 9);
     assert_eq!(CatchClass::Bus.as_u8(), 10);
+    assert_eq!(CatchClass::ClipTransfer.as_u8(), 11);
     assert_eq!(CatchClass::from_u8(10), Some(CatchClass::Bus));
-    assert_eq!(CatchClass::from_u8(11), None);
+    assert_eq!(CatchClass::from_u8(11), Some(CatchClass::ClipTransfer));
+    assert_eq!(CatchClass::from_u8(12), None);
     assert_eq!(CatchClass::from_u8(0xFF), None); // the wildcard is not a class
 }
 
@@ -379,6 +382,46 @@ fn control_event_splits_setup_from_data() {
     assert!(o.setup().is_none());
     assert_eq!(o.data(), &[0x11, 0x22]);
     assert!(o.control_status().is_none());
+}
+
+// A clip's transfer comes back in a control event's shape, with the status a transfer returns.
+#[test]
+fn clip_transfer_event_splits_like_a_control_event_and_carries_a_transfer_status() {
+    let mut p = vec![0, 0, 0, 0, 1, 11, 0x00, 0x00, 1, 0x00, 26, 0];
+    p.extend_from_slice(&[0x80, 0x06, 0x00, 0x01, 0x00, 0x00, 0x12, 0x00]);
+    p.extend_from_slice(&[0x12, 0x01, 0x00, 0x02]);
+    let t = TrafficEvent::from_payload(&p).unwrap();
+    assert_eq!(t.class, CatchClass::ClipTransfer);
+    assert_eq!(t.setup().unwrap(), &p[12..20]);
+    assert_eq!(t.data(), &[0x12, 0x01, 0x00, 0x02]);
+    assert_eq!(t.transfer_status(), Some(TransferStatus::Ok));
+    assert!(t.control_status().is_none());
+    for (flags, want) in [
+        (0xFD, TransferStatus::Stall),
+        (0xFE, TransferStatus::Nak),
+        (0xFF, TransferStatus::NoDevice),
+        (0xFC, TransferStatus::Refused),
+    ] {
+        let mut q = p.clone();
+        q[9] = flags;
+        assert_eq!(
+            TrafficEvent::from_payload(&q).unwrap().transfer_status(),
+            Some(want)
+        );
+    }
+    // A control event's flags are the device's answer to the game PC, not a transfer's status.
+    let mut ctl = p.clone();
+    ctl[5] = 8;
+    assert!(
+        TrafficEvent::from_payload(&ctl)
+            .unwrap()
+            .transfer_status()
+            .is_none()
+    );
+    // Cut inside the setup packet, the surviving bytes are the request and not data.
+    let cut = TrafficEvent::from_payload(&p[..16]).unwrap();
+    assert!(cut.setup().is_none());
+    assert!(cut.data().is_empty());
 }
 
 #[test]

@@ -1,9 +1,9 @@
 //! `CATCH` (§3.9) subscription vocabulary: the address space, one table entry, decoded `RESP(CATCH)`.
 
 use crate::protocol::opcode::{
-    CATCH_CLS_ANY, CATCH_CLS_AXIS, CATCH_CLS_BTN, CATCH_CLS_BUS, CATCH_CLS_CONTROL, CATCH_CLS_EMIT,
-    CATCH_CLS_HID_IN, CATCH_CLS_HID_OUT, CATCH_CLS_KEY, CATCH_CLS_MEDIA, CATCH_CLS_VEND_BULK,
-    CATCH_CLS_VEND_INTR, CATCH_ID_ANY,
+    CATCH_CLS_ANY, CATCH_CLS_AXIS, CATCH_CLS_BTN, CATCH_CLS_BUS, CATCH_CLS_CLIP_XFER,
+    CATCH_CLS_CONTROL, CATCH_CLS_EMIT, CATCH_CLS_HID_IN, CATCH_CLS_HID_OUT, CATCH_CLS_KEY,
+    CATCH_CLS_MEDIA, CATCH_CLS_VEND_BULK, CATCH_CLS_VEND_INTR, CATCH_ID_ANY,
 };
 use crate::types::{Axis, Class, ClockEstimate, Direction, Usage};
 
@@ -42,6 +42,9 @@ pub enum CatchClass {
     Emit = CATCH_CLS_EMIT,
     /// Bus lifecycle; a bus event has no id.
     Bus = CATCH_CLS_BUS,
+    /// A control transfer a clip ran against the real device
+    /// ([`ClipFrame::transfer`](crate::ClipFrame::transfer)); `id` is the endpoint number (0 = EP0).
+    ClipTransfer = CATCH_CLS_CLIP_XFER,
 }
 
 impl CatchClass {
@@ -64,6 +67,7 @@ impl CatchClass {
             CATCH_CLS_CONTROL => CatchClass::Control,
             CATCH_CLS_EMIT => CatchClass::Emit,
             CATCH_CLS_BUS => CatchClass::Bus,
+            CATCH_CLS_CLIP_XFER => CatchClass::ClipTransfer,
             _ => return None,
         })
     }
@@ -77,7 +81,7 @@ impl CatchClass {
         )
     }
 
-    /// Whether this is one of the seven byte-oriented traffic classes.
+    /// Whether this is one of the eight byte-oriented traffic classes.
     pub fn is_traffic(self) -> bool {
         !self.is_input()
     }
@@ -126,11 +130,13 @@ pub enum TrafficClass {
     Emit = CATCH_CLS_EMIT,
     /// Bus lifecycle; a bus event has no id.
     Bus = CATCH_CLS_BUS,
+    /// A control transfer a clip ran against the real device; `id` is the endpoint number (0 = EP0).
+    ClipTransfer = CATCH_CLS_CLIP_XFER,
 }
 
 impl TrafficClass {
     /// Every traffic class, in wire order.
-    pub const ALL: [TrafficClass; 7] = [
+    pub const ALL: [TrafficClass; 8] = [
         TrafficClass::HidIn,
         TrafficClass::HidOut,
         TrafficClass::VendorInterrupt,
@@ -138,6 +144,7 @@ impl TrafficClass {
         TrafficClass::Control,
         TrafficClass::Emit,
         TrafficClass::Bus,
+        TrafficClass::ClipTransfer,
     ];
 
     /// The wire `class` byte.
@@ -156,6 +163,7 @@ impl From<TrafficClass> for CatchClass {
             TrafficClass::Control => CatchClass::Control,
             TrafficClass::Emit => CatchClass::Emit,
             TrafficClass::Bus => CatchClass::Bus,
+            TrafficClass::ClipTransfer => CatchClass::ClipTransfer,
         }
     }
 }
@@ -173,6 +181,7 @@ impl TryFrom<CatchClass> for TrafficClass {
             CatchClass::Control => TrafficClass::Control,
             CatchClass::Emit => TrafficClass::Emit,
             CatchClass::Bus => TrafficClass::Bus,
+            CatchClass::ClipTransfer => TrafficClass::ClipTransfer,
             input => return Err(input),
         })
     }

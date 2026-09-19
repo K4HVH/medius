@@ -4,6 +4,7 @@ mod catch;
 mod clip;
 mod concurrency;
 mod device_info;
+mod discover;
 mod keepalive;
 mod keyboard;
 mod led;

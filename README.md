@@ -54,7 +54,6 @@ The base crate is the lean sync core. Optional features:
 |-----------|-------------|
 | `async`   | `AsyncDevice`, async queries over the same core, runtime-agnostic (no tokio) |
 | `mock`    | `MockBox`, an in-process fake box for tests without hardware |
-| `flash`   | `esptool` reboot-to-download + firmware flash handoff |
 | `tracing` | per-frame TX/RX `tracing` instrumentation |
 
 ```toml
@@ -76,7 +75,10 @@ let device = Device::open("/dev/ttyACM0")?;   // a specific port
 
 ```rust
 for b in Device::list() {                     // every connected box
-    println!("{} {:?} {} {}", b.id(), b.name(), b.device.kind, b.device);  // MAC, name, kind, vid:pid + product
+    match &b.device {
+        Some(d) => println!("{} {:?} {} {}", b.id(), b.name(), d.kind, d),  // MAC, name, kind, vid:pid + product
+        None => println!("{} is on protocol {}", b.id(), b.version.proto_ver),  // needs a firmware update
+    }
 }
 let m = Device::find_mouse_box()?;            // the box cloning a mouse
 let k = Device::find_keyboard_box()?;         // the box cloning a keyboard
@@ -84,6 +86,8 @@ let d = Device::open_by_id("5a4e00111e28")?;  // by device MAC (or CH343 serial)
 ```
 
 Each box's identity is its device-chip MAC; a reopened box reconnects to the same physical unit even after ports renumber.
+
+A box on another control protocol than `PROTO_VER` is listed with `device: None`, and `open_by_id` and the `find_*` helpers answer `Error::BadProtoVer` with the protocol it reported. Update its firmware from the [dashboard](https://medius.k4tech.net/dashboard).
 
 ### Mouse control
 
@@ -299,7 +303,12 @@ on this machine's clock, unwrapping the 32-bit rollover and both chips' domains.
 device.reboot(RebootTarget::DeviceRun)?;  // restart a chip (run / ROM-download × device / host)
 device.reconnect()?;                      // rescan VID/PID, reopen, re-assert held state
 device.reapply()?;                        // re-send currently-held overrides on demand
+
+let fw = device.firmware_info()?;         // both chips' firmware versions and booted app slots
+device.update_firmware(UpdateTarget::Device, &image, &mut |p| println!("{}%", p.percent()))?;
 ```
+
+`update_firmware` writes the image into the chip's spare app slot over the control port and boots it; the box reverts an image that will not run. It needs a box this build can open, so a box on another control protocol is updated from the dashboard.
 
 The reader also reconnects on its own if the link drops.
 

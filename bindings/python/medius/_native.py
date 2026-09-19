@@ -8,8 +8,13 @@ import sys
 from ctypes.util import find_library
 from pathlib import Path
 
+# MEDIUS_ABI_VERSION of the header these ctypes mirrors were written from; the tests hold it to the
+# header. Import refuses a library whose medius_abi_version() reports any other number.
+ABI_VERSION = 8
+
 MEDIUS_MAX_USAGES = 256
 MEDIUS_CLIP_TRIG_MAX = 8
+MEDIUS_CLIP_PKT_TRIG_MAX = 8
 MEDIUS_MAX_LOCKS = 256
 MEDIUS_MAX_LOG_TEXT = 512
 MEDIUS_MAX_PATH = 512
@@ -22,6 +27,7 @@ MEDIUS_MAX_REWRITE_ENTRIES = 32
 MEDIUS_MAX_PATCH_ENTRIES = 16
 MEDIUS_MAX_TRANSFORM_ENTRIES = 32
 MEDIUS_MAX_REWRITE_MATCH = 16
+MEDIUS_MAX_PKT_MATCH = 16
 MEDIUS_MAX_DEV_PAYLOAD = 512
 
 # The CATCH wildcards are sentinel values, not a separate flag byte.
@@ -66,6 +72,23 @@ class MediusClipTrigger(ctypes.Structure):
     _fields_ = [("on", MediusUsage), ("edge", u8), ("action", u8), ("consume", u8)]
 
 
+class MediusClipPacketTrigger(ctypes.Structure):
+    _fields_ = [
+        ("class_", u8),
+        ("id", u16),
+        ("direction", u8),
+        ("action", u8),
+        ("consume", u8),
+        ("once_per_run", u8),
+        ("selector_len", u8),
+        ("match_len", u16),
+        ("mask_len", u16),
+        ("match_bytes", u8 * MEDIUS_MAX_PKT_MATCH),
+        ("mask", u8 * MEDIUS_MAX_PKT_MATCH),
+        ("hits", u16),
+    ]
+
+
 class MediusClipSettings(ctypes.Structure):
     _fields_ = [
         ("autolock_bits", u8),
@@ -75,6 +98,8 @@ class MediusClipSettings(ctypes.Structure):
         ("ride", u8),
         ("triggers", MediusClipTrigger * MEDIUS_CLIP_TRIG_MAX),
         ("n", u8),
+        ("packet_triggers", MediusClipPacketTrigger * MEDIUS_CLIP_PKT_TRIG_MAX),
+        ("packet_n", u8),
     ]
 
 
@@ -148,6 +173,7 @@ class MediusBoxInfo(ctypes.Structure):
         ("port", MediusPortInfo),
         ("version", MediusVersion),
         ("device", MediusDeviceInfo),
+        ("has_device", u8),
     ]
 
 
@@ -389,6 +415,9 @@ class MediusClipStatus(ctypes.Structure):
         ("underruns", u16),
         ("overruns", u16),
         ("seq_gaps", u16),
+        ("xfers", u16),
+        ("xfer_errs", u16),
+        ("gated", u16),
         ("held_n", u16),
         ("held", MediusUsage * MEDIUS_MAX_USAGES),
     ]
@@ -500,7 +529,23 @@ def _load_library():
     )
 
 
+def _check_abi(library):
+    # The structs above are a hand-written copy of medius.h. A library built from another header lays
+    # them out differently, and a call through a changed struct misreads it or overruns its buffer.
+    fn = library.medius_abi_version
+    fn.restype = u32
+    fn.argtypes = []
+    got = int(fn())
+    if got != ABI_VERSION:
+        raise ImportError(
+            f"{library._name} speaks medius C ABI {got}, and this medius package is built for ABI "
+            f"{ABI_VERSION}; install the medius package that matches the library, or point "
+            "MEDIUS_LIB at a library built from the same release"
+        )
+
+
 lib = _load_library()
+_check_abi(lib)
 
 
 def _decl(name, restype, argtypes, optional=False):
@@ -584,6 +629,11 @@ _decl(
     i32,
     [HANDLE, u8, MediusSetup, ctypes.POINTER(u8), usize, ctypes.POINTER(MediusTransferOutcome)],
 )
+_decl(
+    "medius_device_transfer_timeout",
+    i32,
+    [HANDLE, u8, MediusSetup, ctypes.POINTER(u8), usize, u32, ctypes.POINTER(MediusTransferOutcome)],
+)
 _decl("medius_device_set_rewrite", i32, [HANDLE, ctypes.POINTER(MediusRewriteRule)])
 _decl("medius_device_remove_rewrite", i32, [HANDLE, ctypes.POINTER(MediusRewriteRule)])
 _decl("medius_device_clear_rewrite", i32, [HANDLE])
@@ -602,6 +652,7 @@ _decl("medius_device_transform_remap", i32, [HANDLE, MediusLockTarget, MediusLoc
 _decl("medius_device_query_transforms", i32, [HANDLE, ctypes.POINTER(MediusTransforms)])
 
 _decl("medius_default_query_timeout_ms", u32, [])
+_decl("medius_default_transfer_timeout_ms", u32, [])
 _decl("medius_default_keepalive_cadence_ms", u32, [])
 _decl("medius_abi_version", u32, [])
 _decl("medius_version_string", ctypes.c_char_p, [])
@@ -653,6 +704,11 @@ _decl(
     "medius_traffic_event_bus_event",
     c_bool,
     [ctypes.POINTER(MediusTrafficEvent), ctypes.POINTER(MediusBusEvent)],
+)
+_decl(
+    "medius_traffic_event_transfer_status",
+    c_bool,
+    [ctypes.POINTER(MediusTrafficEvent), ctypes.POINTER(u8)],
 )
 _decl("medius_traffic_event_bulk_end_of_transfer", c_bool, [ctypes.POINTER(MediusTrafficEvent)])
 _decl("medius_traffic_event_bulk_zlp", c_bool, [ctypes.POINTER(MediusTrafficEvent)])
@@ -710,17 +766,34 @@ _decl("medius_log_stream_recv", i32, [HANDLE, ctypes.POINTER(MediusLogLine)])
 _decl("medius_log_stream_try_recv", c_bool, [HANDLE, ctypes.POINTER(MediusLogLine)])
 _decl("medius_log_stream_recv_timeout", c_bool, [HANDLE, u64, ctypes.POINTER(MediusLogLine)])
 
+_decl("medius_clip_frame_new", HANDLE, [])
+_decl("medius_clip_frame_free", None, [HANDLE])
+_decl("medius_clip_frame_clear", i32, [HANDLE])
+_decl("medius_clip_frame_move", i32, [HANDLE, i16, i16])
+_decl("medius_clip_frame_wheel", i32, [HANDLE, i16])
+_decl("medius_clip_frame_pan", i32, [HANDLE, i16])
+_decl("medius_clip_frame_edge", i32, [HANDLE, MediusUsage, u8])
+_decl("medius_clip_frame_press", i32, [HANDLE, MediusUsage])
+_decl("medius_clip_frame_release", i32, [HANDLE, MediusUsage])
+_decl("medius_clip_frame_force_release", i32, [HANDLE, MediusUsage])
+_decl("medius_clip_frame_raw", i32, [HANDLE, u8, u8, ctypes.POINTER(u8), usize])
+_decl("medius_clip_frame_transfer", i32, [HANDLE, u8, MediusSetup, ctypes.POINTER(u8), usize])
+_decl("medius_clip_frame_byte_len", usize, [HANDLE])
 _decl("medius_clip_builder_new", HANDLE, [])
 _decl("medius_clip_builder_free", None, [HANDLE])
 _decl("medius_clip_builder_clear", i32, [HANDLE])
+_decl("medius_clip_builder_byte_len", usize, [HANDLE])
 _decl("medius_clip_builder_gap", i32, [HANDLE, u16])
 _decl("medius_clip_builder_move", i32, [HANDLE, i16, i16])
 _decl("medius_clip_builder_wheel", i32, [HANDLE, i16])
+_decl("medius_clip_builder_pan", i32, [HANDLE, i16])
 _decl("medius_clip_builder_press", i32, [HANDLE, MediusUsage])
 _decl("medius_clip_builder_release", i32, [HANDLE, MediusUsage])
 _decl("medius_clip_builder_force_release", i32, [HANDLE, MediusUsage])
 _decl("medius_clip_builder_edge", i32, [HANDLE, MediusUsage, u8])
-_decl("medius_clip_builder_frame", i32, [HANDLE, i16, i16, i16, ctypes.POINTER(MediusUsage), ctypes.POINTER(u8), usize])
+_decl("medius_clip_builder_raw", i32, [HANDLE, u8, u8, ctypes.POINTER(u8), usize])
+_decl("medius_clip_builder_transfer", i32, [HANDLE, u8, MediusSetup, ctypes.POINTER(u8), usize])
+_decl("medius_clip_builder_frame", i32, [HANDLE, HANDLE])
 _decl("medius_device_clip", i32, [HANDLE, PHANDLE])
 _decl("medius_clip_free", None, [HANDLE])
 _decl("medius_clip_append", i32, [HANDLE, HANDLE])
@@ -730,6 +803,8 @@ _decl("medius_clip_set_retain", i32, [HANDLE, u8])
 _decl("medius_clip_set_ride", i32, [HANDLE, u8])
 _decl("medius_clip_bind", i32, [HANDLE, MediusClipTrigger])
 _decl("medius_clip_unbind", i32, [HANDLE, MediusUsage, u8])
+_decl("medius_clip_bind_packet", i32, [HANDLE, ctypes.POINTER(MediusClipPacketTrigger)])
+_decl("medius_clip_unbind_packet", i32, [HANDLE, ctypes.POINTER(MediusClipPacketTrigger)])
 _decl("medius_clip_clear_triggers", i32, [HANDLE])
 _decl("medius_clip_start", i32, [HANDLE])
 _decl("medius_clip_stop", i32, [HANDLE])
@@ -776,6 +851,11 @@ if HAS_MOCK:
     _decl("medius_mock_set_spread_learned", None, [HANDLE, u32])
     _decl("medius_mock_set_clip_status", None, [HANDLE, MediusClipStatus])
     _decl("medius_mock_set_clip_settings", None, [HANDLE, MediusClipSettings])
+    _decl(
+        "medius_mock_clip_packet",
+        c_bool,
+        [HANDLE, u8, u16, u8, ctypes.POINTER(u8), usize, ctypes.POINTER(u8), ctypes.POINTER(c_bool)],
+    )
     _decl("medius_mock_silent", None, [HANDLE])
     _decl("medius_mock_push_raw", None, [HANDLE, ctypes.POINTER(u8), usize])
     _decl("medius_mock_push_log", None, [HANDLE, u8, ctypes.c_char_p])

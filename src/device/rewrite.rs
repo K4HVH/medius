@@ -1,7 +1,9 @@
 use crate::error::{Error, Result};
 use crate::link::reconcile::StoredRewrite;
 use crate::protocol::command::rewrite_payload;
-use crate::protocol::opcode::{Q_REWRITE, Q_REWRITE_ENTRY, REWRITE_MAX_ENTRIES};
+use crate::protocol::opcode::{
+    MAX_PAYLOAD, Q_REWRITE, Q_REWRITE_ENTRY, REWRITE_MATCH_MAX, REWRITE_MAX_ENTRIES,
+};
 use crate::protocol::{FrameType, Resp, parse_resp};
 use crate::types::rewrite::{REWRITE_CLEAR_ID, rewrite_entry_from_payload};
 use crate::types::{Direction, RewriteAction, RewriteClass, RewriteRule, RewriteTable};
@@ -185,6 +187,12 @@ pub(crate) fn validate_rule(rule: &RewriteRule) -> Result<()> {
             mask_len: rule.mask.len(),
         });
     }
+    if rule.match_bytes.len() > REWRITE_MATCH_MAX {
+        return Err(Error::RewriteMatchTooLong {
+            len: rule.match_bytes.len(),
+            limit: REWRITE_MATCH_MAX,
+        });
+    }
     // REWRITE's direction byte is Both/Positive/Negative only; the box rejects the bearing-relative
     // pair by range, so surface it here rather than sending a frame the box drops.
     if rule.direction.is_relative() {
@@ -197,6 +205,19 @@ pub(crate) fn validate_rule(rule: &RewriteRule) -> Result<()> {
         return Err(Error::RewriteActionClass {
             action: rule.action,
             class: rule.class,
+        });
+    }
+    // The box refuses a rule its own read-back reply cannot carry: that reply's header is two bytes
+    // wider than the command's, so a rule can fit the frame it is sent in and still be refused.
+    const ENTRY_HDR: usize = 11;
+    let room = MAX_PAYLOAD - ENTRY_HDR - 2 * rule.match_bytes.len();
+    if rule.payload.len() > room {
+        return Err(Error::RewritePayloadTooLarge {
+            action: rule.action,
+            class: rule.class,
+            len: rule.payload.len(),
+            offset: rule.offset as usize,
+            cap: room,
         });
     }
     // Mirror the box's head-cap admission (rewrite_tab.h): a report surface holds 64 bytes and a

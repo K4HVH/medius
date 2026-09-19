@@ -1,5 +1,8 @@
-use crate::link::reconcile::DesiredState;
-use crate::types::{Action, Button, Key, MediaKey, Usage};
+use crate::link::reconcile::{DesiredState, clip_packet_key};
+use crate::types::{
+    Action, Blanket, Button, ClipAction, ClipPacketTrigger, ClipPacketTriggerEntry, ClipSettings,
+    ClipState, ClipStatus, ClipTrigger, Direction, Edge, Key, MediaKey, TrafficClass, Usage,
+};
 
 #[test]
 fn default_is_idle() {
@@ -540,5 +543,281 @@ fn reset_clears_transforms_too() {
     d.apply_transform(stored_xf(3, 1, 3, 1));
     d.clear(); // the RESET path
     assert!(d.held_transforms().is_empty());
+    assert!(d.is_idle());
+}
+
+// What the box holds of a clip is not re-asserted, but a second of silence clears it, so any of it keeps
+// the keepalive running.
+#[test]
+fn a_loaded_clip_a_setting_or_a_trigger_is_not_idle() {
+    let mut d = DesiredState::default();
+    d.clip_loaded(true);
+    assert!(!d.is_idle());
+    d.clip_loaded(false);
+    assert!(d.is_idle());
+
+    d.clip_setting(2, 1); // retain
+    assert!(!d.is_idle());
+    d.clip_setting(2, 0);
+    assert!(d.is_idle());
+    d.clip_setting(9, 1); // an id the box does not know either
+    assert!(d.is_idle());
+
+    d.clip_trigger((1, 0x3A, 1), true);
+    d.clip_trigger((1, 0x3A, 2), true);
+    d.clip_trigger((1, 0x3A, 1), false);
+    assert!(!d.is_idle());
+    d.clip_triggers_clear();
+    assert!(d.is_idle());
+
+    // A packet trigger is held under its whole key: the mask is part of it.
+    let key = |mask: u8| (4u8, 2u16, 1u8, vec![0x07], vec![mask]);
+    d.clip_packet_bind(key(0xFF), false);
+    d.clip_packet_bind(key(0x0F), false);
+    d.clip_packet_unbind(&key(0xFF));
+    assert!(!d.is_idle());
+    d.clip_packet_unbind(&key(0x0F));
+    assert!(d.is_idle());
+
+    // One clear drops both kinds from DesiredState.
+    d.clip_trigger((1, 0x3A, 1), true);
+    d.clip_packet_bind(key(0xFF), false);
+    d.clip_triggers_clear();
+    assert!(d.is_idle());
+    d.clip_packet_bind(key(0xFF), false);
+    d.clip_triggers_clear();
+    assert!(d.is_idle());
+}
+
+// The box removes every consuming packet trigger when the opt-in goes off, and holds the rest.
+#[test]
+fn the_opt_in_going_off_drops_the_consuming_packet_triggers() {
+    let key = |id: u16| (4u8, id, 1u8, vec![0x07], vec![0xFF]);
+    let mut d = DesiredState::default();
+    d.clip_packet_bind(key(1), true);
+    d.clip_packet_bind(key(2), false);
+    d.clip_packet_bind(key(3), true);
+    assert_eq!(d.clip_packet_drop_consuming(), vec![key(1), key(3)]);
+    assert!(!d.is_idle(), "the watching trigger stands");
+    assert_eq!(d.clip_packet_drop_consuming(), vec![]);
+    d.clip_packet_unbind(&key(2));
+    assert!(d.is_idle());
+
+    // A re-bind takes the flags it sent: a consuming trigger re-bound watching stays.
+    d.clip_packet_bind(key(1), true);
+    d.clip_packet_bind(key(1), false);
+    assert_eq!(d.clip_packet_drop_consuming(), vec![]);
+    assert!(!d.is_idle());
+    // Only consuming triggers: nothing is left to hold.
+    d.clip_packet_bind(key(1), true);
+    d.clip_packet_drop_consuming();
+    assert!(d.is_idle());
+
+    // An adopted trigger carries the consume flag the box read back.
+    let adopted = |consume: bool| ClipSettings {
+        packet_triggers: vec![ClipPacketTriggerEntry {
+            trigger: ClipPacketTrigger {
+                consume,
+                ..ClipPacketTrigger::new(TrafficClass::HidIn, 2, Direction::IN, ClipAction::Start)
+            },
+            hits: 0,
+        }],
+        ..ClipSettings::default()
+    };
+    for consume in [false, true] {
+        let mut d = DesiredState::default();
+        d.clip_adopt(&ClipStatus::default(), &adopted(consume));
+        assert_eq!(d.clip_packet_drop_consuming().len(), consume as usize);
+        assert_eq!(d.is_idle(), consume);
+    }
+}
+
+#[test]
+fn a_reset_forgets_the_clip() {
+    let mut d = DesiredState::default();
+    d.clip_loaded(true);
+    d.clip_setting(1, 1);
+    d.clip_trigger((0, 3, 1), true);
+    d.clip_packet_bind((9, 1, 1, vec![], vec![]), false);
+    d.clear();
+    assert!(d.is_idle());
+}
+
+// After a reconnect the box's own answer replaces what was recorded: a blip shorter than the silence
+// window leaves the clip standing, a longer one clears it.
+#[test]
+fn a_reconnect_adopts_what_the_box_still_holds_of_a_clip() {
+    let empty = ClipStatus::default();
+    let plain = ClipSettings::default();
+    let mut d = DesiredState::default();
+    d.clip_loaded(true);
+    d.clip_setting(3, 1);
+    d.clip_trigger((0, 3, 1), true);
+    d.clip_packet_bind((9, 1, 1, vec![], vec![]), false);
+    d.clip_adopt(&empty, &plain);
+    assert!(
+        d.is_idle(),
+        "a box that lost the clip leaves nothing to keep alive"
+    );
+
+    let held = |status: &ClipStatus, settings: &ClipSettings| {
+        let mut d = DesiredState::default();
+        d.clip_adopt(status, settings);
+        !d.is_idle()
+    };
+    assert!(held(
+        &ClipStatus {
+            total: 40,
+            ..empty.clone()
+        },
+        &plain
+    ));
+    // A streaming clip that ran dry holds no bytes and is still playing.
+    assert!(held(
+        &ClipStatus {
+            state: ClipState::Playing,
+            ..empty.clone()
+        },
+        &plain
+    ));
+    assert!(held(
+        &empty,
+        &ClipSettings {
+            autolock: vec![Blanket::Aim],
+            ..plain.clone()
+        }
+    ));
+    assert!(held(
+        &empty,
+        &ClipSettings {
+            loop_: true,
+            ..plain.clone()
+        }
+    ));
+    assert!(held(
+        &empty,
+        &ClipSettings {
+            retain: true,
+            ..plain.clone()
+        }
+    ));
+    assert!(held(
+        &empty,
+        &ClipSettings {
+            ride: true,
+            ..plain.clone()
+        }
+    ));
+    // `finalized` is the ring's state, which `total` already covers.
+    assert!(!held(
+        &empty,
+        &ClipSettings {
+            finalized: true,
+            ..plain.clone()
+        }
+    ));
+
+    // Each adopted scalar lands on its own `CLIP_SET` id, where the next `set` of it overwrites it.
+    for (id, only) in [
+        (
+            0u8,
+            ClipSettings {
+                autolock: vec![Blanket::Aim],
+                ..plain.clone()
+            },
+        ),
+        (
+            1,
+            ClipSettings {
+                loop_: true,
+                ..plain.clone()
+            },
+        ),
+        (
+            2,
+            ClipSettings {
+                retain: true,
+                ..plain.clone()
+            },
+        ),
+        (
+            3,
+            ClipSettings {
+                ride: true,
+                ..plain.clone()
+            },
+        ),
+    ] {
+        let mut d = DesiredState::default();
+        d.clip_adopt(&empty, &only);
+        for other in (0..4).filter(|&o| o != id) {
+            d.clip_setting(other, 0);
+        }
+        assert!(!d.is_idle(), "setting {id} was adopted onto another id");
+        d.clip_setting(id, 0);
+        assert!(d.is_idle(), "setting {id}");
+    }
+
+    // An adopted trigger is the one `unbind` removes, and an adopted setting the one `set` overwrites.
+    let bound = ClipSettings {
+        triggers: vec![ClipTrigger::new(
+            Button::SIDE1,
+            Edge::Press,
+            ClipAction::Toggle,
+        )],
+        ride: true,
+        ..plain.clone()
+    };
+    let mut d = DesiredState::default();
+    d.clip_adopt(&empty, &bound);
+    d.clip_setting(3, 0);
+    assert!(!d.is_idle());
+    let (class, id) = Usage::from(Button::SIDE1).class_id();
+    d.clip_trigger((class, id, 1), false);
+    assert!(d.is_idle());
+
+    // An adopted packet trigger alone holds the keepalive, under the key `unbind_packet` removes.
+    let packet = ClipPacketTrigger::new(TrafficClass::HidIn, 2, Direction::IN, ClipAction::Start)
+        .matching([0x07, 0x20], [0xFF, 0x20])
+        .once_per_run(1);
+    let watching = ClipSettings {
+        packet_triggers: vec![ClipPacketTriggerEntry {
+            trigger: packet.clone(),
+            hits: 3,
+        }],
+        ..plain.clone()
+    };
+    assert!(held(&empty, &watching));
+    let mut d = DesiredState::default();
+    d.clip_adopt(&empty, &watching);
+    // Every part of the key tells two triggers apart.
+    for other in [
+        ClipPacketTrigger {
+            class: TrafficClass::Emit,
+            ..packet.clone()
+        },
+        ClipPacketTrigger {
+            id: 3,
+            ..packet.clone()
+        },
+        ClipPacketTrigger {
+            direction: Direction::OUT,
+            ..packet.clone()
+        },
+        packet.clone().matching([0x07, 0x00], [0xFF, 0x20]),
+        packet.clone().matching([0x07, 0x20], [0xFF, 0xFF]),
+    ] {
+        d.clip_packet_unbind(&clip_packet_key(&other));
+        assert!(!d.is_idle(), "{other:?}");
+    }
+    // The verb and the flags are no part of it.
+    let same_key = ClipPacketTrigger {
+        action: ClipAction::Stop,
+        consume: true,
+        once_per_run: false,
+        selector_len: 0,
+        ..packet
+    };
+    d.clip_packet_unbind(&clip_packet_key(&same_key));
     assert!(d.is_idle());
 }

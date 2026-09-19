@@ -1,13 +1,14 @@
-use std::collections::BTreeMap;
 use std::collections::btree_map::Entry;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::link::catch::FilterSet;
 use crate::protocol::opcode::{
-    BTN_COUNT, LOCK_CLS_AXIS, LOCK_CLS_BTN, LOCK_CLS_MEDIA, LOCK_DIR_AGAINST, LOCK_DIR_BOTH,
-    LOCK_DIR_NEG, LOCK_DIR_POS, LOCK_DIR_WITH, LOCK_ID_ALL, LOCK_SCALE_BLOCK, LOCK_SCALE_PASS,
-    MAX_BUTTONS,
+    BTN_COUNT, CLIP_SET_AUTOLOCK, CLIP_SET_LOOP, CLIP_SET_RETAIN, CLIP_SET_RIDE, LOCK_CLS_AXIS,
+    LOCK_CLS_BTN, LOCK_CLS_MEDIA, LOCK_DIR_AGAINST, LOCK_DIR_BOTH, LOCK_DIR_NEG, LOCK_DIR_POS,
+    LOCK_DIR_WITH, LOCK_ID_ALL, LOCK_SCALE_BLOCK, LOCK_SCALE_PASS, MAX_BUTTONS,
 };
-use crate::types::{Action, Class, Usage};
+use crate::types::lock::blanket_scope;
+use crate::types::{Action, Class, ClipPacketTrigger, ClipSettings, ClipState, ClipStatus, Usage};
 
 /// A lock the host wants held, keyed by its wire fields so a reapply is exact and idempotent.
 pub(crate) type LockKey = (u8, u16, u8);
@@ -185,9 +186,109 @@ pub(crate) struct DesiredState {
     // count. `None` before any CAPS read: the blanket then expands onto the five named buttons. A
     // device fact, not PC-owned injection state, so `clear()`/`is_idle()` leave it alone.
     declared_buttons: Option<u8>,
+    clip: ClipHeld,
+}
+
+// What the box holds of a clip: a loaded ring, settings off their defaults, and both kinds of trigger.
+// A second of control silence clears all of it, so while any of it stands the keepalive keeps the link
+// from going quiet. The ring's content is the caller's to reload, so a reconnect replays none of it
+// and reads back what the box still holds.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+struct ClipHeld {
+    loaded: bool,
+    settings: [u8; 4], // by CLIP_SET id; every default is 0
+    triggers: BTreeSet<(u8, u16, u8)>,
+    packet_triggers: BTreeMap<ClipPacketKey, bool>, // whether each consumes
+}
+
+// The (class, id, dir, match, mask) key the box holds a packet trigger under.
+pub(crate) type ClipPacketKey = (u8, u16, u8, Vec<u8>, Vec<u8>);
+
+pub(crate) fn clip_packet_key(t: &ClipPacketTrigger) -> ClipPacketKey {
+    (
+        t.class.as_u8(),
+        t.id,
+        t.direction.as_u8(),
+        t.match_bytes.clone(),
+        t.mask.clone(),
+    )
 }
 
 impl DesiredState {
+    pub(crate) fn clip_loaded(&mut self, loaded: bool) {
+        self.clip.loaded = loaded;
+    }
+
+    pub(crate) fn clip_setting(&mut self, id: u8, value: u8) {
+        if let Some(s) = self.clip.settings.get_mut(id as usize) {
+            *s = value;
+        }
+    }
+
+    pub(crate) fn clip_trigger(&mut self, key: (u8, u16, u8), present: bool) {
+        if present {
+            self.clip.triggers.insert(key);
+        } else {
+            self.clip.triggers.remove(&key);
+        }
+    }
+
+    pub(crate) fn clip_packet_bind(&mut self, key: ClipPacketKey, consume: bool) {
+        self.clip.packet_triggers.insert(key, consume);
+    }
+
+    pub(crate) fn clip_packet_unbind(&mut self, key: &ClipPacketKey) {
+        self.clip.packet_triggers.remove(key);
+    }
+
+    // The opt-in went off, and the box removed every consuming packet trigger with it. Returns what
+    // was dropped, for a caller whose frame never went out to put back.
+    pub(crate) fn clip_packet_drop_consuming(&mut self) -> Vec<ClipPacketKey> {
+        let dropped: Vec<ClipPacketKey> = self
+            .clip
+            .packet_triggers
+            .iter()
+            .filter(|&(_, &consume)| consume)
+            .map(|(k, _)| k.clone())
+            .collect();
+        for k in &dropped {
+            self.clip.packet_triggers.remove(k);
+        }
+        dropped
+    }
+
+    pub(crate) fn clip_triggers_clear(&mut self) {
+        self.clip.triggers.clear();
+        self.clip.packet_triggers.clear();
+    }
+
+    // Take the box's own answer for what it holds, read back after a reconnect. A ring with bytes in
+    // it, or an engine that is not idle (a streaming clip that ran dry stays playing), is a loaded clip.
+    pub(crate) fn clip_adopt(&mut self, status: &ClipStatus, settings: &ClipSettings) {
+        let mut scalars = [0u8; 4];
+        scalars[CLIP_SET_AUTOLOCK as usize] = blanket_scope(&settings.autolock);
+        scalars[CLIP_SET_LOOP as usize] = settings.loop_ as u8;
+        scalars[CLIP_SET_RETAIN as usize] = settings.retain as u8;
+        scalars[CLIP_SET_RIDE as usize] = settings.ride as u8;
+        self.clip = ClipHeld {
+            loaded: status.total != 0 || status.state != ClipState::Idle,
+            settings: scalars,
+            triggers: settings
+                .triggers
+                .iter()
+                .map(|t| {
+                    let (class, id) = t.on.class_id();
+                    (class, id, t.edge.as_u8())
+                })
+                .collect(),
+            packet_triggers: settings
+                .packet_triggers
+                .iter()
+                .map(|e| (clip_packet_key(&e.trigger), e.trigger.consume))
+                .collect(),
+        };
+    }
+
     /// Record a momentary-usage override (any class) for reconnect-replay.
     pub(crate) fn apply(&mut self, usage: Usage, action: Action) {
         let key = usage.class_id();
@@ -439,6 +540,7 @@ impl DesiredState {
         // `RESET` clears the box's transform table too (§3.15, the injection-adjacent lifecycle), so
         // drop the local copy for the same reason.
         self.transforms.clear();
+        self.clip = ClipHeld::default();
     }
 
     /// The catch subscription table the box should be holding (re-asserted on reconnect).
@@ -458,6 +560,10 @@ impl DesiredState {
             && self.locks.is_empty()
             && self.rewrites.is_empty()
             && self.transforms.is_empty()
+            && !self.clip.loaded
+            && self.clip.settings == [0; 4]
+            && self.clip.triggers.is_empty()
+            && self.clip.packet_triggers.is_empty()
     }
 
     /// Every held momentary override, as `(Usage, Action)`, for the reconnect reapply.

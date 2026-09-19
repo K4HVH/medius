@@ -69,11 +69,39 @@ def _u16(value, what):
     return v
 
 
+def _u32(value, what):
+    v = int(value)
+    if not 0 <= v <= 0xFFFFFFFF:
+        raise ValueError(f"{what} must be 0..4294967295, got {value!r}")
+    return v
+
+
 def _i16(value, what):
     v = int(value)
     if not -0x8000 <= v <= 0x7FFF:
         raise ValueError(f"{what} must be -32768..32767, got {value!r}")
     return v
+
+
+def _as_bytes(data, what) -> bytes:
+    """`data` as bytes, or TypeError. `bytes(3)` is three zero bytes, so an int never reaches it."""
+    if isinstance(data, (bytes, bytearray, memoryview)):
+        return bytes(data)
+    refusal = f"{what} must be bytes-like or an iterable of ints, got {type(data).__name__}"
+    if isinstance(data, str) or hasattr(data, "__index__"):
+        raise TypeError(refusal)
+    try:
+        return bytes(data)
+    except TypeError:
+        raise TypeError(refusal) from None
+
+
+def _bytes_buf(data, what):
+    """A ``(c_uint8 * n)`` buffer copied from `data`, and its length, for a ``POINTER(u8)`` argument.
+    An empty payload is a real zero-length buffer the C side never reads (it maps len 0 to an empty
+    slice)."""
+    raw = _as_bytes(data, what)
+    return (ctypes.c_uint8 * len(raw)).from_buffer_copy(raw), len(raw)
 
 
 def _window_ms(window_ms):
@@ -446,7 +474,8 @@ class Patch:
     """A descriptor patch (§3.14), keyed by ``(section, cfg, index, offset)``.
 
     ``bytes`` overwrites the descriptor from ``offset``; an empty ``bytes`` removes the patch at that
-    key. A patch never changes a descriptor's byte count.
+    key. A patch never changes a descriptor's byte count. ``cfg`` is the configuration index: 0 is the
+    first configuration, not ``bConfigurationValue``.
     """
 
     section: PatchSection
@@ -589,7 +618,9 @@ class PortInfo:
 class BoxInfo:
     port: PortInfo
     version: Version
-    device: "DeviceInfo"
+    #: None for a box on another control protocol (`version.proto_ver`); opening it raises
+    #: `BadProtoVerError`.
+    device: Optional["DeviceInfo"]
 
     @property
     def id(self) -> str:
@@ -654,7 +685,7 @@ class BusEvent:
 @dataclass
 class TrafficEvent:
     """One byte-oriented catch event: HID reports, vendor endpoints, control transactions, the bytes
-    the clone emitted, or bus lifecycle.
+    the clone emitted, bus lifecycle, or a clip's control transfers.
 
     `bytes` is as much of the packet as the subscription's capture kept; `true_len` is its length
     before that truncation, so set both when building one by hand.
@@ -673,13 +704,13 @@ class TrafficEvent:
         return bool(_native.lib.medius_traffic_event_truncated(ctypes.byref(c)))
 
     def setup(self) -> Optional[bytes]:
-        """The 8-byte setup packet of a CONTROL event; `None` for another class or a shorter capture."""
+        """The 8-byte setup packet of a CONTROL or CLIP_TRANSFER event; `None` for another class or a shorter capture."""
         c = traffic_event_to_c(self)
         p = _native.lib.medius_traffic_event_setup(ctypes.byref(c))
         return bytes(p[:8]) if p else None
 
     def data(self) -> bytes:
-        """The data stage of a CONTROL event, the whole packet for any other class."""
+        """The data stage of a CONTROL or CLIP_TRANSFER event, the whole packet for any other class."""
         c = traffic_event_to_c(self)
         n = _native.usize()
         p = _native.lib.medius_traffic_event_data(ctypes.byref(c), ctypes.byref(n))
@@ -692,6 +723,17 @@ class TrafficEvent:
         if _native.lib.medius_traffic_event_control_status(ctypes.byref(c), ctypes.byref(out)):
             return ControlStatus(out.value)
         return None
+
+    def transfer_status(self) -> "Optional[TransferStatus | int]":
+        """How the transfer ended; `None` for any class but CLIP_TRANSFER. `NAK` when no answer came, and the raw byte for a status no member names."""
+        c = traffic_event_to_c(self)
+        out = _native.u8()
+        if not _native.lib.medius_traffic_event_transfer_status(ctypes.byref(c), ctypes.byref(out)):
+            return None
+        try:
+            return TransferStatus(out.value)
+        except ValueError:
+            return int(out.value)
 
     def bus_event(self) -> Optional[BusEvent]:
         """The lifecycle event; `None` for any class but BUS or an unknown kind."""
@@ -1202,7 +1244,8 @@ def port_from_c(c) -> PortInfo:
 
 
 def box_from_c(c) -> BoxInfo:
-    return BoxInfo(port_from_c(c.port), version_from_c(c.version), device_info_from_c(c.device))
+    device = device_info_from_c(c.device) if c.has_device else None
+    return BoxInfo(port_from_c(c.port), version_from_c(c.version), device)
 
 
 def mouse_caps_from_c(c) -> MouseCaps:
@@ -1343,15 +1386,23 @@ def imperfect_to_c(i) -> "_native.MediusImperfectStatus":
     )
 
 
-# The advanced control layer (§3.14). Over-capacity byte fields raise here rather than reach ctypes, which
-# would truncate silently; the crate-level refusals (mask length, action/class, payload size, relative
-# direction) are values that DO marshal and come back as their own status.
+# The advanced control layer (§3.14). A byte field over its ABI capacity raises here, because ctypes
+# would cut it to fit; the crate-level refusals (mask length, match length, action/class, payload
+# size, relative direction) are values that DO marshal and come back as their own status.
 def _fixed_bytes(dst, src: bytes, cap: int, what: str) -> int:
     if len(src) > cap:
         raise ValueError(f"{what} is {len(src)} bytes, over the {cap}-byte ABI limit")
     for i, byte in enumerate(src):
         dst[i] = byte
     return len(src)
+
+
+# A match or mask crosses with its whole length and as many bytes as the array holds, so one past
+# the array comes back as the library's status.
+def _match_field(dst, src: bytes, what: str) -> int:
+    for i, byte in enumerate(src[: len(dst)]):
+        dst[i] = byte
+    return _u16(len(src), what)
 
 
 def setup_to_c(s) -> "_native.MediusSetup":
@@ -1380,12 +1431,10 @@ def rewrite_rule_to_c(r) -> "_native.MediusRewriteRule":
     c.direction = int(_enum(r.direction, Direction, "direction"))
     c.action = int(_enum(r.action, RewriteAction, "action"))
     c.offset = _u16(r.offset, "offset")
-    c.match_len = _fixed_bytes(
-        c.match_bytes, bytes(r.match_bytes), _native.MEDIUS_MAX_REWRITE_MATCH, "match_bytes"
-    )
-    c.mask_len = _fixed_bytes(c.mask, bytes(r.mask), _native.MEDIUS_MAX_REWRITE_MATCH, "mask")
+    c.match_len = _match_field(c.match_bytes, _as_bytes(r.match_bytes, "match_bytes"), "match_bytes")
+    c.mask_len = _match_field(c.mask, _as_bytes(r.mask, "mask"), "mask")
     c.payload_len = _fixed_bytes(
-        c.payload, bytes(r.payload), _native.MEDIUS_MAX_DEV_PAYLOAD, "payload"
+        c.payload, _as_bytes(r.payload, "payload"), _native.MEDIUS_MAX_DEV_PAYLOAD, "payload"
     )
     return c
 
@@ -1431,7 +1480,7 @@ def patch_to_c(p) -> "_native.MediusPatch":
     c.cfg = _u8(p.cfg, "cfg")
     c.index = _u8(p.index, "index")
     c.offset = _u16(p.offset, "offset")
-    c.len = _fixed_bytes(c.bytes, bytes(p.bytes), _native.MEDIUS_MAX_DEV_PAYLOAD, "bytes")
+    c.len = _fixed_bytes(c.bytes, _as_bytes(p.bytes, "bytes"), _native.MEDIUS_MAX_DEV_PAYLOAD, "bytes")
     return c
 
 
@@ -1528,6 +1577,13 @@ class ClipStatus:
     underruns: int
     overruns: int
     seq_gaps: int
+    #: Clip transfers the device completed.
+    xfers: int
+    #: Clip transfers that ended any other way: a refusal, no answer, no room in the box's queue, or
+    #: dropped behind one the device did not answer.
+    xfer_errs: int
+    #: Raw reports and transfers the box discarded because the imperfect-clone opt-in was off.
+    gated: int
     held: List["Usage"] = field(default_factory=list)
 
     def is_held(self, usage: "Usage") -> bool:
@@ -1546,6 +1602,9 @@ def clip_status_from_c(c) -> ClipStatus:
         c.underruns,
         c.overruns,
         c.seq_gaps,
+        c.xfers,
+        c.xfer_errs,
+        c.gated,
         held,
     )
 
@@ -1560,6 +1619,9 @@ def clip_status_to_c(s) -> "_native.MediusClipStatus":
     c.underruns = s.underruns
     c.overruns = s.overruns
     c.seq_gaps = s.seq_gaps
+    c.xfers = s.xfers
+    c.xfer_errs = s.xfer_errs
+    c.gated = s.gated
     n = min(len(s.held), _native.MEDIUS_MAX_USAGES)
     c.held_n = n
     for i in range(n):
@@ -1569,7 +1631,8 @@ def clip_status_to_c(s) -> "_native.MediusClipStatus":
 
 @dataclass
 class ClipTrigger:
-    """One clip trigger binding: `on`'s `edge` drives `action`; `consume` suppresses the input from the game."""
+    """One clip input trigger: `on`'s `edge` drives `action`; `consume` suppresses the input from the
+    game. The trigger set's other kind is the `ClipPacketTrigger`."""
 
     on: "Usage"
     edge: Edge
@@ -1578,15 +1641,79 @@ class ClipTrigger:
 
 
 @dataclass
+class ClipPacketTrigger:
+    """One clip packet trigger, keyed by ``(traffic_class, id, direction, match_bytes, mask)``: a
+    packet on a traffic surface whose head matches under the mask drives ``action`` on the box's next
+    tick, with no host round trip. The trigger set's other kind is the input `ClipTrigger`.
+
+    ``traffic_class`` is the surface the packet crosses: any `TrafficClass` but ``BUS`` and
+    ``CLIP_TRANSFER``. ``id`` is the interface number for ``HID_IN`` and the endpoint number for the
+    rest, or `ANY_ID`. ``direction`` is `Direction.BOTH`, or the one of `Direction.IN` and
+    `Direction.OUT` the class carries.
+
+    ``match_bytes`` and ``mask`` are the masked head compare and must be the same length, at most
+    `PKT_MATCH_MAX`: a packet matches when ``head[i] & mask[i] == match_bytes[i]`` for each, and an
+    empty match takes every packet on the address. For ``CONTROL`` the head is the 8 setup bytes, then
+    the first 8 bytes of OUT data. An ``EMIT`` trigger sees the clip's own frames as well as native
+    and injected ones, and none of the clip's raw reports.
+
+    A trigger no packet can match is refused, by `ClipHandle.bind_packet` and by the box: a match bit
+    outside its mask, since a packet byte is masked before it is compared, and a direction the class
+    never carries. ``HID_IN`` and ``EMIT`` flow ``IN`` and ``HID_OUT`` flows ``OUT``; the vendor
+    classes and ``CONTROL`` carry either, and every class takes ``BOTH``. The match and mask go to the
+    box as given.
+
+    The box reads a packet for its triggers as the packet arrived, ahead of the rewrite table, and the
+    two are independent: one packet can fire a trigger and win a `RewriteRule`. One trigger wins a
+    packet, most specific first: an exact ``id`` beats `ANY_ID`, more masked bits beat fewer, ``IN``
+    or ``OUT`` beats ``BOTH``, then the trigger bound earlier.
+
+    ``consume`` drops every packet the trigger wins, before the rewrite table sees it. Dropping
+    traffic alters the wire, so the box holds a consuming trigger only under
+    `Device.allow_imperfect_clones`, on any class but ``CONTROL``.
+
+    ``once_per_run`` drives the action on the first packet of a run of matching ones, so a device that
+    repeats a held state every poll fires once per hold; the release is a second trigger matching the
+    released bytes. A run is over one stream: a class other than ``CONTROL``, a concrete ``id``, and
+    ``IN`` or ``OUT``. The first ``selector_len`` match bytes select the stream within that address (a
+    report ID) and the rest are the condition, so ``selector_len`` is below the match length and the
+    mask past it has at least one bit set: a condition every packet of the stream meets is a run that
+    never ends.
+
+    ``hits`` is the packets the trigger has won since it was bound or overwritten (saturating), read
+    back by `ClipHandle.query_config`. `ClipHandle.bind_packet` sends the trigger without it, and a
+    value outside 0..65535 is a `ValueError` there as anywhere.
+    """
+
+    #: The ``id`` that addresses every interface or endpoint of the class.
+    ANY_ID = _native.MEDIUS_CATCH_ID_ANY
+
+    traffic_class: TrafficClass
+    id: int
+    direction: Direction
+    action: ClipAction
+    match_bytes: bytes = b""
+    mask: bytes = b""
+    consume: bool = False
+    once_per_run: bool = False
+    selector_len: int = 0
+    hits: int = 0
+
+
+@dataclass
 class ClipSettings:
-    """The clip configuration read back from RESP(CLIP): autolock, loop/retain, finalized, and the trigger set."""
+    """The clip configuration read back from RESP(CLIP): autolock, loop/retain, finalized, and both
+    kinds of trigger."""
 
     autolock: List[Blanket] = field(default_factory=list)
     loop: bool = False
     retain: bool = False
     finalized: bool = False
     ride: bool = False
+    #: The input triggers.
     triggers: List[ClipTrigger] = field(default_factory=list)
+    #: The packet triggers, in the order the box holds them, each with its ``hits``.
+    packet_triggers: List[ClipPacketTrigger] = field(default_factory=list)
 
 
 _BLANKET_BITS = [
@@ -1596,6 +1723,46 @@ _BLANKET_BITS = [
     (0x08, Blanket.KEYS),
     (0x10, Blanket.MEDIA),
 ]
+
+
+def _clip_packet_key_to_c(t) -> "_native.MediusClipPacketTrigger":
+    c = _native.MediusClipPacketTrigger()
+    c.class_ = int(_enum(t.traffic_class, TrafficClass, "traffic_class"))
+    c.id = _u16(t.id, "id")
+    c.direction = int(_enum(t.direction, Direction, "direction"))
+    c.match_len = _match_field(c.match_bytes, _as_bytes(t.match_bytes, "match_bytes"), "match_bytes")
+    c.mask_len = _match_field(c.mask, _as_bytes(t.mask, "mask"), "mask")
+    return c
+
+
+def clip_packet_trigger_to_c(t, key_only: bool = False) -> "_native.MediusClipPacketTrigger":
+    """`t` as its C mirror; with `key_only`, the key `ClipHandle.unbind_packet` reads and zeros."""
+    c = _clip_packet_key_to_c(t)
+    if key_only:
+        return c
+    c.action = int(_enum(t.action, ClipAction, "action"))
+    c.consume = 1 if t.consume else 0
+    c.once_per_run = 1 if t.once_per_run else 0
+    c.selector_len = _u8(t.selector_len, "selector_len")
+    c.hits = _u16(t.hits, "hits")
+    return c
+
+
+def clip_packet_trigger_from_c(c) -> ClipPacketTrigger:
+    ml = min(int(c.match_len), _native.MEDIUS_MAX_PKT_MATCH)
+    msl = min(int(c.mask_len), _native.MEDIUS_MAX_PKT_MATCH)
+    return ClipPacketTrigger(
+        TrafficClass(c.class_),
+        int(c.id),
+        Direction(c.direction),
+        ClipAction(c.action),
+        bytes(c.match_bytes[:ml]),
+        bytes(c.mask[:msl]),
+        bool(c.consume),
+        bool(c.once_per_run),
+        int(c.selector_len),
+        int(c.hits),
+    )
 
 
 def clip_settings_from_c(c) -> ClipSettings:
@@ -1609,6 +1776,8 @@ def clip_settings_from_c(c) -> ClipSettings:
         )
         for i in range(n)
     ]
+    packet_n = min(int(c.packet_n), _native.MEDIUS_CLIP_PKT_TRIG_MAX)
+    packet_triggers = [clip_packet_trigger_from_c(c.packet_triggers[i]) for i in range(packet_n)]
     autolock = [b for (m, b) in _BLANKET_BITS if c.autolock_bits & m]
     return ClipSettings(
         autolock,
@@ -1617,6 +1786,7 @@ def clip_settings_from_c(c) -> ClipSettings:
         bool(c.finalized),
         bool(c.ride),
         triggers,
+        packet_triggers,
     )
 
 
@@ -1638,6 +1808,10 @@ def clip_settings_to_c(s) -> "_native.MediusClipSettings":
             int(_enum(t.action, ClipAction, f"triggers[{i}].action")),
             1 if t.consume else 0,
         )
+    packet_n = min(len(s.packet_triggers), _native.MEDIUS_CLIP_PKT_TRIG_MAX)
+    c.packet_n = packet_n
+    for i in range(packet_n):
+        c.packet_triggers[i] = clip_packet_trigger_to_c(s.packet_triggers[i])
     return c
 
 
@@ -1710,7 +1884,7 @@ def traffic_event_to_c(t) -> "_native.MediusTrafficEvent":
     c.direction = int(_enum(t.direction, Direction, "direction"))
     c.flags = _u8(t.flags, "flags")
     c.true_len = _u16(t.true_len, "true_len")
-    raw = bytes(t.bytes)[: _native.MEDIUS_MAX_TRAFFIC_BYTES]
+    raw = _as_bytes(t.bytes, "bytes")[: _native.MEDIUS_MAX_TRAFFIC_BYTES]
     c.len = len(raw)
     for i, b in enumerate(raw):
         c.bytes[i] = b
