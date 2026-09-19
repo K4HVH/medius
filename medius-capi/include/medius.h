@@ -2260,10 +2260,10 @@ MediusStatus medius_device_set_render(struct MediusDevice *dev,
 
 // Set the percent of the host's command interval an injected delta is released across. 0 puts the
 // whole delta on the next report the box emits, 100 releases that delta across one command
-// interval, and above 100 overlaps. The box releases nothing across an interval until it has learned the host's
+// interval, and above 100 overlaps. A loop at the native report rate keeps each command whole, on a
+// report of its own. The box releases nothing across an interval until it has learned the host's
 // command period from `MOVE` arrivals.
-MediusStatus medius_device_set_spread(struct MediusDevice *dev,
-                                      uint16_t percent);
+MediusStatus medius_device_set_spread(struct MediusDevice *dev, uint16_t percent);
 
 MediusStatus medius_device_query_version(struct MediusDevice *dev, struct MediusVersion *out);
 

@@ -155,8 +155,8 @@ impl Device {
     /// across; persisted in NVS.
     ///
     /// 0 puts the whole delta on the next report the box emits. 100 releases that delta evenly
-    /// across one command interval. Above 100 overlaps, and is allowed. At a loop matched to the native report
-    /// rate the interval is one report period, so the emitted stream is what it was.
+    /// across one command interval. Above 100 overlaps, and is allowed. A loop at the native report rate
+    /// keeps each command whole, on a report of its own.
     ///
     /// The box learns the interval from `MOVE` arrivals and releases nothing across one until it
     /// has ([`SpreadStatus::span_us`](crate::SpreadStatus)). Motion asking for exact timing is
