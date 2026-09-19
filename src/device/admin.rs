@@ -16,6 +16,8 @@ impl Device {
     }
 
     /// Best-effort reconnect: rescan by VID/PID, reopen, re-apply held state, bump the counter.
+    /// [`Error::BadProtoVer`](crate::Error::BadProtoVer) when the box answers on another control
+    /// protocol, as after a reflash to other firmware; it stays disconnected.
     pub fn reconnect(&self) -> Result<()> {
         self.link.reconnect()
     }

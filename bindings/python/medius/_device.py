@@ -284,6 +284,10 @@ class Device:
         check(_native.lib.medius_device_reapply(self._handle))
 
     def reconnect(self):
+        """Rescan, reopen this box, and re-apply held state.
+
+        Raises `BadProtoVerError` when the box answers on another control protocol; it stays
+        disconnected."""
         check(_native.lib.medius_device_reconnect(self._handle))
 
     def reboot(self, target: RebootTarget):

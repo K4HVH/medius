@@ -8,8 +8,8 @@ import sys
 from ctypes.util import find_library
 from pathlib import Path
 
-# The medius_abi_version() of the header these ctypes mirrors were written from. Import refuses a
-# library that reports any other number.
+# MEDIUS_ABI_VERSION of the header these ctypes mirrors were written from; the tests hold it to the
+# header. Import refuses a library whose medius_abi_version() reports any other number.
 ABI_VERSION = 8
 
 MEDIUS_MAX_USAGES = 256

@@ -176,3 +176,59 @@ fn a_clip_call_that_never_went_out_records_nothing() {
     clip.clear_triggers().unwrap();
     assert!(idle());
 }
+
+// RESP(VERSION) for a box on `proto` with base MAC `mac`.
+fn version_reply(proto: u8, mac: [u8; 6]) -> Vec<u8> {
+    let mut p = vec![crate::protocol::opcode::Q_VERSION, proto, 3, 4, 0];
+    p.extend_from_slice(&mac);
+    p
+}
+
+// The same box answering after a reflash. Every other query gets a reply the probe cannot read, which
+// ends that probe at once.
+fn reflashed(proto: u8, mac: [u8; 6]) -> Arc<dyn crate::transport::Transport> {
+    Arc::new(MockTransport::with_responder(
+        move |ty, seq, payload| match (ty, payload.first()) {
+            (FrameType::Query, Some(&crate::protocol::opcode::Q_VERSION)) => {
+                encode(FrameType::Resp, seq, &version_reply(proto, mac)).unwrap()
+            }
+            (FrameType::Query, Some(&what)) => encode(FrameType::Resp, seq, &[what]).unwrap(),
+            _ => Vec::new(),
+        },
+    ))
+}
+
+#[test]
+fn a_rescan_refuses_the_box_back_on_another_protocol() {
+    let mac = [0x5A, 0x4E, 0x00, 0x11, 0x1E, 0x28];
+    let device = Device::from_transport_with_cadence(
+        Arc::new(MockTransport::new()),
+        Duration::from_secs(60),
+    );
+    device
+        .link
+        .set_identity(crate::link::reconnect::BoxIdentity { serial: None, mac });
+
+    // v3.4.0 firmware answers protocol 7, and a later one 9. Neither is taken back.
+    for proto in [7, crate::PROTO_VER + 1] {
+        let port = reflashed(proto, mac);
+        let err = device
+            .link
+            .adopt_reopened(vec![("/dev/ttyACM0".into(), Arc::clone(&port))])
+            .unwrap_err();
+        assert!(
+            matches!(err, crate::Error::BadProtoVer { got } if got == proto),
+            "{proto}: {err:?}"
+        );
+        assert_eq!(Arc::strong_count(&port), 1, "{proto}: the port was adopted");
+        assert_eq!(device.counters().reconnects, 0);
+    }
+
+    // On this build's protocol the same box is taken back.
+    let port = reflashed(crate::PROTO_VER, mac);
+    device
+        .link
+        .adopt_reopened(vec![("/dev/ttyACM0".into(), Arc::clone(&port))])
+        .expect("the box on this build's protocol is adopted");
+    assert_eq!(device.counters().reconnects, 1);
+}

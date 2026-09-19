@@ -9,10 +9,12 @@ pub const SOF: u8 = 0xA5;
 pub const MAX_PAYLOAD: usize = 512;
 
 /// Protocol version in `RESP(VERSION)` (§4.1); the handshake requires this exact value. Bumped to 8
-/// for v3.4.1, which reshapes `RESP(CLIP)`, `CLIP_TRIGGER` and `REWRITE`. Protocol 7 is v3.4.0: the
-/// advanced control layer (`RAW`/`TRANSFER`/`REWRITE`/`PATCH`) and the `u16` `HEALTH` flags. The
-/// handshake refuses a v3.4.0 box with [`Error::BadProtoVer`](crate::Error::BadProtoVer); update its
-/// firmware from the dashboard at <https://medius.k4tech.net/dashboard> before opening it here.
+/// for v3.4.1, which reshapes `RESP(CLIP)` and `CLIP_TRIGGER` and matches an interrupt OUT packet on
+/// a vendor interface as `VendorInterrupt`, which protocol 7 matched as `HidOut`. Protocol 7 is
+/// v3.4.0: the advanced control layer (`RAW`/`TRANSFER`/`REWRITE`/`PATCH`) and the `u16` `HEALTH`
+/// flags. The handshake refuses a v3.4.0 box with [`Error::BadProtoVer`](crate::Error::BadProtoVer);
+/// update its firmware from the dashboard at <https://medius.k4tech.net/dashboard> before opening it
+/// here.
 pub const PROTO_VER: u8 = 8;
 
 /// `INJECT` class byte: the momentary-usage field kind.
