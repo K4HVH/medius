@@ -572,21 +572,64 @@ fn a_loaded_clip_a_setting_or_a_trigger_is_not_idle() {
 
     // A packet trigger is held under its whole key: the mask is part of it.
     let key = |mask: u8| (4u8, 2u16, 1u8, vec![0x07], vec![mask]);
-    d.clip_packet_trigger(key(0xFF), true);
-    d.clip_packet_trigger(key(0x0F), true);
-    d.clip_packet_trigger(key(0xFF), false);
+    d.clip_packet_bind(key(0xFF), false);
+    d.clip_packet_bind(key(0x0F), false);
+    d.clip_packet_unbind(&key(0xFF));
     assert!(!d.is_idle());
-    d.clip_packet_trigger(key(0x0F), false);
+    d.clip_packet_unbind(&key(0x0F));
     assert!(d.is_idle());
 
-    // One clear forgets both kinds.
+    // One clear drops both kinds from DesiredState.
     d.clip_trigger((1, 0x3A, 1), true);
-    d.clip_packet_trigger(key(0xFF), true);
+    d.clip_packet_bind(key(0xFF), false);
     d.clip_triggers_clear();
     assert!(d.is_idle());
-    d.clip_packet_trigger(key(0xFF), true);
+    d.clip_packet_bind(key(0xFF), false);
     d.clip_triggers_clear();
     assert!(d.is_idle());
+}
+
+// The box removes every consuming packet trigger when the opt-in goes off, and holds the rest.
+#[test]
+fn the_opt_in_going_off_drops_the_consuming_packet_triggers() {
+    let key = |id: u16| (4u8, id, 1u8, vec![0x07], vec![0xFF]);
+    let mut d = DesiredState::default();
+    d.clip_packet_bind(key(1), true);
+    d.clip_packet_bind(key(2), false);
+    d.clip_packet_bind(key(3), true);
+    assert_eq!(d.clip_packet_drop_consuming(), vec![key(1), key(3)]);
+    assert!(!d.is_idle(), "the watching trigger stands");
+    assert_eq!(d.clip_packet_drop_consuming(), vec![]);
+    d.clip_packet_unbind(&key(2));
+    assert!(d.is_idle());
+
+    // A re-bind takes the flags it sent: a consuming trigger re-bound watching stays.
+    d.clip_packet_bind(key(1), true);
+    d.clip_packet_bind(key(1), false);
+    assert_eq!(d.clip_packet_drop_consuming(), vec![]);
+    assert!(!d.is_idle());
+    // Only consuming triggers: nothing is left to hold.
+    d.clip_packet_bind(key(1), true);
+    d.clip_packet_drop_consuming();
+    assert!(d.is_idle());
+
+    // An adopted trigger carries the consume flag the box read back.
+    let adopted = |consume: bool| ClipSettings {
+        packet_triggers: vec![ClipPacketTriggerEntry {
+            trigger: ClipPacketTrigger {
+                consume,
+                ..ClipPacketTrigger::new(TrafficClass::HidIn, 2, Direction::IN, ClipAction::Start)
+            },
+            hits: 0,
+        }],
+        ..ClipSettings::default()
+    };
+    for consume in [false, true] {
+        let mut d = DesiredState::default();
+        d.clip_adopt(&ClipStatus::default(), &adopted(consume));
+        assert_eq!(d.clip_packet_drop_consuming().len(), consume as usize);
+        assert_eq!(d.is_idle(), consume);
+    }
 }
 
 #[test]
@@ -595,7 +638,7 @@ fn a_reset_forgets_the_clip() {
     d.clip_loaded(true);
     d.clip_setting(1, 1);
     d.clip_trigger((0, 3, 1), true);
-    d.clip_packet_trigger((9, 1, 1, vec![], vec![]), true);
+    d.clip_packet_bind((9, 1, 1, vec![], vec![]), false);
     d.clear();
     assert!(d.is_idle());
 }
@@ -610,7 +653,7 @@ fn a_reconnect_adopts_what_the_box_still_holds_of_a_clip() {
     d.clip_loaded(true);
     d.clip_setting(3, 1);
     d.clip_trigger((0, 3, 1), true);
-    d.clip_packet_trigger((9, 1, 1, vec![], vec![]), true);
+    d.clip_packet_bind((9, 1, 1, vec![], vec![]), false);
     d.clip_adopt(&empty, &plain);
     assert!(
         d.is_idle(),
@@ -764,7 +807,7 @@ fn a_reconnect_adopts_what_the_box_still_holds_of_a_clip() {
         packet.clone().matching([0x07, 0x00], [0xFF, 0x20]),
         packet.clone().matching([0x07, 0x20], [0xFF, 0xFF]),
     ] {
-        d.clip_packet_trigger(clip_packet_key(&other), false);
+        d.clip_packet_unbind(&clip_packet_key(&other));
         assert!(!d.is_idle(), "{other:?}");
     }
     // The verb and the flags are no part of it.
@@ -775,6 +818,6 @@ fn a_reconnect_adopts_what_the_box_still_holds_of_a_clip() {
         selector_len: 0,
         ..packet
     };
-    d.clip_packet_trigger(clip_packet_key(&same_key), false);
+    d.clip_packet_unbind(&clip_packet_key(&same_key));
     assert!(d.is_idle());
 }

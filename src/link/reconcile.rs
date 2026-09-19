@@ -198,7 +198,7 @@ struct ClipHeld {
     loaded: bool,
     settings: [u8; 4], // by CLIP_SET id; every default is 0
     triggers: BTreeSet<(u8, u16, u8)>,
-    packet_triggers: BTreeSet<ClipPacketKey>,
+    packet_triggers: BTreeMap<ClipPacketKey, bool>, // whether each consumes
 }
 
 // The (class, id, dir, match, mask) key the box holds a packet trigger under.
@@ -233,12 +233,28 @@ impl DesiredState {
         }
     }
 
-    pub(crate) fn clip_packet_trigger(&mut self, key: ClipPacketKey, present: bool) {
-        if present {
-            self.clip.packet_triggers.insert(key);
-        } else {
-            self.clip.packet_triggers.remove(&key);
+    pub(crate) fn clip_packet_bind(&mut self, key: ClipPacketKey, consume: bool) {
+        self.clip.packet_triggers.insert(key, consume);
+    }
+
+    pub(crate) fn clip_packet_unbind(&mut self, key: &ClipPacketKey) {
+        self.clip.packet_triggers.remove(key);
+    }
+
+    // The opt-in went off, and the box removed every consuming packet trigger with it. Returns what
+    // was dropped, for a caller whose frame never went out to put back.
+    pub(crate) fn clip_packet_drop_consuming(&mut self) -> Vec<ClipPacketKey> {
+        let dropped: Vec<ClipPacketKey> = self
+            .clip
+            .packet_triggers
+            .iter()
+            .filter(|&(_, &consume)| consume)
+            .map(|(k, _)| k.clone())
+            .collect();
+        for k in &dropped {
+            self.clip.packet_triggers.remove(k);
         }
+        dropped
     }
 
     pub(crate) fn clip_triggers_clear(&mut self) {
@@ -268,7 +284,7 @@ impl DesiredState {
             packet_triggers: settings
                 .packet_triggers
                 .iter()
-                .map(|e| clip_packet_key(&e.trigger))
+                .map(|e| (clip_packet_key(&e.trigger), e.trigger.consume))
                 .collect(),
         };
     }

@@ -178,9 +178,9 @@ impl PacketTriggers {
         self.rows.iter().map(|r| r.match_bytes.len()).sum()
     }
 
-    // clip_ptrig_set: add, overwrite or remove one trigger, or refuse the frame whole. `class` is a
-    // traffic surface, the only kind of frame routed here. `imperfect` is OPTION(IMPERFECT), which a
-    // consuming trigger rides.
+    // clip_ptrig_set: add, overwrite or remove one trigger, or refuse the frame whole. Returns the
+    // index of the trigger it set or removed. `imperfect` is whether `OPTION(IMPERFECT)` is on, which
+    // a consuming trigger needs.
     #[allow(clippy::too_many_arguments)]
     fn set(
         &mut self,
@@ -193,10 +193,11 @@ impl PacketTriggers {
         match_bytes: &[u8],
         mask: &[u8],
         imperfect: bool,
-    ) {
+    ) -> Option<usize> {
         let mlen = match_bytes.len();
-        if dir > LOCK_DIR_NEG || mlen > PKT_MATCH_MAX {
-            return;
+        let surface = (CATCH_CLS_HID_IN..=CATCH_CLS_EMIT).contains(&class);
+        if !surface || dir > LOCK_DIR_NEG || mlen > PKT_MATCH_MAX || mask.len() != mlen {
+            return None;
         }
         // A trigger no packet can match, as a set or as the key of a removal: a direction the class
         // never carries, or a match bit outside the mask.
@@ -204,10 +205,10 @@ impl PacketTriggers {
         if (dir == LOCK_DIR_NEG && one_way_in)
             || (dir == LOCK_DIR_POS && class == CATCH_CLS_HID_OUT)
         {
-            return;
+            return None;
         }
         if match_bytes.iter().zip(mask).any(|(m, k)| m & !k != 0) {
-            return;
+            return None;
         }
         let found = self.rows.iter().position(|r| {
             (r.class, r.id, r.dir) == (class, id, dir)
@@ -215,19 +216,18 @@ impl PacketTriggers {
                 && r.mask == mask
         });
         if flags & CLIP_TRIG_F_PRESENT == 0 {
-            if let Some(i) = found {
-                self.rows.remove(i);
-            }
-            return;
+            let i = found?;
+            self.rows.remove(i);
+            return Some(i);
         }
         if action > CLIP_OP_TOGGLE
             || flags & !(CLIP_TRIG_F_PRESENT | CLIP_TRIG_F_CONSUME | CLIP_TRIG_F_RUN) != 0
         {
-            return;
+            return None;
         }
         let ctl = class == CATCH_CLS_CONTROL;
         if flags & CLIP_TRIG_F_CONSUME != 0 && (ctl || !imperfect) {
-            return;
+            return None;
         }
         if flags & CLIP_TRIG_F_RUN != 0 {
             // The condition is the mask past the selector. With no byte there, or no masked bit in
@@ -238,10 +238,10 @@ impl PacketTriggers {
                 || dir == LOCK_DIR_BOTH
                 || condition.iter().all(|&k| k == 0)
             {
-                return;
+                return None;
             }
         } else if slen != 0 {
-            return;
+            return None;
         }
         let keep = flags & (CLIP_TRIG_F_CONSUME | CLIP_TRIG_F_RUN);
         if let Some(i) = found {
@@ -251,10 +251,10 @@ impl PacketTriggers {
                 (r.action, r.flags, r.slen) = (action, keep, slen);
                 (r.hits, r.live) = (0, false);
             }
-            return;
+            return Some(i);
         }
         if self.rows.len() >= CLIP_PKT_TRIG_MAX || self.match_used() + mlen > CLIP_PKT_MATCH_POOL {
-            return;
+            return None;
         }
         self.rows.push(MockPacketTrigger {
             class,
@@ -268,6 +268,12 @@ impl PacketTriggers {
             hits: 0,
             live: false,
         });
+        Some(self.rows.len() - 1)
+    }
+
+    // clip_ptrig_drop_consuming: the opt-in went off, and consuming a packet is dropping traffic.
+    fn drop_consuming(&mut self) {
+        self.rows.retain(|r| r.flags & CLIP_TRIG_F_CONSUME == 0);
     }
 
     // clip_ptrig_packet: one packet through the set. Every RUN trigger on this exact address has its
@@ -818,32 +824,39 @@ impl State {
         self.packet_triggers.rows.clear();
     }
 
-    // Script the clip config. The packet triggers go into the table under the bounds the box holds it
-    // to, so a script past them reads back as the box would answer: the entries that fit.
+    // Script the clip config. Each packet trigger is bound in order as a CLIP_TRIGGER frame binds it,
+    // under the opt-in as it stands, so a script reads back as the box would answer: the entries it
+    // takes, each with its scripted `hits`.
     fn script_clip_settings(&mut self, mut settings: ClipSettings) {
         self.packet_triggers.rows.clear();
+        let imperfect = self.imperfect.allowed;
         for e in std::mem::take(&mut settings.packet_triggers) {
             let t = e.trigger;
-            let fits = t.match_bytes.len() == t.mask.len()
-                && t.match_bytes.len() <= PKT_MATCH_MAX
-                && self.packet_triggers.rows.len() < CLIP_PKT_TRIG_MAX
-                && self.packet_triggers.match_used() + t.match_bytes.len() <= CLIP_PKT_MATCH_POOL;
-            if fits {
-                self.packet_triggers.rows.push(MockPacketTrigger {
-                    class: t.class.as_u8(),
-                    id: t.id,
-                    dir: t.direction.as_u8(),
-                    action: t.action.as_u8(),
-                    flags: t.flags(),
-                    slen: t.selector_len,
-                    match_bytes: t.match_bytes,
-                    mask: t.mask,
-                    hits: e.hits as u32,
-                    live: false,
-                });
+            let taken = self.packet_triggers.set(
+                t.class.as_u8(),
+                t.id,
+                t.direction.as_u8(),
+                t.action.as_u8(),
+                CLIP_TRIG_F_PRESENT | t.flags(),
+                t.selector_len,
+                &t.match_bytes,
+                &t.mask,
+                imperfect,
+            );
+            if let Some(i) = taken {
+                self.packet_triggers.rows[i].hits = e.hits as u32;
             }
         }
         self.clip_settings = settings;
+    }
+
+    // A scripted opt-in, which goes off as OPTION(IMPERFECT) takes it off: the consuming packet
+    // triggers go with it.
+    fn script_imperfect(&mut self, imperfect: ImperfectStatus) {
+        self.imperfect = imperfect;
+        if !imperfect.allowed {
+            self.packet_triggers.drop_consuming();
+        }
     }
 
     // Apply a TRANSFORM frame (§3.15), modelled on transform_tab_set. Ungated: a transform is faithful,
@@ -1001,10 +1014,7 @@ impl State {
                         self.rewrite_gen = self.rewrite_gen.wrapping_add(1);
                     }
                     self.rewrite_full = false;
-                    // Consuming a packet is dropping traffic (clip_ptrig_drop_consuming).
-                    self.packet_triggers
-                        .rows
-                        .retain(|r| r.flags & CLIP_TRIG_F_CONSUME == 0);
+                    self.packet_triggers.drop_consuming();
                     // The clone re-presents without the opt-in, so a stored set stops being shown.
                     self.patch_applied = false;
                 }
@@ -1980,9 +1990,11 @@ impl MockBox {
     }
 
     /// Set the [`ImperfectStatus`] answered to `QUERY(OPTIONS, IMPERFECT)` (builder style).
+    /// With the opt-in off the mock drops its consuming clip packet triggers, as the box does when
+    /// `OPTION(IMPERFECT)` goes off.
     #[must_use]
     pub fn with_imperfect_status(self, imperfect: ImperfectStatus) -> Self {
-        self.state.lock().imperfect = imperfect;
+        self.state.lock().script_imperfect(imperfect);
         self
     }
 
@@ -2004,16 +2016,24 @@ impl MockBox {
     }
 
     /// Update the configured [`ImperfectStatus`] in place (e.g. to simulate an over-capacity device).
+    /// With the opt-in off the mock drops its consuming clip packet triggers, as the box does when
+    /// `OPTION(IMPERFECT)` goes off.
     pub fn set_imperfect_status(&self, imperfect: ImperfectStatus) {
-        self.state.lock().imperfect = imperfect;
+        self.state.lock().script_imperfect(imperfect);
     }
 
     /// Enable or disable the imperfect-clone opt-in the advanced control layer (§3.14) is gated on (builder
     /// style). A shorthand for scripting [`ImperfectStatus::allowed`] before a `raw`/`transfer`/`rewrite`.
+    /// With the opt-in off the mock drops its consuming clip packet triggers, as the box does when
+    /// `OPTION(IMPERFECT)` goes off.
     pub fn with_imperfect(self, allow: bool) -> Self {
         {
             let mut st = self.state.lock();
-            st.imperfect.allowed = allow;
+            let imperfect = ImperfectStatus {
+                allowed: allow,
+                ..st.imperfect
+            };
+            st.script_imperfect(imperfect);
         }
         self
     }
@@ -2132,16 +2152,24 @@ impl MockBox {
         self.state.lock().clip = clip;
     }
 
-    /// Set the [`ClipSettings`] answered to `QUERY(CLIP)` (builder style). Its packet triggers become
-    /// the set [`bind_packet`](crate::ClipHandle::bind_packet) adds to and
-    /// [`clip_packet`](Self::clip_packet) runs a packet through.
+    /// Set the [`ClipSettings`] answered to `QUERY(CLIP)` (builder style).
+    ///
+    /// The packet triggers are bound in order, as [`bind_packet`](crate::ClipHandle::bind_packet)
+    /// binds them, under the opt-in the mock holds when it is scripted. The mock holds the ones the
+    /// box would take, each with its scripted `hits`, and leaves out the rest as the box's own answer
+    /// would: a direction the class never carries, a match bit outside the mask, a run with no
+    /// condition, [`consume`](crate::ClipPacketTrigger::consume) on `Control` or with the opt-in off,
+    /// and entries past the count or the match pool. Script the opt-in before a consuming trigger.
+    /// The triggers held are the set `bind_packet` adds to and [`clip_packet`](Self::clip_packet)
+    /// runs a packet through.
     #[must_use]
     pub fn with_clip_settings(self, settings: ClipSettings) -> Self {
         self.state.lock().script_clip_settings(settings);
         self
     }
 
-    /// Update the [`ClipSettings`] answered to `QUERY(CLIP)` in place.
+    /// Update the [`ClipSettings`] answered to `QUERY(CLIP)` in place, as
+    /// [`with_clip_settings`](Self::with_clip_settings) scripts them.
     pub fn set_clip_settings(&self, settings: ClipSettings) {
         self.state.lock().script_clip_settings(settings);
     }

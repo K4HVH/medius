@@ -251,8 +251,10 @@ class ClipHandle:
 
         The box makes three checks this call cannot. A consuming trigger needs
         `Device.allow_imperfect_clones`, the set holds `CLIP_PKT_TRIG_MAX` triggers, and their match
-        bytes share a pool of `CLIP_PKT_MATCH_POOL`. A trigger the box refused is absent from
-        `query_config`.
+        bytes share a pool of `CLIP_PKT_MATCH_POOL`. A bind the box refuses leaves its set as it
+        was: a new key is not held, and a key the box holds keeps the trigger that was there, with its
+        own action and flags. To confirm a bind, compare the fields `query_config` reads back with the
+        ones bound.
         """
         c = clip_packet_trigger_to_c(trigger)
         check(_native.lib.medius_clip_bind_packet(self._handle, ctypes.byref(c)))

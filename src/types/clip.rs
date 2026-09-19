@@ -161,6 +161,9 @@ impl ClipTrigger {
 ///     .matching([0x07, 0x00], [0xFF, 0x20])
 ///     .once_per_run(1);
 /// clip.bind_packet(&held)?;
+/// // A run has no priming: on a device that repeats its state every poll, `let_go` bound with the
+/// // button up meets its condition at once and drives Stop on the next report. Bind it while the
+/// // button is held to skip that Stop, or accept it: with no clip playing it stops nothing.
 /// clip.bind_packet(&let_go)?;
 /// # Ok(()) }
 /// ```
@@ -218,8 +221,8 @@ impl ClipPacketTrigger {
 
     /// Narrow the trigger to packets whose head compares equal to `match_bytes` under `mask`. Both are
     /// one length, at most [`PKT_MATCH_MAX`](crate::PKT_MATCH_MAX) bytes, and every set bit of
-    /// `match_bytes` is set in `mask`; a longer packet still matches on its head. The two are the
-    /// trigger's key as given: neither is masked or trimmed on the way to the box.
+    /// `match_bytes` is set in `mask`; a longer packet still matches on its head. The box receives
+    /// both as given, and they are the trigger's key.
     pub fn matching(mut self, match_bytes: impl Into<Vec<u8>>, mask: impl Into<Vec<u8>>) -> Self {
         self.match_bytes = match_bytes.into();
         self.mask = mask.into();
@@ -229,11 +232,16 @@ impl ClipPacketTrigger {
     /// Consume the packet: every packet the trigger wins is dropped, whether or not the action runs on
     /// it. [`Control`](TrafficClass::Control) takes none.
     ///
+    /// A consumed [`HidIn`](TrafficClass::HidIn) report is dropped whole, the motion and buttons in it
+    /// with it; a release edge in that report reaches the PC with the next one. A catch subscription
+    /// still sees a consumed `HidIn` packet and a consumed OUT packet, and sees no consumed vendor IN
+    /// packet and no consumed [`Emit`](TrafficClass::Emit) packet.
+    ///
     /// Dropping traffic alters the wire, so the box holds a consuming trigger only under
     /// [`allow_imperfect_clones(true)`](crate::Device::allow_imperfect_clones). With the opt-in off
-    /// the box refuses the bind, which [`bind_packet`](crate::ClipHandle::bind_packet) cannot see:
-    /// the trigger is absent from [`query_config`](crate::ClipHandle::query_config). Turning the
-    /// opt-in off removes every consuming trigger the box holds.
+    /// the box refuses the bind, which [`bind_packet`](crate::ClipHandle::bind_packet) cannot see; its
+    /// docs say how to confirm a bind. Turning the opt-in off removes every consuming trigger the box
+    /// holds.
     pub fn consume(mut self) -> Self {
         self.consume = true;
         self
@@ -248,8 +256,13 @@ impl ClipPacketTrigger {
     /// [`OUT`](Direction::OUT). The first `selector_len` match bytes select the stream within that
     /// address (a report ID) and the rest are the condition, so `selector_len` is below the match
     /// length and the mask past it has at least one bit set: a condition every packet of the stream
-    /// meets is a run that never ends. A packet that fails the selector leaves the run as it was. An
-    /// identical re-bind keeps the run; an overwrite and a bus reset start it again.
+    /// meets is a run that never ends. A packet that fails the selector leaves the run as it was.
+    ///
+    /// A run has no priming. A trigger whose condition already holds when it is bound drives its
+    /// action on the next packet of its stream, so a release trigger bound with the button up fires
+    /// at once on a device that repeats its state every poll. Bind the press trigger first and the
+    /// release trigger while the button is held, or accept the one action. An identical re-bind keeps
+    /// the run; an overwrite, a bus reset and a configuration change start it again.
     pub fn once_per_run(mut self, selector_len: u8) -> Self {
         self.once_per_run = true;
         self.selector_len = selector_len;
