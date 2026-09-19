@@ -7,8 +7,8 @@ use std::time::Duration;
 use medius::{Device, MockBox};
 
 use crate::convert::{
-    clip_status_from_c, clock_domain_from_c, device_info_from_c, emit_pace_from_c,
-    frame_type_from_c,
+    clip_action_to_c, clip_status_from_c, clock_domain_from_c, device_info_from_c,
+    emit_pace_from_c, frame_type_from_c, opt_slice, traffic_class_from_c,
 };
 use crate::ctypes::*;
 use crate::device::MediusDevice;
@@ -283,6 +283,10 @@ pub unsafe extern "C" fn medius_mock_set_clip_status(
 }
 
 /// Set the [`ClipSettings`](medius::ClipSettings) the mock answers to `medius_clip_query_config`.
+/// `value.packet_triggers` become the set `medius_clip_bind_packet` adds to and
+/// `medius_mock_clip_packet` runs a packet through, each starting at its `hits`. The mock holds them
+/// to the bounds the box does, so a script past `MEDIUS_CLIP_PKT_MATCH_POOL` reads back the entries
+/// that fit. A trigger with a byte no constant names is skipped.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_mock_set_clip_settings(
     mock: *mut MediusMockBox,
@@ -291,6 +295,58 @@ pub unsafe extern "C" fn medius_mock_set_clip_settings(
     with_mock(mock, |m| {
         m.set_clip_settings(crate::convert::clip_settings_from_c(&value))
     });
+}
+
+/// Run one packet through the mock's packet triggers, as the box does for a packet crossing `class`
+/// at `id` in `direction` whose first bytes are `head[0..head_len]`. The most specific trigger the
+/// head matches wins it and counts it in its `hits`. Returns whether the winner drives its action on
+/// this packet, with the `MEDIUS_CLIP_ACTION_*` value in `*out_action`; false when no trigger wins,
+/// and when the winner is `once_per_run` and the packet continues a run. `*out_consumed` is whether
+/// the winner consumes the packet, whatever the return. A null out is skipped.
+///
+/// A packet travels `POSITIVE` (IN) or `NEGATIVE` (OUT) across a surface that carries that flow: IN
+/// for `MEDIUS_CATCH_CLASS_HID_IN` and `_EMIT`, OUT for `_HID_OUT`, either for the vendor classes and
+/// `_CONTROL`. Any other `class` and `direction`, a byte no constant names among them, is no packet:
+/// it returns false with `*out_consumed` false, counts in no `hits` and leaves every run as it was.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn medius_mock_clip_packet(
+    mock: *mut MediusMockBox,
+    class: u8,
+    id: u16,
+    direction: u8,
+    head: *const u8,
+    head_len: usize,
+    out_action: *mut u8,
+    out_consumed: *mut bool,
+) -> bool {
+    guard(false, || {
+        if !out_consumed.is_null() {
+            unsafe { *out_consumed = false };
+        }
+        if mock.is_null() {
+            return false;
+        }
+        let (Some(class), Some(direction), Some(head)) = (
+            traffic_class_from_c(class),
+            medius::Direction::from_u8(direction),
+            unsafe { opt_slice(head, head_len) },
+        ) else {
+            return false;
+        };
+        let (action, consumed) = unsafe { &(*mock).inner }.clip_packet(class, id, direction, head);
+        if !out_consumed.is_null() {
+            unsafe { *out_consumed = consumed };
+        }
+        match action {
+            Some(a) => {
+                if !out_action.is_null() {
+                    unsafe { *out_action = clip_action_to_c(a) };
+                }
+                true
+            }
+            None => false,
+        }
+    })
 }
 
 /// Make the mock unresponsive to queries (it still records commands). One-way, for testing timeouts.

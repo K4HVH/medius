@@ -4,15 +4,16 @@ use std::os::raw::c_char;
 use std::time::Duration;
 
 use medius::{
-    Action, Axis, Bearing, BearingMode, Blanket, BoxInfo, Button, Caps, CatchEntry, CatchEvent,
-    CatchFilter, CatchState, ChipFirmware, Class, ClipState, ClipStatus, ClockDomain,
-    ClockEstimate, CountersSnapshot, DeviceInfo, DeviceKind, Direction, EmitPace, EmitPaceStatus,
-    FirmwareInfo, Health, ImageState, ImperfectStatus, Input, InputEvent, KbdCaps, Key, LedMode,
-    LedTarget, LockEntry, LockScope, LockTarget, Locks, LogLevel, LogLine, MediaKey, Motion,
-    MouseCaps, MoveTiming, Patch, PatchEntry, PatchSection, PatchSet, PendingMotion, PortInfo,
-    Rate, RebootTarget, RenderMode, RenderStatus, RewriteAction, RewriteClass, RewriteEntry,
-    RewriteRule, RewriteTable, Setup, SpreadStatus, Stats, TransferOutcome, Transform, TransformOp,
-    Transforms, Usage, Version,
+    Action, Axis, Bearing, BearingMode, Blanket, BoxInfo, Button, Caps, CatchClass, CatchEntry,
+    CatchEvent, CatchFilter, CatchState, ChipFirmware, Class, ClipPacketTrigger,
+    ClipPacketTriggerEntry, ClipState, ClipStatus, ClockDomain, ClockEstimate, CountersSnapshot,
+    DeviceInfo, DeviceKind, Direction, EmitPace, EmitPaceStatus, FirmwareInfo, Health, ImageState,
+    ImperfectStatus, Input, InputEvent, KbdCaps, Key, LedMode, LedTarget, LockEntry, LockScope,
+    LockTarget, Locks, LogLevel, LogLine, MediaKey, Motion, MouseCaps, MoveTiming, Patch,
+    PatchEntry, PatchSection, PatchSet, PendingMotion, PortInfo, Rate, RebootTarget, RenderMode,
+    RenderStatus, RewriteAction, RewriteClass, RewriteEntry, RewriteRule, RewriteTable, Setup,
+    SpreadStatus, Stats, TrafficClass, TransferOutcome, Transform, TransformOp, Transforms, Usage,
+    Version,
 };
 
 use crate::ctypes::*;
@@ -640,9 +641,9 @@ impl From<TransferOutcome> for MediusTransferOutcome {
 
 // `len` bytes of a match or mask array, zero-filled past the array's end so the length checks see
 // the length the caller declared.
-fn match_field(bytes: &[u8; MEDIUS_MAX_REWRITE_MATCH], len: u16) -> Vec<u8> {
+fn match_field(bytes: &[u8], len: u16) -> Vec<u8> {
     let len = len as usize;
-    let mut v = bytes[..len.min(MEDIUS_MAX_REWRITE_MATCH)].to_vec();
+    let mut v = bytes[..len.min(bytes.len())].to_vec();
     v.resize(len, 0);
     v
 }
@@ -844,56 +845,114 @@ fn clip_state_to_c(s: ClipState) -> u8 {
     s as u8
 }
 
-impl From<ClipStatus> for MediusClipStatus {
-    fn from(s: ClipStatus) -> Self {
-        let mut held = [blank_usage(); MEDIUS_MAX_USAGES];
-        let n = s.held.len().min(MEDIUS_MAX_USAGES);
-        for (slot, u) in held.iter_mut().zip(s.held.iter()).take(n) {
-            *slot = usage_to_c(*u);
-        }
-        MediusClipStatus {
-            state: clip_state_to_c(s.state),
-            free: s.free,
-            total: s.total,
-            played: s.played,
-            ticks: s.ticks,
-            underruns: s.underruns,
-            overruns: s.overruns,
-            seq_gaps: s.seq_gaps,
-            xfers: s.xfers,
-            xfer_errs: s.xfer_errs,
-            gated: s.gated,
-            held_n: n as u16,
-            held,
-        }
+// An out struct is zeroed whole and then written a field at a time, so every byte a caller reads is
+// defined, the padding between fields included. A struct built by value and copied out carries
+// whatever its padding held, and two reads of one state then differ under `memcmp`.
+fn write_usage(dst: &mut MediusUsage, u: Usage) {
+    dst.kind = u.class.as_u8();
+    dst.id = u.id;
+}
+
+// Write `s` to `*out`, which must be valid for a write of one `MediusClipStatus`.
+pub(crate) unsafe fn clip_status_to_c(s: &ClipStatus, out: *mut MediusClipStatus) {
+    unsafe { std::ptr::write_bytes(out, 0, 1) };
+    let c = unsafe { &mut *out };
+    c.state = clip_state_to_c(s.state);
+    c.free = s.free;
+    c.total = s.total;
+    c.played = s.played;
+    c.ticks = s.ticks;
+    c.underruns = s.underruns;
+    c.overruns = s.overruns;
+    c.seq_gaps = s.seq_gaps;
+    c.xfers = s.xfers;
+    c.xfer_errs = s.xfer_errs;
+    c.gated = s.gated;
+    c.held_n = s.held.len().min(MEDIUS_MAX_USAGES) as u16;
+    for (slot, u) in c.held.iter_mut().zip(&s.held) {
+        write_usage(slot, *u);
     }
 }
 
-// Serialise clip settings to the C struct (autolock as a `CLIP_LOCK_*` bitmask, triggers into the fixed array).
-pub(crate) fn clip_settings_to_c(s: &medius::ClipSettings) -> MediusClipSettings {
-    let mut triggers = [MediusClipTrigger {
-        on: blank_usage(),
-        edge: MediusEdge::Both as u8,
-        action: MediusClipAction::Start as u8,
-        consume: 0,
-    }; MEDIUS_CLIP_TRIG_MAX];
-    let n = s.triggers.len().min(MEDIUS_CLIP_TRIG_MAX);
-    for (slot, t) in triggers.iter_mut().zip(s.triggers.iter()).take(n) {
-        *slot = MediusClipTrigger {
-            on: usage_to_c(t.on),
-            edge: edge_to_c(t.edge),
-            action: clip_action_to_c(t.action),
-            consume: t.consume as u8,
-        };
+pub(crate) fn traffic_class_from_c(v: u8) -> Option<TrafficClass> {
+    TrafficClass::try_from(CatchClass::from_u8(v)?).ok()
+}
+
+// The `(class, id, direction, match, mask)` key of a `MediusClipPacketTrigger`, as a trigger that
+// drives `action`; `None` for a class or direction byte no constant names. `match_len` and `mask_len`
+// are kept separate so an unequal pair still reaches the crate, which refuses it.
+fn clip_packet_key_from_c(
+    c: &MediusClipPacketTrigger,
+    action: medius::ClipAction,
+) -> Option<ClipPacketTrigger> {
+    Some(
+        ClipPacketTrigger::new(
+            traffic_class_from_c(c.class)?,
+            c.id,
+            Direction::from_u8(c.direction)?,
+            action,
+        )
+        .matching(
+            match_field(&c.match_bytes, c.match_len),
+            match_field(&c.mask, c.mask_len),
+        ),
+    )
+}
+
+// A `MediusClipPacketTrigger` to a [`ClipPacketTrigger`]; `None` for a class, direction or action
+// byte no constant names. `hits` is filled by the read-back; bind does not send it.
+pub(crate) fn clip_packet_trigger_from_c(c: &MediusClipPacketTrigger) -> Option<ClipPacketTrigger> {
+    let mut t = clip_packet_key_from_c(c, clip_action_from_c(c.action)?)?;
+    t.consume = c.consume != 0;
+    t.once_per_run = c.once_per_run != 0;
+    t.selector_len = c.selector_len;
+    Some(t)
+}
+
+// The trigger `medius_clip_unbind_packet` removes: the key alone, whatever the other bytes hold.
+pub(crate) fn clip_packet_unbind_from_c(c: &MediusClipPacketTrigger) -> Option<ClipPacketTrigger> {
+    clip_packet_key_from_c(c, medius::ClipAction::Start)
+}
+
+// Write `e` into `c`, a zeroed slot. The lengths are the array's at most.
+fn write_clip_packet_trigger(c: &mut MediusClipPacketTrigger, e: &ClipPacketTriggerEntry) {
+    let t = &e.trigger;
+    let ml = t.match_bytes.len().min(MEDIUS_MAX_PKT_MATCH);
+    c.match_bytes[..ml].copy_from_slice(&t.match_bytes[..ml]);
+    let msl = t.mask.len().min(MEDIUS_MAX_PKT_MATCH);
+    c.mask[..msl].copy_from_slice(&t.mask[..msl]);
+    c.class = t.class.as_u8();
+    c.id = t.id;
+    c.direction = t.direction.as_u8();
+    c.action = clip_action_to_c(t.action);
+    c.consume = b(t.consume);
+    c.once_per_run = b(t.once_per_run);
+    c.selector_len = t.selector_len;
+    c.match_len = ml as u16;
+    c.mask_len = msl as u16;
+    c.hits = e.hits;
+}
+
+// Write `s` to `*out`, which must be valid for a write of one `MediusClipSettings`: autolock as a
+// `CLIP_LOCK_*` bitmask, each kind of trigger into its fixed array. A slot past its count reads zero.
+pub(crate) unsafe fn clip_settings_to_c(s: &medius::ClipSettings, out: *mut MediusClipSettings) {
+    unsafe { std::ptr::write_bytes(out, 0, 1) };
+    let c = unsafe { &mut *out };
+    c.autolock_bits = s.autolock.iter().fold(0u8, |m, b| m | blanket_bit(*b));
+    c.loop_ = b(s.loop_);
+    c.retain = b(s.retain);
+    c.finalized = b(s.finalized);
+    c.ride = b(s.ride);
+    c.n = s.triggers.len().min(MEDIUS_CLIP_TRIG_MAX) as u8;
+    for (slot, t) in c.triggers.iter_mut().zip(&s.triggers) {
+        write_usage(&mut slot.on, t.on);
+        slot.edge = edge_to_c(t.edge);
+        slot.action = clip_action_to_c(t.action);
+        slot.consume = b(t.consume);
     }
-    MediusClipSettings {
-        autolock_bits: s.autolock.iter().fold(0u8, |m, b| m | blanket_bit(*b)),
-        loop_: s.loop_ as u8,
-        retain: s.retain as u8,
-        finalized: s.finalized as u8,
-        ride: s.ride as u8,
-        triggers,
-        n: n as u8,
+    c.packet_n = s.packet_triggers.len().min(MEDIUS_CLIP_PKT_TRIG_MAX) as u8;
+    for (slot, e) in c.packet_triggers.iter_mut().zip(&s.packet_triggers) {
+        write_clip_packet_trigger(slot, e);
     }
 }
 
@@ -944,6 +1003,16 @@ pub(crate) fn clip_settings_from_c(c: &MediusClipSettings) -> medius::ClipSettin
             })
         })
         .collect();
+    let packet_n = (c.packet_n as usize).min(MEDIUS_CLIP_PKT_TRIG_MAX);
+    let packet_triggers = c.packet_triggers[..packet_n]
+        .iter()
+        .filter_map(|t| {
+            Some(ClipPacketTriggerEntry {
+                trigger: clip_packet_trigger_from_c(t)?,
+                hits: t.hits,
+            })
+        })
+        .collect();
     let autolock = [
         Blanket::Aim,
         Blanket::Wheel,
@@ -961,6 +1030,7 @@ pub(crate) fn clip_settings_from_c(c: &MediusClipSettings) -> medius::ClipSettin
         finalized: c.finalized != 0,
         ride: c.ride != 0,
         triggers,
+        packet_triggers,
     }
 }
 

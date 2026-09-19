@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 import ctypes
-from typing import Optional
+from typing import Optional, Tuple
 
 from . import _native
 from ._device import Device
-from ._enums import (BearingMode, ClipState, ClockDomain, DeviceKind, EmitMode, FrameType, LogLevel,
-                     RenderMode)
+from ._enums import (BearingMode, ClipAction, ClipState, ClockDomain, DeviceKind, Direction, EmitMode,
+                     FrameType, LogLevel, RenderMode, TrafficClass)
 from ._types import (
     Bearing,
     Caps,
@@ -167,8 +167,41 @@ class MockBox:
         _native.lib.medius_mock_set_clip_status(self._handle, clip_status_to_c(status))
 
     def set_clip_settings(self, settings: "ClipSettings"):
-        """Set the `ClipSettings` the mock answers to `ClipHandle.query_config`."""
+        """Set the `ClipSettings` the mock answers to `ClipHandle.query_config`. Its packet triggers
+        become the set `ClipHandle.bind_packet` adds to and `clip_packet` runs a packet through, each
+        starting at its ``hits``. The mock holds them to the bounds the box does, so a script past
+        `CLIP_PKT_MATCH_POOL` reads back the entries that fit."""
         _native.lib.medius_mock_set_clip_settings(self._handle, clip_settings_to_c(settings))
+
+    def clip_packet(
+        self, traffic_class: TrafficClass, id: int, direction: Direction, head: bytes
+    ) -> Tuple[Optional[ClipAction], bool]:
+        """Run one packet through the packet triggers, as the box does for a packet crossing
+        `traffic_class` at `id` in `direction` whose first bytes are `head`. The most specific trigger
+        `head` matches wins it and counts it in its ``hits``.
+
+        Returns the action the winner drives on this packet, and whether the winner consumes the
+        packet. The action is `None` when no trigger wins, and when the winner is ``once_per_run`` and
+        the packet continues a run.
+
+        A packet travels ``IN`` or ``OUT`` across a surface that carries that flow: ``IN`` for
+        ``HID_IN`` and ``EMIT``, ``OUT`` for ``HID_OUT``, either for the vendor classes and
+        ``CONTROL``. Any other `traffic_class` and `direction` is no packet: it returns
+        ``(None, False)``, counts in no ``hits`` and leaves every run as it was."""
+        raw = _as_bytes(head, "head")
+        buf = (_native.u8 * len(raw)).from_buffer_copy(raw)
+        action, consumed = _native.u8(), _native.c_bool()
+        fired = _native.lib.medius_mock_clip_packet(
+            self._handle,
+            int(_enum(traffic_class, TrafficClass, "traffic_class")),
+            _u16(id, "id"),
+            int(_enum(direction, Direction, "direction")),
+            buf,
+            len(raw),
+            ctypes.byref(action),
+            ctypes.byref(consumed),
+        )
+        return (ClipAction(action.value) if fired else None, bool(consumed.value))
 
     def silent(self):
         """Make the mock stop answering queries (one-way, for timeout tests)."""

@@ -1,8 +1,7 @@
 //! Pure, device-free helpers: parameter constructors and inspectors mirroring the `medius` value-type methods.
 
-use crate::convert::{clip_action_from_c, clip_action_to_c, rewrite_rule_from_c};
 use crate::ctypes::*;
-use crate::error::{MediusStatus, clear_error, fail, guard, guard_status};
+use crate::error::guard;
 
 const SETUP_LEN: u16 = 8;
 
@@ -591,95 +590,6 @@ pub unsafe extern "C" fn medius_traffic_event_bulk_zlp(event: *const MediusTraff
         }
         let e = unsafe { &*event };
         e.class == MEDIUS_CATCH_CLASS_VENDOR_BULK && e.flags & 0x02 != 0
-    })
-}
-
-/// Fill `*rule_out` with a rule that runs clip verb `clip_action` on the box's next tick for every
-/// packet it wins, and zero the rest of it; set `match_bytes`/`mask` afterwards to narrow it.
-/// `flags` is `MEDIUS_REWRITE_CLIP_*` bits: `DROP` drops each packet the rule wins, `EDGE` runs the
-/// verb on the first packet of a run only, with the first `selector_len` match bytes picking the
-/// run's stream. Any other bit is `MEDIUS_STATUS_ERR_REWRITE_CLIP_RULE` and `*rule_out` is left as
-/// it was. `class` takes a `MEDIUS_REWRITE_CLASS_*` constant, `direction` a `MEDIUS_DIRECTION_*` one
-/// and `clip_action` a `MEDIUS_CLIP_ACTION_*` one; any other value is
-/// `MEDIUS_STATUS_ERR_INVALID_ARG`. Mirrors `medius::RewriteRule::clip`.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn medius_rewrite_rule_clip(
-    rule_out: *mut MediusRewriteRule,
-    class: u8,
-    id: u16,
-    direction: u8,
-    clip_action: u8,
-    flags: u8,
-    selector_len: u8,
-) -> MediusStatus {
-    guard_status(|| {
-        if rule_out.is_null() {
-            return fail(MediusStatus::ErrInvalidArg, "null pointer");
-        }
-        let (Some(class), Some(direction), Some(verb)) = (
-            medius::RewriteClass::from_u8(class),
-            medius::Direction::from_u8(direction),
-            clip_action_from_c(clip_action),
-        ) else {
-            return fail(
-                MediusStatus::ErrInvalidArg,
-                "invalid rewrite class, direction or clip action",
-            );
-        };
-        if flags & !(MEDIUS_REWRITE_CLIP_DROP | MEDIUS_REWRITE_CLIP_EDGE) != 0 {
-            return fail(
-                MediusStatus::ErrRewriteClipRule,
-                "a clip rewrite rule takes only the drop and edge flags",
-            );
-        }
-        let mut rule = medius::RewriteRule::clip(class, id, direction, verb);
-        if let [_, f, slen] = rule.payload.as_mut_slice() {
-            *f = flags;
-            *slen = selector_len;
-        }
-        unsafe { *rule_out = rule.into() };
-        clear_error();
-        MediusStatus::Ok
-    })
-}
-
-/// What a clip rule does: the verb to `*out_action` as a `MEDIUS_CLIP_ACTION_*` value, the
-/// `MEDIUS_REWRITE_CLIP_*` bits to `*out_flags` and the selector length to `*out_selector_len`; false
-/// for any other rule. A null out is skipped and the return still answers. Mirrors
-/// `medius::RewriteRule::clip_verb`.
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn medius_rewrite_rule_clip_verb(
-    rule: *const MediusRewriteRule,
-    out_action: *mut u8,
-    out_flags: *mut u8,
-    out_selector_len: *mut u8,
-) -> bool {
-    guard(false, || {
-        if rule.is_null() {
-            return false;
-        }
-        let Some(verb) = rewrite_rule_from_c(unsafe { &*rule }).and_then(|r| r.clip_verb()) else {
-            return false;
-        };
-        let mut flags = 0;
-        if verb.drop {
-            flags |= MEDIUS_REWRITE_CLIP_DROP;
-        }
-        if verb.edge {
-            flags |= MEDIUS_REWRITE_CLIP_EDGE;
-        }
-        unsafe {
-            if !out_action.is_null() {
-                *out_action = clip_action_to_c(verb.action);
-            }
-            if !out_flags.is_null() {
-                *out_flags = flags;
-            }
-            if !out_selector_len.is_null() {
-                *out_selector_len = verb.selector_len;
-            }
-        }
-        true
     })
 }
 

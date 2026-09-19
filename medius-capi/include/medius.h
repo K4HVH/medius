@@ -116,14 +116,18 @@
 // The bearing window the box holds before any host sets one, in ms.
 #define MEDIUS_BEARING_WINDOW_DEFAULT_MS 20
 
-// `medius_rewrite_rule_clip` flag: every packet the rule wins is dropped.
-#define MEDIUS_REWRITE_CLIP_DROP 1
-
-// `medius_rewrite_rule_clip` flag: the verb runs on the first packet of a run of matching ones.
-#define MEDIUS_REWRITE_CLIP_EDGE 2
-
-// The max clip trigger bindings in a `MediusClipSettings` (matches the firmware `CLIP_TRIG_MAX`).
+// The max clip input triggers in a `MediusClipSettings` (matches the firmware `CLIP_TRIG_MAX`).
 #define MEDIUS_CLIP_TRIG_MAX 8
+
+// The max clip packet triggers in a `MediusClipSettings` (the firmware `CLIP_PKT_TRIG_MAX`).
+#define MEDIUS_CLIP_PKT_TRIG_MAX 8
+
+// The match bytes the box holds across every clip packet trigger (the firmware
+// `CLIP_PKT_MATCH_POOL`).
+#define MEDIUS_CLIP_PKT_MATCH_POOL 112
+
+// The most `match`/`mask` bytes one clip packet trigger compares (the firmware `PKT_MATCH_MAX`).
+#define MEDIUS_MAX_PKT_MATCH 16
 
 // The most edges one `MediusClipFrame` carries (the firmware `CLIP_EDGES_MAX`).
 #define MEDIUS_CLIP_EDGES_MAX 8
@@ -196,8 +200,8 @@ enum MediusStatus
     // A clip transfer whose data is not what its setup packet announces: `length` bytes for an OUT
     // request, none for an IN one.
     MEDIUS_STATUS_ERR_CLIP_TRANSFER_DATA = 32,
-    // A `MEDIUS_REWRITE_ACTION_CLIP` rule the box would refuse; `medius_last_error_message` says why.
-    MEDIUS_STATUS_ERR_REWRITE_CLIP_RULE = 33,
+    // A clip packet trigger the box would refuse; `medius_last_error_message` says why.
+    MEDIUS_STATUS_ERR_CLIP_PACKET_TRIGGER = 33,
     // A rewrite rule with more than `MEDIUS_MAX_REWRITE_MATCH` match bytes.
     MEDIUS_STATUS_ERR_REWRITE_MATCH_TOO_LONG = 34,
 };
@@ -540,7 +544,7 @@ typedef uint8_t MediusClass;
 #endif // __STDC_VERSION__ >= 202311L
 #endif // __cplusplus
 
-// The engine action a trigger binding drives.
+// The engine action a `MediusClipTrigger` or a `MediusClipPacketTrigger` drives.
 enum MediusClipAction
 #if defined(__cplusplus) || __STDC_VERSION__ >= 202311L
   : uint8_t
@@ -803,8 +807,7 @@ typedef uint8_t MediusRebootTarget;
 
 // What the winning rewrite rule does to a matched packet (§3.14). Crosses the ABI as the `action`
 // byte. `Drop` is a report surface only; `Answer`/`Stall`/`Nak` and the two reply rewrites are
-// control-only, mirroring the box's own admissibility check. `Clip` runs a clip verb on any class;
-// `medius_rewrite_rule_clip` builds one.
+// control-only, mirroring the box's own admissibility check.
 enum MediusRewriteAction
 #if defined(__cplusplus) || __STDC_VERSION__ >= 202311L
   : uint8_t
@@ -819,7 +822,6 @@ enum MediusRewriteAction
     MEDIUS_REWRITE_ACTION_NAK = 6,
     MEDIUS_REWRITE_ACTION_REPLY_PATCH = 7,
     MEDIUS_REWRITE_ACTION_REPLY_REPLACE = 8,
-    MEDIUS_REWRITE_ACTION_CLIP = 9,
 };
 #ifndef __cplusplus
 #if __STDC_VERSION__ >= 202311L
@@ -946,7 +948,8 @@ typedef struct MediusSetup {
     uint16_t length;
 } MediusSetup;
 
-// One clip trigger binding: `on`'s `edge` drives `action`; `consume` suppresses the input from the game.
+// One clip input trigger: `on`'s `edge` drives `action`; `consume` suppresses the input from the
+// game. The trigger set's other kind is the `MediusClipPacketTrigger`.
 typedef struct MediusClipTrigger {
     struct MediusUsage on;
     // A `MEDIUS_EDGE_*` value.
@@ -955,6 +958,66 @@ typedef struct MediusClipTrigger {
     uint8_t action;
     uint8_t consume;
 } MediusClipTrigger;
+
+// One clip packet trigger, keyed by `(class, id, direction, match, mask)`: a packet on a traffic
+// surface whose head matches under the mask drives `action` on the box's next tick, with no host
+// round trip. The trigger set's other kind is the input `MediusClipTrigger`.
+//
+// `match_bytes[0..match_len]` and `mask[0..mask_len]` are the masked head compare (they must be the
+// same length; an empty match takes every packet on the address): a packet matches when
+// `head[i] & mask[i] == match_bytes[i]` for each. For `MEDIUS_CATCH_CLASS_CONTROL` the head is the 8
+// setup bytes, then the first 8 bytes of OUT data. A `MEDIUS_CATCH_CLASS_EMIT` trigger sees the
+// clip's own frames as well as native and injected ones, and none of the clip's raw reports.
+//
+// A trigger no packet can match is refused, by `medius_clip_bind_packet` and by the box: a match bit
+// outside its mask, since a packet byte is masked before it is compared, and a direction the class
+// never carries. `HID_IN` and `EMIT` flow `POSITIVE` (IN) and `HID_OUT` flows `NEGATIVE` (OUT); the
+// vendor classes and `CONTROL` carry either, and every class takes `MEDIUS_DIRECTION_BOTH`.
+//
+// The box reads a packet for its triggers as the packet arrived, ahead of the rewrite table, and the
+// two are independent: one packet can fire a trigger and win a rewrite rule. One trigger wins a
+// packet, most specific first: an exact `id` beats `MEDIUS_CATCH_ID_ANY`, more masked bits beat
+// fewer, `POSITIVE` or `NEGATIVE` beats `MEDIUS_DIRECTION_BOTH`, then the trigger bound earlier.
+//
+// The same shape `medius_clip_query_config` reads back, so a read trigger replays as a bind.
+typedef struct MediusClipPacketTrigger {
+    // The traffic surface the packet crosses: one of `MEDIUS_CATCH_CLASS_HID_IN`, `_HID_OUT`,
+    // `_VENDOR_INTERRUPT`, `_VENDOR_BULK`, `_CONTROL` and `_EMIT`.
+    uint8_t class_;
+    // The address within the class: the interface number for `HID_IN`, the endpoint number for the
+    // rest, or `MEDIUS_CATCH_ID_ANY`.
+    uint16_t id;
+    // A `MEDIUS_DIRECTION_*` value: `BOTH`, or the one of `POSITIVE` (IN) and `NEGATIVE` (OUT) the
+    // class carries.
+    uint8_t direction;
+    // A `MEDIUS_CLIP_ACTION_*` value.
+    uint8_t action;
+    // Drop every packet the trigger wins, before the rewrite table sees it. Dropping traffic alters
+    // the wire, so the box holds a consuming trigger only under
+    // `medius_device_allow_imperfect_clones`, on any class but `CONTROL`.
+    uint8_t consume;
+    // Drive `action` on the first packet of a run of matching ones, so a device that repeats a held
+    // state every poll fires once per hold; 0 drives it on each packet. A run is over one stream:
+    // a class other than `CONTROL`, a concrete `id`, and `POSITIVE` or `NEGATIVE`.
+    uint8_t once_per_run;
+    // With `once_per_run`, how many leading match bytes select the run's stream within the address
+    // (a report ID). The rest are the condition, so it is below `match_len` and the mask past it has
+    // at least one bit set: a condition every packet of the stream meets is a run that never ends.
+    // 0 without.
+    uint8_t selector_len;
+    // Valid bytes in `match_bytes` (must equal `mask_len`).
+    uint16_t match_len;
+    // Valid bytes in `mask` (must equal `match_len`).
+    uint16_t mask_len;
+    // Every set bit of `match_bytes[0..match_len]` is set in `mask`. The two go to the box as given.
+    uint8_t match_bytes[MEDIUS_MAX_PKT_MATCH];
+    uint8_t mask[MEDIUS_MAX_PKT_MATCH];
+    // Packets the trigger has won since it was bound or overwritten (saturating). A `once_per_run`
+    // trigger wins every packet of a run and drives its action on the first. Filled by
+    // `medius_clip_query_config` and read by `medius_mock_set_clip_settings`;
+    // `medius_clip_bind_packet` sends the trigger without it.
+    uint16_t hits;
+} MediusClipPacketTrigger;
 
 // A snapshot of the device-side clip ring and playback counters (the runtime view of `RESP(CLIP)`).
 typedef struct MediusClipStatus {
@@ -980,7 +1043,8 @@ typedef struct MediusClipStatus {
     struct MediusUsage held[MEDIUS_MAX_USAGES];
 } MediusClipStatus;
 
-// The clip configuration read back from `RESP(CLIP)`: autolock scope, loop/retain scalars, and triggers.
+// The clip configuration read back from `RESP(CLIP)`: autolock scope, loop/retain scalars, and both
+// kinds of trigger.
 typedef struct MediusClipSettings {
     // The autolock scope as `CLIP_LOCK_*` bits (`medius_clip_set_autolock`).
     uint8_t autolock_bits;
@@ -989,9 +1053,14 @@ typedef struct MediusClipSettings {
     uint8_t finalized;
     // Whether the clip's motion waits to ride a native report (`medius_clip_set_ride`).
     uint8_t ride;
+    // The input triggers.
     struct MediusClipTrigger triggers[MEDIUS_CLIP_TRIG_MAX];
     // The number of valid entries in `triggers`.
     uint8_t n;
+    // The packet triggers, in the order the box holds them, each with its `hits`.
+    struct MediusClipPacketTrigger packet_triggers[MEDIUS_CLIP_PKT_TRIG_MAX];
+    // The number of valid entries in `packet_triggers`.
+    uint8_t packet_n;
 } MediusClipSettings;
 
 // A discovered medius serial port. `path` is NUL-terminated.
@@ -1886,18 +1955,51 @@ MediusStatus medius_clip_set_retain(struct MediusClip *clip,
 MediusStatus medius_clip_set_ride(struct MediusClip *clip,
                                   uint8_t on);
 
-// Add or overwrite a trigger binding. `trigger.edge` takes a `MEDIUS_EDGE_*` constant and
+// Add or overwrite an input trigger. `trigger.edge` takes a `MEDIUS_EDGE_*` constant and
 // `trigger.action` a `MEDIUS_CLIP_ACTION_*` one; any other value is
 // `MEDIUS_STATUS_ERR_INVALID_ARG`.
 MediusStatus medius_clip_bind(struct MediusClip *clip, struct MediusClipTrigger trigger);
 
-// Remove the trigger binding on `usage`'s `edge`. `edge` takes a `MEDIUS_EDGE_*` constant; any other
+// Remove the input trigger on `usage`'s `edge`. `edge` takes a `MEDIUS_EDGE_*` constant; any other
 // value is `MEDIUS_STATUS_ERR_INVALID_ARG`.
-MediusStatus medius_clip_unbind(struct MediusClip *clip,
-                                struct MediusUsage usage,
-                                uint8_t edge);
+MediusStatus medius_clip_unbind(struct MediusClip *clip, struct MediusUsage usage, uint8_t edge);
 
-// Remove every trigger binding.
+// Add or overwrite a packet trigger: a packet `trigger` matches fires its action on the box's next
+// tick, no host round trip. Binding a key the box holds overwrites it. `trigger->class_` takes a
+// traffic `MEDIUS_CATCH_CLASS_*` constant, `trigger->direction` a `MEDIUS_DIRECTION_*` one and
+// `trigger->action` a `MEDIUS_CLIP_ACTION_*` one; any other value is
+// `MEDIUS_STATUS_ERR_INVALID_ARG`.
+//
+// What the box would refuse is `MEDIUS_STATUS_ERR_CLIP_PACKET_TRIGGER` before anything is sent, and
+// `medius_last_error_message` says which:
+//
+// - a class that is `MEDIUS_CATCH_CLASS_BUS` or `_CLIP_TRANSFER`;
+// - a `match_len` past `MEDIUS_MAX_PKT_MATCH`, or unlike `mask_len`;
+// - a direction the class never carries: `NEGATIVE` (OUT) on `HID_IN` or `EMIT`, `POSITIVE` (IN) on
+//   `HID_OUT`;
+// - a match bit outside its mask, which no packet can equal;
+// - `consume` on `MEDIUS_CATCH_CLASS_CONTROL`;
+// - a `selector_len` without `once_per_run`;
+// - `once_per_run` without one stream (a class other than `CONTROL`, a concrete `id`, and `POSITIVE`
+//   or `NEGATIVE`), without match bytes past its selector, or with no masked bit in them.
+//
+// A bearing-relative direction is `MEDIUS_STATUS_ERR_RELATIVE_DIRECTION`. The match and mask go to
+// the box as given, so the key this trigger names is the key the box holds.
+//
+// The box makes three checks this call cannot. A consuming trigger needs
+// `medius_device_allow_imperfect_clones`, the set holds `MEDIUS_CLIP_PKT_TRIG_MAX` triggers, and
+// their match bytes share a pool of `MEDIUS_CLIP_PKT_MATCH_POOL`. A trigger the box refused is absent
+// from `medius_clip_query_config`.
+MediusStatus medius_clip_bind_packet(struct MediusClip *clip,
+                                     const struct MediusClipPacketTrigger *trigger);
+
+// Remove the packet trigger keyed by `trigger`'s `(class, id, direction, match, mask)`; its other
+// fields are ignored. A key the box cannot hold is refused as `medius_clip_bind_packet` refuses it:
+// the class, the lengths, the direction, and a match bit outside the mask.
+MediusStatus medius_clip_unbind_packet(struct MediusClip *clip,
+                                       const struct MediusClipPacketTrigger *trigger);
+
+// Remove every trigger of both kinds: the input triggers and the packet triggers.
 MediusStatus medius_clip_clear_triggers(struct MediusClip *clip);
 
 // Rewind and play (resume from a pause).
@@ -1928,7 +2030,7 @@ MediusStatus medius_clip_finalize(struct MediusClip *clip);
 MediusStatus medius_clip_query_status(struct MediusClip *clip,
                                       struct MediusClipStatus *out);
 
-// Query the clip configuration: autolock scope, loop/retain, finalized, and the trigger set.
+// Query the clip configuration: autolock scope, loop/retain, finalized, and both kinds of trigger.
 MediusStatus medius_clip_query_config(struct MediusClip *clip, struct MediusClipSettings *out);
 
 // Open the box at serial `path` (NUL-terminated UTF-8), handshake, and write the owned handle to `*out`.
@@ -2127,15 +2229,14 @@ MediusStatus medius_device_transfer_timeout(struct MediusDevice *dev,
                                             struct MediusTransferOutcome *out);
 
 // `REWRITE` (§3.14): install (add or overwrite) one rewrite rule. Gated on the imperfect-clone
-// opt-in. `rule->class` takes a `MEDIUS_REWRITE_CLASS_*` constant, `rule->action` a
+// opt-in. `rule->class_` takes a `MEDIUS_REWRITE_CLASS_*` constant, `rule->action` a
 // `MEDIUS_REWRITE_ACTION_*` one and `rule->direction` a `MEDIUS_DIRECTION_*` one; any other value is
 // `MEDIUS_STATUS_ERR_INVALID_ARG`. `match_len` must equal `mask_len`
 // (`MEDIUS_STATUS_ERR_REWRITE_MASK_LENGTH`) and be at most `MEDIUS_MAX_REWRITE_MATCH`
 // (`..._REWRITE_MATCH_TOO_LONG`), the action must be valid for the class
 // (`..._REWRITE_ACTION_CLASS`), the direction must not be bearing-relative
-// (`..._RELATIVE_DIRECTION`), the payload must fit the box's head
-// (`..._REWRITE_PAYLOAD_TOO_LARGE`), and a `MEDIUS_REWRITE_ACTION_CLIP` rule must be one the box
-// admits (`..._REWRITE_CLIP_RULE`). `medius_device_query_rewrite` confirms what the box holds.
+// (`..._RELATIVE_DIRECTION`), and the payload must fit the box's head
+// (`..._REWRITE_PAYLOAD_TOO_LARGE`). `medius_device_query_rewrite` confirms what the box holds.
 MediusStatus medius_device_set_rewrite(struct MediusDevice *dev,
                                        const struct MediusRewriteRule *rule);
 
@@ -2499,31 +2600,6 @@ bool medius_traffic_event_bulk_end_of_transfer(const struct MediusTrafficEvent *
 // Mirrors `medius::TrafficEvent::bulk_zlp`.
 bool medius_traffic_event_bulk_zlp(const struct MediusTrafficEvent *event);
 
-// Fill `*rule_out` with a rule that runs clip verb `clip_action` on the box's next tick for every
-// packet it wins, and zero the rest of it; set `match_bytes`/`mask` afterwards to narrow it.
-// `flags` is `MEDIUS_REWRITE_CLIP_*` bits: `DROP` drops each packet the rule wins, `EDGE` runs the
-// verb on the first packet of a run only, with the first `selector_len` match bytes picking the
-// run's stream. Any other bit is `MEDIUS_STATUS_ERR_REWRITE_CLIP_RULE` and `*rule_out` is left as
-// it was. `class` takes a `MEDIUS_REWRITE_CLASS_*` constant, `direction` a `MEDIUS_DIRECTION_*` one
-// and `clip_action` a `MEDIUS_CLIP_ACTION_*` one; any other value is
-// `MEDIUS_STATUS_ERR_INVALID_ARG`. Mirrors `medius::RewriteRule::clip`.
-MediusStatus medius_rewrite_rule_clip(struct MediusRewriteRule *rule_out,
-                                      uint8_t class_,
-                                      uint16_t id,
-                                      uint8_t direction,
-                                      uint8_t clip_action,
-                                      uint8_t flags,
-                                      uint8_t selector_len);
-
-// What a clip rule does: the verb to `*out_action` as a `MEDIUS_CLIP_ACTION_*` value, the
-// `MEDIUS_REWRITE_CLIP_*` bits to `*out_flags` and the selector length to `*out_selector_len`; false
-// for any other rule. A null out is skipped and the return still answers. Mirrors
-// `medius::RewriteRule::clip_verb`.
-bool medius_rewrite_rule_clip_verb(const struct MediusRewriteRule *rule,
-                                   uint8_t *out_action,
-                                   uint8_t *out_flags,
-                                   uint8_t *out_selector_len);
-
 // Whether the clip is currently holding `usage` down. Mirrors `medius::ClipStatus::is_held`.
 bool medius_clip_status_is_held(const struct MediusClipStatus *status, struct MediusUsage usage);
 
@@ -2835,7 +2911,33 @@ void medius_mock_set_clip_status(struct MediusMockBox *mock, struct MediusClipSt
 
 #if defined(MEDIUS_FEATURE_MOCK)
 // Set the [`ClipSettings`](medius::ClipSettings) the mock answers to `medius_clip_query_config`.
+// `value.packet_triggers` become the set `medius_clip_bind_packet` adds to and
+// `medius_mock_clip_packet` runs a packet through, each starting at its `hits`. The mock holds them
+// to the bounds the box does, so a script past `MEDIUS_CLIP_PKT_MATCH_POOL` reads back the entries
+// that fit. A trigger with a byte no constant names is skipped.
 void medius_mock_set_clip_settings(struct MediusMockBox *mock, struct MediusClipSettings value);
+#endif
+
+#if defined(MEDIUS_FEATURE_MOCK)
+// Run one packet through the mock's packet triggers, as the box does for a packet crossing `class`
+// at `id` in `direction` whose first bytes are `head[0..head_len]`. The most specific trigger the
+// head matches wins it and counts it in its `hits`. Returns whether the winner drives its action on
+// this packet, with the `MEDIUS_CLIP_ACTION_*` value in `*out_action`; false when no trigger wins,
+// and when the winner is `once_per_run` and the packet continues a run. `*out_consumed` is whether
+// the winner consumes the packet, whatever the return. A null out is skipped.
+//
+// A packet travels `POSITIVE` (IN) or `NEGATIVE` (OUT) across a surface that carries that flow: IN
+// for `MEDIUS_CATCH_CLASS_HID_IN` and `_EMIT`, OUT for `_HID_OUT`, either for the vendor classes and
+// `_CONTROL`. Any other `class` and `direction`, a byte no constant names among them, is no packet:
+// it returns false with `*out_consumed` false, counts in no `hits` and leaves every run as it was.
+bool medius_mock_clip_packet(struct MediusMockBox *mock,
+                             uint8_t class_,
+                             uint16_t id,
+                             uint8_t direction,
+                             const uint8_t *head,
+                             uintptr_t head_len,
+                             uint8_t *out_action,
+                             bool *out_consumed);
 #endif
 
 #if defined(MEDIUS_FEATURE_MOCK)

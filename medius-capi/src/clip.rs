@@ -3,8 +3,8 @@
 use medius::{ClipBuilder, ClipFrame, ClipHandle};
 
 use crate::convert::{
-    action_from_c, clip_action_from_c, clip_settings_to_c, edge_from_c, input_to_medius, opt_slice,
-    setup_from_c,
+    action_from_c, clip_action_from_c, clip_packet_trigger_from_c, clip_packet_unbind_from_c,
+    clip_settings_to_c, clip_status_to_c, edge_from_c, input_to_medius, opt_slice, setup_from_c,
 };
 use crate::ctypes::*;
 use crate::device::MediusDevice;
@@ -502,7 +502,7 @@ pub unsafe extern "C" fn medius_clip_set_ride(clip: *mut MediusClip, on: u8) -> 
     with_clip(clip, |c| c.set_ride(on != 0))
 }
 
-/// Add or overwrite a trigger binding. `trigger.edge` takes a `MEDIUS_EDGE_*` constant and
+/// Add or overwrite an input trigger. `trigger.edge` takes a `MEDIUS_EDGE_*` constant and
 /// `trigger.action` a `MEDIUS_CLIP_ACTION_*` one; any other value is
 /// `MEDIUS_STATUS_ERR_INVALID_ARG`.
 #[unsafe(no_mangle)]
@@ -526,7 +526,7 @@ pub unsafe extern "C" fn medius_clip_bind(
     with_clip(clip, |c| c.bind(t))
 }
 
-/// Remove the trigger binding on `usage`'s `edge`. `edge` takes a `MEDIUS_EDGE_*` constant; any other
+/// Remove the input trigger on `usage`'s `edge`. `edge` takes a `MEDIUS_EDGE_*` constant; any other
 /// value is `MEDIUS_STATUS_ERR_INVALID_ARG`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_clip_unbind(
@@ -543,7 +543,73 @@ pub unsafe extern "C" fn medius_clip_unbind(
     with_clip(clip, |c| c.unbind(u, edge))
 }
 
-/// Remove every trigger binding.
+fn with_packet_trigger(
+    clip: *mut MediusClip,
+    trigger: *const MediusClipPacketTrigger,
+    from_c: impl FnOnce(&MediusClipPacketTrigger) -> Option<medius::ClipPacketTrigger>,
+    f: impl FnOnce(&ClipHandle, &medius::ClipPacketTrigger) -> Result<(), medius::Error>,
+) -> MediusStatus {
+    guard_status(|| {
+        if clip.is_null() || trigger.is_null() {
+            return fail(MediusStatus::ErrInvalidArg, "null pointer");
+        }
+        let Some(t) = from_c(unsafe { &*trigger }) else {
+            return fail(MediusStatus::ErrInvalidArg, "invalid clip packet trigger");
+        };
+        status_of(f(unsafe { &(*clip).inner }, &t))
+    })
+}
+
+/// Add or overwrite a packet trigger: a packet `trigger` matches fires its action on the box's next
+/// tick, no host round trip. Binding a key the box holds overwrites it. `trigger->class_` takes a
+/// traffic `MEDIUS_CATCH_CLASS_*` constant, `trigger->direction` a `MEDIUS_DIRECTION_*` one and
+/// `trigger->action` a `MEDIUS_CLIP_ACTION_*` one; any other value is
+/// `MEDIUS_STATUS_ERR_INVALID_ARG`.
+///
+/// What the box would refuse is `MEDIUS_STATUS_ERR_CLIP_PACKET_TRIGGER` before anything is sent, and
+/// `medius_last_error_message` says which:
+///
+/// - a class that is `MEDIUS_CATCH_CLASS_BUS` or `_CLIP_TRANSFER`;
+/// - a `match_len` past `MEDIUS_MAX_PKT_MATCH`, or unlike `mask_len`;
+/// - a direction the class never carries: `NEGATIVE` (OUT) on `HID_IN` or `EMIT`, `POSITIVE` (IN) on
+///   `HID_OUT`;
+/// - a match bit outside its mask, which no packet can equal;
+/// - `consume` on `MEDIUS_CATCH_CLASS_CONTROL`;
+/// - a `selector_len` without `once_per_run`;
+/// - `once_per_run` without one stream (a class other than `CONTROL`, a concrete `id`, and `POSITIVE`
+///   or `NEGATIVE`), without match bytes past its selector, or with no masked bit in them.
+///
+/// A bearing-relative direction is `MEDIUS_STATUS_ERR_RELATIVE_DIRECTION`. The match and mask go to
+/// the box as given, so the key this trigger names is the key the box holds.
+///
+/// The box makes three checks this call cannot. A consuming trigger needs
+/// `medius_device_allow_imperfect_clones`, the set holds `MEDIUS_CLIP_PKT_TRIG_MAX` triggers, and
+/// their match bytes share a pool of `MEDIUS_CLIP_PKT_MATCH_POOL`. A trigger the box refused is absent
+/// from `medius_clip_query_config`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn medius_clip_bind_packet(
+    clip: *mut MediusClip,
+    trigger: *const MediusClipPacketTrigger,
+) -> MediusStatus {
+    with_packet_trigger(clip, trigger, clip_packet_trigger_from_c, |c, t| {
+        c.bind_packet(t)
+    })
+}
+
+/// Remove the packet trigger keyed by `trigger`'s `(class, id, direction, match, mask)`; its other
+/// fields are ignored. A key the box cannot hold is refused as `medius_clip_bind_packet` refuses it:
+/// the class, the lengths, the direction, and a match bit outside the mask.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn medius_clip_unbind_packet(
+    clip: *mut MediusClip,
+    trigger: *const MediusClipPacketTrigger,
+) -> MediusStatus {
+    with_packet_trigger(clip, trigger, clip_packet_unbind_from_c, |c, t| {
+        c.unbind_packet(t)
+    })
+}
+
+/// Remove every trigger of both kinds: the input triggers and the packet triggers.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_clip_clear_triggers(clip: *mut MediusClip) -> MediusStatus {
     with_clip(clip, |c| c.clear_triggers())
@@ -609,7 +675,7 @@ pub unsafe extern "C" fn medius_clip_query_status(
         }
         match unsafe { &(*clip).inner }.query_status() {
             Ok(s) => {
-                unsafe { *out = MediusClipStatus::from(s) };
+                unsafe { clip_status_to_c(&s, out) };
                 clear_error();
                 MediusStatus::Ok
             }
@@ -618,7 +684,7 @@ pub unsafe extern "C" fn medius_clip_query_status(
     })
 }
 
-/// Query the clip configuration: autolock scope, loop/retain, finalized, and the trigger set.
+/// Query the clip configuration: autolock scope, loop/retain, finalized, and both kinds of trigger.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_clip_query_config(
     clip: *mut MediusClip,
@@ -630,7 +696,7 @@ pub unsafe extern "C" fn medius_clip_query_config(
         }
         match unsafe { &(*clip).inner }.query_config() {
             Ok(s) => {
-                unsafe { *out = clip_settings_to_c(&s) };
+                unsafe { clip_settings_to_c(&s, out) };
                 clear_error();
                 MediusStatus::Ok
             }

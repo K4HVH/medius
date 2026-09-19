@@ -57,7 +57,7 @@ class Status(IntEnum):
     ERR_CLIP_FRAME_COUNT = 30
     ERR_CLIP_FRAME_TOO_LONG = 31
     ERR_CLIP_TRANSFER_DATA = 32
-    ERR_REWRITE_CLIP_RULE = 33
+    ERR_CLIP_PACKET_TRIGGER = 33
     ERR_REWRITE_MATCH_TOO_LONG = 34
 
 
@@ -113,6 +113,12 @@ CLIP_EDGES_MAX = 8
 CLIP_RAW_MAX = 8
 #: The most bytes one clip frame encodes to: one CLIP_APPEND payload.
 CLIP_ENTRY_MAX = 512
+#: The most packet triggers the box holds, beside its input triggers.
+CLIP_PKT_TRIG_MAX = 8
+#: The match bytes the box holds across every packet trigger.
+CLIP_PKT_MATCH_POOL = 112
+#: The most match bytes one packet trigger compares.
+PKT_MATCH_MAX = 16
 
 
 class Edge(IntEnum):
@@ -124,7 +130,7 @@ class Edge(IntEnum):
 
 
 class ClipAction(IntEnum):
-    """The engine action a `ClipTrigger` drives."""
+    """The engine action a `ClipTrigger` or a `ClipPacketTrigger` drives."""
 
     START = 0
     STOP = 1
@@ -353,8 +359,7 @@ class RewriteAction(IntEnum):
     """What the winning rewrite rule does to a matched packet (§3.14).
 
     A report class may `PASS`, `DROP`, `PATCH` or `REPLACE`. The control class adds `ANSWER`, `STALL`,
-    `NAK` and the two reply rewrites, which the box refuses on any other class. Every class takes
-    `CLIP`, which runs a clip verb; build that rule with `RewriteRule.clip`.
+    `NAK` and the two reply rewrites, which the box refuses on any other class.
     """
 
     PASS = 0
@@ -366,13 +371,6 @@ class RewriteAction(IntEnum):
     NAK = 6
     REPLY_PATCH = 7
     REPLY_REPLACE = 8
-    CLIP = 9
-
-
-#: `RewriteAction.CLIP` flag: every packet the rule wins is dropped.
-REWRITE_CLIP_DROP = 0x01
-#: `RewriteAction.CLIP` flag: the verb runs on the first packet of a run of matching ones.
-REWRITE_CLIP_EDGE = 0x02
 
 
 class PatchSection(IntEnum):

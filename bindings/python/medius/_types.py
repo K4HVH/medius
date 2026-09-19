@@ -31,8 +31,6 @@ from ._enums import (
     LockTargetKind,
     LogLevel,
     PatchSection,
-    REWRITE_CLIP_DROP,
-    REWRITE_CLIP_EDGE,
     RewriteAction,
     RewriteClass,
     TrafficClass,
@@ -42,7 +40,6 @@ from ._enums import (
     Key,
     MediaKey,
 )
-from ._errors import check
 
 
 # Scalar checks for the parameters that reach ctypes. ctypes truncates silently, so an unchecked
@@ -426,27 +423,12 @@ class TransferOutcome:
 
 
 @dataclass
-class ClipVerb:
-    """What a ``CLIP`` rewrite rule does (`RewriteRule.clip_verb`)."""
-
-    action: ClipAction
-    #: Every packet the rule wins is dropped.
-    drop: bool = False
-    #: The verb runs on the first packet of a run of matching ones.
-    edge: bool = False
-    #: How many leading match bytes pick the run's stream.
-    selector_len: int = 0
-
-
-@dataclass
 class RewriteRule:
     """A rewrite rule (§3.14), keyed by ``(rewrite_class, id, direction, match_bytes, mask)``.
 
     ``match_bytes`` and ``mask`` are the masked head compare and must be the same length (an empty
     match matches every packet on the address); ``payload`` is the bytes an action that carries one
     supplies; ``offset`` is where a ``PATCH``/``REPLY_PATCH`` writes.
-
-    Build a ``CLIP`` rule with `clip`, which writes the payload.
     """
 
     rewrite_class: RewriteClass
@@ -457,59 +439,6 @@ class RewriteRule:
     match_bytes: bytes = b""
     mask: bytes = b""
     payload: bytes = b""
-
-    @classmethod
-    def clip(
-        cls,
-        rewrite_class: RewriteClass,
-        id: int,
-        direction: Direction,
-        verb: ClipAction,
-        match_bytes: bytes = b"",
-        mask: bytes = b"",
-        drop: bool = False,
-        on_edge: Optional[int] = None,
-    ) -> "RewriteRule":
-        """A rule that runs clip verb ``verb`` on the box's next tick for every packet it wins.
-
-        ``drop`` drops each packet the rule wins; the box refuses it on ``CONTROL`` and ``ANY``.
-        ``on_edge`` is a selector length: the verb runs on the first packet of a run of matching ones,
-        so a device that repeats a held state every poll fires once per hold. The first ``on_edge``
-        match bytes pick the run's stream out of the address (a report ID) and the rest are the
-        condition. It needs a report class, a concrete ``id`` and ``IN`` or ``OUT``.
-        """
-        flags = (REWRITE_CLIP_DROP if drop else 0) | (REWRITE_CLIP_EDGE if on_edge is not None else 0)
-        c = _native.MediusRewriteRule()
-        check(
-            _native.lib.medius_rewrite_rule_clip(
-                ctypes.byref(c),
-                int(_enum(rewrite_class, RewriteClass, "rewrite_class")),
-                _u16(id, "id"),
-                int(_enum(direction, Direction, "direction")),
-                int(_enum(verb, ClipAction, "verb")),
-                flags,
-                _u8(on_edge or 0, "on_edge"),
-            )
-        )
-        rule = rewrite_rule_from_c(c)
-        rule.match_bytes = _as_bytes(match_bytes, "match_bytes")
-        rule.mask = _as_bytes(mask, "mask")
-        return rule
-
-    def clip_verb(self) -> Optional[ClipVerb]:
-        """What a ``CLIP`` rule does; `None` for any other rule, or a payload that is not a clip rule's."""
-        c = rewrite_rule_to_c(self)
-        action, flags, selector_len = _native.u8(), _native.u8(), _native.u8()
-        if not _native.lib.medius_rewrite_rule_clip_verb(
-            ctypes.byref(c), ctypes.byref(action), ctypes.byref(flags), ctypes.byref(selector_len)
-        ):
-            return None
-        return ClipVerb(
-            ClipAction(action.value),
-            bool(flags.value & REWRITE_CLIP_DROP),
-            bool(flags.value & REWRITE_CLIP_EDGE),
-            int(selector_len.value),
-        )
 
 
 @dataclass
@@ -1466,9 +1395,9 @@ def _fixed_bytes(dst, src: bytes, cap: int, what: str) -> int:
 
 
 # A match or mask crosses with its whole length and as many bytes as the array holds, so one past
-# `MEDIUS_MAX_REWRITE_MATCH` comes back as the library's status.
+# the array comes back as the library's status.
 def _match_field(dst, src: bytes, what: str) -> int:
-    for i, byte in enumerate(src[: _native.MEDIUS_MAX_REWRITE_MATCH]):
+    for i, byte in enumerate(src[: len(dst)]):
         dst[i] = byte
     return _u16(len(src), what)
 
@@ -1699,7 +1628,8 @@ def clip_status_to_c(s) -> "_native.MediusClipStatus":
 
 @dataclass
 class ClipTrigger:
-    """One clip trigger binding: `on`'s `edge` drives `action`; `consume` suppresses the input from the game."""
+    """One clip input trigger: `on`'s `edge` drives `action`; `consume` suppresses the input from the
+    game. The trigger set's other kind is the `ClipPacketTrigger`."""
 
     on: "Usage"
     edge: Edge
@@ -1708,15 +1638,79 @@ class ClipTrigger:
 
 
 @dataclass
+class ClipPacketTrigger:
+    """One clip packet trigger, keyed by ``(traffic_class, id, direction, match_bytes, mask)``: a
+    packet on a traffic surface whose head matches under the mask drives ``action`` on the box's next
+    tick, with no host round trip. The trigger set's other kind is the input `ClipTrigger`.
+
+    ``traffic_class`` is the surface the packet crosses: any `TrafficClass` but ``BUS`` and
+    ``CLIP_TRANSFER``. ``id`` is the interface number for ``HID_IN`` and the endpoint number for the
+    rest, or `ANY_ID`. ``direction`` is `Direction.BOTH`, or the one of `Direction.IN` and
+    `Direction.OUT` the class carries.
+
+    ``match_bytes`` and ``mask`` are the masked head compare and must be the same length, at most
+    `PKT_MATCH_MAX`: a packet matches when ``head[i] & mask[i] == match_bytes[i]`` for each, and an
+    empty match takes every packet on the address. For ``CONTROL`` the head is the 8 setup bytes, then
+    the first 8 bytes of OUT data. An ``EMIT`` trigger sees the clip's own frames as well as native
+    and injected ones, and none of the clip's raw reports.
+
+    A trigger no packet can match is refused, by `ClipHandle.bind_packet` and by the box: a match bit
+    outside its mask, since a packet byte is masked before it is compared, and a direction the class
+    never carries. ``HID_IN`` and ``EMIT`` flow ``IN`` and ``HID_OUT`` flows ``OUT``; the vendor
+    classes and ``CONTROL`` carry either, and every class takes ``BOTH``. The match and mask go to the
+    box as given.
+
+    The box reads a packet for its triggers as the packet arrived, ahead of the rewrite table, and the
+    two are independent: one packet can fire a trigger and win a `RewriteRule`. One trigger wins a
+    packet, most specific first: an exact ``id`` beats `ANY_ID`, more masked bits beat fewer, ``IN``
+    or ``OUT`` beats ``BOTH``, then the trigger bound earlier.
+
+    ``consume`` drops every packet the trigger wins, before the rewrite table sees it. Dropping
+    traffic alters the wire, so the box holds a consuming trigger only under
+    `Device.allow_imperfect_clones`, on any class but ``CONTROL``.
+
+    ``once_per_run`` drives the action on the first packet of a run of matching ones, so a device that
+    repeats a held state every poll fires once per hold; the release is a second trigger matching the
+    released bytes. A run is over one stream: a class other than ``CONTROL``, a concrete ``id``, and
+    ``IN`` or ``OUT``. The first ``selector_len`` match bytes select the stream within that address (a
+    report ID) and the rest are the condition, so ``selector_len`` is below the match length and the
+    mask past it has at least one bit set: a condition every packet of the stream meets is a run that
+    never ends.
+
+    ``hits`` is the packets the trigger has won since it was bound or overwritten (saturating), read
+    back by `ClipHandle.query_config`. `ClipHandle.bind_packet` sends the trigger without it, and a
+    value outside 0..65535 is a `ValueError` there as anywhere.
+    """
+
+    #: The ``id`` that addresses every interface or endpoint of the class.
+    ANY_ID = _native.MEDIUS_CATCH_ID_ANY
+
+    traffic_class: TrafficClass
+    id: int
+    direction: Direction
+    action: ClipAction
+    match_bytes: bytes = b""
+    mask: bytes = b""
+    consume: bool = False
+    once_per_run: bool = False
+    selector_len: int = 0
+    hits: int = 0
+
+
+@dataclass
 class ClipSettings:
-    """The clip configuration read back from RESP(CLIP): autolock, loop/retain, finalized, and the trigger set."""
+    """The clip configuration read back from RESP(CLIP): autolock, loop/retain, finalized, and both
+    kinds of trigger."""
 
     autolock: List[Blanket] = field(default_factory=list)
     loop: bool = False
     retain: bool = False
     finalized: bool = False
     ride: bool = False
+    #: The input triggers.
     triggers: List[ClipTrigger] = field(default_factory=list)
+    #: The packet triggers, in the order the box holds them, each with its ``hits``.
+    packet_triggers: List[ClipPacketTrigger] = field(default_factory=list)
 
 
 _BLANKET_BITS = [
@@ -1726,6 +1720,46 @@ _BLANKET_BITS = [
     (0x08, Blanket.KEYS),
     (0x10, Blanket.MEDIA),
 ]
+
+
+def _clip_packet_key_to_c(t) -> "_native.MediusClipPacketTrigger":
+    c = _native.MediusClipPacketTrigger()
+    c.class_ = int(_enum(t.traffic_class, TrafficClass, "traffic_class"))
+    c.id = _u16(t.id, "id")
+    c.direction = int(_enum(t.direction, Direction, "direction"))
+    c.match_len = _match_field(c.match_bytes, _as_bytes(t.match_bytes, "match_bytes"), "match_bytes")
+    c.mask_len = _match_field(c.mask, _as_bytes(t.mask, "mask"), "mask")
+    return c
+
+
+def clip_packet_trigger_to_c(t, key_only: bool = False) -> "_native.MediusClipPacketTrigger":
+    """`t` as its C mirror; with `key_only`, the key `ClipHandle.unbind_packet` reads and zeros."""
+    c = _clip_packet_key_to_c(t)
+    if key_only:
+        return c
+    c.action = int(_enum(t.action, ClipAction, "action"))
+    c.consume = 1 if t.consume else 0
+    c.once_per_run = 1 if t.once_per_run else 0
+    c.selector_len = _u8(t.selector_len, "selector_len")
+    c.hits = _u16(t.hits, "hits")
+    return c
+
+
+def clip_packet_trigger_from_c(c) -> ClipPacketTrigger:
+    ml = min(int(c.match_len), _native.MEDIUS_MAX_PKT_MATCH)
+    msl = min(int(c.mask_len), _native.MEDIUS_MAX_PKT_MATCH)
+    return ClipPacketTrigger(
+        TrafficClass(c.class_),
+        int(c.id),
+        Direction(c.direction),
+        ClipAction(c.action),
+        bytes(c.match_bytes[:ml]),
+        bytes(c.mask[:msl]),
+        bool(c.consume),
+        bool(c.once_per_run),
+        int(c.selector_len),
+        int(c.hits),
+    )
 
 
 def clip_settings_from_c(c) -> ClipSettings:
@@ -1739,6 +1773,8 @@ def clip_settings_from_c(c) -> ClipSettings:
         )
         for i in range(n)
     ]
+    packet_n = min(int(c.packet_n), _native.MEDIUS_CLIP_PKT_TRIG_MAX)
+    packet_triggers = [clip_packet_trigger_from_c(c.packet_triggers[i]) for i in range(packet_n)]
     autolock = [b for (m, b) in _BLANKET_BITS if c.autolock_bits & m]
     return ClipSettings(
         autolock,
@@ -1747,6 +1783,7 @@ def clip_settings_from_c(c) -> ClipSettings:
         bool(c.finalized),
         bool(c.ride),
         triggers,
+        packet_triggers,
     )
 
 
@@ -1768,6 +1805,10 @@ def clip_settings_to_c(s) -> "_native.MediusClipSettings":
             int(_enum(t.action, ClipAction, f"triggers[{i}].action")),
             1 if t.consume else 0,
         )
+    packet_n = min(len(s.packet_triggers), _native.MEDIUS_CLIP_PKT_TRIG_MAX)
+    c.packet_n = packet_n
+    for i in range(packet_n):
+        c.packet_triggers[i] = clip_packet_trigger_to_c(s.packet_triggers[i])
     return c
 
 
