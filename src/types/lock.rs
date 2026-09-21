@@ -174,7 +174,7 @@ impl Locks {
         Some(Locks { entries })
     }
 
-    /// Build a [`Locks`] from decoded entries; useful for tests and [`MockBox`](crate::MockBox).
+    /// Build a [`Locks`] from decoded entries; useful for tests and `MockBox`.
     pub fn from_entries(entries: Vec<LockEntry>) -> Locks {
         Locks { entries }
     }

@@ -68,7 +68,7 @@ fn set_health_updates_subsequent_queries() {
 #[test]
 fn handshake_rejects_wrong_proto_ver() {
     let mock = MockBox::new().with_version(Version {
-        proto_ver: 9,
+        proto_ver: 11,
         fw_major: 0,
         fw_minor: 0,
         fw_patch: 0,
@@ -76,12 +76,12 @@ fn handshake_rejects_wrong_proto_ver() {
         name: String::new(),
     });
     let err = Device::open_mock(mock).unwrap_err();
-    assert!(matches!(err, Error::BadProtoVer { got: 9 }), "got {err:?}");
+    assert!(matches!(err, Error::BadProtoVer { got: 11 }), "got {err:?}");
 }
 
 #[test]
 fn handshake_refuses_a_v3_4_0_box() {
-    // v3.4.0 firmware answers protocol 7; this build speaks 8.
+    // v3.4.0 firmware answers protocol 7; this build speaks 9.
     let mock = MockBox::new().with_version(Version {
         proto_ver: 7,
         fw_major: 3,
@@ -94,7 +94,7 @@ fn handshake_refuses_a_v3_4_0_box() {
     assert!(matches!(err, Error::BadProtoVer { got: 7 }), "got {err:?}");
     assert_eq!(
         err.to_string(),
-        "unsupported protocol version 7 (expected 8)"
+        "unsupported protocol version 7 (expected 9)"
     );
 }
 

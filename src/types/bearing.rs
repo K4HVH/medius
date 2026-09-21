@@ -44,9 +44,8 @@ impl BearingMode {
 
 /// The configured bearing (`RESP(OPTIONS, BEARING)`, §4.14).
 ///
-/// [`Default`] is what a box boots with, so a [`MockBox`](crate::MockBox) replies as real
-/// hardware would: [`BEARING_WINDOW_DEFAULT`](crate::BEARING_WINDOW_DEFAULT) in
-/// [`BearingMode::PerAxis`].
+/// [`Default`] is what a box boots with, so a `MockBox` replies as real hardware would:
+/// [`BEARING_WINDOW_DEFAULT`](crate::BEARING_WINDOW_DEFAULT) in [`BearingMode::PerAxis`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Bearing {
     /// How long the direction of the last injected delta stays the thing

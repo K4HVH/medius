@@ -1258,7 +1258,7 @@ pub extern "C" fn medius_default_keepalive_cadence_ms() -> u32 {
 
 /// The C ABI version this header declares, bumped on any breaking change to it. Compare it with
 /// `medius_abi_version()` once at start-up.
-pub const MEDIUS_ABI_VERSION: u32 = 8;
+pub const MEDIUS_ABI_VERSION: u32 = 9;
 
 /// The C ABI version of the loaded library, bumped on any breaking change to this header. Call it once
 /// at start-up and compare it with `MEDIUS_ABI_VERSION`. On a mismatch, call nothing else: the structs

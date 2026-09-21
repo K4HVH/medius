@@ -6,7 +6,8 @@ pub struct SpreadStatus {
     /// Percent of the learnt command interval. 0 is off; above 100 overlaps.
     pub percent: u16,
     /// The interval being released across, in microseconds. 0 until the box has learned the host's
-    /// command period, and 0 whenever `percent` is 0.
+    /// command period, 0 whenever `percent` is 0, and 0 before the box has settled where the motion
+    /// is held. In each the whole delta goes out on the next report.
     pub span_us: u32,
 }
 

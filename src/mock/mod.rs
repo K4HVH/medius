@@ -375,8 +375,10 @@ impl Default for State {
                 ..Caps::default()
             },
             rate: Rate::from_payload(&[4, 0, 0, 0, 0, 0]).unwrap(),
-            stats: Stats::from_payload(&[5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
-                .unwrap(),
+            stats: Stats::from_payload(&[
+                5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+            ])
+            .unwrap(),
             table: LockTable::default(),
             locks: None,
             catch: CatchState::from_payload(&[
@@ -1167,6 +1169,8 @@ fn stats_payload(s: Stats) -> Vec<u8> {
     p.extend_from_slice(&s.wakeups.to_le_bytes());
     p.extend_from_slice(&s.reset_count.to_le_bytes());
     p.extend_from_slice(&s.config_count.to_le_bytes());
+    p.extend_from_slice(&s.link_rx_drops.to_le_bytes());
+    p.extend_from_slice(&s.host_rx_drops.to_le_bytes());
     p
 }
 

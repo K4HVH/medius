@@ -7,7 +7,7 @@ use crate::protocol::opcode::Q_FIRMWARE;
 /// Which chip an update addresses.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum UpdateTarget {
-    /// The PC-facing chip: the clone, the control protocol, injection.
+    /// The PC-facing chip: the clone, the control protocol, and the report the game PC reads.
     Device,
     /// The device-facing chip, reachable only through the inter-chip link.
     Host,
