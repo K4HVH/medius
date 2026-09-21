@@ -281,10 +281,16 @@ class Rate:
 class Stats:
     """Box-side delivery and telemetry counters.
 
-    The narrowed fields saturate, so a maxed counter never wraps to a small value. `link_rx_drops`
-    and `host_rx_drops` are frames one of the box's two chips could not take off the inter-chip link,
-    and they do not saturate: a count that stopped rising would stop saying that the loss is still
-    going on. Both should read 0.
+    The narrowed fields saturate, so a maxed counter never wraps to a small value. The three drop
+    counters are full width and do not saturate: a count that stopped rising would stop saying that
+    the loss is still going on.
+
+    The ones to act on are `tx_drops`, a report the clone's queue could not hold, and
+    `link_rx_drops`/`host_rx_drops`, an input-carrying frame one of the box's two chips could not
+    take off the link between them. Each of those is the player's own input going missing, and each
+    should read 0. `relay_drops` is back-pressure on a relayed stream either way -- a vendor IN
+    packet the PC is not draining, or an OUT packet past the relay's one-per-frame ceiling -- which
+    carries no input and is expected under load.
     """
 
     inject_emits: int
@@ -297,6 +303,7 @@ class Stats:
     config_count: int
     link_rx_drops: int
     host_rx_drops: int
+    relay_drops: int
 
 
 @dataclass
@@ -1334,6 +1341,7 @@ def stats_from_c(c) -> Stats:
         c.config_count,
         c.link_rx_drops,
         c.host_rx_drops,
+        c.relay_drops,
     )
 
 
@@ -1349,6 +1357,7 @@ def stats_to_c(s) -> "_native.MediusStats":
         s.config_count,
         s.link_rx_drops,
         s.host_rx_drops,
+        s.relay_drops,
     )
 
 

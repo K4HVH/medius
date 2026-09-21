@@ -345,7 +345,9 @@ mod linux {
                 })
                 .unwrap_or(false);
             // The link drop counters are cumulative since the box booted: anything but zero is a
-            // report or an injected delta lost between the box's own two chips.
+            // report or an injected delta lost between the box's own two chips. relay_drops is
+            // printed and not judged: it is back-pressure on a relayed stream, which a box under
+            // load is meant to report.
             let stats_ok = stats
                 .as_ref()
                 .map(|s| s.tx_drops == 0 && s.link_rx_drops == 0 && s.host_rx_drops == 0)
@@ -358,10 +360,18 @@ mod linux {
                 .map(|hz| format!("{hz:.0}"))
                 .unwrap_or_else(|| "?".into());
             let confident = rate.as_ref().map(|r| r.confident).unwrap_or(false);
-            let (drops, wedges, link_drops, host_drops) = stats
+            let (drops, wedges, link_drops, host_drops, relay_drops) = stats
                 .as_ref()
-                .map(|s| (s.tx_drops, s.tx_wedges, s.link_rx_drops, s.host_rx_drops))
-                .unwrap_or((u16::MAX, u8::MAX, u32::MAX, u32::MAX));
+                .map(|s| {
+                    (
+                        s.tx_drops,
+                        s.tx_wedges,
+                        s.link_rx_drops,
+                        s.host_rx_drops,
+                        s.relay_drops,
+                    )
+                })
+                .unwrap_or((u16::MAX, u8::MAX, u32::MAX, u32::MAX, u32::MAX));
             let id = info
                 .as_ref()
                 .map(|i| i.to_string())
@@ -370,7 +380,7 @@ mod linux {
                 "device info",
                 caps_ok && info_ok && rate_ok && stats_ok,
                 format!(
-                    "mouse={id} caps={caps:?}  rate={hz}Hz confident={confident}  tx_drops={drops} tx_wedges={wedges}  link_rx_drops={link_drops} host_rx_drops={host_drops}"
+                    "mouse={id} caps={caps:?}  rate={hz}Hz confident={confident}  tx_drops={drops} tx_wedges={wedges}  link_rx_drops={link_drops} host_rx_drops={host_drops} relay_drops={relay_drops}"
                 ),
             );
         }

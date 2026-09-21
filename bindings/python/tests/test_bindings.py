@@ -624,6 +624,7 @@ def test_stats_roundtrip():
         config_count=4,
         link_rx_drops=0xDEADBEEF,
         host_rx_drops=0,
+        relay_drops=0x0A0B0C0D,
     )
     with MockBox() as mock:
         mock.set_stats(stats)

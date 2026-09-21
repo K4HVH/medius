@@ -1364,11 +1364,17 @@ typedef struct MediusRate {
 
 // Box-side delivery/telemetry counters.
 //
-// The narrowed fields saturate, so a maxed counter never wraps to a small value. The two link drop
+// The narrowed fields saturate, so a maxed counter never wraps to a small value. The three drop
 // counters are full width and do not saturate: a count that stopped rising would stop saying that
 // the loss is still going on.
+//
+// The ones to act on are `tx_drops`, `link_rx_drops` and `host_rx_drops`: each of those is the
+// player's own input going missing, and each should read 0. `relay_drops` carries no input and is
+// expected under load.
 typedef struct MediusStats {
     uint32_t inject_emits;
+    // Reports the clone's TX queue could not hold: the player's own input, which the game PC
+    // never saw; it should stay 0.
     uint16_t tx_drops;
     uint16_t tx_merges;
     uint8_t tx_maxdepth;
@@ -1376,11 +1382,16 @@ typedef struct MediusStats {
     uint16_t wakeups;
     uint16_t reset_count;
     uint16_t config_count;
-    // Frames the chip that serves the clone could not take off the inter-chip link. One lost there
-    // is a mouse report or an injected delta that never reached the wire; it should stay 0.
+    // Input-carrying frames the chip that serves the clone could not take off the inter-chip link.
+    // One lost there is a mouse report or an injected delta that never reached the wire; it should
+    // stay 0.
     uint32_t link_rx_drops;
     // The same count for the chip that reads the real device, relayed over the link.
     uint32_t host_rx_drops;
+    // Back-pressure on a relayed stream, either direction: a vendor IN packet the PC is not
+    // draining, or an OUT packet past the relay's one-per-frame ceiling. Expected under load, and
+    // counted apart from `tx_drops` because nothing of the player's input goes missing with it.
+    uint32_t relay_drops;
 } MediusStats;
 
 // One entry in a decoded `RESP(LOCKS)`: the locked target and which edges are locked.
