@@ -87,9 +87,8 @@ struct State {
     patches: Vec<MockPatch>,
     patch_applied: bool,
     patch_refused: bool,
-    // The field-transform table the TRANSFORM frames build, modelled the way the box holds it (keyed
-    // rows in installation order, a full flag). Ungated: unlike rewrites it is not cleared when the
-    // imperfect opt-in goes off, because a transform is faithful and never needed it.
+    // The field-transform table the TRANSFORM frames build, modelled the way the box holds it
+    // (keyed rows in installation order, a full flag).
     transforms: Vec<MockTransform>,
     transform_full: bool,
     // The canned answer to a TRANSFER (status, IN data). The box answers 0xFC when the opt-in is off.
@@ -147,9 +146,7 @@ fn pkt_head_eq(match_bytes: &[u8], mask: &[u8], n: usize, head: &[u8]) -> bool {
 }
 
 impl MockPacketTrigger {
-    // pkt_match_score: how specific this trigger is for a packet, `None` when it is no candidate. An
-    // exact id beats the id wildcard, then more masked bits beat fewer, then a named direction beats
-    // BOTH. The firmware's third id rank is the class wildcard, which a trigger never carries.
+    // pkt_match_score: how specific this trigger is for a packet, `None` when it is no candidate.
     fn score(&self, class: u8, id: u16, dir: u8, head: &[u8]) -> Option<u32> {
         let id_rank = match (self.class == class, self.id) {
             (true, i) if i == id => 2,
@@ -179,8 +176,7 @@ impl PacketTriggers {
     }
 
     // clip_ptrig_set: add, overwrite or remove one trigger, or refuse the frame whole. Returns the
-    // index of the trigger it set or removed. `imperfect` is whether `OPTION(IMPERFECT)` is on, which
-    // a consuming trigger needs.
+    // index of the trigger it set or removed.
     #[allow(clippy::too_many_arguments)]
     fn set(
         &mut self,
@@ -276,9 +272,8 @@ impl PacketTriggers {
         self.rows.retain(|r| r.flags & CLIP_TRIG_F_CONSUME == 0);
     }
 
-    // clip_ptrig_packet: one packet through the set. Every RUN trigger on this exact address has its
-    // run brought up to date, winner or not. The winner is charged a hit. Returns the verb it fires
-    // on this packet and whether it consumes the packet.
+    // clip_ptrig_packet: one packet through the set. Every RUN trigger on this exact address has
+    // its run brought up to date, winner or not. The winner is charged a hit.
     fn packet(&mut self, class: u8, id: u16, dir: u8, head: &[u8]) -> (Option<u8>, bool) {
         let mut winner: Option<(usize, u32)> = None;
         for (i, r) in self.rows.iter().enumerate() {
@@ -415,9 +410,8 @@ impl Default for State {
     }
 }
 
-// The box's lock table, modelled the way the firmware holds it so the mock answers `RESP(LOCKS)` the
-// way a box would rather than echoing what the host sent. Mouse rows are X, Y, wheel, pan then the
-// buttons; slots are POS, NEG, WITH, AGAINST.
+// The box's lock table, modelled the way the firmware holds it so the mock answers `RESP(LOCKS)`
+// the way a box would rather than echoing what the host sent.
 const LOCK_TGT_BTN_BASE: usize = 4; // CTRL_LOCK_TGT_BTN_BASE: 4 axes (X, Y, wheel, pan) precede the buttons
 const LOCK_TGT_COUNT: usize = LOCK_TGT_BTN_BASE + MAX_BUTTONS as usize; // 4 axes + 16 buttons
 const LOCK_SLOT_WITH: usize = 2;
@@ -425,11 +419,7 @@ const SLOT_DIRS: [u8; 4] = [LOCK_DIR_POS, LOCK_DIR_NEG, LOCK_DIR_WITH, LOCK_DIR_
 // CTRL_RESP_LOCKS_MAXN and INPUT_MEDIA_MAX: past either the box drops silently.
 const RESP_LOCKS_MAXN: usize = 85;
 const MEDIA_LOCK_MAX: usize = 8;
-// The rest of ctrl_proto.h's reply bounds. Every one of these sits behind a public builder that
-// takes a caller-supplied length, and the box truncates at each rather than refusing: it appends
-// what fits and answers. Encoding past them writes a count byte that wrapped past 255, or a payload
-// longer than a frame carries, and since the responder runs inside `write_all`, that `encode`
-// failure unwinds back out of the caller's own query rather than answering it.
+// The rest of ctrl_proto.h's reply bounds.
 const NAME_MAX: usize = 32; // CTRL_NAME_MAX
 const DEVICE_INFO_PRODUCT_MAX: usize = 127; // CTRL_DEVICE_INFO_PRODUCT_MAX
 const CATCH_MAXN: usize = 32; // CTRL_CATCH_MAXN
@@ -506,8 +496,7 @@ impl LockTable {
     // button id past it is dropped, exactly as the firmware caps at `nbtn`.
     pub(crate) fn apply(&mut self, class: u8, id: u16, dir: u8, scale: i16, n_buttons: u8) {
         // One bit has nothing to reverse, so the box writes nothing at all for a negative on a
-        // momentary class (usbdev_set_lock). Truncating it to a block here instead would agree with a
-        // crate that had lost its own guard.
+        // momentary class (usbdev_set_lock).
         if scale < 0 && class != LOCK_CLS_AXIS {
             return;
         }
@@ -673,8 +662,6 @@ impl State {
 
     // Apply a REWRITE frame the way the box would: keyed add/overwrite/remove, a monotonic gen, a
     // whole-table clear, and the caps that raise `full`. Dropped whole while the opt-in is off.
-    // The gates run in the box's order: the frame's own lengths, the opt-in (which the clear-all
-    // sentinel passes), then the table's checks.
     fn apply_rewrite_frame(&mut self, p: &[u8]) {
         if p.len() < 9 {
             return;
@@ -778,9 +765,8 @@ impl State {
         }
     }
 
-    // Apply a CLIP_TRIGGER frame. A traffic class makes it a packet trigger, which the table takes or
-    // refuses whole. The clear-all sentinel drops both kinds. Any other input binding is the scripted
-    // `ClipSettings`' to hold, so its frame is recorded and changes nothing here.
+    // Apply a CLIP_TRIGGER frame. A traffic class makes it a packet trigger, which the table takes
+    // or refuses whole. The clear-all sentinel drops both kinds.
     fn apply_clip_trigger_frame(&mut self, p: &[u8]) {
         let Some(&class) = p.first() else {
             return;
@@ -827,9 +813,7 @@ impl State {
         self.packet_triggers.rows.clear();
     }
 
-    // Script the clip config. Each packet trigger is bound in order as a CLIP_TRIGGER frame binds it,
-    // under the opt-in as it stands, so a script reads back as the box would answer: the entries it
-    // takes, each with its scripted `hits`.
+    // Script the clip config.
     fn script_clip_settings(&mut self, mut settings: ClipSettings) {
         self.packet_triggers.rows.clear();
         let imperfect = self.imperfect.allowed;
@@ -862,10 +846,8 @@ impl State {
         }
     }
 
-    // Apply a TRANSFORM frame (§3.15), modelled on transform_tab_set. Ungated: a transform is faithful,
-    // so unlike REWRITE this runs whatever the imperfect opt-in. The refusals mirror the firmware: an
-    // op at or above the count, a class pair the op cannot take, a field neither map declares, and the
-    // table ceiling (which sets the full flag).
+    // Apply a TRANSFORM frame (§3.15), modelled on transform_tab_set. Ungated: a transform is
+    // faithful, so unlike REWRITE this runs whatever the imperfect opt-in.
     fn apply_transform_frame(&mut self, p: &[u8]) {
         if p.len() < 8 {
             return;
@@ -1071,9 +1053,7 @@ impl State {
 fn version_payload(v: &Version) -> Vec<u8> {
     let mut p = vec![0u8, v.proto_ver, v.fw_major, v.fw_minor, v.fw_patch];
     p.extend_from_slice(&v.mac);
-    // usbdev_box_name_copy stops at CTRL_NAME_MAX, so a longer name reads back cut. Bytes, not
-    // chars, as the box copies them: a split multi-byte char decodes lossily, which is what the box
-    // would put on the wire too.
+    // usbdev_box_name_copy stops at CTRL_NAME_MAX, so a longer name reads back cut.
     p.extend_from_slice(&v.name.as_bytes()[..v.name.len().min(NAME_MAX)]);
     p
 }
@@ -1179,9 +1159,8 @@ fn stats_payload(s: Stats) -> Vec<u8> {
 fn locks_payload(l: &Locks) -> Vec<u8> {
     use crate::protocol::opcode::{LOCK_CLS_AXIS, LOCK_ID_ALL};
     use crate::types::{LockScope, LockTarget};
-    // The box stops appending at RESP_LOCKS_MAXN and answers with what fit (ctrl_locks_append), so a
-    // longer `Locks` truncates here. Encoding all of them would write a count byte that wrapped past
-    // 255 and a payload no frame can carry, which fails the caller's query instead of answering it.
+    // The box stops appending at RESP_LOCKS_MAXN and answers with what fit (ctrl_locks_append), so
+    // a longer `Locks` truncates here.
     let entries = &l.entries()[..l.entries().len().min(RESP_LOCKS_MAXN)];
     let mut p = vec![6u8, entries.len() as u8];
     for e in entries {
@@ -1257,8 +1236,6 @@ fn options_emit_payload(
 ) -> Vec<u8> {
     // `render` is not echoed here any more (it has its own option), but the rendered gate still
     // decides the resolved rate, so the pace reply still depends on it.
-    // Mirror the firmware: Fixed clamps the echoed rate to 1..=1000 (0 -> 1000) and snaps resolved
-    // to the 1 ms frame clock (1000/n); Learned/Interval echo 0 (no real device to resolve).
     let (mode, fixed_hz, mut resolved) = match pace {
         EmitPace::Learned => (0u8, 0u16, 0u16),
         EmitPace::Interval => (1, 0, 0),
@@ -1269,18 +1246,12 @@ fn options_emit_payload(
         }
     };
     // The texture rides its own option beside the pace, but only forces resolved to 1 kHz when the
-    // pace resolved to no period of its own; a Fixed rate keeps its snapped value. That is the
-    // firmware's condition, not "the pace is Learned": usbdev.c's emit_override_period returns 0 for
-    // Interval too while no device is bound, which is the state this mock models. The box also gates
-    // it on a profile having ARMED, not on the mode being set: until then it runs the paced fill and
-    // reports 0. A mock that answered 1000 regardless would green-light host code that reads
-    // resolved_hz as "the renderer is emitting".
+    // pace resolved to no period of its own; a Fixed rate keeps its snapped value.
     if render != RenderMode::Off && render_ready && resolved == 0 {
         resolved = 1000;
     }
-    // The box resolves a forced rate to a bInterval in whole 1 ms frames and advertises 1000/n, so a
-    // request that is not a divisor of 1000 comes back as something else. A naive echo would diverge.
-    // A force only applies with the imperfect opt-in on; without it the clone still advertises its own.
+    // The box resolves a forced rate to a bInterval in whole 1 ms frames and advertises 1000/n, so
+    // a request that is not a divisor of 1000 comes back as something else.
     let (advertised, active) = match force_hz.filter(|hz| *hz != 0 && allowed) {
         None => (native_hz, false),
         Some(hz) => {
@@ -1307,9 +1278,8 @@ fn options_render_payload(mode: RenderMode, full: bool, ready: bool) -> Vec<u8> 
     vec![9u8, OPT_RENDER, mode.to_wire(), full as u8, ready as u8]
 }
 
-// The box resolves the interval from a command period it has learned off MOVE arrivals, and answers 0
-// while it has none or the option is off. A mock that answered a span from the percent alone would
-// model a friendlier box than the hardware and green-light host code reading it as "spreading".
+// The box resolves the interval from a command period it has learned off MOVE arrivals, and answers
+// 0 while it has none or the option is off.
 fn options_spread_payload(percent: u16, learned_us: u32) -> Vec<u8> {
     let span = if percent == 0 || learned_us == 0 {
         0
@@ -1754,9 +1724,8 @@ impl MockBox {
                         Some((status, arg)) => {
                             let mut p = vec![op, payload.get(1).copied().unwrap_or(0), status];
                             p.extend_from_slice(&arg.to_le_bytes());
-                            // A DATA acknowledgement answers a whole window, so the firmware gives it a
-                            // rolling SEQ of its own rather than echoing the command's. Echoing it here
-                            // would let a client that correlated on SEQ pass the mock and fail on the box.
+                            // A DATA acknowledgement answers a whole window, so the firmware gives
+                            // it a rolling SEQ of its own rather than echoing the command's.
                             let rseq = if op == 1 {
                                 let v = st.update.data_seq;
                                 st.update.data_seq = st.update.data_seq.wrapping_add(1);

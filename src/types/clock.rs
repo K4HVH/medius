@@ -183,15 +183,11 @@ pub struct Stamped {
 }
 
 // Samples per floor block. The floor is the minimum over the current block plus the previous one,
-// so its age is bounded by two blocks, about 8 s at 1 kHz. An all-time minimum cannot be right: the
-// two crystals drift at up to 20 ppm, so a floor from an hour ago is 72 ms wrong and only ever gets
-// worse. Bounding the window lets the floor rise as well as fall.
+// so its age is bounded by two blocks, about 8 s at 1 kHz.
 const FLOOR_BLOCK: u32 = 4096;
 
-// A [`Stamped::host`] correction larger than this re-anchors the timeline instead of being absorbed.
-// Small corrections are smoothed so time never visibly runs backwards; a large one is the estimate
-// being wrong, and holding a wrong answer to keep it monotonic wedges the stream for as long as the
-// error lasts.
+// A [`Stamped::host`] correction larger than this re-anchors the timeline instead of being
+// absorbed.
 const RESYNC_NS: u64 = 1_000_000;
 
 // Half the 32-bit stamp range. A backward step shorter than this is the box's own priority queues
@@ -308,8 +304,7 @@ impl Timeline {
         let floor = d.push_lag(lag_ns);
 
         // Non-negative by construction: at the sample that set the floor, box_ns + floor is exactly
-        // that sample's own elapsed, and elapsed since our own origin cannot be negative. The cast is
-        // still saturated: a fabricated epoch would otherwise wrap silently into a small number.
+        // that sample's own elapsed, and elapsed since our own origin cannot be negative.
         let raw_host_ns = (box_ns + floor).max(0).min(u64::MAX as i128) as u64;
         // A small correction is absorbed so the timeline does not visibly run backwards; a large one
         // means the estimate was wrong, and pinning a wrong answer to stay monotonic would freeze the

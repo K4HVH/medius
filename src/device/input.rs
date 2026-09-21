@@ -57,9 +57,7 @@ impl InputStream {
 
     fn pump(&mut self, event: CatchEvent) {
         match event {
-            // A report that moved nothing is not motion. The box never emits one, but the routing
-            // fallback for an unaddressable event delivers it, and a phantom zero-delta event is the
-            // exact shape the emission-suppression work was about.
+            // A report that moved nothing is not motion.
             CatchEvent::Motion(m) if m.axes().next().is_some() => {
                 self.pending.push_back(InputEvent {
                     ts_us: m.ts_us,

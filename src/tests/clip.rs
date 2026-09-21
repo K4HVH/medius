@@ -1214,9 +1214,8 @@ mod packet_trigger {
             assert_eq!(read, vec![plain]);
         }
 
-        // How many packet triggers the mock answers with, read off the wire: the decode leaves out an
-        // entry it has no names for. Nothing is held and no input trigger is bound, so the count
-        // sits right after `[autolock][flags][n_trig]`.
+        // How many packet triggers the mock answers with, read off the wire: the decode leaves out
+        // an entry it has no names for.
         fn held_on_the_wire(device: &Device, mock: &MockBox) -> u8 {
             device.clip().query_config().unwrap();
             mock.replied_frames().pop().unwrap().payload[34]

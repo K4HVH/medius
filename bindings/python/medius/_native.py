@@ -437,9 +437,7 @@ class MediusMotionEvent(ctypes.Structure):
 
 
 class MediusUsageEvent(ctypes.Structure):
-    # Mirrors MediusUsageEvent in medius.h. A missing field here is not a decode bug, it is a buffer
-    # overrun: the library writes sizeof(MediusCatchEvent) bytes into whatever this allocates, so a
-    # struct short by one field lets every catch event write past the end of it.
+    # Mirrors MediusUsageEvent in medius.h.
     _fields_ = [
         ("class_", u8),
         ("direction", u8),

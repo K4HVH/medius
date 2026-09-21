@@ -199,9 +199,8 @@ fn input_catch_class(class: u8) -> Option<MediusCatchClass> {
     }
 }
 
-// A filter addressing nothing: the wildcard class carrying a real id, which subscribing refuses with
-// MEDIUS_STATUS_ERR_INVALID_ARG. A constructor has no status of its own, and a byte no constant names
-// must not become a narrower subscription that looks like the box producing no events.
+// A filter addressing nothing: the wildcard class carrying a real id, which subscribing refuses
+// with MEDIUS_STATUS_ERR_INVALID_ARG.
 fn unaddressable() -> MediusCatchFilter {
     MediusCatchFilter {
         class: MEDIUS_CATCH_CLASS_ANY,
@@ -437,8 +436,6 @@ pub unsafe extern "C" fn medius_traffic_event_data(
         let e = unsafe { &*event };
         let n = (e.len as usize).min(MEDIUS_MAX_TRAFFIC_BYTES);
         // A control event whose own setup packet was cut short has no data stage at all.
-        // Falling through to "the whole buffer is the data" handed a decoder the surviving setup
-        // bytes: a GET_DESCRIPTOR request labelled as the descriptor it asked for.
         let (skip, n) = if !is_control_shaped(e) {
             (0usize, n)
         } else if e.len >= SETUP_LEN {

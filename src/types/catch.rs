@@ -246,8 +246,6 @@ impl Capture {
 }
 
 // The box dedups its table on (class, id, direction), so the host has to collapse on exactly that.
-// Split out rather than left implicit in CatchFilter's comparison traits: a PartialEq that quietly
-// ignored the capture held for two filters that behaved differently, and assert_eq! passed on it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub(crate) struct FilterKey {
     class: Option<CatchClass>,
@@ -518,9 +516,7 @@ impl CatchState {
             if o + Self::ENTRY > p.len() {
                 break;
             }
-            // An entry this build cannot name is SKIPPED, not fatal to the whole reply. Propagating
-            // the failure discarded the drop counts and the clock estimate too, and surfaced as "no
-            // reply": a firmware that added one class would look like a dead link.
+            // An entry this build cannot name is SKIPPED, not fatal to the whole reply.
             let Some(filter) = CatchFilter::from_wire(
                 p[o],
                 u16::from_le_bytes([p[o + 1], p[o + 2]]),

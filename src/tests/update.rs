@@ -198,10 +198,8 @@ fn a_zero_credit_falls_back_to_the_default() {
 
 #[test]
 fn update_status_names_every_value_the_box_can_answer() {
-    // Derived from name() rather than hand-listed. The hand-written version was bypassed by the very
-    // status it existed to guard, because adding one meant remembering a test in another file. This
-    // fails the moment an arm is added or removed, which is the prompt to update the wire docs, the
-    // reference client and the dashboard table too.
+    // Derived from name() rather than hand-listed. The hand-written version was bypassed by the
+    // very status it existed to guard, because adding one meant remembering a test in another file.
     let named: Vec<u8> = (0u8..=0xFF)
         .filter(|&v| UpdateStatus(v).name() != "unknown")
         .collect();
@@ -344,8 +342,7 @@ mod correlation {
     use crate::protocol::FrameType;
 
     // A DATA acknowledgement answers a whole window, so the box gives it a rolling SEQ of its own
-    // rather than echoing the command's. This reads the REPLY seqs: an earlier version of this test
-    // only looked at the frames the client sent, so it passed whatever the mock answered.
+    // rather than echoing the command's.
     #[test]
     fn data_acks_carry_a_rolling_seq_not_the_command_seq() {
         let mock = crate::MockBox::new();
@@ -416,10 +413,7 @@ mod correlation {
 mod stale_replies {
     use super::*;
 
-    // An abandoned transfer leaves its last acknowledgement in the channel. Taking that as the first
-    // window's answer would run the loop a window ahead of the box for the rest of the image, which
-    // is twice the credit in flight against a receiver sized for one window. Dropping it has to
-    // happen after the BEGIN reply, because awaiting that reply is what moves it out of the channel.
+    // An abandoned transfer leaves its last acknowledgement in the channel.
     #[test]
     fn a_leftover_data_ack_does_not_answer_the_next_transfers_first_window() {
         let mock = crate::MockBox::new();

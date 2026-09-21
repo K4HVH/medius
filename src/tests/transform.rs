@@ -454,9 +454,8 @@ mod mock_roundtrip {
 
     #[test]
     fn a_reapply_re_sends_held_transforms_in_installation_order() {
-        // The box applies transforms in table order and two that write the same field do not commute,
-        // so the replay is only correct if it rebuilds the ORDER, not just the set. Installed here so
-        // the second entry sorts BELOW the first by wire key: a map-backed store would swap them.
+        // The box applies transforms in table order and two that write the same field do not
+        // commute, so the replay is only correct if it rebuilds the ORDER, not just the set.
         let mock = MockBox::new();
         let device = Device::with_mock(mock.clone());
         let swap_y_wheel = Transform::swap(Axis::Y, Axis::Wheel); // key (3,1,3,2)
@@ -477,9 +476,8 @@ mod mock_roundtrip {
 
     #[test]
     fn the_readback_comes_back_in_apply_order() {
-        // The host→box half of the ordering claim is covered by the replay tests; this is the box→host
-        // half. RESP(TRANSFORMS) is meant to read back as the commands that rebuild the table, which it
-        // can only do if it carries the order the box applies them in.
+        // The host→box half of the ordering claim is covered by the replay tests; this is the
+        // box→host half.
         let device = Device::with_mock(MockBox::new());
         let first = Transform::swap(Axis::Y, Axis::Wheel); // key (3,1,3,2)
         let second = Transform::remap(Axis::X, Axis::Y); // key (3,0,3,1), sorts BELOW the first

@@ -41,10 +41,7 @@ impl Override {
 
 const SLOT_DIRS: [u8; 4] = [LOCK_DIR_POS, LOCK_DIR_NEG, LOCK_DIR_WITH, LOCK_DIR_AGAINST];
 
-// One row of the box's lock table: the scale each of the four slots holds. Tracking the row rather
-// than the direction byte that was sent is what makes a release exact: Both writes the absolute
-// pair and passes the relative one, so a later single-direction unlock has to clear one slot out of a
-// group write, which a key per direction cannot express.
+// One row of the box's lock table: the scale each of the four slots holds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct Slots([i16; 4]);
 
@@ -165,34 +162,23 @@ pub(crate) struct DesiredState {
     // One entry per box lock-table row. A row every slot passes is not held at all and is dropped, so
     // `locks` stays exactly the set a reconnect has to re-send.
     locks: BTreeMap<(u8, u16), Slots>,
-    // Granular media rows in the order they were taken. The box keeps its media locks in a fixed
-    // 8-slot array filled first-free-slot-first, so a replay in id order refills those slots in a
-    // different order and, past the eight it holds, drops a different usage than the box was
-    // dropping. The blanket is its own flag on the box, not a slot, so it stays out.
+    // Granular media rows in the order they were taken.
     media_order: Vec<u16>,
     catch: FilterSet,
     // The rewrite-rule table the box should be holding, keyed by wire key so a re-set is exact and
     // idempotent. Re-asserted on reconnect and by the keepalive, exactly like `catch`.
     rewrites: BTreeMap<RewriteWireKey, StoredRewrite>,
     // The field-transform table the box should be holding, keyed by (sclass, sid, dclass, did) so a
-    // Session state re-asserted on reconnect and by the keepalive. A VEC, not a map: the box applies
-    // transforms in installation order and two that write the same field do not commute, so replaying
-    // them in key order would rebuild a different pipeline than the one the host built.
+    // Session state re-asserted on reconnect and by the keepalive.
     transforms: Vec<StoredTransform>,
     // The clone's declared button count, cached from `RESP(CAPS)`: the handshake reads it, and a
-    // reconnect re-reads it. A button blanket is held UNEXPANDED and expanded onto this many rows at
-    // reassert time, so a wide-button lock set before the caller's own `caps()` still re-asserts every
-    // declared button across a reconnect, and a device swapped in during the blip re-asserts onto its
-    // count. `None` before any CAPS read: the blanket then expands onto the five named buttons. A
-    // device fact, not PC-owned injection state, so `clear()`/`is_idle()` leave it alone.
+    // reconnect re-reads it.
     declared_buttons: Option<u8>,
     clip: ClipHeld,
 }
 
-// What the box holds of a clip: a loaded ring, settings off their defaults, and both kinds of trigger.
-// A second of control silence clears all of it, so while any of it stands the keepalive keeps the link
-// from going quiet. The ring's content is the caller's to reload, so a reconnect replays none of it
-// and reads back what the box still holds.
+// What the box holds of a clip: a loaded ring, settings off their defaults, and both kinds of
+// trigger.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 struct ClipHeld {
     loaded: bool,
@@ -395,9 +381,8 @@ impl DesiredState {
         self.declared_buttons = Some(n_buttons.min(MAX_BUTTONS));
     }
 
-    // How many button rows a button blanket expands onto: the declared count once CAPS is read, else
-    // the five named buttons. The box holds no button-blanket flag, so the host does the expansion, at
-    // reassert time off the current count. Always within the box's ceiling.
+    // How many button rows a button blanket expands onto: the declared count once CAPS is read,
+    // else the five named buttons.
     fn button_count(&self) -> u16 {
         self.declared_buttons.unwrap_or(BTN_COUNT) as u16
     }
@@ -575,10 +560,7 @@ impl DesiredState {
         })
     }
 
-    // The `(key, scale)` commands that rebuild every held row, for the reconnect reapply. The button
-    // blanket is expanded here onto the count CAPS last reported, not at apply time, so a reconnect
-    // that re-read CAPS re-asserts every declared button. Media rows come out in the order they were
-    // taken, so the replay fills the box's slot array the way the live box filled it.
+    // The `(key, scale)` commands that rebuild every held row, for the reconnect reapply.
     pub(crate) fn held_locks(&self) -> Vec<(LockKey, i16)> {
         let button_count = self.button_count();
         let mut rows: Vec<(&(u8, u16), &Slots)> = self.locks.iter().collect();

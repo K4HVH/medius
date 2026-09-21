@@ -265,7 +265,6 @@ fn mock_emit_pace_matches_firmware_snap() {
     use crate::{Device, EmitPace, EmitPaceStatus, MockBox, RenderMode};
     // The mock models firmware pacing: Fixed(400) snaps to 1000/3 = 333 Hz on the 1 ms frame clock
     // (not raw 400) and Fixed(2000) clamps to 1 kHz; a naive echo would diverge from hardware.
-    // An untouched mock models a fresh box, which boots rendering De-spiked.
     let mock = MockBox::new().with_emit_pace(EmitPace::Fixed(400));
     let device = Device::with_mock(mock.clone());
     assert_eq!(
@@ -289,9 +288,7 @@ fn mock_emit_pace_matches_firmware_snap() {
             force_active: false,
         }
     );
-    // The texture is its own command now, but it still governs the resolved rate. The box gates that
-    // on a profile having ARMED, not on the mode being set: a box told to render but still waiting for
-    // one runs the paced fill and reports the learnt cap.
+    // The texture is its own command now, but it still governs the resolved rate.
     device.set_render(RenderMode::Stock, false).unwrap();
     device.set_emit_pace(EmitPace::Learned, None).unwrap();
     assert_eq!(device.query_emit_pace().unwrap().resolved_hz, 0);
@@ -320,9 +317,7 @@ fn mock_emit_pace_matches_firmware_snap() {
         }
     );
 
-    // Armed, a rendered stream on a learnt pace self-paces every millisecond and says so. This is the
-    // half that discriminates: without it the reply reads the same whether the renderer is emitting
-    // or the box is still on the fill.
+    // Armed, a rendered stream on a learnt pace self-paces every millisecond and says so.
     let armed = Device::with_mock(MockBox::new().with_render_ready(true));
     armed.set_render(RenderMode::Stock, false).unwrap();
     armed.set_emit_pace(EmitPace::Learned, None).unwrap();

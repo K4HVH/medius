@@ -178,8 +178,6 @@ fn reapply_re_emits_held_locks_but_not_released_ones() {
         .map(|f| f.payload.clone())
         .collect();
     // Only the two still-held locks, each re-asserted at the scale it was set to; key A is gone.
-    // Ordered by the desired-set key (class,id,dir): the KEY blanket (1, 0xFFFF, both) before the
-    // AXIS X+ (3, 0, pos).
     assert_eq!(
         locks,
         vec![vec![1, 0xFF, 0xFF, 0, 0, 0], vec![3, 0, 0, 1, 0, 0]]

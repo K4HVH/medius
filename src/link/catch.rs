@@ -25,9 +25,6 @@ pub(crate) const CATCH_CAPACITY: usize = 256;
 pub(crate) type FilterSet = BTreeMap<FilterKey, CatchFilter>;
 
 // Collapse filters onto one entry per address, keeping the widest capture.
-//
-// Widest-wins rather than last-wins: a pair naming one address at two captures has to mean the same
-// thing in either order, and only one of the two orders can be the one the caller meant.
 pub(crate) fn collapse(filters: impl IntoIterator<Item = CatchFilter>) -> FilterSet {
     let mut out = FilterSet::new();
     for f in filters {
@@ -38,9 +35,8 @@ pub(crate) fn collapse(filters: impl IntoIterator<Item = CatchFilter>) -> Filter
     out
 }
 
-// Whether `o` is no more specific than `f` and addresses the same thing, so an event resolving to `f`
-// is one `o` asked for. The box captures at the MOST SPECIFIC matching entry, so without folding
-// `o`'s capture into `f`, a narrow entry from one subscriber cuts a broad subscriber's packets.
+// Whether `o` is no more specific than `f` and addresses the same thing, so an event resolving to
+// `f` is one `o` asked for.
 fn covers(o: CatchFilter, f: CatchFilter) -> bool {
     let class_ok = match (o.class(), f.class()) {
         (None, _) => true,
@@ -55,11 +51,7 @@ fn covers(o: CatchFilter, f: CatchFilter) -> bool {
     if !(class_ok && id_ok) {
         return false;
     }
-    // Direction ranks in specificity ONLY between two entries at the same address. Once `o` is
-    // broader in (class, id) its own entry always ranks below `f`, so `f` serves every direction `o`
-    // admits and `f`'s capture is what the box applies. Requiring `o` to be Both there cut a broad
-    // subscriber that had merely named a direction: `everything().inbound()` at whole packets got 8
-    // bytes because an unrelated caller capped one endpoint.
+    // Direction ranks in specificity ONLY between two entries at the same address.
     if o.class() == f.class() && o.id() == f.id() {
         o.direction() == Direction::Both
     } else {
@@ -145,19 +137,13 @@ fn decode_event(ty: FrameType, payload: &[u8]) -> Option<CatchEvent> {
     }
 }
 
-// Whether this subscriber asked for this event.
-//
-// A traffic event carries its own `(class, id, direction)` and matches directly. The two input
-// frames do not: they carry content, and the addresses they represent have to be read out of it.
-// Passing `u16::MAX` for an input event, the wildcard on the wire but not on this side, made every
-// exact-id input subscription match nothing, silently: the box accepted the entry, `RESP(CATCH)`
-// listed it, its drop count stayed zero, and the stream was empty forever.
+// Whether this subscriber asked for this event. A traffic event carries its own `(class, id,
+// direction)` and matches directly.
 fn wanted(sub: &CatchSub, event: &CatchEvent) -> bool {
     let any = |class, id, dir| sub.filters.values().any(|f| f.matches(class, id, dir));
     match event {
-        // One report can move several axes. It is delivered if ANY axis it moved was subscribed, with
-        // that axis's own sign. A report that moved nothing names no axis, so it falls back to the
-        // class: an event this side cannot address is one to deliver, never one to discard.
+        // One report can move several axes. It is delivered if ANY axis it moved was subscribed,
+        // with that axis's own sign.
         CatchEvent::Motion(m) => {
             let mut moved = m.axes().peekable();
             if moved.peek().is_none() {
@@ -168,10 +154,7 @@ fn wanted(sub: &CatchSub, event: &CatchEvent) -> bool {
             }
             moved.any(|(ax, d)| any(CatchClass::Axis, ax.as_u16(), Direction::of_delta(d)))
         }
-        // A snapshot is the CLASS's state, not one usage's, so it routes on class and edge. Matching
-        // per-usage threw away exactly the edge a caller was waiting for, and only when some OTHER
-        // subscriber's usage happened to still be held, which is the shape that hides it from a
-        // single-subscriber test.
+        // A snapshot is the CLASS's state, not one usage's, so it routes on class and edge.
         CatchEvent::Usages(u) => sub.filters.values().any(|f| {
             f.matches_class_only(CatchClass::from(u.class)) && f.direction().admits(u.direction)
         }),
@@ -181,10 +164,6 @@ fn wanted(sub: &CatchSub, event: &CatchEvent) -> bool {
 
 // Deliver one decoded catch frame to the subscribers that asked for it, dropping the oldest on a
 // full buffer.
-//
-// Matched against each subscriber's own filters, not broadcast: the box holds one table, the union
-// of every subscription, so without this check a caller watching one endpoint would also receive
-// everything every other caller in the process had subscribed to.
 pub(crate) fn deliver_event(reg: &Mutex<CatchReg>, ty: FrameType, payload: &[u8]) {
     let Some(event) = decode_event(ty, payload) else {
         return;
@@ -215,10 +194,7 @@ impl Link {
     // write per entry, ahead of any other subscribe and of the keepalive.
     pub(crate) fn catch_sync(&self, prev: &FilterSet, next: &FilterSet) -> Result<()> {
         // An unsubscribe of the wildcard entry is byte-for-byte the frame the box treats as "clear
-        // the whole table": it does not look at the direction. So dropping an `everything()`
-        // subscriber took every OTHER subscriber's entry with it, and the diff below then skipped
-        // re-sending them because their captures had not changed: a silent hole in their streams
-        // until the keepalive re-asserted, with no drop counted and no flag set.
+        // the whole table": it does not look at the direction.
         let wildcard_removed = prev
             .iter()
             .any(|(key, f)| f.class().is_none() && !next.contains_key(key));

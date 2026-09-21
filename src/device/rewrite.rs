@@ -221,8 +221,7 @@ pub(crate) fn validate_rule(rule: &RewriteRule) -> Result<()> {
         });
     }
     // Mirror the box's head-cap admission (rewrite_tab.h): a report surface holds 64 bytes and a
-    // control image 8+2048, so a rule whose payload cannot land is refused there. Reject it here
-    // rather than hold a rule DesiredState keeps but the box drops.
+    // control image 8+2048, so a rule whose payload cannot land is refused there.
     const HEAD_REPORT: usize = 64;
     const HEAD_CONTROL: usize = 8 + 2048;
     let plen = rule.payload.len();

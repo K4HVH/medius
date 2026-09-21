@@ -166,13 +166,7 @@ fn fail_bool(message: &str) -> bool {
 }
 
 // The caller's clock and ours share no origin, so the arrival is fed in on OUR scale and the answer
-// shifted back onto theirs. Only differences survive the round trip, which is all either scale
-// carries, so any consistent nanosecond source works, as long as every call uses the same one.
-// `checked_add` covers a narrower `Instant`: nothing a caller can pass overflows on a 64-bit one, but
-// panicking across the FFI boundary is not an option if some target's is narrower.
-//
-// # Safety
-// `t` and `out` must be non-null and valid.
+// shifted back onto theirs.
 unsafe fn timeline_observe(
     t: *mut MediusTimeline,
     ts_us: u32,

@@ -741,10 +741,8 @@ fn a_relative_direction_with_no_bearing_to_read_has_its_own_status() {
 
 #[test]
 fn an_unnamed_direction_byte_in_a_caller_built_lock_entry_is_dropped() {
-    // `MediusLockEntry.direction` is a `uint8_t` the caller fills in through `medius_mock_set_locks`,
-    // and Python has always handed it a raw byte. The setter has no status to return, so the entry is
-    // dropped rather than read as whichever direction the byte resembles: a lock the host believes
-    // in and the box never took is the failure this prevents.
+    // `MediusLockEntry.direction` is a `uint8_t` the caller fills in through
+    // `medius_mock_set_locks`, and Python has always handed it a raw byte.
     const BAD: u8 = 40;
     let mock = medius_mock_new();
     let x = medius_lock_target_axis(MediusLockTargetKind::X as u8);
@@ -787,10 +785,8 @@ fn an_unnamed_direction_byte_in_a_caller_built_lock_entry_is_dropped() {
 
 #[test]
 fn an_unnamed_direction_byte_in_a_catch_filter_is_refused() {
-    // `MediusCatchFilter.direction` is a `uint8_t` the caller fills in, and Python has always handed
-    // it a raw byte. A filter helper has no status to return, so the byte rides the struct and the
-    // subscription refuses it, rather than the box being handed whichever direction its low bits
-    // resemble, or a stream that never yields.
+    // `MediusCatchFilter.direction` is a `uint8_t` the caller fills in, and Python has always
+    // handed it a raw byte.
     const BAD: u8 = 40;
     let mock = medius_mock_new();
     let mut dev: *mut MediusDevice = ptr::null_mut();
@@ -1343,8 +1339,7 @@ fn input_events_report_each_refusal_with_its_own_status() {
 #[test]
 fn every_new_entry_point_survives_a_null_and_respects_the_caller_s_buffer() {
     // A dropped null check is an abort inside the caller's process, and an off-by-one in the one
-    // entry point that writes an unbounded-length result into a caller buffer is a heap smash. Both
-    // mutations passed the whole suite before this test existed.
+    // entry point that writes an unbounded-length result into a caller buffer is a heap smash.
     let mock = medius_mock_new();
     let mut dev: *mut MediusDevice = ptr::null_mut();
     assert_eq!(
@@ -1899,10 +1894,7 @@ fn spec_trigger() -> MediusClipPacketTrigger {
 }
 
 // Eight triggers that differ in every field, each as the crate holds it and as the C struct carries
-// it, written out field by field so neither side is derived from the other. Row 0 consumes only, row
-// 1 is once per run only, rows 2 and 6 are both, and row 7 fills the match array. Each is a trigger a
-// packet can match: a direction its class carries, every match bit under its mask, and a masked bit
-// past a once-per-run selector. The vendor classes take IN, OUT and both.
+// it, written out field by field so neither side is derived from the other.
 fn packet_rows() -> Vec<(medius::ClipPacketTriggerEntry, MediusClipPacketTrigger)> {
     use medius::{ClipAction, ClipPacketTrigger, Direction, TrafficClass};
     let (inbound, outbound, both) = (

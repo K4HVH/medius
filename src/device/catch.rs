@@ -127,9 +127,7 @@ pub(crate) fn prepare(filters: impl IntoIterator<Item = CatchFilter>) -> Result<
     if wanted.is_empty() {
         return Err(Error::EmptySubscription);
     }
-    // WITH/AGAINST are resolved against the injection in flight when a report is weighed. A
-    // subscription is addressed long before any of that, so a relative direction here has nothing to
-    // resolve against and the box would drop the entry silently.
+    // WITH/AGAINST are resolved against the injection in flight when a report is weighed.
     if let Some(f) = wanted.iter().find(|f| f.direction().is_relative()) {
         return Err(Error::RelativeDirection {
             direction: f.direction(),
@@ -142,8 +140,7 @@ pub(crate) fn prepare(filters: impl IntoIterator<Item = CatchFilter>) -> Result<
         });
     }
     // 0xFFFF is the every-id sentinel, so an exact subscription to it becomes the class blanket the
-    // moment it reaches the wire: a much wider stream than the caller asked for, and silent. Only a
-    // media usage is wide enough to express it.
+    // moment it reaches the wire: a much wider stream than the caller asked for, and silent.
     if let Some((class, id)) = wanted.iter().find_map(|f| {
         let (_, id) = f.wire();
         (f.id() == Some(id)).then(|| (f.class(), id))

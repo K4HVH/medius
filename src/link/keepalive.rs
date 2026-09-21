@@ -22,12 +22,7 @@ pub(crate) struct KeepaliveCtx {
     pub(crate) seq: Arc<AtomicU8>,
     pub(crate) counters: Arc<Counters>,
     pub(crate) desired: Arc<Mutex<DesiredState>>,
-    // The same lock subscribe and unsubscribe commit under. Held across this thread's read of the
-    // desired set AND its sends, because between the two an unsubscribe can commit, and then this
-    // thread re-adds the entry it just removed. The box would hold a table no subscriber wants and
-    // the crate's own set does not contain, so no later diff would ever remove it, and because the
-    // table stays non-empty the firmware's silence clear never fires either. On a vendor-bulk entry
-    // that is a quarter of a megabyte a second the link cannot carry, for the life of the connection.
+    // The same lock subscribe and unsubscribe commit under.
     pub(crate) catch_lock: Arc<Mutex<()>>,
     pub(crate) stop: Arc<AtomicBool>,
     pub(crate) cadence: Duration,
@@ -58,11 +53,8 @@ fn keepalive_loop(ctx: KeepaliveCtx) {
         if idle {
             continue;
         }
-        // Any frame feeds the firmware silence timer (§5.4) to hold a held override/lock/subscription
-        // /rewrite alive. Re-sending the CATCH and REWRITE entries (not a bare QUERY) also rebuilds
-        // those tables if a device blip or re-clone cleared them box-side. Only add/overwrite goes
-        // out, never a remove: a blanket clear and re-add here would punch a hole on every cadence.
-        // A rewrite re-set the box already holds byte-for-byte is a no-op there and does not bump gen.
+        // Any frame feeds the firmware silence timer (§5.4) to hold a held
+        // override/lock/subscription /rewrite alive.
         let mut sent_any = false;
         if !catch.is_empty() {
             for f in catch.values() {
