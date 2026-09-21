@@ -248,7 +248,7 @@ let h = device.query_health()?;   // link_up, mouse_attached, clone_configured, 
 let info = device.device_info()?;       // cloned device identity: vid:pid, bcd, flags, kind, product
 let caps = device.caps()?;              // unified caps; caps.is_composite(), caps.mouse.n_buttons, caps.keyboard.nkro, caps.keyboard.has_consumer, caps.keyboard.n_keys
 let rate = device.query_rate()?;        // live native report rate; rate.native_hz()
-let stats = device.query_stats()?;      // delivery counters; stats.tx_drops / stats.tx_wedges
+let stats = device.query_stats()?;      // delivery counters; stats.tx_drops / stats.tx_wedges / stats.link_rx_drops
 let locks = device.query_locks()?;      // active input scales; locks.scale_of(...) / locks.is_locked(...)
 let catch = device.query_catch()?;      // the live catch table, its drop counts, the inter-chip clock
 ```

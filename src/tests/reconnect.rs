@@ -209,8 +209,8 @@ fn a_rescan_refuses_the_box_back_on_another_protocol() {
         .link
         .set_identity(crate::link::reconnect::BoxIdentity { serial: None, mac });
 
-    // v3.4.0 firmware answers protocol 7, and a later one 9. Neither is taken back.
-    for proto in [7, crate::PROTO_VER + 1] {
+    // v3.4.1 firmware answers protocol 8, and a later one 10. Neither is taken back.
+    for proto in [8, crate::PROTO_VER + 1] {
         let port = reflashed(proto, mac);
         let err = device
             .link

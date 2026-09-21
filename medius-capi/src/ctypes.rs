@@ -548,6 +548,10 @@ pub struct MediusRate {
 }
 
 /// Box-side delivery/telemetry counters.
+///
+/// The narrowed fields saturate, so a maxed counter never wraps to a small value. The two link drop
+/// counters are full width and do not saturate: a count that stopped rising would stop saying that
+/// the loss is still going on.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MediusStats {
@@ -559,6 +563,11 @@ pub struct MediusStats {
     pub wakeups: u16,
     pub reset_count: u16,
     pub config_count: u16,
+    /// Frames the chip that serves the clone could not take off the inter-chip link. One lost there
+    /// is a mouse report or an injected delta that never reached the wire; it should stay 0.
+    pub link_rx_drops: u32,
+    /// The same count for the chip that reads the real device, relayed over the link.
+    pub host_rx_drops: u32,
 }
 
 /// One entry in a decoded `RESP(LOCKS)`: the locked target and which edges are locked.
@@ -972,7 +981,8 @@ pub struct MediusSpreadStatus {
     /// Percent of the learned command interval. 0 is off; above 100 overlaps.
     pub percent: u16,
     /// The interval being released across, in microseconds. 0 until the box has learned the host's
-    /// command period, and 0 whenever `percent` is 0.
+    /// command period, 0 whenever `percent` is 0, and 0 before the box has settled where the motion
+    /// is held. In each the whole delta goes out on the next report.
     pub span_us: u32,
 }
 

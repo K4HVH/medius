@@ -451,6 +451,8 @@ impl From<Stats> for MediusStats {
             wakeups: s.wakeups,
             reset_count: s.reset_count,
             config_count: s.config_count,
+            link_rx_drops: s.link_rx_drops,
+            host_rx_drops: s.host_rx_drops,
         }
     }
 }
@@ -1300,6 +1302,8 @@ impl From<MediusStats> for Stats {
             wakeups: s.wakeups,
             reset_count: s.reset_count,
             config_count: s.config_count,
+            link_rx_drops: s.link_rx_drops,
+            host_rx_drops: s.host_rx_drops,
         }
     }
 }

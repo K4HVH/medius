@@ -126,8 +126,8 @@ def test_mock_feature_present():
 def test_meta_functions():
     # These are a hand-written mirror of the C structs, so a bumped ABI means they are stale until
     # someone re-reads the header. Pin it rather than accept anything newer.
-    assert medius.abi_version() == 8
-    assert medius._native.ABI_VERSION == 8
+    assert medius.abi_version() == 9
+    assert medius._native.ABI_VERSION == 9
     assert medius.version_string()
     assert medius.default_query_timeout_ms() > 0
     assert medius.default_keepalive_cadence_ms() > 0
@@ -622,6 +622,8 @@ def test_stats_roundtrip():
         wakeups=900,
         reset_count=3,
         config_count=4,
+        link_rx_drops=0xDEADBEEF,
+        host_rx_drops=0,
     )
     with MockBox() as mock:
         mock.set_stats(stats)

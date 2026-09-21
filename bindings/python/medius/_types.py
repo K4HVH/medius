@@ -279,6 +279,14 @@ class Rate:
 
 @dataclass
 class Stats:
+    """Box-side delivery and telemetry counters.
+
+    The narrowed fields saturate, so a maxed counter never wraps to a small value. `link_rx_drops`
+    and `host_rx_drops` are frames one of the box's two chips could not take off the inter-chip link,
+    and they do not saturate: a count that stopped rising would stop saying that the loss is still
+    going on. Both should read 0.
+    """
+
     inject_emits: int
     tx_drops: int
     tx_merges: int
@@ -287,6 +295,8 @@ class Stats:
     wakeups: int
     reset_count: int
     config_count: int
+    link_rx_drops: int
+    host_rx_drops: int
 
 
 @dataclass
@@ -1322,6 +1332,8 @@ def stats_from_c(c) -> Stats:
         c.wakeups,
         c.reset_count,
         c.config_count,
+        c.link_rx_drops,
+        c.host_rx_drops,
     )
 
 
@@ -1335,6 +1347,8 @@ def stats_to_c(s) -> "_native.MediusStats":
         s.wakeups,
         s.reset_count,
         s.config_count,
+        s.link_rx_drops,
+        s.host_rx_drops,
     )
 
 

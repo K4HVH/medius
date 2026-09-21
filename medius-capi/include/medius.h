@@ -140,7 +140,7 @@
 
 // The C ABI version this header declares, bumped on any breaking change to it. Compare it with
 // `medius_abi_version()` once at start-up.
-#define MEDIUS_ABI_VERSION 8
+#define MEDIUS_ABI_VERSION 9
 
 // The result of a fallible `medius_*` call. `MEDIUS_OK` is zero; everything else is a failure.
 enum MediusStatus
@@ -1363,6 +1363,10 @@ typedef struct MediusRate {
 } MediusRate;
 
 // Box-side delivery/telemetry counters.
+//
+// The narrowed fields saturate, so a maxed counter never wraps to a small value. The two link drop
+// counters are full width and do not saturate: a count that stopped rising would stop saying that
+// the loss is still going on.
 typedef struct MediusStats {
     uint32_t inject_emits;
     uint16_t tx_drops;
@@ -1372,6 +1376,11 @@ typedef struct MediusStats {
     uint16_t wakeups;
     uint16_t reset_count;
     uint16_t config_count;
+    // Frames the chip that serves the clone could not take off the inter-chip link. One lost there
+    // is a mouse report or an injected delta that never reached the wire; it should stay 0.
+    uint32_t link_rx_drops;
+    // The same count for the chip that reads the real device, relayed over the link.
+    uint32_t host_rx_drops;
 } MediusStats;
 
 // One entry in a decoded `RESP(LOCKS)`: the locked target and which edges are locked.
@@ -1509,7 +1518,8 @@ typedef struct MediusSpreadStatus {
     // Percent of the learned command interval. 0 is off; above 100 overlaps.
     uint16_t percent;
     // The interval being released across, in microseconds. 0 until the box has learned the host's
-    // command period, and 0 whenever `percent` is 0.
+    // command period, 0 whenever `percent` is 0, and 0 before the box has settled where the motion
+    // is held. In each the whole delta goes out on the next report.
     uint32_t span_us;
 } MediusSpreadStatus;
 

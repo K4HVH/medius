@@ -10,7 +10,7 @@ from pathlib import Path
 
 # MEDIUS_ABI_VERSION of the header these ctypes mirrors were written from; the tests hold it to the
 # header. Import refuses a library whose medius_abi_version() reports any other number.
-ABI_VERSION = 8
+ABI_VERSION = 9
 
 MEDIUS_MAX_USAGES = 256
 MEDIUS_CLIP_TRIG_MAX = 8
@@ -227,6 +227,8 @@ class MediusStats(ctypes.Structure):
         ("wakeups", u16),
         ("reset_count", u16),
         ("config_count", u16),
+        ("link_rx_drops", u32),
+        ("host_rx_drops", u32),
     ]
 
 
