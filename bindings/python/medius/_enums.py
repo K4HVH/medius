@@ -213,10 +213,8 @@ class BearingMode(IntEnum):
 
     #: Each axis compares its own sign against its own bearing, independently.
     PER_AXIS = 0
-    #: The physical delta is projected onto the injected XY vector. One
-    #: relative scale governs both axes, the lower of X's and Y's, and that is what reads back.
-    #: Each axis's absolute scale then applies to what the projection left, not to the sign the report
-    #: carried: it governs what reaches the PC.
+    # : The physical delta is projected onto the injected XY vector. One : relative scale governs
+    # both axes, the lower of X's and Y's, and that is what reads back.
     VECTOR = 1
 
 
@@ -333,9 +331,7 @@ class ControlStatus(IntEnum):
     OK = 0
     STALLED = 1
     NAKED = 2
-    #: A status byte this build does not know; read `TrafficEvent.flags` for its value. Distinct from
-    #: the three, so a future firmware's new status is not reported as a device fault that never
-    #: happened, and so decoding one does not raise.
+    # : A status byte this build does not know; read `TrafficEvent.flags` for its value.
     OTHER = 3
 
 

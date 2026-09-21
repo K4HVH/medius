@@ -189,9 +189,7 @@ mod linux {
             };
             found.push((name, target.to_string_lossy().into_owned()));
         }
-        // The box clones the attached device's identity, so there is no fixed VID:PID to match on. Pair
-        // the nodes by the by-id prefix they share, and take the group that has both collections; a
-        // single-collection device leaves one group of one.
+        // The box clones the attached device's identity, so there is no fixed VID:PID to match on.
         found.sort();
         if found.is_empty() {
             return Err("no usb event-mouse or event-kbd node in /dev/input/by-id; is USB1 cabled to this machine?".into());
@@ -220,9 +218,7 @@ mod linux {
 
     pub fn run() -> ExitCode {
         let args: Vec<String> = std::env::args().collect();
-        // args[1]: one or more comma-separated evdev nodes. A cloned mouse is composite (mouse and keyboard
-        // interfaces on separate event nodes), so grab BOTH by default; injected input on an ungrabbed node
-        // would otherwise leak to the desktop and escape verification here.
+        // args[1]: one or more comma-separated evdev nodes.
         let events: Vec<String> = match args.get(1) {
             Some(s) => s
                 .split(',')
@@ -345,9 +341,7 @@ mod linux {
                 })
                 .unwrap_or(false);
             // The link drop counters are cumulative since the box booted: anything but zero is a
-            // report or an injected delta lost between the box's own two chips. relay_drops is
-            // printed and not judged: it is back-pressure on a relayed stream, which a box under
-            // load is meant to report.
+            // report or an injected delta lost between the box's own two chips.
             let stats_ok = stats
                 .as_ref()
                 .map(|s| s.tx_drops == 0 && s.link_rx_drops == 0 && s.host_rx_drops == 0)
@@ -386,9 +380,7 @@ mod linux {
         }
 
         {
-            // FIRMWARE: read only. Staging an image from here would reboot the box mid-suite, so this
-            // asserts what a reader can: both chips answer, they agree on a version, and the layout is
-            // the two-slot one an update needs. A box still on a single-app image reports no slot size.
+            // FIRMWARE: read only.
             let dev = device.as_ref().unwrap();
             let fw = dev.firmware_info();
             let both = fw.as_ref().map(|f| f.host.is_some()).unwrap_or(false);
@@ -538,11 +530,8 @@ mod linux {
         }
 
         {
-            // OPTION(RENDER) is its own command: the texture the box renders motion with, and whether
-            // native motion goes through it. Every mode round-trips against both values of
-            // `full`. The refusal of an unknown value is not checked here and cannot be: the typed
-            // API has no way to express one (tools/validate_render.py drives that over the wire).
-            // Restores the box's boot pair (De-spiked, relayed) afterward.
+            // OPTION(RENDER) is its own command: the texture the box renders motion with, and
+            // whether native motion goes through it.
             let dev = device.as_ref().unwrap();
             let mut all_ok = true;
             let mut last = String::new();
@@ -592,11 +581,7 @@ mod linux {
 
         {
             // OPTION(SPREAD): the percent round-trips, and the interval the box reports tracks the
-            // rate this loop actually commands at. Reading the percent back alone would pass a box
-            // that stores the number and spreads nothing, so the discriminating half is span_us
-            // against a loop whose period is known here: MOVEs 4 ms apart are a 250 Hz host. The box
-            // takes the modal gap of its last 128 MOVEs, so the loop fills that whole window: a shorter
-            // one is outvoted by whatever cadence the previous check or run left in it.
+            // rate this loop actually commands at.
             let dev = device.as_ref().unwrap();
             let mut all_ok = true;
             let mut last = String::new();
@@ -794,10 +779,7 @@ mod linux {
         }
 
         {
-            // SCALE: what the box stores is what it renders. Weighing the physical mouse itself needs
-            // a hand on it (tools/validate_lock.py drives that); everything here is a box behaviour
-            // the host's own bookkeeping could not fake, because the numbers read back differ from
-            // the numbers written.
+            // SCALE: what the box stores is what it renders.
             let dev = device.as_ref().unwrap();
             let _ = dev.reset();
             let _ = dev.scale(Axis::X, Direction::Negative, 40);
@@ -828,10 +810,7 @@ mod linux {
         }
 
         {
-            // SCALE: the percent is signed, and the sign is the box's inversion. A u8 anywhere on the
-            // path turns -100 into 156 and the axis amplifies instead of reversing, which is why the
-            // number is read back off the box rather than trusted from the write. A directional
-            // negative is well defined: the slot comes from the sign of the delta before the weigh.
+            // SCALE: the percent is signed, and the sign is the box's inversion.
             let dev = device.as_ref().unwrap();
             let _ = dev.reset();
             let _ = dev.scale(Axis::X, Direction::Both, -100);
@@ -896,10 +875,7 @@ mod linux {
         }
 
         {
-            // BEARING: the mode changes what the box reports for the relative pair. In VECTOR one
-            // scale governs both axes (the lower of X's and Y's), so the readback names that
-            // number on both axes, and switching back to PER_AXIS names each axis's own again. A host
-            // echoing its own writes would report 130/60 in both modes.
+            // BEARING: the mode changes what the box reports for the relative pair.
             let dev = device.as_ref().unwrap();
             let _ = dev.reset();
             let _ = dev.set_bearing(Some(BEARING_WINDOW_DEFAULT), BearingMode::PerAxis);
@@ -1123,9 +1099,8 @@ mod linux {
         }
 
         {
-            // Catch timestamps: drain a short window and confirm every stamp advances by a plausible
-            // amount. Passes vacuously when the mouse is still, since there is nothing to check then;
-            // the event count in the message says whether it actually got exercised.
+            // Catch timestamps: drain a short window and confirm every stamp advances by a
+            // plausible amount.
             let dev = device.as_ref().unwrap();
             let mut stamps: Vec<u32> = Vec::new();
             if let Ok(stream) = dev.catch_events([
@@ -1218,9 +1193,7 @@ mod linux {
                 let _ = injector.1.join();
             }
             let _ = dev.reset();
-            // EMIT must have flowed, because this drove it. HID_IN only when the device reported --
-            // and when it did, the two track the same reports, so they differ by at most whatever was
-            // in flight when the window closed.
+            // EMIT must have flowed, because this drove it.
             let ok =
                 emit > 0 && domains_right && (hid_in == 0 || hid_in.abs_diff(emit) <= emit / 4 + 2);
             check(
@@ -1238,10 +1211,7 @@ mod linux {
         }
 
         {
-            // An EXACT-ID input subscription, on hardware. Every check above uses a class blanket,
-            // and the per-id path shipped broken and invisible: the box accepted the entry, listed
-            // it, counted no drops, and the stream stayed empty forever. Only a filter that names one
-            // axis can tell that apart from a quiet mouse.
+            // An EXACT-ID input subscription, on hardware.
             let dev = device.as_ref().unwrap();
             let mut wanted = 0usize;
             let mut unwanted = 0usize;
@@ -1270,9 +1240,7 @@ mod linux {
         }
 
         {
-            // Decoded input edges. A still device produces nothing, so no count is demanded here --
-            // but every edge that does arrive has to be well formed: a press of a usage already held,
-            // or a release of one that is not, means the snapshot diffing is wrong.
+            // Decoded input edges.
             let dev = device.as_ref().unwrap();
             let (mut presses, mut releases, mut motions) = (0usize, 0usize, 0usize);
             let mut consistent = true;
@@ -1733,12 +1701,7 @@ mod linux {
         }
 
         {
-            // Halving is a SUSTAINED rate fault, so this measures the sustained rate. Injecting into
-            // an idle change-driven device (one that NAKs at rest, which most real mice do) takes
-            // about 150 ms to reach full pace, and counting from cold charged that ramp against a
-            // steady-state threshold: measured 83, 92, then a flat 100 reports per 100 ms for three
-            // solid seconds. Every unit still arrives either way, merged rather than dropped, which is
-            // what `sum` asserts.
+            // Halving is a SUSTAINED rate fault, so this measures the sustained rate.
             let dev = device.as_ref().unwrap();
             let _ = dev.reset();
             std::thread::sleep(Duration::from_millis(100));
@@ -1883,8 +1846,7 @@ mod linux {
 
         {
             // A reconnect re-sends nothing of a clip and reads back what the box still holds, so a
-            // retained clip rides out a blip shorter than the box's silence window. Nothing else is
-            // held here: past the reconnect, only the clip keeps the keepalive running.
+            // retained clip rides out a blip shorter than the box's silence window.
             let dev = device.as_ref().unwrap();
             let clip = dev.clip();
             let _ = dev.reset();
@@ -1937,9 +1899,8 @@ mod linux {
             );
         }
 
-        // Advanced control layer (§3.14): raw injection, control transfers, rewrite rules, descriptor
-        // patches. Runs after the motion checks because clear_patch re-presents the clone (one
-        // replug), which recreates the evdev node this suite grabbed.
+        // Advanced control layer (§3.14): raw injection, control transfers, rewrite rules,
+        // descriptor patches.
         {
             let dev = device.as_ref().unwrap();
             let opt = dev.allow_imperfect_clones(true);
@@ -2041,9 +2002,8 @@ mod linux {
                 seen.len()
             );
 
-            // CLIP entries that ride this layer: a raw report and a control transfer on the clip's own
-            // timeline. The raw report is the learnt frame, so it moves the cursor by 3 when the box
-            // emits it. With the opt-in off the box discards both items and counts them in `gated`.
+            // CLIP entries that ride this layer: a raw report and a control transfer on the clip's
+            // own timeline.
             let get_device = Setup::new(0x80, 0x06, 0x0100, 0x0000, 18);
             let mut adv = ClipBuilder::new();
             adv.gap(2).frame(
@@ -2101,9 +2061,7 @@ mod linux {
                 ),
             );
 
-            // A packet trigger that runs a clip verb. It matches the learnt frame on the emit wire
-            // (the head of it, where a report is longer than a trigger compares), so injecting the
-            // move again starts a retained one-frame clip, exactly once.
+            // A packet trigger that runs a clip verb.
             let _ = clip.clear();
             let armed = frame.is_some() && clip.set_retain(true).is_ok() && {
                 let mut one = ClipBuilder::new();
@@ -2177,9 +2135,8 @@ mod linux {
                 ),
             );
 
-            // TRANSFORM (§3.15): swap X and Y (faithful and ungated, no opt-in needed), read it back,
-            // then clear. Both axes are on any mouse, so the box holds the entry rather than refusing
-            // it. A transform only MOVES a field; what survives the move is the scale's, above.
+            // TRANSFORM (§3.15): swap X and Y (faithful and ungated, no opt-in needed), read it
+            // back, then clear.
             let tset_ok = dev.transform_swap(Axis::X, Axis::Y).is_ok();
             let tq = dev.query_transforms();
             let tpresent = matches!(&tq, Ok(t)

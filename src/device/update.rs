@@ -127,14 +127,11 @@ impl Device {
         let deadline = Instant::now() + CONFIRM_TIMEOUT;
         loop {
             // This is the call you make right after an activate, when the box is rebooting into the
-            // image it is about to confirm. A query that goes unanswered there is the expected state,
-            // so keep asking until the deadline rather than reporting the reboot as a failure.
+            // image it is about to confirm.
             let info = match self.firmware_info() {
                 Ok(i) => i,
                 // Only a timeout. The CH343 stays enumerated while the chip behind it reboots, so a
-                // reboot reads as an unanswered query. Anything else is a real fault, and this is
-                // also called at the top of staging, where waiting 45 s on a box that is not there
-                // would hide it.
+                // reboot reads as an unanswered query.
                 Err(Error::QueryTimeout) if Instant::now() < deadline => {
                     std::thread::sleep(Duration::from_millis(500));
                     continue;
@@ -181,12 +178,7 @@ impl Device {
                 arg,
             });
         }
-        // AFTER the BEGIN reply, not before it. A DATA acknowledgement left over from an abandoned
-        // attempt has arg == credit, which is exactly what the first window expects, so it passes the
-        // offset check and runs the loop a window ahead of the box for the rest of the transfer. But
-        // before the BEGIN it is still sitting in the channel, where dropping held replies cannot
-        // reach it, and awaiting the BEGIN is itself what moves it across. The box replies in
-        // order, so everything from the old attempt is behind that reply on the wire.
+        // AFTER the BEGIN reply, not before it.
         self.drop_held(OTA_OP_DATA);
 
         let mut plan = ChunkPlan::new(image, target, arg);
@@ -248,8 +240,7 @@ impl Device {
     ) -> Result<()> {
         self.stage_firmware(target, image, progress)?;
         // A refused activate leaves the image staged and armed, so a later unrelated activate would
-        // commit it on its own. Disarm it. Best effort, because the usual reason for being here is
-        // that the box is no longer answering, and the activate's error is the one worth reporting.
+        // commit it on its own. Disarm it.
         if let Err(e) = self.activate_firmware() {
             let _ = self.abort_update(target);
             return Err(e);
@@ -265,8 +256,7 @@ impl Device {
         timeout: Duration,
     ) -> Result<(UpdateStatus, u32)> {
         // Anything already queued for THIS op answers an earlier command, and taking it as this
-        // one's reply would report a stale outcome. Everything else belongs to somebody and is
-        // parked rather than dropped.
+        // one's reply would report a stale outcome.
         while let Ok(p) = self.link.updates_rx().try_recv() {
             if p.first() != Some(&op) {
                 self.link.hold_update(p);

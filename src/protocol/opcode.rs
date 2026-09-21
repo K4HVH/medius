@@ -185,8 +185,7 @@ pub const H_CATCH_ON: u8 = 0x40;
 pub const H_KBD_ATT: u8 = 0x80;
 
 // `HEALTH` became a `u16` LE in `CTRL_PROTO_VER 7` (§4.2). Bits 0-7 kept their meaning; the v3.4.0
-// advanced control layer opened the high byte, so these three are `u16`. [`Health`](crate::Health) decodes
-// the whole word.
+// advanced control layer opened the high byte, so these three are `u16`.
 /// The rewrite-rule table (§3.14) is non-empty (v3.4.0).
 pub const H_REWRITE_ON: u16 = 0x0100;
 /// A descriptor-patch set (§3.14) is applied to the clone (v3.4.0).
@@ -240,8 +239,7 @@ pub const CATCH_CTRL_NAK: u8 = 0xFE;
 pub const CLK_RATE_NONE: i32 = i32::MIN;
 
 // `REWRITE` action byte (§3.14): what the winning rule does to a matched packet. A report class can
-// `DROP`; only the control class may `ANSWER`/`STALL`/`NAK` or rewrite the device's reply. Shared
-// wire values with the firmware `rewrite_tab.h` and the dashboard.
+// `DROP`; only the control class may `ANSWER`/`STALL`/`NAK` or rewrite the device's reply.
 /// The rule matched but leaves the packet untouched (a shadow over a broader rule).
 pub const RW_PASS: u8 = 0;
 /// Report class: the packet is not delivered.
@@ -288,9 +286,8 @@ pub const PKT_MATCH_MAX: usize = 16;
 /// The most `match`/`mask` bytes one rewrite rule compares (`REWRITE_MATCH_MAX`).
 pub const REWRITE_MATCH_MAX: usize = PKT_MATCH_MAX;
 
-// `TRANSFORM` op byte (§3.15, `CTRL_XF_*`): a field operation on the semantic path. `sclass`/`dclass`
-// reuse the input classes ([`CATCH_CLS_AXIS`]/`_BTN`/`_KEY`/`_MEDIA`). Shared wire values with the
-// firmware `transform_tab.h`.
+// `TRANSFORM` op byte (§3.15, `CTRL_XF_*`): a field operation on the semantic path.
+// `sclass`/`dclass` reuse the input classes ([`CATCH_CLS_AXIS`]/`_BTN`/`_KEY`/`_MEDIA`).
 /// Move a source field into a destination (axis→axis or button→button in one report, or button→key /
 /// button→media across classes).
 pub const TF_REMAP: u8 = 0;

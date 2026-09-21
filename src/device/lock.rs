@@ -156,8 +156,7 @@ impl Device {
 }
 
 // Only an axis has a bearing to be with or against; the box drops a relative direction on any other
-// class with no reply. A media usage has no edges either (it is suppressed whole, and RESP(LOCKS)
-// reports every media lock as Both), so an edge there becomes the Both the box will report back.
+// class with no reply.
 fn lock_direction(class: u8, direction: Direction) -> Result<Direction> {
     if class == LOCK_CLS_AXIS {
         return Ok(direction);

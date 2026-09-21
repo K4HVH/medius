@@ -584,9 +584,7 @@ fn a_relative_direction_on_a_one_bit_class_writes_nothing_box_side() {
 #[cfg(feature = "mock")]
 #[test]
 fn the_signed_scale_is_bounded_and_axis_only() {
-    // Both refusals are the crate's, before the wire. Without them a magnitude past the bound is
-    // applied at the bound while the readback echoes what was sent, and a negative on a one-bit class
-    // names an operation the field cannot perform.
+    // Both refusals are the crate's, before the wire.
     use crate::protocol::FrameType;
     let mock = crate::MockBox::new();
     let dev = crate::Device::with_mock(mock.clone());
@@ -712,9 +710,7 @@ fn the_reply_truncates_granular_keys_and_never_the_bounded_classes() {
         dev.lock(crate::Key::new(u), Direction::Both).unwrap();
     }
     let l = dev.query_locks().unwrap();
-    // The reply holds 85 entries. 60 keys on both edges offer 120, so what comes back is the two
-    // media entries plus the 83 key edges that fit: media first, because granular keys are enumerated
-    // last precisely so the unbounded class cannot crowd the bounded one off the frame.
+    // The reply holds 85 entries.
     assert_eq!(l.entries().len(), 85);
     assert_eq!(
         l.entries()[0],
@@ -790,8 +786,7 @@ fn the_ninth_granular_media_lock_is_dropped() {
 #[test]
 fn a_released_media_slot_is_refilled_before_the_end() {
     // Unlocking clears the slot the usage sat in and the next lock takes the first free one, so a
-    // replacement lands where the released usage was, ahead of the ones that outlived it. Appending
-    // instead would report the same set in a different order and, once full, drop a different usage.
+    // replacement lands where the released usage was, ahead of the ones that outlived it.
     use crate::types::MediaKey;
     let dev = crate::Device::with_mock(crate::MockBox::new());
     for id in [0xEAu16, 0xE9, 0x30] {
@@ -809,9 +804,7 @@ fn a_released_media_slot_is_refilled_before_the_end() {
 #[test]
 fn a_locks_reply_past_the_entry_cap_still_answers() {
     // Locks::from_entries and MockBox::set_locks are both public and unbounded, but the box appends
-    // at most CTRL_RESP_LOCKS_MAXN entries and always replies (ctrl_locks_append). 256 entries would
-    // encode a count byte of 0 over a payload no frame can carry, and 86 a payload six bytes too
-    // long: either way the caller waits out the query timeout instead of reading a short answer.
+    // at most CTRL_RESP_LOCKS_MAXN entries and always replies (ctrl_locks_append).
     use crate::types::{LockEntry, MediaKey};
     let mock = crate::MockBox::new();
     let entries: Vec<LockEntry> = (0..256u16)
@@ -835,8 +828,7 @@ fn a_locks_reply_past_the_entry_cap_still_answers() {
 #[test]
 fn a_reapply_rebuilds_the_media_slots_in_the_order_the_box_had_them() {
     // The reply enumerates media in slot order, so a replay that refills the slots in a different
-    // order reports the same locks as a different `Locks`. A host comparing snapshots either side of
-    // a reconnect would read that as the box having changed something.
+    // order reports the same locks as a different `Locks`.
     use crate::protocol::FrameType;
     use crate::types::MediaKey;
     let dev = crate::Device::with_mock(crate::MockBox::new());

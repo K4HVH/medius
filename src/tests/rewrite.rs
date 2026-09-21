@@ -102,8 +102,7 @@ fn resp_rewrite_table_full_flag() {
 #[test]
 fn resp_rewrite_high_bytes_decode() {
     // Hand-computed [12][flags 0][gen 0][n 1] then one entry carrying a nonzero high byte in offset
-    // (0x0102 = 258), payload_len (3) and hits (0xFFFF = 65535). A u8 truncation of any field, or a
-    // transpose of offset/payload_len, fails here where every prior test kept those bytes zero.
+    // (0x0102 = 258), payload_len (3) and hits (0xFFFF = 65535).
     let p = [
         12, 0x00, 0x00, 1, // what, flags, gen, n
         0x09, 0x01, 0x00, 0x01, 0x03, 0x04, 0x02, 0x01, 0x03, 0x00, 0xFF, 0xFF,

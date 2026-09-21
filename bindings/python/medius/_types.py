@@ -42,10 +42,7 @@ from ._enums import (
 )
 
 
-# Scalar checks for the parameters that reach ctypes. ctypes truncates silently, so an unchecked
-# 300 becomes 44 and an unchecked -1 becomes 255, and every enum crosses the C ABI as a plain byte
-# the library refuses rather than trusts. Everything that reaches a ctypes argument goes through one
-# of these.
+# Scalar checks for the parameters that reach ctypes.
 def _enum(value, kind, what):
     """`value` as `kind`, or ValueError: the library would read a stray byte as whichever member its
     low bits happen to name."""
@@ -362,9 +359,7 @@ class ClockEstimate:
     """The measured difference between the two chips' clocks, from RESP(CATCH)."""
 
     offset_us: int = 0
-    # None when the box has fitted no rate. Not the same as a fitted 0, which says the two crystals
-    # are matched: on a link too busy for enough clean exchanges no fit is made at all, which is
-    # exactly when assuming no drift costs the most.
+    # None when the box has fitted no rate.
     rate_ppb: int | None = 0
     delay_us: int = 0
     # `None` is the box saying it has never measured, which an offset of zero also looks like.
@@ -679,9 +674,7 @@ class UsageSnapshot:
     direction: Direction = Direction.BOTH
 
     def __post_init__(self) -> None:
-        # A snapshot carries one class, so its entries are what that class IS. Taking it from them
-        # keeps a hand-built snapshot from claiming a class its own usages contradict; the header
-        # field exists for the EMPTY snapshot, which has no entry to read it from.
+        # A snapshot carries one class, so its entries are what that class IS.
         if self.usages:
             self.cls = Class(self.usages[0].kind)
 
@@ -1409,9 +1402,7 @@ def imperfect_to_c(i) -> "_native.MediusImperfectStatus":
     )
 
 
-# The advanced control layer (§3.14). A byte field over its ABI capacity raises here, because ctypes
-# would cut it to fit; the crate-level refusals (mask length, match length, action/class, payload
-# size, relative direction) are values that DO marshal and come back as their own status.
+# The advanced control layer (§3.14).
 def _fixed_bytes(dst, src: bytes, cap: int, what: str) -> int:
     if len(src) > cap:
         raise ValueError(f"{what} is {len(src)} bytes, over the {cap}-byte ABI limit")

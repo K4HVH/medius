@@ -780,9 +780,7 @@ def test_render_roundtrip():
         d.set_emit_pace(EmitPace.learned())
         assert d.query_emit_pace().resolved_hz == 0
 
-    # Armed, a rendered stream on a learnt pace self-paces every millisecond. This is the half that
-    # discriminates: without it the reply reads the same whether the renderer is emitting or the box
-    # is still on the fill.
+    # Armed, a rendered stream on a learnt pace self-paces every millisecond.
     with MockBox() as mock, Device.with_mock(mock) as d:
         mock.set_render(RenderMode.STOCK, True, True)
         assert d.query_render() == RenderStatus(RenderMode.STOCK, True, True)
@@ -1973,10 +1971,6 @@ def test_ctypes_structs_match_the_c_header():
     text = header.read_text()
 
     # The C compiler is the authority; parse each struct out of the header and sizeof it for real.
-    # Derived from the header rather than listed here: a hardcoded list silently skips whatever it
-    # does not name, which is how MediusLockEntry went uncovered through a field-meaning change.
-    # cbindgen closes a typedef'd struct with `} Name;` at column 0; an enum closes with a bare `};`
-    # and a nested member is indented, so neither is picked up.
     probe = pathlib.Path(tempfile.mkdtemp()) / "sizes.c"
     present = re.findall(r"^\} (Medius\w+);$", text, re.M)
     for must in (
@@ -2125,8 +2119,7 @@ def test_the_filter_constructors_address_inputs_like_lock_does():
 
 def test_an_unknown_control_status_does_not_raise():
     # The C ABI reports a status this build does not know as OTHER, and the byte itself stays on
-    # `flags`. Without the member, decoding one raised ValueError: the exact failure the distinct
-    # variant was added to prevent, reintroduced one binding down.
+    # `flags`.
     unknown = TrafficEvent(
         catch_class=CatchClass.CONTROL,
         id=0,

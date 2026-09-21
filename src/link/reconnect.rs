@@ -41,22 +41,15 @@ pub(crate) struct ReconnectCtx {
     pub(crate) desired: Arc<Mutex<DesiredState>>,
     pub(crate) reconnect_lock: Arc<Mutex<()>>,
     pub(crate) identity: Arc<Mutex<Option<BoxIdentity>>>,
-    // The lock subscribe and unsubscribe commit under. Held across the read of the desired catch set
-    // AND the sends that replay it, for the same reason the keepalive holds it: an unsubscribe
-    // committing in between leaves this path re-adding the entry it just removed, into a box whose
-    // table no later diff will ever narrow again.
+    // The lock subscribe and unsubscribe commit under.
     pub(crate) catch_lock: Arc<Mutex<()>>,
-    // Both halves of the update reply path. A reply from before the box went away answers a command
-    // the box no longer remembers, and the parked ones survive a transport swap where the bytes
-    // still in the old handle's buffer do not.
+    // Both halves of the update reply path.
     pub(crate) held_updates: Arc<Mutex<Vec<Vec<u8>>>>,
     pub(crate) updates_rx: flume::Receiver<Vec<u8>>,
 }
 
 // Asks the reopened port one `QUERY` and reads the answer off the local handle before it is swapped
-// in, so the read never races the reader thread (which is on the disconnected slot here). The first
-// reply for the selector decides: the box answers the same way to every re-send, so a reply `read`
-// cannot use ends the probe at once, and a later reply never replaces one already taken.
+// in, so the read never races the reader thread (which is on the disconnected slot here).
 pub(crate) fn probe<T>(
     transport: &dyn Transport,
     what: u8,
@@ -247,9 +240,7 @@ fn reapply_held_locked(ctx: &ReconnectCtx) -> Result<()> {
         )?;
     }
     // Re-assert held scales: like injection, the firmware silence-clears every one after the ~1 s
-    // window, so a blip past it would leave physical input passing untouched without this. The scale is
-    // re-sent at the value the host set, not as a blanket block, or a 40% weighing would come back as a
-    // hard lock.
+    // window, so a blip past it would leave physical input passing untouched without this.
     for ((class, usage, direction), scale) in held_locks {
         let seq = ctx.seq.fetch_add(1, Ordering::Relaxed);
         write_frame(
@@ -275,9 +266,8 @@ fn reapply_held_locked(ctx: &ReconnectCtx) -> Result<()> {
             &catch_payload(class, id, f.direction().as_u8(), 1, f.capture().as_u8()),
         )?;
     }
-    // Re-assert the rewrite table: a drop past the firmware silence window, or a re-clone, clears it
-    // box-side, so without this the rules stay dead. Each goes out as state 1 (add/overwrite), which
-    // is idempotent if the drop was short.
+    // Re-assert the rewrite table: a drop past the firmware silence window, or a re-clone, clears
+    // it box-side, so without this the rules stay dead.
     for r in rewrites {
         let seq = ctx.seq.fetch_add(1, Ordering::Relaxed);
         write_frame(

@@ -42,8 +42,7 @@ fn read_cstr(src: &[c_char]) -> String {
 }
 
 // Every enum crosses this boundary as a byte, because materialising a `#[repr(u8)]` enum from one a
-// caller chose is undefined behaviour before any check can run. These are the total maps back, keyed
-// on the C ABI's own discriminants; each answers `None` for a byte no constant names.
+// caller chose is undefined behaviour before any check can run.
 
 fn kind_to_c(k: DeviceKind) -> u8 {
     let k = match k {
@@ -599,15 +598,10 @@ impl From<ImperfectStatus> for MediusImperfectStatus {
     }
 }
 
-// The advanced control layer (§3.14): raw injection, control transfers, rewrite rules and descriptor
-// patches. The class/action/direction/section enums cross the boundary as bytes, mapped back through
-// the crate's own `from_u8`, so a byte no variant names becomes `None` and is refused rather than
-// materialised as an enum. The variable-length fields follow the catch-event convention: a fixed max
-// array plus a length, truncated at the array's capacity.
+// The advanced control layer (§3.14): raw injection, control transfers, rewrite rules and
+// descriptor patches.
 
-// A read-only byte slice from a caller pointer + length. `from_raw_parts` needs a non-null aligned
-// pointer even for a zero length, so an empty request maps to a real empty slice, and a null pointer
-// with a non-zero length is refused before it is read.
+// A read-only byte slice from a caller pointer + length.
 pub(crate) unsafe fn opt_slice<'a>(ptr: *const u8, len: usize) -> Option<&'a [u8]> {
     if len == 0 {
         Some(&[])
@@ -652,8 +646,7 @@ fn match_field(bytes: &[u8], len: u16) -> Vec<u8> {
 }
 
 // A `MediusRewriteRule` to a [`RewriteRule`]; `None` for a class, action or direction byte no
-// constant names. `match_len` and `mask_len` are kept separate so an unequal pair still reaches the
-// crate, which refuses it with `RewriteMaskLength` rather than this layer papering over it.
+// constant names.
 pub(crate) fn rewrite_rule_from_c(c: &MediusRewriteRule) -> Option<RewriteRule> {
     let pl = (c.payload_len as usize).min(MEDIUS_MAX_DEV_PAYLOAD);
     Some(RewriteRule {
@@ -798,10 +791,8 @@ impl From<PatchSet> for MediusPatchSet {
     }
 }
 
-// A `MediusTransform` to a [`Transform`]; `None` for an op, source or dest byte no constant names. A
-// transform addresses a field the same way a lock does, so both cross as a `MediusLockTarget`. The
-// structural refusal (an op a class pair cannot take, including a field named as both ends) is the
-// crate's, made when the transform is sent.
+// A `MediusTransform` to a [`Transform`]; `None` for an op, source or dest byte no constant names.
+// A transform addresses a field the same way a lock does, so both cross as a `MediusLockTarget`.
 pub(crate) fn transform_from_c(c: &MediusTransform) -> Option<Transform> {
     Some(Transform {
         op: TransformOp::from_u8(c.op)?,
@@ -849,8 +840,7 @@ fn clip_state_to_c(s: ClipState) -> u8 {
 }
 
 // An out struct is zeroed whole and then written a field at a time, so every byte a caller reads is
-// defined, the padding between fields included. A struct built by value and copied out carries
-// whatever its padding held, and two reads of one state then differ under `memcmp`.
+// defined, the padding between fields included.
 fn write_usage(dst: &mut MediusUsage, u: Usage) {
     dst.kind = u.class.as_u8();
     dst.id = u.id;
@@ -882,8 +872,7 @@ pub(crate) fn traffic_class_from_c(v: u8) -> Option<TrafficClass> {
 }
 
 // The `(class, id, direction, match, mask)` key of a `MediusClipPacketTrigger`, as a trigger that
-// drives `action`; `None` for a class or direction byte no constant names. `match_len` and `mask_len`
-// are kept separate so an unequal pair still reaches the crate, which refuses it.
+// drives `action`; `None` for a class or direction byte no constant names.
 fn clip_packet_key_from_c(
     c: &MediusClipPacketTrigger,
     action: medius::ClipAction,

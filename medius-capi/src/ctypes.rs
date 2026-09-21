@@ -31,10 +31,8 @@ pub const MEDIUS_MAX_TRANSFORM_ENTRIES: usize = 32;
 /// The most `match`/`mask` bytes one rewrite rule compares (the firmware `REWRITE_MATCH_MAX`).
 pub const MEDIUS_MAX_REWRITE_MATCH: usize = 16;
 
-// These are literals because cbindgen constant-folds them into the header's `#define`s and cannot do
-// that across a crate boundary. The asserts are what keeps them from drifting: widening a table in the
-// crate and not here used to compile, and the Python ctypes mirror then sized its array off a stale
-// header.
+// These are literals because cbindgen constant-folds them into the header's `#define`s and cannot
+// do that across a crate boundary.
 const _: () = {
     assert!(MEDIUS_MAX_CATCH_ENTRIES == medius::CATCH_MAX_ENTRIES);
     assert!(MEDIUS_MAX_REWRITE_ENTRIES == medius::REWRITE_MAX_ENTRIES);
