@@ -549,13 +549,19 @@ pub struct MediusRate {
 
 /// Box-side delivery/telemetry counters.
 ///
-/// The narrowed fields saturate, so a maxed counter never wraps to a small value. The two link drop
+/// The narrowed fields saturate, so a maxed counter never wraps to a small value. The three drop
 /// counters are full width and do not saturate: a count that stopped rising would stop saying that
 /// the loss is still going on.
+///
+/// The ones to act on are `tx_drops`, `link_rx_drops` and `host_rx_drops`: each of those is the
+/// player's own input going missing, and each should read 0. `relay_drops` carries no input and is
+/// expected under load.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MediusStats {
     pub inject_emits: u32,
+    /// Reports the clone's TX queue could not hold: the player's own input, which the game PC
+    /// never saw; it should stay 0.
     pub tx_drops: u16,
     pub tx_merges: u16,
     pub tx_maxdepth: u8,
@@ -563,11 +569,16 @@ pub struct MediusStats {
     pub wakeups: u16,
     pub reset_count: u16,
     pub config_count: u16,
-    /// Frames the chip that serves the clone could not take off the inter-chip link. One lost there
-    /// is a mouse report or an injected delta that never reached the wire; it should stay 0.
+    /// Input-carrying frames the chip that serves the clone could not take off the inter-chip link.
+    /// One lost there is a mouse report or an injected delta that never reached the wire; it should
+    /// stay 0.
     pub link_rx_drops: u32,
     /// The same count for the chip that reads the real device, relayed over the link.
     pub host_rx_drops: u32,
+    /// Back-pressure on a relayed stream, either direction: a vendor IN packet the PC is not
+    /// draining, or an OUT packet past the relay's one-per-frame ceiling. Expected under load, and
+    /// counted apart from `tx_drops` because nothing of the player's input goes missing with it.
+    pub relay_drops: u32,
 }
 
 /// One entry in a decoded `RESP(LOCKS)`: the locked target and which edges are locked.

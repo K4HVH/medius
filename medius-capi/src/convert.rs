@@ -453,6 +453,7 @@ impl From<Stats> for MediusStats {
             config_count: s.config_count,
             link_rx_drops: s.link_rx_drops,
             host_rx_drops: s.host_rx_drops,
+            relay_drops: s.relay_drops,
         }
     }
 }
@@ -1304,6 +1305,7 @@ impl From<MediusStats> for Stats {
             config_count: s.config_count,
             link_rx_drops: s.link_rx_drops,
             host_rx_drops: s.host_rx_drops,
+            relay_drops: s.relay_drops,
         }
     }
 }
