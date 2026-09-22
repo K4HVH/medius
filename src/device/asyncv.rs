@@ -132,6 +132,11 @@ impl AsyncDevice {
         self.dev().reset()
     }
 
+    /// `RESET` + erase the store and reboot. Instant; see [`Device::factory_reset`].
+    pub fn factory_reset(&self) -> Result<()> {
+        self.dev().factory_reset()
+    }
+
     /// Reboot a chip (run or ROM download per the target). Instant; see [`Device::reboot`].
     pub fn reboot(&self, target: RebootTarget) -> Result<()> {
         self.dev().reboot(target)

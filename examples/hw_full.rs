@@ -2334,6 +2334,51 @@ mod linux {
             }
         }
 
+        {
+            // Erases the box's name, options and everything it has learned about every device it has
+            // seen, then restarts it, so it is opted into by name. It reopens its own handle: the
+            // crash-safe check above took the suite's. medius-fw's tools/validate_factory_reset.py
+            // owns the behavioural coverage.
+            if std::env::var("MEDIUS_HW_FACTORY_RESET").as_deref() == Ok("1") {
+                let reopened = match args.get(2) {
+                    Some(p) => Device::open(p),
+                    None => Device::find(),
+                };
+                match reopened {
+                    Ok(dev) => {
+                        let named = dev.set_name("hw-full-factory").is_ok();
+                        std::thread::sleep(Duration::from_millis(200));
+                        let wiped = dev.factory_reset().is_ok();
+                        // The CH343 stays enumerated while the chip behind it reboots, so the box
+                        // goes silent rather than away: poll until a query answers again.
+                        let deadline = Instant::now() + Duration::from_secs(30);
+                        let mut back = String::new();
+                        while Instant::now() < deadline {
+                            std::thread::sleep(Duration::from_millis(250));
+                            if let Ok(v) = dev.query_version() {
+                                back = v.name;
+                                break;
+                            }
+                        }
+                        check(
+                            "factory reset",
+                            named && wiped && !back.is_empty() && back != "hw-full-factory",
+                            format!("name went to {back:?} and the box answered again"),
+                        );
+                    }
+                    Err(e) => check("factory reset", false, format!("reopen failed: {e}")),
+                }
+            } else {
+                check(
+                    "factory reset",
+                    true,
+                    "skipped: erases this box's name, options and learned devices; \
+                     set MEDIUS_HW_FACTORY_RESET=1 to run it"
+                        .into(),
+                );
+            }
+        }
+
         println!("\nRESULT: {}", if ok { "PASS" } else { "FAIL" });
         if ok {
             ExitCode::SUCCESS

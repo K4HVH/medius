@@ -280,6 +280,13 @@ class Device:
     def reset(self):
         check(_native.lib.medius_device_reset(self._handle))
 
+    def factory_reset(self):
+        """RESET plus the NVS flag: the release ``reset`` does, then the box erases its persistent
+        store and reboots, returning at its defaults under its MAC-derived name. Takes the box name,
+        every option, and all learned per-device data. The box goes quiet while it reboots: the
+        control port stays enumerated, so queries time out rather than the link dropping."""
+        check(_native.lib.medius_device_factory_reset(self._handle))
+
     def reapply(self):
         check(_native.lib.medius_device_reapply(self._handle))
 

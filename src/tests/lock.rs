@@ -699,6 +699,57 @@ fn a_reset_clears_the_lock_table() {
     assert_eq!(dev.query_locks().unwrap().entries().len(), 0);
 }
 
+// The flag byte itself, against the firmware's CTRL_RST_F_NVS. A wrong value is worse than a no-op:
+// the box refuses a RESET carrying an undefined bit whole, so the release would be lost too.
+#[cfg(feature = "mock")]
+#[test]
+fn a_factory_reset_carries_the_nvs_bit_and_a_plain_reset_carries_nothing() {
+    use crate::protocol::FrameType;
+    for (factory, want) in [(false, Vec::new()), (true, vec![0x01u8])] {
+        let mock = crate::MockBox::new();
+        let dev = crate::Device::with_mock(mock.clone());
+        if factory {
+            dev.factory_reset().unwrap();
+        } else {
+            dev.reset().unwrap();
+        }
+        let sent: Vec<Vec<u8>> = mock
+            .recorded_frames()
+            .into_iter()
+            .filter(|f| f.ty == FrameType::Reset)
+            .map(|f| f.payload)
+            .collect();
+        assert_eq!(sent, vec![want], "factory={factory}");
+    }
+}
+
+// Both resets release the session; only the flagged one takes the stored half with it.
+#[cfg(feature = "mock")]
+#[test]
+fn only_a_factory_reset_clears_what_the_box_keeps_in_nvs() {
+    for factory in [false, true] {
+        let dev = crate::Device::with_mock(crate::MockBox::new());
+        dev.set_name("Named").unwrap();
+        dev.set_spread(50).unwrap();
+        assert_eq!(dev.query_version().unwrap().name, "Named");
+        assert_eq!(dev.query_spread().unwrap().percent, 50);
+        if factory {
+            dev.factory_reset().unwrap();
+        } else {
+            dev.reset().unwrap();
+        }
+        let name = dev.query_version().unwrap().name;
+        let spread = dev.query_spread().unwrap().percent;
+        if factory {
+            assert_ne!(name, "Named", "the name survived a factory reset");
+            assert_eq!(spread, 100, "spread did not return to its default");
+        } else {
+            assert_eq!(name, "Named", "a plain RESET took the name");
+            assert_eq!(spread, 50, "a plain RESET took an option");
+        }
+    }
+}
+
 #[cfg(feature = "mock")]
 #[test]
 fn the_reply_truncates_granular_keys_and_never_the_bounded_classes() {

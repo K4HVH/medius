@@ -539,6 +539,16 @@ pub unsafe extern "C" fn medius_device_reset(dev: *mut MediusDevice) -> MediusSt
     with_device(dev, |d| d.reset())
 }
 
+/// `RESET` with the NVS flag: the release `medius_device_reset` does, and then the box erases its
+/// persistent store and reboots, returning at its defaults under its MAC-derived name. Takes the box
+/// name, every option, and everything the box has learned about the devices it has seen, including
+/// any descriptor patch set. The box goes quiet while it
+/// reboots: the control port stays enumerated, so queries time out rather than the link dropping.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn medius_device_factory_reset(dev: *mut MediusDevice) -> MediusStatus {
+    with_device(dev, |d| d.factory_reset())
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_device_reapply(dev: *mut MediusDevice) -> MediusStatus {
     with_device(dev, |d| d.reapply())
