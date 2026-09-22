@@ -1692,7 +1692,8 @@ impl MockBox {
                 FrameType::ClipTrigger => st.apply_clip_trigger_frame(payload),
                 // RESET clears every lock along with the injection, as input_reset does. The bearing
                 // option is NVS-backed and survives it. The rewrite table clears too (§3.14).
-                FrameType::Reset => {
+                // A short frame does nothing, the way the box gates every command on its length.
+                FrameType::Reset if !payload.is_empty() => {
                     st.table = LockTable::default();
                     if !st.rewrites.is_empty() {
                         st.rewrites.clear();
@@ -1706,7 +1707,7 @@ impl MockBox {
                     st.clear_clip_config();
                     // With RST_F_NVS the stored half goes as well and the box reboots into its
                     // defaults, so the options that otherwise survive a RESET do not.
-                    if payload.first().is_some_and(|f| f & RST_F_NVS != 0) {
+                    if payload[0] & RST_F_NVS != 0 {
                         st.reset_persistent();
                     }
                 }
