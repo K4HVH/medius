@@ -10,7 +10,7 @@ use crate::protocol::opcode::{
     LOCK_CLS_BTN, LOCK_CLS_KEY, LOCK_CLS_MEDIA, LOCK_DIR_AGAINST, LOCK_DIR_BOTH, LOCK_DIR_NEG,
     LOCK_DIR_POS, LOCK_DIR_WITH, LOCK_ID_ALL, LOCK_SCALE_BLOCK, LOCK_SCALE_PASS, MAX_BUTTONS,
     OPT_BEARING, OPT_EMIT, OPT_IMPERFECT, OPT_MOVE_RIDE, OPT_NAME, OPT_RENDER, OPT_SPREAD,
-    Q_FIRMWARE, RATE_CONFIDENT,
+    Q_FIRMWARE, RATE_CONFIDENT, RST_F_NVS,
 };
 use crate::protocol::opcode::{
     CATCH_CLS_ANY, CATCH_CLS_CONTROL, CATCH_CLS_EMIT, CATCH_CLS_HID_IN, CATCH_CLS_HID_OUT,
@@ -808,6 +808,25 @@ impl State {
     }
 
     // The clip config goes with the rest of the box's soft state (clip_lifecycle_reset_locked).
+    // What RST_F_NVS takes with it: everything the box keeps in NVS. The values here are the ones
+    // `State::default` starts from, so the mock lands where a wiped box boots.
+    fn reset_persistent(&mut self) {
+        self.version.name = String::new();
+        // Only `allowed` is stored. over_capacity and clone_imperfect describe the attached
+        // device, which the box re-derives when it clones again after the reboot.
+        self.imperfect.allowed = ImperfectStatus::default().allowed;
+        self.move_ride_ms = 0;
+        self.bearing = Bearing::default();
+        self.emit_pace = EmitPace::Learned;
+        self.emit_force_hz = None;
+        self.render_mode = RenderMode::Despiked;
+        self.render_full = false;
+        self.spread_percent = 100;
+        self.patches.clear();
+        self.patch_applied = false;
+        self.patch_refused = false;
+    }
+
     fn clear_clip_config(&mut self) {
         self.clip_settings = ClipSettings::default();
         self.packet_triggers.rows.clear();
@@ -1685,6 +1704,11 @@ impl MockBox {
                     st.transform_full = false;
                     // The clip config is soft state and goes with the locks.
                     st.clear_clip_config();
+                    // With RST_F_NVS the stored half goes as well and the box reboots into its
+                    // defaults, so the options that otherwise survive a RESET do not.
+                    if payload.first().is_some_and(|f| f & RST_F_NVS != 0) {
+                        st.reset_persistent();
+                    }
                 }
                 _ => {}
             }

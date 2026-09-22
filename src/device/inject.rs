@@ -1,6 +1,6 @@
 use crate::error::Result;
-use crate::protocol::FrameType;
 use crate::protocol::command::inject_payload;
+use crate::protocol::{FrameType, RST_F_NVS};
 use crate::types::{Action, Usage};
 
 use super::Device;
@@ -34,8 +34,23 @@ impl Device {
 
     /// `RESET`: return to pure passthrough, clearing injection and ending any open catch stream.
     pub fn reset(&self) -> Result<()> {
+        self.reset_frame(&[])
+    }
+
+    /// `RESET` carrying its NVS flag: the release above, and then the
+    /// box erases its persistent store and reboots, returning at its defaults under its MAC-derived
+    /// name. Clears the box's name, every option, and everything the box has learned about the
+    /// devices it has seen, including any descriptor patch set.
+    /// The box goes quiet while it reboots: the control port stays enumerated, so
+    /// queries time out rather than the link dropping. Poll one until it answers.
+    pub fn factory_reset(&self) -> Result<()> {
+        self.reset_frame(&[RST_F_NVS])
+    }
+
+    // Both resets release the same session state here, so the flag only ever adds the box's side.
+    fn reset_frame(&self, payload: &[u8]) -> Result<()> {
         self.link.desired().lock().clear();
         self.link.catch_disconnect_all();
-        self.link.send(FrameType::Reset, &[])
+        self.link.send(FrameType::Reset, payload)
     }
 }

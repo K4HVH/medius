@@ -32,6 +32,10 @@ pub const MV_F_NOW: u8 = 0x01;
 pub const MV_F_FLUSH: u8 = 0x02;
 pub const MV_F_DISCARD: u8 = 0x04;
 
+/// `RESET` flag: also erase the box's persistent store and reboot, so it returns at its defaults.
+/// An empty `RESET` payload releases the session only, which is what the command has always done.
+pub const RST_F_NVS: u8 = 0x01;
+
 pub const Q_VERSION: u8 = 0;
 pub const Q_HEALTH: u8 = 1;
 /// Cloned device identity: vid/pid/bcd + serial/bos flags + primary kind + product (§4.3).

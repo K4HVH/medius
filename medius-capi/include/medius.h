@@ -2213,6 +2213,13 @@ MediusStatus medius_device_led(struct MediusDevice *dev,
 
 MediusStatus medius_device_reset(struct MediusDevice *dev);
 
+// `RESET` with the NVS flag: the release `medius_device_reset` does, and then the box erases its
+// persistent store and reboots, returning at its defaults under its MAC-derived name. Takes the box
+// name, every option, and everything the box has learned about the devices it has seen, including
+// any descriptor patch set. The box goes quiet while it
+// reboots: the control port stays enumerated, so queries time out rather than the link dropping.
+MediusStatus medius_device_factory_reset(struct MediusDevice *dev);
+
 MediusStatus medius_device_reapply(struct MediusDevice *dev);
 
 // Rescan by VID/PID, reopen this box, and re-apply held state. `MEDIUS_STATUS_ERR_BAD_PROTO_VER` when
