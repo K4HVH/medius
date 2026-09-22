@@ -705,7 +705,7 @@ fn a_reset_clears_the_lock_table() {
 #[test]
 fn a_factory_reset_carries_the_nvs_bit_and_a_plain_reset_carries_nothing() {
     use crate::protocol::FrameType;
-    for (factory, want) in [(false, Vec::new()), (true, vec![0x01u8])] {
+    for (factory, want) in [(false, vec![0x00u8]), (true, vec![0x01u8])] {
         let mock = crate::MockBox::new();
         let dev = crate::Device::with_mock(mock.clone());
         if factory {
@@ -891,7 +891,7 @@ fn a_reapply_rebuilds_the_media_slots_in_the_order_the_box_had_them() {
 
     // RESET clears the box's table the way the firmware's silence window does, without touching what
     // the host holds; `reapply` is then what a reconnect runs.
-    dev.link.send(FrameType::Reset, &[]).unwrap();
+    dev.link.send(FrameType::Reset, &[0]).unwrap();
     assert!(dev.query_locks().unwrap().entries().is_empty());
     dev.reapply().unwrap();
     assert_eq!(dev.query_locks().unwrap(), before);

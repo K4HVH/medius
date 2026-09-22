@@ -34,7 +34,7 @@ impl Device {
 
     /// `RESET`: return to pure passthrough, clearing injection and ending any open catch stream.
     pub fn reset(&self) -> Result<()> {
-        self.reset_frame(&[])
+        self.reset_frame(&[0])
     }
 
     /// `RESET` carrying its NVS flag: the release above, and then the
@@ -48,6 +48,7 @@ impl Device {
     }
 
     // Both resets release the same session state here, so the flag only ever adds the box's side.
+    // The byte is always sent: the box requires it, as it does every other command's payload.
     fn reset_frame(&self, payload: &[u8]) -> Result<()> {
         self.link.desired().lock().clear();
         self.link.catch_disconnect_all();
