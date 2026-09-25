@@ -162,7 +162,7 @@ class Device:
         check(_native.lib.medius_device_wheel(self._handle, _i16(delta, "delta")))
 
     def move_rel_now(self, dx, dy):
-        """A cursor move that bypasses movement riding: it emits on the box's own clock."""
+        """A cursor move that bypasses movement riding: it leaves on the next mouse report the box sends."""
         check(_native.lib.medius_device_move_rel_now(self._handle, _i16(dx, "dx"), _i16(dy, "dy")))
 
     def wheel_now(self, delta):
@@ -302,6 +302,10 @@ class Device:
         check(_native.lib.medius_device_reboot(self._handle, int(target)))
 
     def allow_imperfect_clones(self, allow: bool):
+        """`OPTION(IMPERFECT)`: opt into cloning a device the box cannot clone faithfully, or back to
+        faithful-only. A toggle that changes the patch set the clone serves presents the clone again,
+        which releases the session like a replug of the device; the library re-sends what it holds once
+        the new clone is up, and `ClipHandle.lost` reports a clip it dropped."""
         check(_native.lib.medius_device_allow_imperfect_clones(self._handle, bool(allow)))
 
     def set_movement_riding(self, window_ms: Optional[int]):
@@ -591,17 +595,24 @@ class Device:
 
     def set_patch(self, patch: Patch) -> None:
         """`PATCH` (§3.14): store one descriptor patch. A patch with empty `bytes` removes the patch at
-        its key. Storing is not gated on the opt-in; it takes effect once `apply_patch` re-presents the
-        clone under the opt-in."""
+        its key. Storing is not gated on the opt-in; the set reaches the game PC when the clone is next
+        presented under the opt-in: `apply_patch`, the opt-in turning on, or the device attaching."""
         c = patch_to_c(patch)
         check(_native.lib.medius_device_set_patch(self._handle, ctypes.byref(c)))
 
     def apply_patch(self) -> None:
-        """`PATCH` APPLY (§3.14): re-present the clone with the stored patch set. Needs the opt-in."""
+        """`PATCH` APPLY (§3.14): re-present the clone with the stored patch set. Needs the opt-in. The
+        box re-presents only while the stored set differs from the one served, so applying an emptied
+        set serves the device unpatched, and it leaves a refused set that has not changed since.
+        Presenting the clone again releases the session like a replug of the device; the library
+        re-sends what it holds once the new clone is up, and `ClipHandle.lost` reports a clip
+        it dropped."""
         check(_native.lib.medius_device_apply_patch(self._handle))
 
     def clear_patch(self) -> None:
-        """`PATCH` CLEAR (§3.14): drop every patch for this device and re-present the clone unpatched."""
+        """`PATCH` CLEAR (§3.14): erase this device's stored set (the last attached one's when
+        unplugged). A clone serving patches re-presents unpatched, which releases the session as
+        `apply_patch` does, and the library re-sends it the same way."""
         check(_native.lib.medius_device_clear_patch(self._handle))
 
     def query_patches(self) -> PatchSet:

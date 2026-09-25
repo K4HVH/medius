@@ -30,7 +30,7 @@ pub struct Health {
     pub kbd_attached: bool,
     /// The rewrite-rule table (§3.14) is non-empty (v3.4.0).
     pub rewrite_on: bool,
-    /// A descriptor-patch set (§3.14) is applied to the clone (v3.4.0).
+    /// The clone is serving a patched descriptor set (§3.14) (v3.4.0).
     pub patch_on: bool,
     /// A field transform is active (reserved; the transforms feature owns this bit) (v3.4.0).
     pub transform_on: bool,

@@ -925,6 +925,7 @@ fn counters_are_readable() {
         frames_rx: 0,
         crc_drops: 0,
         reconnects: 0,
+        restarts: 0,
     };
     assert_eq!(
         unsafe { medius_device_counters(dev, &mut counters) },
@@ -3192,7 +3193,7 @@ fn the_mock_runs_a_packet_through_its_triggers() {
         run(hid_in, 5, inbound, &[0x07, 0x20]),
         (true, toggle, false)
     );
-    // Nothing wins on another class, and the outs say so.
+    // Nothing matches on another class, and the outs say so.
     assert_eq!(
         run(
             MEDIUS_CATCH_CLASS_HID_OUT,
@@ -5152,6 +5153,129 @@ fn mouse_caps_pan_crosses_the_boundary() {
     assert_eq!(tf.entries[0].op, MediusTransformOp::Remap as u8);
     assert_eq!(tf.entries[0].dest.kind, MediusLockTargetKind::Pan as u8);
     unsafe {
+        medius_device_free(dev);
+        medius_mock_free(mock);
+    }
+}
+
+#[test]
+fn a_rewrite_past_the_payload_pool_has_its_own_status() {
+    assert_eq!(MediusStatus::ErrRewritePoolFull as i32, 35);
+    assert_eq!(MEDIUS_REWRITE_PAYLOAD_POOL, 2048);
+    let mock = medius_mock_new();
+    unsafe { medius_mock_set_imperfect_status(mock, allowed_status()) };
+    let mut dev: *mut MediusDevice = ptr::null_mut();
+    assert_eq!(
+        unsafe { medius_device_with_mock(mock, &mut dev) },
+        MediusStatus::Ok
+    );
+    let answer = |id: u16, len: usize| {
+        c_rewrite(
+            MediusRewriteClass::Control as u8,
+            id,
+            MediusDirection::Both as u8,
+            MediusRewriteAction::Answer as u8,
+            0,
+            &[],
+            &[],
+            &vec![0x5A; len],
+        )
+    };
+    for id in 0..4 {
+        assert_eq!(
+            unsafe { medius_device_set_rewrite(dev, &answer(id, 512 - 11)) },
+            MediusStatus::Ok
+        );
+    }
+    assert_eq!(
+        unsafe { medius_device_set_rewrite(dev, &answer(4, 45)) },
+        MediusStatus::ErrRewritePoolFull
+    );
+    assert_eq!(
+        unsafe { medius_device_set_rewrite(dev, &answer(4, 44)) },
+        MediusStatus::Ok
+    );
+    unsafe {
+        medius_device_free(dev);
+        medius_mock_free(mock);
+    }
+}
+
+#[test]
+fn a_mock_restart_is_recovered_and_the_clip_reports_its_loss() {
+    let mock = medius_mock_new();
+    let mut dev: *mut MediusDevice = ptr::null_mut();
+    assert_eq!(
+        unsafe { medius_device_open_mock(mock, &mut dev) },
+        MediusStatus::Ok
+    );
+    let clip = unsafe { clip_of(dev) };
+    let builder = medius_clip_builder_new();
+    unsafe {
+        assert_eq!(medius_clip_builder_move(builder, 1, 0), MediusStatus::Ok);
+        assert_eq!(medius_clip_append(clip, builder), MediusStatus::Ok);
+        assert!(!medius_clip_lost(clip));
+        medius_mock_restart(mock);
+    }
+    let mut counters: MediusCountersSnapshot = unsafe { std::mem::zeroed() };
+    let deadline = std::time::Instant::now() + Duration::from_secs(3);
+    while counters.restarts == 0 {
+        assert!(std::time::Instant::now() < deadline, "no recovery");
+        std::thread::sleep(Duration::from_millis(5));
+        assert_eq!(
+            unsafe { medius_device_counters(dev, &mut counters) },
+            MediusStatus::Ok
+        );
+    }
+    unsafe {
+        assert!(medius_clip_lost(clip));
+        assert_eq!(medius_clip_append(clip, builder), MediusStatus::Ok);
+        assert!(!medius_clip_lost(clip));
+        assert!(!medius_clip_lost(ptr::null()));
+        medius_mock_restart(ptr::null_mut());
+        medius_clip_builder_free(builder);
+        medius_clip_free(clip);
+        medius_device_free(dev);
+        medius_mock_free(mock);
+    }
+}
+
+#[test]
+fn the_session_counter_reads_through_and_the_mock_moves_it() {
+    let mock = medius_mock_new();
+    let mut dev: *mut MediusDevice = ptr::null_mut();
+    assert_eq!(
+        unsafe { medius_device_with_mock(mock, &mut dev) },
+        MediusStatus::Ok
+    );
+    let session = || {
+        let mut s: MediusStats = unsafe { std::mem::zeroed() };
+        assert_eq!(
+            unsafe { medius_device_query_stats(dev, &mut s) },
+            MediusStatus::Ok
+        );
+        s.session
+    };
+    assert_eq!(session(), 0);
+    assert_eq!(
+        unsafe { medius_device_move_rel(dev, 1, 0) },
+        MediusStatus::Ok
+    );
+    unsafe { medius_mock_link_lost(mock) };
+    assert_eq!(session(), 1);
+    assert_eq!(
+        unsafe { medius_device_move_rel(dev, 1, 0) },
+        MediusStatus::Ok
+    );
+    unsafe {
+        medius_mock_detach(mock, false);
+        medius_mock_attach(mock);
+    }
+    assert_eq!(session(), 2);
+    unsafe {
+        medius_mock_link_lost(ptr::null_mut());
+        medius_mock_detach(ptr::null_mut(), true);
+        medius_mock_attach(ptr::null_mut());
         medius_device_free(dev);
         medius_mock_free(mock);
     }

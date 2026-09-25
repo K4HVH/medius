@@ -19,10 +19,11 @@ pub enum Motion {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum MoveTiming {
     /// Follow the movement-riding option: with it on, wait for a native cursor-motion report to carry
-    /// this delta. With it off (the box default) nothing is held, so this emits on the box's own clock.
+    /// this delta. With it off (the box default) nothing waits for a ride.
     #[default]
     Ride = 0,
-    /// Emit on the box's own clock whatever movement riding is set to.
+    /// Leave on the next mouse report the box sends, native or its own, whatever movement riding is set
+    /// to.
     Now = MV_F_NOW,
 }
 

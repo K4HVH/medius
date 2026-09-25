@@ -23,8 +23,9 @@ impl Device {
     /// place, keeping its position. Position is the state: entries apply in installation order, and two
     /// that write the same field do not commute.
     ///
-    /// Transforms are session state, re-asserted on reconnect and held alive by the keepalive exactly
-    /// like a [`lock`](Device::lock), and cleared on control-PC silence, [`reset`](Device::reset), a
+    /// Transforms are session state, re-asserted after a reconnect, a device-chip restart or any release
+    /// of the session the box counts, and held alive by the keepalive exactly like a
+    /// [`lock`](Device::lock). The box clears them on control-PC silence, [`reset`](Device::reset), a
     /// device detach, a link drop or a re-clone.
     ///
     /// Delivery is fire-and-forget; [`query_transforms`](Device::query_transforms) confirms what the

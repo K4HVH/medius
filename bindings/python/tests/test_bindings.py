@@ -625,6 +625,7 @@ def test_stats_roundtrip():
         link_rx_drops=0xDEADBEEF,
         host_rx_drops=0,
         relay_drops=0x0A0B0C0D,
+        session=0xBEEF,
     )
     with MockBox() as mock:
         mock.set_stats(stats)
@@ -945,7 +946,7 @@ def test_traffic_event_control_accessors():
         catch_class=CatchClass.CONTROL,
         id=0,
         direction=Direction.POSITIVE,
-        flags=0xFD,
+        flags=0x81,  # a STALL a rule caused
         true_len=8,
         bytes=setup,
     )
@@ -955,13 +956,17 @@ def test_traffic_event_control_accessors():
     assert ev.traffic.setup() == setup
     assert ev.traffic.data() == b""  # a STALL answers with no data stage
     assert ev.traffic.control_status() == ControlStatus.STALLED
+    assert ev.traffic.rule_acted() is True
     assert ev.traffic.bus_event() is None
 
     answered = TrafficEvent(
         CatchClass.CONTROL, 0, Direction.POSITIVE, 0x00, 10, setup + b"\x12\x01"
     )
     assert answered.control_status() == ControlStatus.OK
+    assert answered.rule_acted() is False
     assert answered.data() == b"\x12\x01"
+    naked = TrafficEvent(CatchClass.CONTROL, 0, Direction.POSITIVE, 0x02, 8, setup)
+    assert naked.control_status() == ControlStatus.NAKED
 
 
 def test_clip_transfer_event_accessors():
@@ -988,6 +993,8 @@ def test_clip_transfer_event_accessors():
 
     stalled = TrafficEvent(CatchClass.CLIP_TRANSFER, 0, Direction.IN, 0xFD, 8, setup)
     assert stalled.transfer_status() == TransferStatus.STALL
+    # 0xFD has bit 7 set, and a transfer status is no rule bit.
+    assert stalled.rule_acted() is False
     assert stalled.data() == b""
     unanswered = TrafficEvent(CatchClass.CLIP_TRANSFER, 0, Direction.IN, 0xFE, 8, setup)
     assert unanswered.transfer_status() == TransferStatus.NAK
@@ -1882,7 +1889,7 @@ def test_the_mock_runs_a_packet_through_its_triggers():
             # The id wildcard takes what the exact triggers leave, and an empty head matches it.
             assert mock.clip_packet(TrafficClass.HID_IN, 5, Direction.IN, b"\x07\x20") == (ClipAction.TOGGLE, False)
             assert mock.clip_packet(TrafficClass.HID_IN, 5, Direction.IN, b"") == (ClipAction.TOGGLE, False)
-            # Nothing wins on another class.
+            # Nothing matches on another class.
             assert mock.clip_packet(TrafficClass.HID_OUT, 2, Direction.OUT, b"\x07\x20") == (None, False)
             assert [t.hits for t in clip.query_config().packet_triggers] == [3, 4, 1]
             with pytest.raises(ValueError):
@@ -2124,7 +2131,7 @@ def test_an_unknown_control_status_does_not_raise():
         catch_class=CatchClass.CONTROL,
         id=0,
         direction=Direction.IN,
-        flags=0x42,
+        flags=0x03,
         true_len=8,
         bytes=bytes(8),
     )
@@ -2132,7 +2139,7 @@ def test_an_unknown_control_status_does_not_raise():
         with d.catch_events(CatchFilter.traffic_class(TrafficClass.CONTROL)) as s:
             ev = _push_and_recv(mock, s, unknown)
     assert ev.traffic.control_status() == ControlStatus.OTHER
-    assert ev.traffic.flags == 0x42
+    assert ev.traffic.flags == 0x03
 
 
 def test_timeline_unwraps_the_rollover_and_maps_onto_the_callers_clock():
@@ -2691,3 +2698,85 @@ def test_input_event_carries_pan():
     assert ev is not None
     assert ev.kind == InputKind.MOTION
     assert (ev.dx, ev.dy, ev.dz, ev.pan) == (3, -4, 0, 5)
+
+
+def _await_restarts(d, n):
+    deadline = time.monotonic() + 3
+    while d.counters().restarts < n:
+        assert time.monotonic() < deadline, f"restarts stayed at {d.counters().restarts}"
+        time.sleep(0.005)
+
+
+def test_a_mock_restart_is_recovered_and_the_clip_reports_its_loss():
+    with MockBox() as mock, mock.open() as d:
+        clip = d.clip()
+        d.press(Usage.button(Button.SIDE1))
+        clip.set_retain(True)
+        clip.append(ClipBuilder().move(1, 0))
+        assert clip.lost() is False
+        mock.clear_recorded()
+        mock.restart()
+        _await_restarts(d, 1)
+        assert clip.lost() is True
+        # The held press and the retain setting went back to the restarted box.
+        assert _clip_frames(d, mock, FrameType.INJECT) == [bytes([0, 3, 0, 1])]
+        assert _clip_frames(d, mock, FrameType.CLIP_SET) == [bytes([2, 1])]
+        clip.append(ClipBuilder().move(1, 0))
+        assert clip.lost() is False
+        clip.close()
+
+
+def test_a_rewrite_past_the_payload_pool_raises_its_own_exception():
+    from medius import RewritePoolFullError
+
+    with MockBox() as mock, Device.with_mock(mock) as d:
+        mock.set_imperfect_status(_allowed())
+
+        def answer(i, n):
+            payload = b"\x5a" * n
+            return RewriteRule(RewriteClass.CONTROL, i, Direction.BOTH, RewriteAction.ANSWER, payload=payload)
+
+        for i in range(4):
+            d.set_rewrite(answer(i, 501))
+        with pytest.raises(RewritePoolFullError):
+            d.set_rewrite(answer(4, 45))
+        d.set_rewrite(answer(4, 44))
+        assert len(d.query_rewrite().entries) == 5
+
+
+def test_a_clone_presented_again_gets_back_what_the_library_held():
+    x = LockTarget.x()
+    with MockBox() as mock:
+        mock.set_imperfect_status(_allowed())
+        with mock.open() as d:
+            d.set_patch(Patch(PatchSection.DEVICE, 0, 0, 12, b"\x00\x01"))
+            d.scale(x, Direction.BOTH, 40)
+            mock.clear_recorded()
+            d.apply_patch()  # presents the clone again, which drops the scale on the box
+            deadline = time.monotonic() + 3
+            while not _clip_frames(d, mock, FrameType.LOCK):
+                assert time.monotonic() < deadline, "the scale never went back"
+                time.sleep(0.005)
+            assert d.query_patches().applied is True
+            assert d.query_locks().scale_of(x, Direction.POSITIVE) == 40
+            assert d.counters().restarts == 0
+
+
+def test_a_release_the_box_counts_is_recovered():
+    x = LockTarget.x()
+    with MockBox() as mock:
+        with mock.open() as d:
+            d.scale(x, Direction.BOTH, 40)
+            mock.link_lost()
+            assert d.query_stats().session == 1
+            deadline = time.monotonic() + 3
+            while d.query_locks().scale_of(x, Direction.POSITIVE) != 40:
+                assert time.monotonic() < deadline, "the scale never went back"
+                time.sleep(0.01)
+            mock.detach(back_within_grace=False)
+            mock.attach()
+            deadline = time.monotonic() + 3
+            while d.query_locks().scale_of(x, Direction.POSITIVE) != 40:
+                assert time.monotonic() < deadline, "the scale never went back after a replug"
+                time.sleep(0.01)
+            assert d.counters().restarts == 0

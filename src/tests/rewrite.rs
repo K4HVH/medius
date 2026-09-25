@@ -328,6 +328,122 @@ mod mock_roundtrip {
         ));
     }
 
+    fn answer(id: u16, len: usize) -> RewriteRule {
+        RewriteRule::new(
+            RewriteClass::Control,
+            id,
+            Direction::Both,
+            RewriteAction::Answer,
+        )
+        .with_payload(vec![0x5A; len])
+    }
+
+    // The box counts payload bytes only, and an overwrite gives its old payload back before the new
+    // one is costed. A rule past what is left never reaches the wire.
+    #[test]
+    fn the_payload_pool_is_checked_before_the_wire() {
+        use crate::REWRITE_PAYLOAD_POOL;
+        let mock = allowed_mock();
+        let device = Device::with_mock(mock.clone());
+        for id in 0..4 {
+            device.set_rewrite(&answer(id, 500)).unwrap();
+        }
+        device.set_rewrite(&answer(4, 48)).unwrap();
+        mock.clear_recorded();
+        assert!(matches!(
+            device.set_rewrite(&answer(5, 1)),
+            Err(Error::RewritePoolFull { len: 1, free: 0, limit }) if limit == REWRITE_PAYLOAD_POOL
+        ));
+        assert!(!mock.saw(crate::FrameType::Rewrite));
+        // A rule with no payload takes nothing from the pool.
+        let stall = RewriteRule::new(
+            RewriteClass::Control,
+            9,
+            Direction::Both,
+            RewriteAction::Stall,
+        );
+        device.set_rewrite(&stall).unwrap();
+        // An overwrite of the 48-byte rule has 48 bytes to spend, and one byte more is refused.
+        device.set_rewrite(&answer(4, 48)).unwrap();
+        assert!(matches!(
+            device.set_rewrite(&answer(4, 49)),
+            Err(Error::RewritePoolFull {
+                len: 49,
+                free: 48,
+                ..
+            })
+        ));
+        device.remove_rewrite(&answer(0, 0)).unwrap();
+        device.set_rewrite(&answer(5, 500)).unwrap();
+        let table = device.query_rewrite().unwrap();
+        assert_eq!(table.entries.len(), 6);
+        assert!(!table.table_full);
+    }
+
+    // full is the last rule refused for room, by count or by pool, and any change the box takes
+    // resets it; the keepalive's identical re-sends change nothing and leave it standing.
+    #[test]
+    fn table_full_is_the_last_rule_refused_for_room() {
+        use crate::protocol::FrameType;
+        use crate::protocol::command::rewrite_payload;
+        let device = Device::with_mock(allowed_mock());
+        let full = || device.query_rewrite().unwrap().table_full;
+        let raw = |r: &RewriteRule| {
+            rewrite_payload(
+                r.class.as_u8(),
+                r.id,
+                r.direction.as_u8(),
+                1,
+                r.action.as_u8(),
+                r.offset,
+                &r.match_bytes,
+                &r.mask,
+                &r.payload,
+            )
+        };
+        for id in 0..crate::REWRITE_MAX_ENTRIES as u16 {
+            device.set_rewrite(&answer(id, 1)).unwrap();
+        }
+        assert!(!full(), "a table at the count is no refusal");
+        // Past the crate's own check, the way a second host would reach the box.
+        device
+            .link
+            .send(FrameType::Rewrite, &raw(&answer(99, 1)))
+            .unwrap();
+        assert!(full());
+        device
+            .link
+            .send(FrameType::Rewrite, &raw(&answer(0, 1)))
+            .unwrap();
+        assert!(full(), "an identical re-set is no change");
+        device.set_rewrite(&answer(0, 2)).unwrap();
+        assert!(!full(), "an overwrite is a change");
+
+        device.clear_rewrite().unwrap();
+        for id in 0..4 {
+            device.set_rewrite(&answer(id, 500)).unwrap();
+        }
+        device
+            .link
+            .send(FrameType::Rewrite, &raw(&answer(4, 49)))
+            .unwrap();
+        assert!(full(), "2049 bytes");
+        assert_eq!(device.query_rewrite().unwrap().entries.len(), 4);
+        device.remove_rewrite(&answer(3, 0)).unwrap();
+        assert!(!full(), "a removal is a change");
+        device
+            .link
+            .send(FrameType::Rewrite, &raw(&answer(4, 49)))
+            .unwrap();
+        device
+            .link
+            .send(FrameType::Rewrite, &raw(&answer(9, 501)))
+            .unwrap();
+        assert!(full());
+        device.clear_rewrite().unwrap();
+        assert!(!full());
+    }
+
     #[test]
     fn imperfect_status_scripts_the_gate() {
         // A mock configured over-capacity but opt-in-on still admits the advanced control layer.

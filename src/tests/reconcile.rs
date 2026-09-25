@@ -1,4 +1,4 @@
-use crate::link::reconcile::{DesiredState, clip_packet_key};
+use crate::link::reconcile::{DesiredState, clip_packet_key, clip_trigger_key};
 use crate::types::{
     Action, Blanket, Button, ClipAction, ClipPacketTrigger, ClipPacketTriggerEntry, ClipSettings,
     ClipState, ClipStatus, ClipTrigger, Direction, Edge, Key, MediaKey, TrafficClass, Usage,
@@ -563,28 +563,32 @@ fn a_loaded_clip_a_setting_or_a_trigger_is_not_idle() {
     d.clip_setting(9, 1); // an id the box does not know either
     assert!(d.is_idle());
 
-    d.clip_trigger((1, 0x3A, 1), true);
-    d.clip_trigger((1, 0x3A, 2), true);
-    d.clip_trigger((1, 0x3A, 1), false);
+    let on = |edge| ClipTrigger::new(Key::new(0x3A), edge, ClipAction::Start);
+    d.clip_bind(on(Edge::Press));
+    d.clip_bind(on(Edge::Release));
+    d.clip_unbind(&clip_trigger_key(&on(Edge::Press)));
     assert!(!d.is_idle());
     d.clip_triggers_clear();
     assert!(d.is_idle());
 
     // A packet trigger is held under its whole key: the mask is part of it.
-    let key = |mask: u8| (4u8, 2u16, 1u8, vec![0x07], vec![mask]);
-    d.clip_packet_bind(key(0xFF), false);
-    d.clip_packet_bind(key(0x0F), false);
-    d.clip_packet_unbind(&key(0xFF));
+    let t = |mask: u8| {
+        ClipPacketTrigger::new(TrafficClass::HidIn, 2, Direction::IN, ClipAction::Start)
+            .matching([0x07], [mask])
+    };
+    d.clip_packet_bind(&t(0xFF));
+    d.clip_packet_bind(&t(0x0F));
+    d.clip_packet_unbind(&clip_packet_key(&t(0xFF)));
     assert!(!d.is_idle());
-    d.clip_packet_unbind(&key(0x0F));
+    d.clip_packet_unbind(&clip_packet_key(&t(0x0F)));
     assert!(d.is_idle());
 
     // One clear drops both kinds from DesiredState.
-    d.clip_trigger((1, 0x3A, 1), true);
-    d.clip_packet_bind(key(0xFF), false);
+    d.clip_bind(on(Edge::Press));
+    d.clip_packet_bind(&t(0xFF));
     d.clip_triggers_clear();
     assert!(d.is_idle());
-    d.clip_packet_bind(key(0xFF), false);
+    d.clip_packet_bind(&t(0xFF));
     d.clip_triggers_clear();
     assert!(d.is_idle());
 }
@@ -592,24 +596,28 @@ fn a_loaded_clip_a_setting_or_a_trigger_is_not_idle() {
 // The box removes every consuming packet trigger when the opt-in goes off, and holds the rest.
 #[test]
 fn the_opt_in_going_off_drops_the_consuming_packet_triggers() {
-    let key = |id: u16| (4u8, id, 1u8, vec![0x07], vec![0xFF]);
+    let t = |id: u16, consume: bool| ClipPacketTrigger {
+        consume,
+        ..ClipPacketTrigger::new(TrafficClass::HidIn, id, Direction::IN, ClipAction::Start)
+            .matching([0x07], [0xFF])
+    };
     let mut d = DesiredState::default();
-    d.clip_packet_bind(key(1), true);
-    d.clip_packet_bind(key(2), false);
-    d.clip_packet_bind(key(3), true);
-    assert_eq!(d.clip_packet_drop_consuming(), vec![key(1), key(3)]);
+    d.clip_packet_bind(&t(1, true));
+    d.clip_packet_bind(&t(2, false));
+    d.clip_packet_bind(&t(3, true));
+    assert_eq!(d.clip_packet_drop_consuming(), vec![t(1, true), t(3, true)]);
     assert!(!d.is_idle(), "the watching trigger stands");
     assert_eq!(d.clip_packet_drop_consuming(), vec![]);
-    d.clip_packet_unbind(&key(2));
+    d.clip_packet_unbind(&clip_packet_key(&t(2, false)));
     assert!(d.is_idle());
 
     // A re-bind takes the flags it sent: a consuming trigger re-bound watching stays.
-    d.clip_packet_bind(key(1), true);
-    d.clip_packet_bind(key(1), false);
+    d.clip_packet_bind(&t(1, true));
+    d.clip_packet_bind(&t(1, false));
     assert_eq!(d.clip_packet_drop_consuming(), vec![]);
     assert!(!d.is_idle());
     // Only consuming triggers: nothing is left to hold.
-    d.clip_packet_bind(key(1), true);
+    d.clip_packet_bind(&t(1, true));
     d.clip_packet_drop_consuming();
     assert!(d.is_idle());
 
@@ -637,8 +645,17 @@ fn a_reset_forgets_the_clip() {
     let mut d = DesiredState::default();
     d.clip_loaded(true);
     d.clip_setting(1, 1);
-    d.clip_trigger((0, 3, 1), true);
-    d.clip_packet_bind((9, 1, 1, vec![], vec![]), false);
+    d.clip_bind(ClipTrigger::new(
+        Button::SIDE1,
+        Edge::Press,
+        ClipAction::Start,
+    ));
+    d.clip_packet_bind(&ClipPacketTrigger::new(
+        TrafficClass::Emit,
+        1,
+        Direction::IN,
+        ClipAction::Start,
+    ));
     d.clear();
     assert!(d.is_idle());
 }
@@ -652,8 +669,17 @@ fn a_reconnect_adopts_what_the_box_still_holds_of_a_clip() {
     let mut d = DesiredState::default();
     d.clip_loaded(true);
     d.clip_setting(3, 1);
-    d.clip_trigger((0, 3, 1), true);
-    d.clip_packet_bind((9, 1, 1, vec![], vec![]), false);
+    d.clip_bind(ClipTrigger::new(
+        Button::SIDE1,
+        Edge::Press,
+        ClipAction::Start,
+    ));
+    d.clip_packet_bind(&ClipPacketTrigger::new(
+        TrafficClass::Emit,
+        1,
+        Direction::IN,
+        ClipAction::Start,
+    ));
     d.clip_adopt(&empty, &plain);
     assert!(
         d.is_idle(),
@@ -773,7 +799,7 @@ fn a_reconnect_adopts_what_the_box_still_holds_of_a_clip() {
     d.clip_setting(3, 0);
     assert!(!d.is_idle());
     let (class, id) = Usage::from(Button::SIDE1).class_id();
-    d.clip_trigger((class, id, 1), false);
+    d.clip_unbind(&(class, id, 1));
     assert!(d.is_idle());
 
     // An adopted packet trigger alone holds the keepalive, under the key `unbind_packet` removes.
@@ -820,4 +846,76 @@ fn a_reconnect_adopts_what_the_box_still_holds_of_a_clip() {
     };
     d.clip_packet_unbind(&clip_packet_key(&same_key));
     assert!(d.is_idle());
+}
+
+// A reconnect that finds the box no longer holding an appended clip reports it lost; one that finds
+// it still loaded, or had nothing appended, does not.
+#[test]
+fn a_reconnect_that_finds_the_clip_gone_reports_it_lost() {
+    let gone = ClipStatus::default();
+    let kept = ClipStatus {
+        total: 40,
+        ..ClipStatus::default()
+    };
+    let plain = ClipSettings::default();
+    for (loaded, status, lost) in [
+        (true, &gone, true),
+        (true, &kept, false),
+        (false, &gone, false),
+    ] {
+        let mut d = DesiredState::default();
+        d.clip_loaded(loaded);
+        d.clip_adopt(status, &plain);
+        assert_eq!(
+            d.clip_lost(),
+            lost,
+            "loaded={loaded} total={}",
+            status.total
+        );
+    }
+    // It stands across a later adoption, until an append or a clear.
+    let mut d = DesiredState::default();
+    d.clip_loaded(true);
+    d.clip_adopt(&gone, &plain);
+    d.clip_adopt(&gone, &plain);
+    assert!(d.clip_lost());
+    d.clip_loaded(true);
+    assert!(!d.clip_lost());
+}
+
+// Only a ring the crate loaded and the box then reports empty is lost: a reading taken across an
+// append says nothing, a ring the box had already emptied (a stopped streaming clip) loses nothing,
+// and a release that left the ring standing keeps the clip.
+#[test]
+fn a_clip_is_lost_only_on_the_box_s_word_that_its_ring_went() {
+    let gone = ClipStatus::default();
+    let kept = ClipStatus {
+        total: 40,
+        ..ClipStatus::default()
+    };
+    let released = |before: &ClipStatus, after: &ClipStatus| {
+        let mut d = DesiredState::default();
+        d.clip_loaded(true);
+        let seen = d.clip_ring_gen();
+        d.clip_note_ring(seen, before, false);
+        let seen = d.clip_ring_gen();
+        d.clip_note_ring(seen, after, true);
+        d.clip_lost()
+    };
+    assert!(released(&kept, &gone));
+    assert!(!released(&gone, &gone), "the box had already emptied it");
+    assert!(
+        !released(&kept, &kept),
+        "the release left the ring standing"
+    );
+
+    let mut d = DesiredState::default();
+    d.clip_loaded(true);
+    let seen = d.clip_ring_gen();
+    d.clip_loaded(true);
+    d.clip_note_ring(seen, &gone, true);
+    assert!(
+        !d.clip_lost(),
+        "a reading from before the last append is not trusted"
+    );
 }

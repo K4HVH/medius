@@ -230,6 +230,7 @@ class MediusStats(ctypes.Structure):
         ("link_rx_drops", u32),
         ("host_rx_drops", u32),
         ("relay_drops", u32),
+        ("session", u16),
     ]
 
 
@@ -429,7 +430,13 @@ class MediusClipStatus(ctypes.Structure):
 
 
 class MediusCountersSnapshot(ctypes.Structure):
-    _fields_ = [("frames_tx", u64), ("frames_rx", u64), ("crc_drops", u64), ("reconnects", u64)]
+    _fields_ = [
+        ("frames_tx", u64),
+        ("frames_rx", u64),
+        ("crc_drops", u64),
+        ("reconnects", u64),
+        ("restarts", u64),
+    ]
 
 
 class MediusMotionEvent(ctypes.Structure):
@@ -712,6 +719,7 @@ _decl(
     c_bool,
     [ctypes.POINTER(MediusTrafficEvent), ctypes.POINTER(u8)],
 )
+_decl("medius_traffic_event_rule_acted", c_bool, [ctypes.POINTER(MediusTrafficEvent)])
 _decl("medius_traffic_event_bulk_end_of_transfer", c_bool, [ctypes.POINTER(MediusTrafficEvent)])
 _decl("medius_traffic_event_bulk_zlp", c_bool, [ctypes.POINTER(MediusTrafficEvent)])
 _decl("medius_clip_status_is_held", c_bool, [ctypes.POINTER(MediusClipStatus), MediusUsage])
@@ -816,6 +824,7 @@ _decl("medius_clip_restart", i32, [HANDLE])
 _decl("medius_clip_toggle", i32, [HANDLE])
 _decl("medius_clip_clear", i32, [HANDLE])
 _decl("medius_clip_finalize", i32, [HANDLE])
+_decl("medius_clip_lost", c_bool, [HANDLE])
 _decl("medius_clip_query_status", i32, [HANDLE, ctypes.POINTER(MediusClipStatus)])
 _decl("medius_clip_query_config", i32, [HANDLE, ctypes.POINTER(MediusClipSettings)])
 
@@ -858,6 +867,10 @@ if HAS_MOCK:
         c_bool,
         [HANDLE, u8, u16, u8, ctypes.POINTER(u8), usize, ctypes.POINTER(u8), ctypes.POINTER(c_bool)],
     )
+    _decl("medius_mock_restart", None, [HANDLE])
+    _decl("medius_mock_link_lost", None, [HANDLE])
+    _decl("medius_mock_detach", None, [HANDLE, c_bool])
+    _decl("medius_mock_attach", None, [HANDLE])
     _decl("medius_mock_silent", None, [HANDLE])
     _decl("medius_mock_push_raw", None, [HANDLE, ctypes.POINTER(u8), usize])
     _decl("medius_mock_push_log", None, [HANDLE, u8, ctypes.c_char_p])

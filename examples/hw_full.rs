@@ -1875,7 +1875,12 @@ mod linux {
         }
 
         {
+            // A held Y scale comes through the host chip's reboot: the chip is back inside the link
+            // watch's timeout, so the box releases nothing, and a release it did count (a slower
+            // reboot) is answered by the crate re-sending the scale.
             let dev = device.as_ref().unwrap();
+            let _ = dev.scale(Axis::Y, Direction::Both, 40);
+            let session = dev.query_stats().map(|s| s.session).ok();
             let _ = dev.reboot(RebootTarget::HostRun);
             std::thread::sleep(Duration::from_secs(2));
             let mut recovered = matches!(dev.query_version(), Ok(v) if v.proto_ver == PROTO_VER);
@@ -1887,6 +1892,19 @@ mod linux {
                 std::thread::sleep(Duration::from_millis(500));
                 recovered = matches!(dev.query_version(), Ok(v) if v.proto_ver == PROTO_VER);
             }
+            let released = dev.query_stats().map(|s| s.session).ok() != session;
+            let deadline = Instant::now() + Duration::from_secs(5);
+            let mut y_scale = -1;
+            while Instant::now() < deadline {
+                y_scale = dev
+                    .query_locks()
+                    .map(|l| l.scale_of(Axis::Y, Direction::Positive))
+                    .unwrap_or(-1);
+                if y_scale == 40 {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(100));
+            }
             reset_motion(&acc);
             let _ = dev.move_rel(10, 0);
             std::thread::sleep(Duration::from_millis(200));
@@ -1894,8 +1912,11 @@ mod linux {
             let _ = dev.reset();
             check(
                 "reboot-to-run",
-                recovered && moved == 10,
-                format!("reboot(HostRun) → responsive={recovered}, post-reboot move REL_X={moved}"),
+                recovered && moved == 10 && y_scale == 40,
+                format!(
+                    "reboot(HostRun) → responsive={recovered}, session moved={released}, Y scale \
+                     {y_scale}, post-reboot move REL_X={moved}"
+                ),
             );
         }
 
@@ -2116,6 +2137,54 @@ mod linux {
                 ),
             );
 
+            // CATCH marks a packet a rule acted on: a PATCH at EMIT that turns the (3, 0) frame's X
+            // byte into 5 reaches the PC as 5 on a ruled frame, and with the rule gone neither holds.
+            let _ = dev.set_spread(0);
+            let x_at = frame.as_ref().and_then(|f| {
+                let at: Vec<usize> = (0..f.len()).filter(|&i| f[i] == 3).collect();
+                (at.len() == 1).then(|| at[0])
+            });
+            let emitted = || -> Option<(bool, i64)> {
+                let stream = dev
+                    .catch_events([CatchFilter::traffic(TrafficClass::Emit, 1)])
+                    .ok()?;
+                reset_motion(&acc);
+                let _ = dev.move_rel(3, 0);
+                let until = Instant::now() + Duration::from_millis(250);
+                let mut acted = false;
+                while Instant::now() < until {
+                    if let Some(medius::CatchEvent::Traffic(t)) =
+                        stream.recv_timeout(Duration::from_millis(50))
+                    {
+                        acted |= t.rule_acted();
+                    }
+                }
+                Some((acted, acc.rel_x.load(Ordering::Relaxed)))
+            };
+            let (mut ruled, mut plain) = (None, None);
+            if let (Some(f), Some(i)) = (&frame, x_at) {
+                let head = &f[..f.len().min(medius::PKT_MATCH_MAX)];
+                let rule =
+                    RewriteRule::new(RewriteClass::Emit, 1, Direction::IN, RewriteAction::Patch)
+                        .matching(head.to_vec(), vec![0xFF; head.len()])
+                        .at_offset(i as u16)
+                        .with_payload(vec![5]);
+                if dev.set_rewrite(&rule).is_ok() {
+                    ruled = emitted();
+                }
+                let _ = dev.clear_rewrite();
+                plain = emitted();
+            }
+            let _ = dev.set_spread(spread_was);
+            check(
+                "catch: a rule's mark on the packet",
+                ruled == Some((true, 5)) && plain == Some((false, 3)),
+                format!(
+                    "{learnt}, X byte at {x_at:?}; ruled (marked, REL_X) {ruled:?}, without the rule \
+                     {plain:?}"
+                ),
+            );
+
             // PATCH: store a device-descriptor patch (unapplied), read it back, then clear.
             let patch = Patch::new(PatchSection::Device, 12, vec![0x00, 0x01]);
             let pset_ok = dev.set_patch(&patch).is_ok();
@@ -2126,7 +2195,7 @@ mod linux {
                 .query_patch_entry(0)
                 .map(|p| p.section == PatchSection::Device && p.bytes == vec![0x00, 0x01])
                 .unwrap_or(false);
-            let pclear_ok = dev.clear_patch().is_ok(); // re-presents the clone
+            let pclear_ok = dev.clear_patch().is_ok(); // the set was only stored, so the clone stays
             check(
                 "advanced control: patch",
                 pset_ok && ppresent && pentry_ok && pclear_ok,
@@ -2331,6 +2400,106 @@ mod linux {
                     );
                 }
                 Err(e) => check("auto-reconnect", false, format!("reopen failed: {e}")),
+            }
+        }
+
+        {
+            // The device chip reboots under a program that holds state: the crate hears the box's
+            // hello, waits for the clone, re-sends what it holds, and reports the clip ring gone.
+            let reopened = match args.get(2) {
+                Some(p) => Device::open(p),
+                None => Device::find(),
+            };
+            match reopened {
+                Ok(dev) => {
+                    let clip = dev.clip();
+                    let _ = dev.reset();
+                    let trigger = ClipTrigger::new(Button::SIDE2, Edge::Press, ClipAction::Toggle);
+                    let held = dev.scale(Axis::X, Direction::Both, 40).is_ok()
+                        && clip.set_retain(true).is_ok()
+                        && clip.bind(trigger).is_ok()
+                        && {
+                            let mut one = ClipBuilder::new();
+                            one.move_by(1, 0);
+                            clip.append(&one).is_ok()
+                        };
+                    let base = dev.counters().restarts;
+                    let rebooted = dev.reboot(RebootTarget::DeviceRun).is_ok();
+                    let deadline = Instant::now() + Duration::from_secs(20);
+                    while dev.counters().restarts == base && Instant::now() < deadline {
+                        std::thread::sleep(Duration::from_millis(100));
+                    }
+                    let recovered = dev.counters().restarts > base;
+                    let scale = dev
+                        .query_locks()
+                        .map(|l| l.scale_of(Axis::X, Direction::Positive))
+                        .unwrap_or(-1);
+                    let config = clip.query_config().ok();
+                    let retained = config.as_ref().is_some_and(|c| c.retain);
+                    let bound = config.as_ref().is_some_and(|c| c.triggers == [trigger]);
+                    let lost = clip.lost();
+                    let _ = clip.clear_triggers();
+                    let _ = clip.clear();
+                    let _ = clip.set_retain(false);
+                    let _ = dev.reset();
+                    check(
+                        "device-chip restart",
+                        held && rebooted && recovered && scale == 40 && retained && bound && lost,
+                        format!(
+                            "recovered={recovered}, X scale back at {scale}, retain={retained}, \
+                             trigger bound={bound}, clip reported lost={lost}"
+                        ),
+                    );
+                }
+                Err(e) => check("device-chip restart", false, format!("reopen failed: {e}")),
+            }
+        }
+
+        {
+            // Presenting the clone again (a patch apply, then its clear) releases the session like a
+            // replug of the device and sends no hello: the crate sees the PC enumerate the new clone
+            // and re-sends the scale it holds.
+            let reopened = match args.get(2) {
+                Some(p) => Device::open(p),
+                None => Device::find(),
+            };
+            match reopened {
+                Ok(dev) => {
+                    let was = dev.query_imperfect().map(|i| i.allowed).unwrap_or(false);
+                    let _ = dev.reset();
+                    let held = dev.allow_imperfect_clones(true).is_ok()
+                        && dev.scale(Axis::X, Direction::Both, 40).is_ok()
+                        && dev
+                            .set_patch(&Patch::new(PatchSection::Device, 12, vec![0x00, 0x01]))
+                            .is_ok();
+                    let settled = |applied: bool| {
+                        let deadline = Instant::now() + Duration::from_secs(10);
+                        while Instant::now() < deadline {
+                            std::thread::sleep(Duration::from_millis(100));
+                            let served = dev.query_patches().map(|p| p.applied).ok();
+                            let scale = dev
+                                .query_locks()
+                                .map(|l| l.scale_of(Axis::X, Direction::Positive))
+                                .unwrap_or(-1);
+                            if served == Some(applied) && scale == 40 {
+                                return true;
+                            }
+                        }
+                        false
+                    };
+                    let applied = dev.apply_patch().is_ok() && settled(true);
+                    let cleared = dev.clear_patch().is_ok() && settled(false);
+                    let _ = dev.reset();
+                    let _ = dev.allow_imperfect_clones(was);
+                    check(
+                        "re-presented clone",
+                        held && applied && cleared,
+                        format!(
+                            "X scale back at 40 after the apply={applied}, after the clear={cleared}"
+                        ),
+                    );
+                }
+                Err(e) => check("re-presented clone", false, format!("reopen failed: {e}")),
             }
         }
 

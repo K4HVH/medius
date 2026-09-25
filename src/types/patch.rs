@@ -3,7 +3,8 @@
 //!
 //! A patch overwrites bytes in what the clone presents at enumeration, persisted per device (VID:PID)
 //! in the box's NVS. Unlike a rewrite rule, a patch is configuration, not session state: it survives a
-//! reconnect and clears only on [`clear_patch`](crate::Device::clear_patch) or a stored-set change.
+//! reconnect and clears on [`clear_patch`](crate::Device::clear_patch) or
+//! [`factory_reset`](crate::Device::factory_reset).
 //! The box stores a patch whatever the opt-in, and applies the set only under
 //! [`allow_imperfect_clones`](crate::Device::allow_imperfect_clones).
 
@@ -22,7 +23,8 @@ pub enum PatchSection {
     Config = PATCH_SEC_CONFIG,
     /// An interface's report descriptor; `cfg` is the configuration index and `index` the interface number.
     Report = PATCH_SEC_REPORT,
-    /// A string descriptor; `index` is the string index. A string patch replaces the whole string.
+    /// A string descriptor; `index` is the string index (not 0). The patch replaces the whole string: at
+    /// most 127 bytes, one UTF-16 code unit each, `offset` ignored.
     String = PATCH_SEC_STRING,
     /// The BOS descriptor. `cfg`/`index` are ignored.
     Bos = PATCH_SEC_BOS,
@@ -50,10 +52,11 @@ impl PatchSection {
 
 /// A descriptor patch the host installs on the box.
 ///
-/// A patch is keyed by `(section, cfg, index, offset)`: setting one whose key exists overwrites it,
-/// and a patch with empty [`bytes`](Patch::bytes) removes the patch at that key. A patch never changes
-/// a descriptor's byte count; the box refuses (and logs) a set whose applied descriptors would make
-/// the clone advertise one length and serve another.
+/// A patch is keyed by `(section, cfg, index, offset)`: setting one whose key exists overwrites it and
+/// moves it to the end of the set (the bytes it already holds change nothing), and a patch with empty
+/// [`bytes`](Patch::bytes) removes the patch at that key. Every section but
+/// [`String`](PatchSection::String) keeps the descriptor's byte count; a set that fails the box's
+/// checks is served unpatched ([`PatchSet::refused`]).
 ///
 /// ```no_run
 /// # use medius::{Device, Result};
@@ -171,15 +174,20 @@ pub struct PatchEntry {
 /// The decoded `RESP(PATCHES)` (§4.17): the stored patch set plus its apply state.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct PatchSet {
-    /// The stored set is applied to the live clone.
+    /// The clone serves a non-empty patched set: the one it was presented with, which a later store
+    /// leaves alone until the clone is next presented.
     pub applied: bool,
-    /// A stored change has not been applied yet: an [`apply_patch`](crate::Device::apply_patch) would
-    /// re-present with it.
+    /// The stored set differs from the one the clone serves, in its patches, bytes or order: not applied
+    /// yet, changed or emptied since, refused, or held back because the opt-in is off.
     pub pending: bool,
-    /// The last apply was refused (a patched descriptor's advertised length no longer matched what it
-    /// serves); the box logged why.
+    /// The stored set failed a check when the clone was last presented with it and is unchanged since,
+    /// so the device is served unpatched: a clone check, or a consistency check (a descriptor's length
+    /// or type fields, `bcdUSB` 0x0201+ with no BOS, a HID `wDescriptorLength`, an interrupt-IN
+    /// `wMaxPacketSize` below the report) that the unpatched descriptors pass. The box logs which. A set
+    /// change, a clear, a presentation that passes or a detach resets it.
     pub refused: bool,
-    /// The store is full: a further patch was, or would be, refused.
+    /// Set when the box refused the last new patch or overwrite for room: 16 entries in use, or no
+    /// space left in the 1024-byte pool. The next change to the set, or a clear, resets it.
     pub table_full: bool,
     /// One row per stored patch.
     pub entries: Vec<PatchEntry>,

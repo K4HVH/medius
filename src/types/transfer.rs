@@ -66,12 +66,13 @@ pub enum TransferStatus {
     Ok,
     /// The device STALLed the request.
     Stall,
-    /// The device NAKed to a timeout, or never answered.
+    /// No answer: the device NAKed past the timeout or failed on the bus, `ep` names a control endpoint
+    /// the device does not declare, or the host chip did not answer in time.
     Nak,
     /// No device is attached on the host chip.
     NoDevice,
-    /// The box refused before reaching the device: the opt-in is off, the request was malformed, or
-    /// the data stage was larger than one control frame carries.
+    /// The box refused before reaching the device: the opt-in is off, the request is malformed or its
+    /// data stage too large or short, or the host chip's control queue is full.
     Refused,
     /// A status byte this crate does not name (kept so a newer box's value is not lost).
     Other(u8),

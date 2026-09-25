@@ -514,7 +514,7 @@ fn traffic_event_splits_setup_from_the_data_stage() {
 #[test]
 fn traffic_event_decodes_control_status_and_bus_events() {
     let mut status = MediusControlStatus::Ok;
-    let stalled = control_event(&[0; 8], 0xFD);
+    let stalled = control_event(&[0; 8], 0x01);
     assert!(unsafe { medius_traffic_event_control_status(&stalled, &mut status) });
     assert_eq!(status, MediusControlStatus::Stalled);
 
@@ -522,13 +522,20 @@ fn traffic_event_decodes_control_status_and_bus_events() {
     assert!(unsafe { medius_traffic_event_control_status(&ok, &mut status) });
     assert_eq!(status, MediusControlStatus::Ok);
 
-    let naked = control_event(&[0; 8], 0xFE);
+    let naked = control_event(&[0; 8], 0x02);
     assert!(unsafe { medius_traffic_event_control_status(&naked, &mut status) });
     assert_eq!(status, MediusControlStatus::Naked);
 
-    // An unknown status stays unknown. A catch-all arm reported it as a timeout, so a future
-    // firmware.s new status read as a device fault that never happened; the raw byte is in .flags.
-    let other = control_event(&[0; 8], 0x42);
+    // The handshake is bits 0-1 alone: the rule bit beside it changes nothing.
+    let ruled = control_event(&[0; 8], 0x81);
+    assert!(unsafe { medius_traffic_event_control_status(&ruled, &mut status) });
+    assert_eq!(status, MediusControlStatus::Stalled);
+    assert!(unsafe { medius_traffic_event_rule_acted(&ruled) });
+    assert!(!unsafe { medius_traffic_event_rule_acted(&stalled) });
+
+    // An unknown value stays unknown. A catch-all arm reported it as a timeout, so a future
+    // firmware's new value read as a device fault that never happened; the raw byte is in .flags.
+    let other = control_event(&[0; 8], 0x03);
     assert!(unsafe { medius_traffic_event_control_status(&other, &mut status) });
     assert_eq!(status, MediusControlStatus::Other);
 
@@ -632,4 +639,30 @@ fn a_listed_box_on_another_protocol_carries_no_device() {
     assert_eq!(current.has_device, 1);
     assert_eq!(current.device.vid, 0x046D);
     assert_eq!(current.device.kind, MediusDeviceKind::Mouse as u8);
+}
+
+// Bit 7 is the rule bit on the six classes a rule acts at, and means nothing on the rest: a clip
+// transfer's flags are a TRANSFER status, whose 0xFD STALL has bit 7 set.
+#[test]
+fn the_rule_bit_is_read_only_where_a_rule_acts() {
+    for class in [
+        MEDIUS_CATCH_CLASS_HID_IN,
+        MEDIUS_CATCH_CLASS_HID_OUT,
+        MEDIUS_CATCH_CLASS_VENDOR_INTERRUPT,
+        MEDIUS_CATCH_CLASS_VENDOR_BULK,
+        MEDIUS_CATCH_CLASS_CONTROL,
+        MEDIUS_CATCH_CLASS_EMIT,
+    ] {
+        let mut e = control_event(&[0; 8], 0x80);
+        e.class = class;
+        assert!(unsafe { medius_traffic_event_rule_acted(&e) }, "{class}");
+        e.flags = 0x03;
+        assert!(!unsafe { medius_traffic_event_rule_acted(&e) }, "{class}");
+    }
+    for class in [MEDIUS_CATCH_CLASS_CLIP_TRANSFER, MEDIUS_CATCH_CLASS_BUS] {
+        let mut e = control_event(&[0; 8], 0xFD);
+        e.class = class;
+        assert!(!unsafe { medius_traffic_event_rule_acted(&e) }, "{class}");
+    }
+    assert!(!unsafe { medius_traffic_event_rule_acted(std::ptr::null()) });
 }

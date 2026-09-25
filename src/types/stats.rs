@@ -4,7 +4,7 @@
 ///
 /// The narrowed fields saturate, so a maxed counter never wraps to a small value. The three drop
 /// counters are full width and do not saturate: a count that stopped rising would stop saying that
-/// the loss is still going on.
+/// the loss is still going on. [`session`](Self::session) wraps for the same reason.
 ///
 /// The ones to act on are [`tx_drops`](Self::tx_drops), [`link_rx_drops`](Self::link_rx_drops) and
 /// [`host_rx_drops`](Self::host_rx_drops): each of those is the player's own input going missing,
@@ -39,12 +39,16 @@ pub struct Stats {
     /// draining, or an OUT packet past the relay's one-per-frame ceiling. Expected under load, and
     /// counted apart from `tx_drops` because nothing of the player's input goes missing with it.
     pub relay_drops: u32,
+    /// The times the box released the session state a host set (locks, held input, subscriptions,
+    /// rules, transforms, the clip, an LED override). It wraps, so compare it for inequality; 0 at
+    /// boot. The crate watches it and re-sends what it holds, which is all of that but the LED.
+    pub session: u16,
 }
 
 impl Stats {
     /// Decode a `RESP(STATS)` payload (§4.6).
     pub(crate) fn from_payload(p: &[u8]) -> Option<Self> {
-        if p.len() < 29 {
+        if p.len() < 31 {
             return None;
         }
         Some(Stats {
@@ -59,6 +63,7 @@ impl Stats {
             link_rx_drops: u32::from_le_bytes([p[17], p[18], p[19], p[20]]),
             host_rx_drops: u32::from_le_bytes([p[21], p[22], p[23], p[24]]),
             relay_drops: u32::from_le_bytes([p[25], p[26], p[27], p[28]]),
+            session: u16::from_le_bytes([p[29], p[30]]),
         })
     }
 }

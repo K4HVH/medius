@@ -204,7 +204,7 @@ class Health:
     kbd_attached: bool
     #: The rewrite-rule table (§3.14) is non-empty (v3.4.0).
     rewrite_on: bool = False
-    #: A descriptor-patch set (§3.14) is applied to the clone (v3.4.0).
+    #: The clone is serving a patched descriptor set (§3.14) (v3.4.0).
     patch_on: bool = False
     #: A field transform is active (v3.4.0).
     transform_on: bool = False
@@ -301,6 +301,8 @@ class Stats:
     link_rx_drops: int
     host_rx_drops: int
     relay_drops: int
+    #: The times the box released the session state a host set; wraps, so compare for inequality.
+    session: int = 0
 
 
 @dataclass
@@ -472,8 +474,11 @@ class RewriteEntry:
 class RewriteTable:
     """Decoded RESP(REWRITE) (§4.17): the rewrite table's summary in installation order.
 
-    ``generation`` bumps only on a change that alters the table; the crate replays rules on reconnect,
-    so the field is exposed for a host running its own reconcile.
+    ``generation`` bumps on a table change; a reset, detach, link loss, re-clone or the opt-in going
+    off returns it to 0. The library does not read it: its keepalive re-sends every held rule.
+    ``table_full``: set when the box refused the last new rule or overwrite for room, all 32 entries
+    in use or no space left in the 2048-byte payload pool. The next change to the table, or a clear,
+    resets it.
     """
 
     table_full: bool = False
@@ -486,8 +491,9 @@ class Patch:
     """A descriptor patch (§3.14), keyed by ``(section, cfg, index, offset)``.
 
     ``bytes`` overwrites the descriptor from ``offset``; an empty ``bytes`` removes the patch at that
-    key. A patch never changes a descriptor's byte count. ``cfg`` is the configuration index: 0 is the
-    first configuration, not ``bConfigurationValue``.
+    key. An overwrite moves the patch to the end of the set, unless it holds those bytes already. Every
+    section but ``STRING`` keeps the descriptor's byte count. ``cfg`` is the configuration index: 0 is
+    the first configuration, not ``bConfigurationValue``.
     """
 
     section: PatchSection
@@ -510,7 +516,18 @@ class PatchEntry:
 
 @dataclass
 class PatchSet:
-    """Decoded RESP(PATCHES) (§4.17): the stored patch set plus its apply state."""
+    """Decoded RESP(PATCHES) (§4.17): the stored patch set plus its apply state.
+
+    ``applied``: the clone serves a non-empty patched set, which a later store leaves alone until the
+    next apply. ``pending``: the stored set differs from the one served, in its patches, bytes or
+    order (not applied yet, changed or emptied since, refused, or held back by the opt-in).
+    ``refused``: the stored set failed a check the unpatched descriptors pass, when last presented,
+    and is unchanged since, so the device is served unpatched; the checks are the clone checks and
+    four consistency checks (a descriptor's length or type fields, ``bcdUSB`` with no BOS, a HID
+    ``wDescriptorLength``, an interrupt-IN ``wMaxPacketSize``). ``table_full``: the box refused the last new patch or overwrite
+    for room, 16 entries in use or no space left in the 1024-byte pool; the next change to the set,
+    or a clear, resets it.
+    """
 
     applied: bool = False
     pending: bool = False
@@ -616,6 +633,8 @@ class Counters:
     frames_rx: int
     crc_drops: int
     reconnects: int
+    #: Device-chip restarts the library recovered from by re-sending the state it holds.
+    restarts: int
 
 
 @dataclass
@@ -727,7 +746,7 @@ class TrafficEvent:
         return bytes(p[: int(n.value)]) if p else b""
 
     def control_status(self) -> Optional[ControlStatus]:
-        """What the real device answered; `None` for any class but CONTROL."""
+        """The handshake the game PC received; `None` for any class but CONTROL."""
         c = traffic_event_to_c(self)
         out = _native.u8()
         if _native.lib.medius_traffic_event_control_status(ctypes.byref(c), ctypes.byref(out)):
@@ -752,6 +771,12 @@ class TrafficEvent:
         if _native.lib.medius_traffic_event_bus_event(ctypes.byref(c), ctypes.byref(out)):
             return BusEvent(BusEventKind(out.kind), out.configuration, out.interface, out.alt)
         return None
+
+    def rule_acted(self) -> bool:
+        """Whether a rewrite rule at this event's class changed, dropped, answered or refused the
+        packet. Only HID_IN, HID_OUT, the vendor classes, CONTROL and EMIT carry it."""
+        c = traffic_event_to_c(self)
+        return bool(_native.lib.medius_traffic_event_rule_acted(ctypes.byref(c)))
 
     def bulk_end_of_transfer(self) -> bool:
         """Whether this VENDOR_BULK event carries end-of-transfer."""
@@ -1335,6 +1360,7 @@ def stats_from_c(c) -> Stats:
         c.link_rx_drops,
         c.host_rx_drops,
         c.relay_drops,
+        c.session,
     )
 
 
@@ -1351,6 +1377,7 @@ def stats_to_c(s) -> "_native.MediusStats":
         s.link_rx_drops,
         s.host_rx_drops,
         s.relay_drops,
+        s.session,
     )
 
 
@@ -1678,12 +1705,13 @@ class ClipPacketTrigger:
     box as given.
 
     The box reads a packet for its triggers as the packet arrived, ahead of the rewrite table, and the
-    two are independent: one packet can fire a trigger and win a `RewriteRule`. One trigger wins a
-    packet, most specific first: an exact ``id`` beats `ANY_ID`, more masked bits beat fewer, ``IN``
-    or ``OUT`` beats ``BOTH``, then the trigger bound earlier.
+    two are independent: one packet can fire a trigger and have a `RewriteRule` act on it. Of the
+    triggers a packet matches, only the most specific acts on it: an exact ``id`` ranks above
+    `ANY_ID`, more masked bits above fewer, ``IN`` or ``OUT`` above ``BOTH``, then the trigger bound
+    earlier.
 
-    ``consume`` drops every packet the trigger wins, before the rewrite table sees it. Dropping
-    traffic alters the wire, so the box holds a consuming trigger only under
+    ``consume`` drops every packet the trigger matches as the top-ranked trigger, before the rewrite
+    table sees it. Dropping traffic alters the wire, so the box holds a consuming trigger only under
     `Device.allow_imperfect_clones`, on any class but ``CONTROL``.
 
     ``once_per_run`` drives the action on the first packet of a run of matching ones, so a device that
@@ -1694,9 +1722,9 @@ class ClipPacketTrigger:
     mask past it has at least one bit set: a condition every packet of the stream meets is a run that
     never ends.
 
-    ``hits`` is the packets the trigger has won since it was bound or overwritten (saturating), read
-    back by `ClipHandle.query_config`. `ClipHandle.bind_packet` sends the trigger without it, and a
-    value outside 0..65535 is a `ValueError` there as anywhere.
+    ``hits`` is the packets the trigger has matched as the top-ranked trigger since it was bound or
+    overwritten (saturating), read back by `ClipHandle.query_config`. `ClipHandle.bind_packet` sends
+    the trigger without it, and a value outside 0..65535 is a `ValueError` there as anywhere.
     """
 
     #: The ``id`` that addresses every interface or endpoint of the class.
@@ -1830,7 +1858,7 @@ def clip_settings_to_c(s) -> "_native.MediusClipSettings":
 
 
 def counters_from_c(c) -> Counters:
-    return Counters(c.frames_tx, c.frames_rx, c.crc_drops, c.reconnects)
+    return Counters(c.frames_tx, c.frames_rx, c.crc_drops, c.reconnects, c.restarts)
 
 
 def _input_copy(c) -> Usage:

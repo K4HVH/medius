@@ -6,14 +6,16 @@ use std::time::Duration;
 
 use parking_lot::Mutex;
 
+use crate::protocol::opcode::Q_VERSION;
 use crate::protocol::{DecodedFrame, FrameDecoder, FrameType, parse_log};
 use crate::types::LogLine;
 
 use super::catch::{self, CatchReg};
-use super::correlation::{self, PendingEntry};
+use super::correlation::{self, HELLO_SEQ, PendingEntry};
 use super::counters::Counters;
 use super::logs;
 use super::reconnect::{self, ReconnectCtx};
+use super::restart::RestartWatch;
 use super::slot::TransportSlot;
 
 const READER_IDLE_POLL: Duration = Duration::from_millis(2);
@@ -28,6 +30,7 @@ pub(crate) fn spawn_reader(
     events: Arc<Mutex<CatchReg>>,
     counters: Arc<Counters>,
     stop: Arc<AtomicBool>,
+    restart: Arc<RestartWatch>,
     reconnect_ctx: ReconnectCtx,
 ) -> JoinHandle<()> {
     std::thread::Builder::new()
@@ -42,6 +45,7 @@ pub(crate) fn spawn_reader(
                 &events,
                 &counters,
                 &stop,
+                &restart,
                 &reconnect_ctx,
             )
         })
@@ -58,6 +62,7 @@ fn reader_loop(
     events: &Mutex<CatchReg>,
     counters: &Counters,
     stop: &AtomicBool,
+    restart: &RestartWatch,
     reconnect_ctx: &ReconnectCtx,
 ) {
     let mut decoder = FrameDecoder::new();
@@ -81,7 +86,8 @@ fn reader_loop(
             Ok(n) => {
                 decoder.feed(&buf[..n], |frame| {
                     route_frame(
-                        frame, pending, logs_tx, logs_rx, updates_tx, events, counters,
+                        frame, pending, logs_tx, logs_rx, updates_tx, events, counters, restart,
+                        transport,
                     );
                 });
                 counters.set_crc_drops(decoder.crc_error_count());
@@ -103,6 +109,8 @@ fn route_frame(
     updates_tx: &flume::Sender<Vec<u8>>,
     events: &Mutex<CatchReg>,
     counters: &Counters,
+    restart: &RestartWatch,
+    transport: &TransportSlot,
 ) {
     counters.inc_rx();
     trace_event!(
@@ -114,9 +122,14 @@ fn route_frame(
         len = frame.payload.len(),
     );
     match frame.ty {
+        // The box's hello: no query the crate waits on takes its `SEQ`.
+        FrameType::Resp if frame.seq == HELLO_SEQ && frame.payload.first() == Some(&Q_VERSION) => {
+            restart.note_hello(&frame.payload, transport);
+        }
         // `TransferResp` is correlated by `SEQ` in the same pending map as a `RESP`, its own opcode
         // and echoed endpoint together telling it apart from a same-`SEQ` query reply.
         FrameType::Resp | FrameType::TransferResp => {
+            restart.note_reply();
             correlation::deliver(pending, frame.ty, frame.seq, frame.payload)
         }
         FrameType::Log => {
@@ -131,6 +144,7 @@ fn route_frame(
         // Not correlated by SEQ like a RESP: one acknowledgement answers a whole window of DATA
         // frames, so it carries a rolling SEQ and the caller matches on the op byte instead.
         FrameType::UpdateResp => {
+            restart.note_reply();
             let _ = updates_tx.send(frame.payload);
         }
         _ => {}

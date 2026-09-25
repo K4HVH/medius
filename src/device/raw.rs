@@ -31,10 +31,15 @@ impl Device {
     /// toward the game PC; [`Direction::OUT`] relays to the real device. Only those two are addressable:
     /// [`Direction::Both`] returns [`Error::RawDirection`] and the bearing-relative pair returns
     /// [`Error::RelativeDirection`], both before any frame goes out. The write is stateless and one-shot:
-    /// the next native report on that endpoint carries the device's own state, not the raw one, and
-    /// `RAW` bypasses the [rewrite rules](Device::set_rewrite). An interrupt payload past the endpoint's
-    /// `wMaxPacketSize` is dropped box-side; a bulk transfer splits at the packet size and terminates
-    /// with a short packet.
+    /// the next native report on that endpoint carries native state, not the raw one, and
+    /// `RAW` bypasses the [rewrite rules](Device::set_rewrite). No native report can carry a raw IN
+    /// report, so on an endpoint the device reports on at every poll it takes a poll of its own, within
+    /// two of the device's reports.
+    ///
+    /// `bytes` is at most 510 long; a longer one returns [`Error::FrameTooLong`]. An interrupt payload
+    /// past the endpoint's `wMaxPacketSize` is dropped box-side, in either direction. A bulk payload
+    /// splits at `wMaxPacketSize` on the wire and ends with a short packet, or a zero-length one when it
+    /// is an exact multiple.
     ///
     /// Admitted by [`allow_imperfect_clones`](Device::allow_imperfect_clones): with the opt-in off the
     /// box drops the frame and says nothing, so this still returns `Ok`.

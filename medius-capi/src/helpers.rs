@@ -450,7 +450,7 @@ pub unsafe extern "C" fn medius_traffic_event_data(
     })
 }
 
-/// What the real device answered, written to `*out`; false for any class but CONTROL. Mirrors
+/// The handshake the game PC received, written to `*out`; false for any class but CONTROL. Mirrors
 /// `medius::TrafficEvent::control_status`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_traffic_event_control_status(
@@ -465,10 +465,10 @@ pub unsafe extern "C" fn medius_traffic_event_control_status(
         if e.class != MEDIUS_CATCH_CLASS_CONTROL {
             return false;
         }
-        let status = match e.flags {
-            0x00 => MediusControlStatus::Ok,
-            0xFD => MediusControlStatus::Stalled,
-            0xFE => MediusControlStatus::Naked,
+        let status = match e.flags & 0x03 {
+            0 => MediusControlStatus::Ok,
+            1 => MediusControlStatus::Stalled,
+            2 => MediusControlStatus::Naked,
             _ => MediusControlStatus::Other,
         };
         if !out.is_null() {
@@ -558,6 +558,29 @@ pub unsafe extern "C" fn medius_traffic_event_bus_event(
             };
         }
         true
+    })
+}
+
+/// Whether a rewrite rule at this event's class changed, dropped, answered or refused the packet: flags
+/// bit 7 on HID_IN, HID_OUT, VENDOR_INTERRUPT, VENDOR_BULK, CONTROL and EMIT, false for any other
+/// class. Mirrors `medius::TrafficEvent::rule_acted`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn medius_traffic_event_rule_acted(event: *const MediusTrafficEvent) -> bool {
+    guard(false, || {
+        if event.is_null() {
+            return false;
+        }
+        let e = unsafe { &*event };
+        let ruled = matches!(
+            e.class,
+            MEDIUS_CATCH_CLASS_HID_IN
+                | MEDIUS_CATCH_CLASS_HID_OUT
+                | MEDIUS_CATCH_CLASS_VENDOR_INTERRUPT
+                | MEDIUS_CATCH_CLASS_VENDOR_BULK
+                | MEDIUS_CATCH_CLASS_CONTROL
+                | MEDIUS_CATCH_CLASS_EMIT
+        );
+        ruled && e.flags & 0x80 != 0
     })
 }
 

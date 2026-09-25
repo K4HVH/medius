@@ -8,6 +8,7 @@ pub(crate) struct Counters {
     pub(crate) frames_rx: AtomicU64,
     pub(crate) crc_drops: AtomicU64,
     pub(crate) reconnects: AtomicU64,
+    pub(crate) restarts: AtomicU64,
 }
 
 impl Counters {
@@ -23,6 +24,10 @@ impl Counters {
         self.reconnects.fetch_add(1, Ordering::Relaxed);
     }
 
+    pub(crate) fn inc_restarts(&self) {
+        self.restarts.fetch_add(1, Ordering::Relaxed);
+    }
+
     pub(crate) fn set_crc_drops(&self, n: u64) {
         self.crc_drops.store(n, Ordering::Relaxed);
     }
@@ -33,6 +38,7 @@ impl Counters {
             frames_rx: self.frames_rx.load(Ordering::Relaxed),
             crc_drops: self.crc_drops.load(Ordering::Relaxed),
             reconnects: self.reconnects.load(Ordering::Relaxed),
+            restarts: self.restarts.load(Ordering::Relaxed),
         }
     }
 }

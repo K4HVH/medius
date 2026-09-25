@@ -70,6 +70,8 @@ pub enum MediusStatus {
     ErrClipPacketTrigger = 33,
     /// A rewrite rule with more than `MEDIUS_MAX_REWRITE_MATCH` match bytes.
     ErrRewriteMatchTooLong = 34,
+    /// A rewrite payload past what the held rules leave of `MEDIUS_REWRITE_PAYLOAD_POOL`.
+    ErrRewritePoolFull = 35,
 }
 
 #[derive(Default)]
@@ -126,6 +128,7 @@ fn status_for(err: &Error) -> MediusStatus {
         Error::RewriteActionClass { .. } => MediusStatus::ErrRewriteActionClass,
         Error::RewritePayloadTooLarge { .. } => MediusStatus::ErrRewritePayloadTooLarge,
         Error::RewriteTableFull { .. } => MediusStatus::ErrRewriteTableFull,
+        Error::RewritePoolFull { .. } => MediusStatus::ErrRewritePoolFull,
         Error::LockScaleRange { .. } => MediusStatus::ErrLockScaleRange,
         Error::LockScaleUsage { .. } => MediusStatus::ErrLockScaleUsage,
         Error::TransformOpFields { .. } => MediusStatus::ErrTransformOpFields,

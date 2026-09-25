@@ -11,4 +11,6 @@ pub struct CountersSnapshot {
     pub crc_drops: u64,
     /// Total successful reconnects.
     pub reconnects: u64,
+    /// Device-chip restarts the crate recovered from by re-sending the state it holds.
+    pub restarts: u64,
 }

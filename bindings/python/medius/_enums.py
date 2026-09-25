@@ -59,6 +59,7 @@ class Status(IntEnum):
     ERR_CLIP_TRANSFER_DATA = 32
     ERR_CLIP_PACKET_TRIGGER = 33
     ERR_REWRITE_MATCH_TOO_LONG = 34
+    ERR_REWRITE_POOL_FULL = 35
 
 
 class DeviceKind(IntEnum):
@@ -326,12 +327,13 @@ class ClockDomain(IntEnum):
 
 
 class ControlStatus(IntEnum):
-    """What the real device answered a proxied control transaction with."""
+    """The handshake the game PC received for a control transaction. `STALLED` covers a device STALL,
+    a request a rule refused, and above endpoint 0 a request that failed; `NAKED` is endpoint 0 only."""
 
     OK = 0
     STALLED = 1
     NAKED = 2
-    # : A status byte this build does not know; read `TrafficEvent.flags` for its value.
+    # : A handshake value this build does not know; read `TrafficEvent.flags` bits 0-1 for it.
     OTHER = 3
 
 
@@ -339,7 +341,8 @@ class RewriteClass(IntEnum):
     """A traffic class a rewrite rule addresses (§3.14).
 
     These are the write-direction CATCH classes the box will rewrite; the parsed-input and bus classes
-    are not rewritable. `ANY` is the wire wildcard, matching every rewritable class at once.
+    are not rewritable. `ANY` is the wire wildcard: `PASS`/`PATCH`/`REPLACE` only, applied at every
+    surface a packet crosses, so a native report can hit it at `HID_IN` and again at `EMIT`.
     """
 
     HID_IN = 4
@@ -352,10 +355,11 @@ class RewriteClass(IntEnum):
 
 
 class RewriteAction(IntEnum):
-    """What the winning rewrite rule does to a matched packet (§3.14).
+    """What the top-ranked matching rewrite rule does to the packet (§3.14).
 
     A report class may `PASS`, `DROP`, `PATCH` or `REPLACE`. The control class adds `ANSWER`, `STALL`,
-    `NAK` and the two reply rewrites, which the box refuses on any other class.
+    `NAK` and the two reply rewrites, which the box refuses on any other class. On `CONTROL`, `PATCH`
+    and `REPLACE` act on an OUT request's data stage only.
     """
 
     PASS = 0

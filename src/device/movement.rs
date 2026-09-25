@@ -20,8 +20,8 @@ impl Device {
         self.move_axis(Motion::Wheel(delta), MoveTiming::Ride, PendingMotion::Keep)
     }
 
-    /// `MOVE` (cursor) that bypasses movement riding: emits on the box's own clock even while riding is
-    /// on, and leaves motion already held for a ride held.
+    /// `MOVE` (cursor) that bypasses movement riding: leaves on the next mouse report the box sends,
+    /// native or its own, even while riding is on, and leaves motion already held for a ride held.
     pub fn move_rel_now(&self, dx: i16, dy: i16) -> Result<()> {
         self.move_axis(
             Motion::Cursor { dx, dy },

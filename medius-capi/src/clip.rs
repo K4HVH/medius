@@ -665,6 +665,19 @@ pub unsafe extern "C" fn medius_clip_finalize(clip: *mut MediusClip) -> MediusSt
     with_clip(clip, |c| c.finalize())
 }
 
+/// Whether the box dropped the clip appended since the last `medius_clip_clear`: its device chip
+/// restarted, the box released the session, or a reconnect found it gone. Set once the box takes a
+/// reload again, and reset by the next append or clear.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn medius_clip_lost(clip: *const MediusClip) -> bool {
+    guard(false, || {
+        if clip.is_null() {
+            return false;
+        }
+        unsafe { &(*clip).inner }.lost()
+    })
+}
+
 /// Query the ring depth, progress, and playback counters. A `Faulted` state means recover with `medius_clip_clear`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_clip_query_status(

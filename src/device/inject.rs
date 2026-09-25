@@ -9,6 +9,8 @@ impl Device {
     /// `INJECT`: set a momentary-usage override for any input class (button, key, or media).
     pub fn inject(&self, usage: impl Into<Usage>, action: Action) -> Result<()> {
         let u = usage.into();
+        // Serialised against a recovery's re-send, which would otherwise land a stale press after a release.
+        let _serial = self.link.reassert_guard();
         self.link.desired().lock().apply(u, action);
         let (class, id) = u.class_id();
         self.link.send(
@@ -50,8 +52,9 @@ impl Device {
     // Both resets release the same session state here, so the flag only ever adds the box's side.
     // The byte is always sent: the box requires it, as it does every other command's payload.
     fn reset_frame(&self, payload: &[u8]) -> Result<()> {
+        let _serial = self.link.reassert_guard();
         self.link.desired().lock().clear();
-        self.link.catch_disconnect_all();
+        self.link.catch_disconnect_all_locked();
         self.link.send(FrameType::Reset, payload)
     }
 }

@@ -1756,19 +1756,19 @@ mod packet_trigger {
             assert_eq!(fired(2, &held_report), Some(ClipAction::Start));
             clip.bind_packet(&on(2, Direction::Both, ClipAction::Stop))
                 .unwrap();
-            assert_eq!(fired(2, &held_report), Some(ClipAction::Stop)); // an exact id beats the wildcard
+            assert_eq!(fired(2, &held_report), Some(ClipAction::Stop)); // an exact id over the wildcard
             assert_eq!(fired(3, &held_report), Some(ClipAction::Start));
             clip.bind_packet(&on(2, Direction::IN, ClipAction::Pause))
                 .unwrap();
-            assert_eq!(fired(2, &held_report), Some(ClipAction::Pause)); // a named direction beats both
+            assert_eq!(fired(2, &held_report), Some(ClipAction::Pause)); // a named direction over both
             clip.bind_packet(&on(2, Direction::Both, ClipAction::Resume).matching([0x07], [0xFF]))
                 .unwrap();
-            assert_eq!(fired(2, &held_report), Some(ClipAction::Resume)); // masked bits beat a direction
+            assert_eq!(fired(2, &held_report), Some(ClipAction::Resume)); // masked bits over a direction
             clip.bind_packet(&on(2, Direction::Both, ClipAction::Restart).matching([0x06], [0xFE]))
                 .unwrap();
-            assert_eq!(fired(2, &held_report), Some(ClipAction::Resume)); // eight bits beat seven
+            assert_eq!(fired(2, &held_report), Some(ClipAction::Resume)); // eight bits over seven
             assert_eq!(fired(2, &[0x06]), Some(ClipAction::Restart));
-            // A masked wildcard still loses to a bare exact id: the id ranks above the bits.
+            // A masked wildcard still ranks below a bare exact id: the id counts before the bits.
             clip.bind_packet(
                 &on(any, Direction::IN, ClipAction::Toggle).matching([0x09; 16], [0xFF; 16]),
             )
@@ -1798,7 +1798,7 @@ mod packet_trigger {
             assert_eq!(
                 hits,
                 vec![2, 2, 2, 2, 2, 1],
-                "each win is charged to its winner"
+                "each packet is charged to its top-ranked trigger"
             );
         }
 
@@ -1856,7 +1856,7 @@ mod packet_trigger {
             assert_eq!(fired(vint, 2, Direction::IN, &down), start);
             assert_eq!(fired(vint, 2, Direction::IN, &down[..1]), None); // selector passes, no condition byte
             assert_eq!(fired(vint, 2, Direction::IN, &down), start);
-            assert_eq!(triggers(&device)[0].hits, 6, "wins, not firings");
+            assert_eq!(triggers(&device)[0].hits, 6, "top-ranked, not firings");
         }
 
         #[test]
@@ -1875,7 +1875,7 @@ mod packet_trigger {
             };
             assert_eq!(fired(&[0x07, 0x21]), Some(ClipAction::Stop));
             assert_eq!(triggers(&device)[0].hits, 0);
-            assert_eq!(fired(&[0x07, 0x20]), None, "it wins now, mid-run");
+            assert_eq!(fired(&[0x07, 0x20]), None, "it ranks first now, mid-run");
             assert_eq!(fired(&[0x07, 0x01]), None);
             assert_eq!(fired(&[0x07, 0x20]), Some(ClipAction::Start));
         }
@@ -1917,9 +1917,10 @@ mod packet_trigger {
             }
         }
 
-        // consume takes every packet the trigger wins, whether or not the verb runs on it.
+        // consume takes every packet the trigger matches as the top-ranked trigger, whether or not
+        // the verb runs on it.
         #[test]
-        fn a_consuming_trigger_takes_every_packet_it_wins() {
+        fn a_consuming_trigger_takes_every_packet_it_is_top_ranked_for() {
             let mock = MockBox::new().with_imperfect(true);
             let device = Device::with_mock(mock.clone());
             let clip = device.clip();

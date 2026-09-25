@@ -23,9 +23,11 @@ impl Device {
             return Err(Error::LockScaleUsage { scale, class });
         }
         let dir = lock_direction(class, direction)?.as_u8();
-        // Recorded before the write so a reconnect racing it still replays the lock, and rolled back
-        // when the frame never went out: a desired state the box was never told about holds the
+        // Serialised against a recovery's re-send, which would otherwise land a stale lock after this
+        // one. Recorded before the write so a reconnect racing it still replays the lock, and rolled
+        // back when the frame never went out: a desired state the box was never told about holds the
         // keepalive open for a lock nothing is applying.
+        let _serial = self.link.reassert_guard();
         let undo = self
             .link
             .desired()
