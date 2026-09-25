@@ -9,6 +9,7 @@
 use std::io;
 use std::path::Path;
 
+use serial2::os::windows::CommTimeouts;
 use serial2::{SerialPort, Settings};
 
 use super::{CTRL_BAUD, IO_TIMEOUT};
@@ -31,14 +32,22 @@ impl SerialTransport {
             .strip_prefix(r"\\.\")
             .or_else(|| path.strip_prefix(r"\\?\"))
             .unwrap_or(&path);
-        let mut port = SerialPort::open(name, |mut settings: Settings| {
+        let port = SerialPort::open(name, |mut settings: Settings| {
             settings.set_raw();
             settings.set_baud_rate(CTRL_BAUD)?;
             settings.as_raw_dbc_mut()._bitfield &= !DCB_ABORT_ON_ERROR;
             Ok(settings)
         })?;
-        port.set_read_timeout(IO_TIMEOUT)?;
-        port.set_write_timeout(IO_TIMEOUT)?;
+        // set_read_timeout arms the COMMTIMEOUTS combo that makes the WCH CH343 driver schedule the
+        // read-timeout DPC it bugchecks in; a zero read constant is a non-blocking read that never
+        // arms it, and the reader already polls on a 0-byte read.
+        port.set_windows_timeouts(&CommTimeouts {
+            read_interval_timeout: u32::MAX,
+            read_total_timeout_multiplier: 0,
+            read_total_timeout_constant: 0,
+            write_total_timeout_multiplier: 0,
+            write_total_timeout_constant: IO_TIMEOUT.as_millis().try_into().unwrap_or(u32::MAX),
+        })?;
         let _ = port.discard_input_buffer();
         Ok(SerialTransport { port })
     }
