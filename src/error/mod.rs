@@ -64,6 +64,16 @@ pub enum Error {
     #[error("the box holds {limit} rewrite rules and they are all in use; remove one first")]
     RewriteTableFull { limit: usize },
 
+    #[error(
+        "a rewrite payload of {len} bytes does not fit the {free} bytes left of the box's \
+         {limit}-byte payload pool; remove a rule or shorten a payload first"
+    )]
+    RewritePoolFull {
+        len: usize,
+        free: usize,
+        limit: usize,
+    },
+
     #[error("{action:?} is not a valid action for a {class:?} rewrite rule")]
     RewriteActionClass {
         action: crate::types::RewriteAction,

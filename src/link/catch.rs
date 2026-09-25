@@ -295,10 +295,9 @@ impl Link {
         let _ = self.catch_sync(&prev, &effective);
     }
 
-    // Tear down every catch subscription (used by `reset()`). One blanket clear rather than a
-    // per-entry diff: nothing is left to keep streaming.
-    pub(crate) fn catch_disconnect_all(&self) {
-        let _serial = self.inner.catch_lock.lock();
+    // Tear down every catch subscription (used by `reset()`, which holds the lock subscribe and
+    // unsubscribe commit under). One blanket clear rather than a per-entry diff: nothing is left.
+    pub(crate) fn catch_disconnect_all_locked(&self) {
         self.inner.events.lock().subs.clear();
         self.inner.desired.lock().set_catch(FilterSet::new());
         let _ = self.send(

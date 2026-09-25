@@ -1,6 +1,8 @@
 //! The three catch event frames (§4.10) and what they decode to.
 
-use crate::protocol::opcode::{CATCH_CTRL_NAK, CATCH_CTRL_OK, CATCH_CTRL_STALL};
+use crate::protocol::opcode::{
+    CATCH_CTRL_MASK, CATCH_CTRL_NAK, CATCH_CTRL_OK, CATCH_CTRL_STALL, CATCH_F_RULE,
+};
 use crate::types::{Axis, CatchClass, Class, ClockDomain, Direction, TransferStatus, Usage};
 
 /// Byte width of the header every catch event frame leads with: `ts_us` (u32) then the clock domain.
@@ -129,17 +131,18 @@ pub enum BusEvent {
     CloneDown,
 }
 
-/// What the real device answered a proxied control transaction with.
+/// The handshake the game PC received for a control transaction.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ControlStatus {
-    /// The device answered.
+    /// The transaction completed.
     Ok,
-    /// The device STALLed.
+    /// The PC got a STALL: from the device, from a rule that refused the request, or, above endpoint
+    /// 0, for a request that failed.
     Stalled,
-    /// The device NAKed to timeout, or never answered.
+    /// NAKed until the host gave up, on endpoint 0 only: the device never answered, or a `Nak` rule.
     Naked,
-    /// A status byte this build does not know. Distinct from the three, so a future firmware's new
-    /// status is not reported as a device fault that never happened.
+    /// A handshake value this build does not know. Distinct from the three, so a future firmware's
+    /// new value is not reported as a device fault that never happened.
     Other(u8),
 }
 
@@ -157,7 +160,8 @@ pub struct TrafficEvent {
     pub id: u16,
     /// [`Direction::IN`] is device to PC, [`Direction::OUT`] is PC to device.
     pub direction: Direction,
-    /// Class-specific; read it through [`Self::bus_event`] or [`Self::control_status`].
+    /// Class-specific; read it through [`Self::control_status`], [`Self::rule_acted`],
+    /// [`Self::transfer_status`], [`Self::bus_event`] or the bulk accessors.
     pub flags: u8,
     /// The packet's length before the subscription's [`Capture`](crate::Capture) truncated it.
     pub true_len: u16,
@@ -218,17 +222,32 @@ impl TrafficEvent {
         }
     }
 
-    /// What the real device answered, for a [`CatchClass::Control`] event.
+    /// The handshake the game PC received, for a [`CatchClass::Control`] event.
     pub fn control_status(&self) -> Option<ControlStatus> {
         if self.class != CatchClass::Control {
             return None;
         }
-        Some(match self.flags {
+        Some(match self.flags & CATCH_CTRL_MASK {
             CATCH_CTRL_OK => ControlStatus::Ok,
             CATCH_CTRL_STALL => ControlStatus::Stalled,
             CATCH_CTRL_NAK => ControlStatus::Naked,
             v => ControlStatus::Other(v),
         })
+    }
+
+    /// Whether a rewrite rule at this event's class changed, dropped, answered or refused the packet.
+    /// Only the classes a rule acts at carry it; a `Pass` rule, or a `Patch` that changed nothing, does not.
+    pub fn rule_acted(&self) -> bool {
+        let ruled = matches!(
+            self.class,
+            CatchClass::HidIn
+                | CatchClass::HidOut
+                | CatchClass::VendorInterrupt
+                | CatchClass::VendorBulk
+                | CatchClass::Control
+                | CatchClass::Emit
+        );
+        ruled && self.flags & CATCH_F_RULE != 0
     }
 
     /// How the transfer ended, for a [`CatchClass::ClipTransfer`] event: the status a

@@ -120,6 +120,10 @@ class RewriteTableFullError(MediusError):
     """A rewrite rule added to a table that already holds `REWRITE_MAX_ENTRIES`."""
 
 
+class RewritePoolFullError(MediusError):
+    """A rewrite payload past what the held rules leave of the box's 2048-byte payload pool."""
+
+
 class TransformOpFieldsError(MediusError):
     """A transform op that cannot address its `source`/`dest` pair."""
 
@@ -187,6 +191,7 @@ _STATUS_EXC = {
     Status.ERR_CLIP_TRANSFER_DATA: ClipTransferDataError,
     Status.ERR_CLIP_PACKET_TRIGGER: ClipPacketTriggerError,
     Status.ERR_REWRITE_MATCH_TOO_LONG: RewriteMatchTooLongError,
+    Status.ERR_REWRITE_POOL_FULL: RewritePoolFullError,
 }
 
 

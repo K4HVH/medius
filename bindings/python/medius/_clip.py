@@ -303,6 +303,12 @@ class ClipHandle:
         """Finalize a retained clip: fix its end so it can replay and loop."""
         check(_native.lib.medius_clip_finalize(self._handle))
 
+    def lost(self) -> bool:
+        """Whether the box dropped the clip appended since the last `clear`: its device chip restarted,
+        the box released the session, or a reconnect found it gone. Set once the box takes a reload
+        again, and reset by the next `append` or `clear`."""
+        return bool(_native.lib.medius_clip_lost(self._handle))
+
     def query_status(self) -> ClipStatus:
         """The ring depth, progress, and playback counters. A `FAULTED` state means recover with `clear`."""
         out = _native.MediusClipStatus()

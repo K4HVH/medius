@@ -35,7 +35,8 @@ pub enum CatchClass {
     /// [`IN`](Direction::IN) or [`OUT`](Direction::OUT). The one class that can
     /// saturate the control link on its own, and the first dropped when it cannot keep up.
     VendorBulk = CATCH_CLS_VEND_BULK,
-    /// A proxied control transaction; `id` is the endpoint number (0 = EP0).
+    /// A control transaction the game PC received, on any control endpoint; `id` is the endpoint
+    /// number (0 = EP0). On EP0 only class and vendor requests raise one.
     Control = CATCH_CLS_CONTROL,
     /// The bytes the clone put on the wire; `id` is the endpoint number, `direction`
     /// [`IN`](Direction::IN).
@@ -123,7 +124,8 @@ pub enum TrafficClass {
     /// Bulk traffic on a vendor interface; `id` is the endpoint number, `direction`
     /// [`IN`](Direction::IN) or [`OUT`](Direction::OUT).
     VendorBulk = CATCH_CLS_VEND_BULK,
-    /// A proxied control transaction; `id` is the endpoint number (0 = EP0).
+    /// A control transaction the game PC received, on any control endpoint; `id` is the endpoint
+    /// number (0 = EP0). On EP0 only class and vendor requests raise one.
     Control = CATCH_CLS_CONTROL,
     /// The bytes the clone put on the wire; `id` is the endpoint number, `direction`
     /// [`IN`](Direction::IN).
@@ -223,7 +225,7 @@ impl Capture {
         }
     }
 
-    /// The wider of two: whole beats every finite length, and the longer of two finite ones wins.
+    /// The wider of two: whole if either is whole, else the longer of the two finite lengths.
     pub fn widest(self, other: Capture) -> Capture {
         match (self.bytes(), other.bytes()) {
             (Some(a), Some(b)) => Capture::First(a.max(b)),

@@ -17,11 +17,12 @@ use crate::types::Direction;
 ///
 /// These are `CATCH`'s traffic classes in the write direction, the exact set the box will rewrite:
 /// the parsed-input classes (button, key, media, axis) and the bus class are not rewritable and have
-/// no variant here. [`Any`](RewriteClass::Any) matches every rewritable class at once.
+/// no variant here. [`Any`](RewriteClass::Any) acts at every surface a packet crosses.
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum RewriteClass {
-    /// The device's HID input report, before the renderer; `id` is the interface number.
+    /// The native HID input report as it arrived; `id` is the interface number. On the bound mouse a
+    /// motion rewrite here survives only on reports the host chip leaves alone; rewrite motion at `Emit`.
     HidIn = CATCH_CLS_HID_IN,
     /// An interrupt-OUT report the game PC wrote, relayed to the device; `id` is the endpoint number
     /// and the `direction` is [`OUT`](crate::Direction::OUT).
@@ -32,13 +33,14 @@ pub enum RewriteClass {
     /// Bulk traffic on a vendor interface; `id` is the endpoint number and the `direction` is
     /// [`IN`](crate::Direction::IN) or [`OUT`](crate::Direction::OUT).
     VendorBulk = CATCH_CLS_VEND_BULK,
-    /// A proxied control transfer; `id` is the endpoint number (0 = EP0). The one class that may
-    /// `Answer`/`Stall`/`Nak` or rewrite the device's reply.
+    /// A proxied control transfer; `id` is the endpoint number (0 = EP0). On EP0 only class and vendor
+    /// requests reach a rule (change descriptors with `PATCH`); above EP0 every request does.
     Control = CATCH_CLS_CONTROL,
     /// The outgoing wire, after the renderer; `id` is the endpoint number and the `direction` is
     /// [`IN`](crate::Direction::IN). Catches injected and rendered frames as well as relayed ones.
     Emit = CATCH_CLS_EMIT,
-    /// Every rewritable class at once (the wire wildcard `0xFF`).
+    /// The wire wildcard `0xFF`: ranked below every other rule, `id` not compared, and `Pass`, `Patch`
+    /// and `Replace` only. It acts at each surface, so a native report can hit it at `HidIn` and `Emit`.
     Any = 0xFF,
 }
 
@@ -68,14 +70,15 @@ impl RewriteClass {
     }
 }
 
-/// What the winning rewrite rule does to a matched packet (§3.14).
+/// What the top-ranked matching rewrite rule does to the packet (§3.14).
 ///
 /// A report class ([`HidIn`](RewriteClass::HidIn), [`HidOut`](RewriteClass::HidOut),
 /// [`Emit`](RewriteClass::Emit), the vendor classes) may [`Pass`](RewriteAction::Pass),
-/// [`Drop`](RewriteAction::Drop), [`Patch`](RewriteAction::Patch) or [`Replace`](RewriteAction::Replace).
-/// The control class adds [`Answer`](RewriteAction::Answer), [`Stall`](RewriteAction::Stall),
-/// [`Nak`](RewriteAction::Nak) and the two reply rewrites. [`is_valid_for`](RewriteAction::is_valid_for)
-/// mirrors the box's own admissibility check.
+/// [`Drop`](RewriteAction::Drop), [`Patch`](RewriteAction::Patch) or [`Replace`](RewriteAction::Replace);
+/// [`Any`](RewriteClass::Any) takes `Pass`, `Patch` and `Replace` only. The control class adds
+/// [`Answer`](RewriteAction::Answer), [`Stall`](RewriteAction::Stall), [`Nak`](RewriteAction::Nak) and
+/// the two reply rewrites. [`is_valid_for`](RewriteAction::is_valid_for) mirrors the box's own
+/// admissibility check.
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Default)]
 pub enum RewriteAction {
@@ -85,15 +88,17 @@ pub enum RewriteAction {
     /// Report class: the packet is not delivered. An `Emit` drop mutes the wire; a `HidIn` drop drops
     /// the device's contribution while injection still emits.
     Drop = RW_DROP,
-    /// Overwrite the payload bytes at `offset`, length preserved.
+    /// Overwrite the payload bytes at `offset`, length preserved. On `Control`, an OUT request's data
+    /// stage only.
     Patch = RW_PATCH,
-    /// The packet becomes the payload.
+    /// The packet becomes the payload. On `Control`, the payload overwrites the start of an OUT
+    /// request's data stage and `wLength` is kept.
     Replace = RW_REPLACE,
     /// Control: answer from the payload without asking the device.
     Answer = RW_ANSWER,
     /// Control: protocol STALL.
     Stall = RW_STALL,
-    /// Control: NAK to a timeout.
+    /// Control: NAK on EP0 until the host times out; STALL on a control endpoint above 0.
     Nak = RW_NAK,
     /// Control IN: overwrite the device's reply at `offset`.
     ReplyPatch = RW_REPLY_PATCH,
@@ -284,19 +289,20 @@ pub struct RewriteEntry {
     pub offset: u16,
     /// How many payload bytes the rule carries.
     pub payload_len: u16,
-    /// How many packets the rule has matched since it was installed (saturating).
+    /// How many packets the rule has matched as the top-ranked rule since it was installed or last
+    /// overwritten, a [`Pass`](RewriteAction::Pass) rule included (saturating).
     pub hits: u16,
 }
 
 /// The decoded `RESP(REWRITE)` (§4.17): the whole rewrite table's summary.
 ///
-/// `generation` bumps only on a change that alters the table, so a host that holds a last-seen value
-/// re-sends its rules only when the box's diverges (a device blip or re-clone can clear the table
-/// while the control link stays up). The crate does this for you; the field is exposed for a host that
-/// runs its own reconcile.
+/// `generation` bumps on a change to the table and on a clear of a non-empty one. A reset, detach, link
+/// loss, re-clone or the opt-in going off empties the table and returns it to 0. The crate does not
+/// read it: its keepalive re-sends every held rule.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct RewriteTable {
-    /// The table is full: a further rule was, or would be, refused.
+    /// Set when the box refused the last new rule or overwrite for room: all 32 entries in use, or no
+    /// space left in the 2048-byte payload pool. The next change to the table, or a clear, resets it.
     pub table_full: bool,
     /// The table's generation counter (see the type docs).
     pub generation: u8,

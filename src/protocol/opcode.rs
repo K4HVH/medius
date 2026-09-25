@@ -9,8 +9,9 @@ pub const SOF: u8 = 0xA5;
 pub const MAX_PAYLOAD: usize = 512;
 
 /// Protocol version in `RESP(VERSION)` (§4.1); the handshake requires this exact value. Bumped to 9
-/// for v3.4.2, which grows `RESP(STATS)` from 17 to 29 bytes with a dropped-frame counter for each
-/// direction of the box's inter-chip link and one for back-pressure on a relayed stream. Protocol 8
+/// for v3.4.2, which grows `RESP(STATS)` from 17 to 31 bytes with a dropped-frame counter for each
+/// direction of the box's inter-chip link, one for back-pressure on a relayed stream and the session
+/// counter, moves a `CONTROL` event's handshake to bits 0-1 of its flags and adds the rule bit (b7). Protocol 8
 /// is v3.4.1: the reshaped `RESP(CLIP)` and `CLIP_TRIGGER`, and an interrupt OUT packet on a vendor
 /// interface matched as `VendorInterrupt`, which protocol 7 matched as `HidOut`. Protocol 7 is
 /// v3.4.0: the advanced control layer (`RAW`/`TRANSFER`/`REWRITE`/`PATCH`) and the `u16` `HEALTH`
@@ -192,7 +193,7 @@ pub const H_KBD_ATT: u8 = 0x80;
 // advanced control layer opened the high byte, so these three are `u16`.
 /// The rewrite-rule table (§3.14) is non-empty (v3.4.0).
 pub const H_REWRITE_ON: u16 = 0x0100;
-/// A descriptor-patch set (§3.14) is applied to the clone (v3.4.0).
+/// The clone is serving a patched descriptor set (§3.14) (v3.4.0).
 pub const H_PATCH_ON: u16 = 0x0200;
 /// A field transform is active (reserved; the transforms feature owns this bit) (v3.4.0).
 pub const H_TRANSFORM_ON: u16 = 0x0400;
@@ -231,32 +232,40 @@ pub const CATCH_ID_ANY: u16 = 0xFFFF;
 /// silently incomplete subscription.
 pub const CATCH_MAX_ENTRIES: usize = 32;
 
-/// `TRAFFIC_EVENT.flags` for a `CATCH_CLS_CONTROL` event: what the real device answered.
+/// `TRAFFIC_EVENT.flags` bits 0-1 for a `CATCH_CLS_CONTROL` event: the handshake the game PC received.
 pub const CATCH_CTRL_OK: u8 = 0x00;
-/// The device STALLed the transfer.
-pub const CATCH_CTRL_STALL: u8 = 0xFD;
-/// The device NAKed to timeout, or never answered.
-pub const CATCH_CTRL_NAK: u8 = 0xFE;
+/// The PC got a STALL.
+pub const CATCH_CTRL_STALL: u8 = 0x01;
+/// NAKed until the host gave up (endpoint 0 only).
+pub const CATCH_CTRL_NAK: u8 = 0x02;
+/// The bits of a `CATCH_CLS_CONTROL` event's flags that carry the handshake.
+pub const CATCH_CTRL_MASK: u8 = 0x03;
+/// `TRAFFIC_EVENT.flags` bit 7 on a class the rewrite table acts at: a rule changed, dropped,
+/// answered or refused the packet.
+pub const CATCH_F_RULE: u8 = 0x80;
 
 /// `RESP(CATCH).clk_rate_ppb` sentinel: the box has fitted no drift rate. Distinct from a fitted 0,
 /// which says the two crystals are matched.
 pub const CLK_RATE_NONE: i32 = i32::MIN;
 
-// `REWRITE` action byte (§3.14): what the winning rule does to a matched packet. A report class can
-// `DROP`; only the control class may `ANSWER`/`STALL`/`NAK` or rewrite the device's reply.
+// `REWRITE` action byte (§3.14): what the top-ranked matching rule does to the packet. A report
+// class can `DROP`; only the control class may `ANSWER`/`STALL`/`NAK` or rewrite the device's
+// reply.
 /// The rule matched but leaves the packet untouched (a shadow over a broader rule).
 pub const RW_PASS: u8 = 0;
 /// Report class: the packet is not delivered.
 pub const RW_DROP: u8 = 1;
-/// Overwrite `plen` payload bytes at `off`, length preserved.
+/// Overwrite `plen` payload bytes at `off`, length preserved. On the control class, an OUT data
+/// stage only.
 pub const RW_PATCH: u8 = 2;
-/// The packet becomes the payload.
+/// The packet becomes the payload. On the control class, it overwrites the start of an OUT data stage
+/// and `wLength` is kept.
 pub const RW_REPLACE: u8 = 3;
 /// Control: answer from the payload without asking the device.
 pub const RW_ANSWER: u8 = 4;
 /// Control: protocol STALL.
 pub const RW_STALL: u8 = 5;
-/// Control: NAK to a timeout.
+/// Control: NAK on EP0 until the host times out; STALL on a control endpoint above 0.
 pub const RW_NAK: u8 = 6;
 /// Control IN: overwrite the device's reply at `off`.
 pub const RW_REPLY_PATCH: u8 = 7;
@@ -277,11 +286,14 @@ pub const PATCH_SEC_STRING: u8 = 3;
 pub const PATCH_SEC_BOS: u8 = 4;
 /// `PATCH` engine verb: re-present the clone with the stored set (one replug to the game PC).
 pub const PATCH_APPLY: u8 = 0xFE;
-/// `PATCH` engine verb: drop every patch for this device and re-present unpatched.
+/// `PATCH` engine verb: erase this device's stored set, and re-present a clone serving patches unpatched.
 pub const PATCH_CLEAR: u8 = 0xFF;
 
 /// Entries the box's rewrite table holds (`REWRITE_TAB_MAX`); past it a rule is refused and `RESP(REWRITE).table_full` says so.
 pub const REWRITE_MAX_ENTRIES: usize = 32;
+/// Payload bytes the box's rewrite table holds across every rule (`REWRITE_POOL`); a rule that does not
+/// fit is refused and `RESP(REWRITE).table_full` says so. Match and mask bytes are not counted.
+pub const REWRITE_PAYLOAD_POOL: usize = 2048;
 /// Entries the box's descriptor-patch store holds (`PATCH_MAX`); past it a patch is refused and `RESP(PATCHES).table_full` says so.
 pub const PATCH_MAX_ENTRIES: usize = 16;
 /// The most `match`/`mask` bytes the box compares against a packet head (`PKT_MATCH_MAX`), for a

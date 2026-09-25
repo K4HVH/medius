@@ -30,6 +30,8 @@ pub const MEDIUS_MAX_PATCH_ENTRIES: usize = 16;
 pub const MEDIUS_MAX_TRANSFORM_ENTRIES: usize = 32;
 /// The most `match`/`mask` bytes one rewrite rule compares (the firmware `REWRITE_MATCH_MAX`).
 pub const MEDIUS_MAX_REWRITE_MATCH: usize = 16;
+/// Payload bytes the box's rewrite table holds across every rule (the firmware `REWRITE_POOL`).
+pub const MEDIUS_REWRITE_PAYLOAD_POOL: usize = 2048;
 
 // These are literals because cbindgen constant-folds them into the header's `#define`s and cannot
 // do that across a crate boundary.
@@ -39,6 +41,7 @@ const _: () = {
     assert!(MEDIUS_MAX_PATCH_ENTRIES == medius::PATCH_MAX_ENTRIES);
     assert!(MEDIUS_MAX_TRANSFORM_ENTRIES == medius::TRANSFORM_MAX_ENTRIES);
     assert!(MEDIUS_MAX_REWRITE_MATCH == medius::REWRITE_MATCH_MAX);
+    assert!(MEDIUS_REWRITE_PAYLOAD_POOL == medius::REWRITE_PAYLOAD_POOL);
     assert!(MEDIUS_MAX_DEV_PAYLOAD == medius::MAX_PAYLOAD);
 };
 /// The largest advanced control layer byte payload the control link carries in one frame (`MAX_PAYLOAD`):
@@ -60,7 +63,8 @@ pub const MEDIUS_CATCH_CLASS_HID_OUT: u8 = 5;
 pub const MEDIUS_CATCH_CLASS_VENDOR_INTERRUPT: u8 = 6;
 /// Vendor-interface bulk traffic, keyed by endpoint number and direction.
 pub const MEDIUS_CATCH_CLASS_VENDOR_BULK: u8 = 7;
-/// A proxied control transaction, keyed by endpoint number (0 = EP0).
+/// A control transaction the game PC received, keyed by endpoint number (0 = EP0). On EP0 only class
+/// and vendor requests raise one.
 pub const MEDIUS_CATCH_CLASS_CONTROL: u8 = 8;
 /// The bytes the clone put on the wire, keyed by endpoint number, direction IN.
 pub const MEDIUS_CATCH_CLASS_EMIT: u8 = 9;
@@ -479,7 +483,7 @@ pub struct MediusHealth {
     pub kbd_attached: u8,
     /// The rewrite-rule table (§3.14) is non-empty (v3.4.0).
     pub rewrite_on: u8,
-    /// A descriptor-patch set (§3.14) is applied to the clone (v3.4.0).
+    /// The clone is serving a patched descriptor set (§3.14) (v3.4.0).
     pub patch_on: u8,
     /// A field transform is active (v3.4.0).
     pub transform_on: u8,
@@ -577,6 +581,9 @@ pub struct MediusStats {
     /// draining, or an OUT packet past the relay's one-per-frame ceiling. Expected under load, and
     /// counted apart from `tx_drops` because nothing of the player's input goes missing with it.
     pub relay_drops: u32,
+    /// The times the box released the session state a host set. It wraps, so compare it for
+    /// inequality; 0 at boot.
+    pub session: u16,
 }
 
 /// One entry in a decoded `RESP(LOCKS)`: the locked target and which edges are locked.
@@ -693,7 +700,8 @@ pub struct MediusImperfectStatus {
 
 /// A traffic class a rewrite rule addresses (§3.14). Crosses the ABI as the `class` byte of a
 /// `MediusRewriteRule`/`MediusRewriteEntry`; these are the write-direction `CATCH` classes the box
-/// will rewrite. `Any` is the wire wildcard `0xFF`.
+/// will rewrite. `Any` is the wire wildcard `0xFF`: `Pass`/`Patch`/`Replace` only, applied at every
+/// surface a packet crosses.
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MediusRewriteClass {
@@ -706,9 +714,9 @@ pub enum MediusRewriteClass {
     Any = 0xFF,
 }
 
-/// What the winning rewrite rule does to a matched packet (§3.14). Crosses the ABI as the `action`
-/// byte. `Drop` is a report surface only; `Answer`/`Stall`/`Nak` and the two reply rewrites are
-/// control-only, mirroring the box's own admissibility check.
+/// What the top-ranked matching rewrite rule does to the packet (§3.14). Crosses the ABI as the
+/// `action` byte. `Drop` is a report surface only; `Answer`/`Stall`/`Nak` and the two reply
+/// rewrites are control-only, mirroring the box's own admissibility check.
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MediusRewriteAction {
@@ -828,7 +836,8 @@ pub struct MediusRewriteEntry {
     pub offset: u16,
     /// How many payload bytes the rule carries.
     pub payload_len: u16,
-    /// Packets the rule has matched since it was installed (saturating).
+    /// Packets the rule has matched as the top-ranked rule since it was installed or last
+    /// overwritten, a `MEDIUS_REWRITE_ACTION_PASS` rule included (saturating).
     pub hits: u16,
 }
 
@@ -837,9 +846,10 @@ pub struct MediusRewriteEntry {
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct MediusRewriteTable {
-    /// The table is full: a further rule was, or would be, refused.
+    /// Set when the box refused the last new rule or overwrite for room: all 32 entries in use, or no
+    /// space left in the 2048-byte payload pool. The next change to the table, or a clear, resets it.
     pub table_full: u8,
-    /// The generation counter; bumps only on a change that alters the table.
+    /// Bumps on a table change; reset, detach, link loss, re-clone or opt-in off return it to 0.
     pub generation: u8,
     /// The number of valid entries in `entries`.
     pub n: u16,
@@ -849,7 +859,8 @@ pub struct MediusRewriteTable {
 /// A descriptor patch (§3.14), keyed by `(section, cfg, index, offset)`.
 ///
 /// `bytes[0..len]` overwrites the descriptor from `offset`; an empty `bytes` (`len` 0) removes the
-/// patch at that key. A patch never changes a descriptor's byte count. The same shape
+/// patch at that key. An overwrite moves the patch to the end of the set, unless it holds those bytes
+/// already. Every section but `String` keeps the descriptor's byte count. The same shape
 /// `medius_device_query_patch_entry` reads back, so a read patch replays as a set.
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -889,13 +900,19 @@ pub struct MediusPatchEntry {
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct MediusPatchSet {
-    /// The stored set is applied to the live clone.
+    /// The clone serves a non-empty patched set, which a later store leaves alone until the clone is
+    /// next presented.
     pub applied: u8,
-    /// A stored change has not been applied yet.
+    /// The stored set differs from the one the clone serves, in its patches, bytes or order: not applied
+    /// yet, changed or emptied since, refused, or held back because the opt-in is off.
     pub pending: u8,
-    /// The last apply was refused (a patched descriptor's length no longer matched what it serves).
+    /// The stored set failed a check (a clone check, or a consistency check: a descriptor's length or
+    /// type fields, `bcdUSB` with no BOS, a HID `wDescriptorLength`, an interrupt-IN `wMaxPacketSize`)
+    /// that the unpatched descriptors pass, when last presented, and is unchanged since, so the device
+    /// is served unpatched.
     pub refused: u8,
-    /// The store is full: a further patch was, or would be, refused.
+    /// Set when the box refused the last new patch or overwrite for room: 16 entries in use, or no
+    /// space left in the 1024-byte pool. The next change to the set, or a clear, resets it.
     pub table_full: u8,
     /// The number of valid entries in `entries`.
     pub n: u16,
@@ -1076,9 +1093,10 @@ const _: () = {
 /// vendor classes and `CONTROL` carry either, and every class takes `MEDIUS_DIRECTION_BOTH`.
 ///
 /// The box reads a packet for its triggers as the packet arrived, ahead of the rewrite table, and the
-/// two are independent: one packet can fire a trigger and win a rewrite rule. One trigger wins a
-/// packet, most specific first: an exact `id` beats `MEDIUS_CATCH_ID_ANY`, more masked bits beat
-/// fewer, `POSITIVE` or `NEGATIVE` beats `MEDIUS_DIRECTION_BOTH`, then the trigger bound earlier.
+/// two are independent: one packet can fire a trigger and have a rewrite rule act on it. Of the
+/// triggers a packet matches, only the most specific acts on it: an exact `id` ranks above
+/// `MEDIUS_CATCH_ID_ANY`, more masked bits above fewer, `POSITIVE` or `NEGATIVE` above
+/// `MEDIUS_DIRECTION_BOTH`, then the trigger bound earlier.
 ///
 /// The same shape `medius_clip_query_config` reads back, so a read trigger replays as a bind.
 #[repr(C)]
@@ -1095,8 +1113,8 @@ pub struct MediusClipPacketTrigger {
     pub direction: u8,
     /// A `MEDIUS_CLIP_ACTION_*` value.
     pub action: u8,
-    /// Drop every packet the trigger wins, before the rewrite table sees it. Dropping traffic alters
-    /// the wire, so the box holds a consuming trigger only under
+    /// Drop every packet the trigger matches as the top-ranked trigger, before the rewrite table
+    /// sees it. Dropping traffic alters the wire, so the box holds a consuming trigger only under
     /// `medius_device_allow_imperfect_clones`, on any class but `CONTROL`.
     pub consume: u8,
     /// Drive `action` on the first packet of a run of matching ones, so a device that repeats a held
@@ -1115,9 +1133,9 @@ pub struct MediusClipPacketTrigger {
     /// Every set bit of `match_bytes[0..match_len]` is set in `mask`. The two go to the box as given.
     pub match_bytes: [u8; MEDIUS_MAX_PKT_MATCH],
     pub mask: [u8; MEDIUS_MAX_PKT_MATCH],
-    /// Packets the trigger has won since it was bound or overwritten (saturating). A `once_per_run`
-    /// trigger wins every packet of a run and drives its action on the first. Filled by
-    /// `medius_clip_query_config` and read by `medius_mock_set_clip_settings`;
+    /// Packets the trigger has matched as the top-ranked trigger since it was bound or overwritten
+    /// (saturating). A `once_per_run` trigger counts every packet of a run and drives its action on
+    /// the first. Filled by `medius_clip_query_config` and read by `medius_mock_set_clip_settings`;
     /// `medius_clip_bind_packet` sends the trigger without it.
     pub hits: u16,
 }
@@ -1152,6 +1170,8 @@ pub struct MediusCountersSnapshot {
     pub frames_rx: u64,
     pub crc_drops: u64,
     pub reconnects: u64,
+    /// Device-chip restarts the library recovered from by re-sending the state it holds.
+    pub restarts: u64,
 }
 
 /// A discovered medius serial port. `path` is NUL-terminated.
@@ -1227,8 +1247,8 @@ pub struct MediusTrafficEvent {
     /// as one; C++ renders the enum as `enum : uint8_t`, so assigning this to a `MediusDirection`
     /// there needs a cast.
     pub direction: u8,
-    /// Class-specific; read it with `medius_traffic_event_control_status`, `..._bus_event` or
-    /// `..._transfer_status`.
+    /// Class-specific; read it with `medius_traffic_event_control_status`, `..._rule_acted`,
+    /// `..._bus_event`, `..._transfer_status` or the bulk accessors.
     pub flags: u8,
     /// The packet's length before `capture` truncated it.
     pub true_len: u16,
@@ -1237,16 +1257,20 @@ pub struct MediusTrafficEvent {
     pub bytes: [u8; MEDIUS_MAX_TRAFFIC_BYTES],
 }
 
-/// What the real device answered a proxied control transaction with.
+/// The handshake the game PC received for a control transaction.
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MediusControlStatus {
+    /// The transaction completed.
     Ok = 0,
+    /// A STALL: from the device, from a rule that refused the request, or, above endpoint 0, for a
+    /// request that failed.
     Stalled = 1,
+    /// NAKed until the host gave up, on endpoint 0 only.
     Naked = 2,
-    /// A status byte this build does not know. Read `MediusTrafficEvent::flags` for its value. Kept
-    /// distinct rather than folded into the nearest known one: a catch-all arm reported a future
-    /// firmware's new status as a timeout, which reads as a device fault that never happened.
+    /// A handshake value this build does not know. Read `MediusTrafficEvent::flags` bits 0-1 for it.
+    /// Kept distinct rather than folded into the nearest known one, so a future firmware's new value
+    /// is not reported as a device fault that never happened.
     Other = 3,
 }
 

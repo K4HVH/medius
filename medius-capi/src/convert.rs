@@ -453,6 +453,7 @@ impl From<Stats> for MediusStats {
             link_rx_drops: s.link_rx_drops,
             host_rx_drops: s.host_rx_drops,
             relay_drops: s.relay_drops,
+            session: s.session,
         }
     }
 }
@@ -1094,6 +1095,7 @@ impl From<CountersSnapshot> for MediusCountersSnapshot {
             frames_rx: c.frames_rx,
             crc_drops: c.crc_drops,
             reconnects: c.reconnects,
+            restarts: c.restarts,
         }
     }
 }
@@ -1295,6 +1297,7 @@ impl From<MediusStats> for Stats {
             link_rx_drops: s.link_rx_drops,
             host_rx_drops: s.host_rx_drops,
             relay_drops: s.relay_drops,
+            session: s.session,
         }
     }
 }

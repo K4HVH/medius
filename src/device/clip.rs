@@ -152,6 +152,33 @@ pub(crate) fn encode_chunks(clip: &ClipBuilder, limit: usize) -> Result<Vec<Vec<
     Ok(out)
 }
 
+// `CLIP_TRIGGER` adding or overwriting `t`.
+pub(crate) fn bind_payload(t: &ClipTrigger) -> [u8; 6] {
+    let (class, id) = t.on.class_id();
+    let consume = if t.consume { CLIP_TRIG_F_CONSUME } else { 0 };
+    clip_trigger_payload(
+        class,
+        id,
+        t.edge.as_u8(),
+        t.action.as_u8(),
+        CLIP_TRIG_F_PRESENT | consume,
+    )
+}
+
+// `CLIP_TRIGGER` adding or overwriting the packet trigger `t`.
+pub(crate) fn bind_packet_payload(t: &ClipPacketTrigger) -> Vec<u8> {
+    clip_packet_trigger_payload(
+        t.class.as_u8(),
+        t.id,
+        t.direction.as_u8(),
+        t.action.as_u8(),
+        CLIP_TRIG_F_PRESENT | t.flags(),
+        t.selector_len,
+        &t.match_bytes,
+        &t.mask,
+    )
+}
+
 // The key a packet trigger is held under, checked the way the box checks it on a bind and a removal
 // alike (clip_ptrig_set in the firmware's clip_ptrig.h).
 pub(crate) fn validate_packet_key(t: &ClipPacketTrigger) -> Result<()> {
@@ -245,6 +272,9 @@ impl Device {
 /// The keepalive holds a loaded clip, a setting off its default and a bound trigger of either kind
 /// past the box's silence window. A reconnect re-sends none of it and keeps alive what the box still
 /// holds: a link down for longer than that window leaves nothing, so reload the clip and its config.
+/// A device-chip restart or a release of the session the box counts in
+/// [`Stats::session`](crate::Stats::session) (the opt-in going off keeps the clip) can empty the ring:
+/// the crate re-sends the settings and triggers, and [`lost`](Self::lost) says to reload the clip.
 #[derive(Clone, Debug)]
 pub struct ClipHandle {
     link: Link,
@@ -319,28 +349,10 @@ impl ClipHandle {
 
     /// Add or overwrite an input trigger: `trigger`'s edge fires its action on the box, no host round-trip. Fire-and-forget.
     pub fn bind(&self, trigger: ClipTrigger) -> Result<()> {
-        let (class, id) = trigger.on.class_id();
-        let flags = CLIP_TRIG_F_PRESENT
-            | if trigger.consume {
-                CLIP_TRIG_F_CONSUME
-            } else {
-                0
-            };
         let _serial = self.link.reassert_guard();
-        self.link.send(
-            FrameType::ClipTrigger,
-            &clip_trigger_payload(
-                class,
-                id,
-                trigger.edge.as_u8(),
-                trigger.action.as_u8(),
-                flags,
-            ),
-        )?;
         self.link
-            .desired()
-            .lock()
-            .clip_trigger((class, id, trigger.edge.as_u8()), true);
+            .send(FrameType::ClipTrigger, &bind_payload(&trigger))?;
+        self.link.desired().lock().clip_bind(trigger);
         Ok(())
     }
 
@@ -355,7 +367,7 @@ impl ClipHandle {
         self.link
             .desired()
             .lock()
-            .clip_trigger((class, id, edge.as_u8()), false);
+            .clip_unbind(&(class, id, edge.as_u8()));
         Ok(())
     }
 
@@ -395,23 +407,9 @@ impl ClipHandle {
     pub fn bind_packet(&self, trigger: &ClipPacketTrigger) -> Result<()> {
         validate_packet_trigger(trigger)?;
         let _serial = self.link.reassert_guard();
-        self.link.send(
-            FrameType::ClipTrigger,
-            &clip_packet_trigger_payload(
-                trigger.class.as_u8(),
-                trigger.id,
-                trigger.direction.as_u8(),
-                trigger.action.as_u8(),
-                CLIP_TRIG_F_PRESENT | trigger.flags(),
-                trigger.selector_len,
-                &trigger.match_bytes,
-                &trigger.mask,
-            ),
-        )?;
         self.link
-            .desired()
-            .lock()
-            .clip_packet_bind(clip_packet_key(trigger), trigger.consume);
+            .send(FrameType::ClipTrigger, &bind_packet_payload(trigger))?;
+        self.link.desired().lock().clip_packet_bind(trigger);
         Ok(())
     }
 
@@ -496,6 +494,13 @@ impl ClipHandle {
     /// Finalize a retained clip: fix its end so it can replay and loop. Fire-and-forget.
     pub fn finalize(&self) -> Result<()> {
         self.ctrl(CLIP_OP_FINALIZE)
+    }
+
+    /// Whether the box dropped the clip appended since the last [`clear`](Self::clear): its device
+    /// chip restarted, the box released the session, or a reconnect found it gone. Set once the box
+    /// takes a reload again, and reset by the next `append` or `clear`.
+    pub fn lost(&self) -> bool {
+        self.link.desired().lock().clip_lost()
     }
 
     // --- Readback (`QUERY(CLIP)`), two views over the one `RESP(CLIP)` frame. ---

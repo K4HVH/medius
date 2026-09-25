@@ -233,7 +233,8 @@ impl AsyncDevice {
         self.dev().input_events(filters)
     }
 
-    /// `OPTION(IMPERFECT)`: opt into cloning an over-capacity device. Instant; see [`Device::allow_imperfect_clones`].
+    /// `OPTION(IMPERFECT)`: opt into cloning a device the box cannot clone exactly. Instant; see
+    /// [`Device::allow_imperfect_clones`].
     pub fn allow_imperfect_clones(&self, allow: bool) -> Result<()> {
         self.dev().allow_imperfect_clones(allow)
     }
@@ -623,7 +624,7 @@ impl AsyncDevice {
         self.dev().apply_patch_send()
     }
 
-    /// `PATCH` CLEAR: drop every patch and re-present. See [`Device::clear_patch`].
+    /// `PATCH` CLEAR: erase this device's stored set. See [`Device::clear_patch`].
     pub fn clear_patch(&self) -> Result<()> {
         self.dev().clear_patch()
     }
@@ -823,6 +824,11 @@ impl AsyncClipHandle {
     /// Finalize a retained clip. Instant; see [`ClipHandle::finalize`](crate::ClipHandle::finalize).
     pub fn finalize(&self) -> Result<()> {
         self.inner.finalize()
+    }
+
+    /// Whether the box dropped the appended clip. See [`ClipHandle::lost`](crate::ClipHandle::lost).
+    pub fn lost(&self) -> bool {
+        self.inner.lost()
     }
 
     /// `QUERY(CLIP)`: the ring depth, progress, and playback counters, awaiting the correlated `RESP`. See [`ClipHandle::query_status`](crate::ClipHandle::query_status).

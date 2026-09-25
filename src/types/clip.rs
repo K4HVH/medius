@@ -137,10 +137,11 @@ impl ClipTrigger {
 /// every class takes [`Both`](Direction::Both).
 ///
 /// The box reads a packet for its triggers as the packet arrived, ahead of the rewrite table, and the
-/// two are independent: one packet can fire a trigger and win a [`RewriteRule`](crate::RewriteRule).
-/// One trigger wins a packet, most specific first: an exact `id` beats [`ANY_ID`](Self::ANY_ID), more
-/// masked bits beat fewer, [`IN`](Direction::IN) or [`OUT`](Direction::OUT) beats
-/// [`Both`](Direction::Both), then the trigger bound earlier.
+/// two are independent: one packet can fire a trigger and have a
+/// [`RewriteRule`](crate::RewriteRule) act on it. Of the triggers a packet matches, only the most
+/// specific acts on it: an exact `id` ranks above [`ANY_ID`](Self::ANY_ID), more masked bits above
+/// fewer, [`IN`](Direction::IN) or [`OUT`](Direction::OUT) above [`Both`](Direction::Both), then
+/// the trigger bound earlier.
 ///
 /// Packet triggers are a managed set keyed by `(class, id, direction, match_bytes, mask)`: binding a
 /// key the box holds overwrites it. The box holds [`CLIP_PKT_TRIG_MAX`](crate::CLIP_PKT_TRIG_MAX) of
@@ -185,7 +186,8 @@ pub struct ClipPacketTrigger {
     pub match_bytes: Vec<u8>,
     /// The mask over [`match_bytes`](Self::match_bytes); same length.
     pub mask: Vec<u8>,
-    /// Drop every packet the trigger wins, before the rewrite table sees it.
+    /// Drop every packet the trigger matches as the top-ranked trigger, before the rewrite table
+    /// sees it.
     pub consume: bool,
     /// Drive the action on the first packet of a run of matching ones, where a plain trigger drives it
     /// on each.
@@ -229,8 +231,8 @@ impl ClipPacketTrigger {
         self
     }
 
-    /// Consume the packet: every packet the trigger wins is dropped, whether or not the action runs on
-    /// it. [`Control`](TrafficClass::Control) takes none.
+    /// Consume the packet: every packet the trigger matches as the top-ranked trigger is dropped,
+    /// whether or not the action runs on it. [`Control`](TrafficClass::Control) takes none.
     ///
     /// A consumed [`HidIn`](TrafficClass::HidIn) report is dropped whole, the motion and buttons in it
     /// with it; a release edge in that report reaches the PC with the next one. A catch subscription
@@ -303,9 +305,9 @@ pub struct ClipPacketTriggerEntry {
     /// The trigger, in the shape [`bind_packet`](crate::ClipHandle::bind_packet) takes, so a read
     /// entry replays as a bind.
     pub trigger: ClipPacketTrigger,
-    /// How many packets the trigger has won since it was bound or overwritten (saturating). A
-    /// [`once_per_run`](ClipPacketTrigger::once_per_run) trigger wins every packet of a run and drives
-    /// its action on the first.
+    /// How many packets the trigger has matched as the top-ranked trigger since it was bound or
+    /// overwritten (saturating). A [`once_per_run`](ClipPacketTrigger::once_per_run) trigger counts
+    /// every packet of a run and drives its action on the first.
     pub hits: u16,
 }
 

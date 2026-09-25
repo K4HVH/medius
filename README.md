@@ -310,7 +310,7 @@ device.update_firmware(UpdateTarget::Device, &image, &mut |p| println!("{}%", p.
 
 `update_firmware` writes the image into the chip's spare app slot over the control port and boots it; the box reverts an image that will not run. It needs a box this build can open, so a box on another control protocol is updated from the dashboard.
 
-The reader also reconnects on its own if the link drops.
+The reader also reconnects on its own if the link drops. When the device chip restarts under a live link, or the box releases what the program set without one (a patch apply or clear, an opt-in toggle, a detached device, the link between its chips dropping), the crate re-sends what it holds once the clone is up, and `ClipHandle::lost` reports a clip that was dropped.
 
 ### Observability
 
@@ -319,7 +319,7 @@ for line in device.logs() {       // device LOG stream
     println!("[{:?}] {}", line.level, line.text);
 }
 
-let c = device.counters();        // frames_tx / frames_rx / crc_drops / reconnects
+let c = device.counters();        // frames_tx / frames_rx / crc_drops / reconnects / restarts
 ```
 
 ### Async (feature = `async`)

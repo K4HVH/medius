@@ -100,7 +100,7 @@ fn capture_normalises_and_widens() {
         "First(0) is the whole packet"
     );
     assert_eq!(Capture::First(16).bytes(), Some(16));
-    // 0 on the wire means whole, so whole beats every finite length in both orders.
+    // 0 on the wire means whole, so whole is wider than every finite length in both orders.
     assert_eq!(
         Capture::First(16).widest(Capture::First(64)),
         Capture::First(64)
@@ -284,23 +284,54 @@ fn a_cut_setup_packet_is_not_reported_as_a_data_stage() {
 }
 
 #[test]
-fn control_status_covers_every_answer_the_device_can_give() {
+fn control_status_covers_every_handshake_the_pc_can_get() {
     let with_flags = |flags: u8| {
         let p = [0, 0, 0, 0, 1, 8, 0, 0, 0, flags, 0, 0];
         TrafficEvent::from_payload(&p).unwrap().control_status()
     };
     assert_eq!(with_flags(0x00), Some(ControlStatus::Ok));
-    assert_eq!(with_flags(0xFD), Some(ControlStatus::Stalled));
-    assert_eq!(with_flags(0xFE), Some(ControlStatus::Naked));
-    // An unknown status stays unknown. A catch-all arm reported it as a timeout, so a future
-    // firmware's new status would read as a device fault that never happened.
-    assert_eq!(with_flags(0x42), Some(ControlStatus::Other(0x42)));
+    assert_eq!(with_flags(0x01), Some(ControlStatus::Stalled));
+    assert_eq!(with_flags(0x02), Some(ControlStatus::Naked));
+    // The handshake is bits 0-1 alone: the rule bit beside it changes nothing.
+    assert_eq!(with_flags(0x81), Some(ControlStatus::Stalled));
+    assert_eq!(with_flags(0x80), Some(ControlStatus::Ok));
+    // An unknown value stays unknown. A catch-all arm reported it as a timeout, so a future
+    // firmware's new value would read as a device fault that never happened.
+    assert_eq!(with_flags(0x03), Some(ControlStatus::Other(0x03)));
     // A class that is not Control has no control status at all, whatever its flags say.
     let p = [0, 0, 0, 0, 1, 7, 3, 0x00, 1, 0x01, 0, 0];
     assert_eq!(
         TrafficEvent::from_payload(&p).unwrap().control_status(),
         None
     );
+}
+
+// Bit 7 is the rule bit on the six classes a rule acts at, and means nothing on the rest: a clip
+// transfer's flags are a TRANSFER status, whose 0xFD STALL has bit 7 set.
+#[test]
+fn the_rule_bit_is_read_only_where_a_rule_acts() {
+    let event = |class: u8, flags: u8| {
+        let p = [0, 0, 0, 0, 1, class, 0, 0, 1, flags, 0, 0];
+        TrafficEvent::from_payload(&p).unwrap()
+    };
+    for class in [
+        CatchClass::HidIn,
+        CatchClass::HidOut,
+        CatchClass::VendorInterrupt,
+        CatchClass::VendorBulk,
+        CatchClass::Control,
+        CatchClass::Emit,
+    ] {
+        assert!(event(class.as_u8(), 0x80).rule_acted(), "{class:?}");
+        assert!(!event(class.as_u8(), 0x03).rule_acted(), "{class:?}");
+    }
+    let xfer = event(CatchClass::ClipTransfer.as_u8(), 0xFD);
+    assert!(!xfer.rule_acted());
+    assert_eq!(xfer.transfer_status(), Some(TransferStatus::Stall));
+    assert!(!event(CatchClass::Bus.as_u8(), 0x80).rule_acted());
+    // A bulk event keeps its own two bits beside it.
+    let bulk = event(CatchClass::VendorBulk.as_u8(), 0x81);
+    assert!(bulk.rule_acted() && bulk.bulk_end_of_transfer() && !bulk.bulk_zlp());
 }
 
 #[test]
@@ -363,9 +394,8 @@ fn control_event_splits_setup_from_data() {
     );
     assert_eq!(t.data(), &[0xAA, 0xBB]);
     assert_eq!(t.control_status(), Some(ControlStatus::Ok));
-    // A STALL is what the real device answered, not the box's own refusal.
     let mut stalled = p.clone();
-    stalled[9] = 0xFD;
+    stalled[9] = 0x01;
     assert_eq!(
         TrafficEvent::from_payload(&stalled)
             .unwrap()
@@ -811,7 +841,7 @@ mod with_mock {
     #[test]
     fn the_widest_capture_reaches_the_box() {
         // The box holds ONE entry per address, so two subscribers naming it with different captures
-        // have to be resolved rather than have one win.
+        // have to be resolved to the wider one rather than have one of them kept.
         let capture_sent_to_box = |a: Capture, b: Capture| {
             let mock = MockBox::new();
             let dev = Device::with_mock(mock.clone());

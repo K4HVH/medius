@@ -329,8 +329,9 @@ impl Timeline {
     /// its place on the timeline; only a step longer than half the range is a rollover. Treating
     /// every backward step as a rollover turned a 1 µs inversion into a permanent 71.6-minute jump.
     ///
-    /// A reboot restarts the clock at zero, which this cannot tell from a very large jump. Nothing on
-    /// the wire announces a chip reboot, so call [`Self::reset`] for a chip you know restarted.
+    /// A reboot restarts the clock at zero, which this cannot tell from a very large jump. Call
+    /// [`Self::reset`] for a chip that restarted; a device-chip restart raises
+    /// [`CountersSnapshot::restarts`](crate::CountersSnapshot::restarts).
     pub fn box_us(&mut self, event: &impl Timestamped) -> u64 {
         self.box_us_of(event.ts_us(), event.clock())
     }

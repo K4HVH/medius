@@ -208,7 +208,7 @@ pub fn patch_apply_payload() -> [u8; 1] {
     [PATCH_APPLY]
 }
 
-/// `PATCH` CLEAR (§3.14): the single `section = 0xFF` byte; drop every patch and re-present.
+/// `PATCH` CLEAR (§3.14): the single `section = 0xFF` byte; erase this device's stored set.
 pub fn patch_clear_payload() -> [u8; 1] {
     [PATCH_CLEAR]
 }

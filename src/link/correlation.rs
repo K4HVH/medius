@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicU8, AtomicU64, Ordering};
 use std::time::Duration;
 
 use parking_lot::Mutex;
@@ -22,6 +22,50 @@ pub(crate) struct PendingEntry {
     tx: flume::Sender<Vec<u8>>,
 }
 
+/// The `SEQ` the box's unsolicited `RESP(VERSION)` hello carries. No reply the crate waits for uses it.
+pub(crate) const HELLO_SEQ: u8 = 0;
+
+// Takes a free `SEQ` for a reply to wait on, never the hello's.
+pub(crate) fn register(
+    pending: &Mutex<HashMap<u8, PendingEntry>>,
+    query_gen: &AtomicU64,
+    seq_counter: &AtomicU8,
+    expected_ty: FrameType,
+    expected_what: u8,
+) -> (u8, u64, flume::Receiver<Vec<u8>>) {
+    let gen_id = query_gen.fetch_add(1, Ordering::Relaxed);
+    let (tx, rx) = flume::bounded::<Vec<u8>>(1);
+    let mut pending = pending.lock();
+    let next = || seq_counter.fetch_add(1, Ordering::Relaxed);
+    let mut seq = next();
+    for _ in 0..256 {
+        if seq != HELLO_SEQ && !pending.contains_key(&seq) {
+            break;
+        }
+        seq = next();
+    }
+    if seq == HELLO_SEQ {
+        seq = next();
+    }
+    pending.insert(
+        seq,
+        PendingEntry {
+            gen_id,
+            expected_ty,
+            expected_what,
+            tx,
+        },
+    );
+    (seq, gen_id, rx)
+}
+
+pub(crate) fn cancel(pending: &Mutex<HashMap<u8, PendingEntry>>, seq: u8, gen_id: u64) {
+    let mut pending = pending.lock();
+    if pending.get(&seq).is_some_and(|e| e.gen_id == gen_id) {
+        pending.remove(&seq);
+    }
+}
+
 pub(crate) fn deliver(
     pending: &Mutex<HashMap<u8, PendingEntry>>,
     ty: FrameType,
@@ -39,10 +83,7 @@ pub(crate) fn deliver(
 
 impl LinkInner {
     pub(crate) fn cancel_query(&self, seq: u8, gen_id: u64) {
-        let mut pending = self.pending.lock();
-        if pending.get(&seq).is_some_and(|e| e.gen_id == gen_id) {
-            pending.remove(&seq);
-        }
+        cancel(&self.pending, seq, gen_id);
     }
 }
 
@@ -52,26 +93,13 @@ impl Link {
         expected_ty: FrameType,
         expected_what: u8,
     ) -> (u8, u64, flume::Receiver<Vec<u8>>) {
-        let gen_id = self.inner.query_gen.fetch_add(1, Ordering::Relaxed);
-        let (tx, rx) = flume::bounded::<Vec<u8>>(1);
-        let mut pending = self.inner.pending.lock();
-        let mut seq = self.next_seq();
-        for _ in 0..256 {
-            if !pending.contains_key(&seq) {
-                break;
-            }
-            seq = self.next_seq();
-        }
-        pending.insert(
-            seq,
-            PendingEntry {
-                gen_id,
-                expected_ty,
-                expected_what,
-                tx,
-            },
-        );
-        (seq, gen_id, rx)
+        register(
+            &self.inner.pending,
+            &self.inner.query_gen,
+            &self.inner.seq,
+            expected_ty,
+            expected_what,
+        )
     }
 
     pub(crate) fn cancel_query(&self, seq: u8, gen_id: u64) {

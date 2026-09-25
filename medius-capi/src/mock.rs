@@ -305,10 +305,10 @@ pub unsafe extern "C" fn medius_mock_set_clip_settings(
 
 /// Run one packet through the mock's packet triggers, as the box does for a packet crossing `class`
 /// at `id` in `direction` whose first bytes are `head[0..head_len]`. The most specific trigger the
-/// head matches wins it and counts it in its `hits`. Returns whether the winner drives its action on
-/// this packet, with the `MEDIUS_CLIP_ACTION_*` value in `*out_action`; false when no trigger wins,
-/// and when the winner is `once_per_run` and the packet continues a run. `*out_consumed` is whether
-/// the winner consumes the packet, whatever the return. A null out is skipped.
+/// head matches counts it in its `hits`. Returns whether that trigger drives its action on this
+/// packet, with the `MEDIUS_CLIP_ACTION_*` value in `*out_action`; false when no trigger matches,
+/// and when that trigger is `once_per_run` and the packet continues a run. `*out_consumed` is
+/// whether that trigger consumes the packet, whatever the return. A null out is skipped.
 ///
 /// A packet travels `POSITIVE` (IN) or `NEGATIVE` (OUT) across a surface that carries that flow: IN
 /// for `MEDIUS_CATCH_CLASS_HID_IN` and `_EMIT`, OUT for `_HID_OUT`, either for the vendor classes and
@@ -353,6 +353,36 @@ pub unsafe extern "C" fn medius_mock_clip_packet(
             None => false,
         }
     })
+}
+
+/// Simulate a device-chip restart: the mock drops its session state, keeps what it stores, sends its
+/// hello now and again on the next frame it receives, and has its clone back 100 ms later.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn medius_mock_restart(mock: *mut MediusMockBox) {
+    with_mock(mock, |m| m.restart());
+}
+
+/// Simulate the inter-chip link dropping and coming back: the mock releases the session a host set
+/// (counted in `MediusStats::session`) and the clone stays up.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn medius_mock_link_lost(mock: *mut MediusMockBox) {
+    with_mock(mock, |m| m.link_lost());
+}
+
+/// Simulate the real device detaching: the mock releases the session a host set at once. With
+/// `back_within_grace` the same device re-attaches inside the 250 ms grace and the clone stays up;
+/// otherwise the clone is torn down when the grace ends, which counts again only after a command
+/// arrived in it, and stays down until `medius_mock_attach`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn medius_mock_detach(mock: *mut MediusMockBox, back_within_grace: bool) {
+    with_mock(mock, |m| m.detach(back_within_grace));
+}
+
+/// Simulate the device attaching again: inside a detach's grace the clone stays as it is; after the
+/// teardown a fresh clone starts, which has nothing to release.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn medius_mock_attach(mock: *mut MediusMockBox) {
+    with_mock(mock, |m| m.attach());
 }
 
 /// Make the mock unresponsive to queries (it still records commands). One-way, for testing timeouts.

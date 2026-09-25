@@ -50,6 +50,9 @@
 // The most `match`/`mask` bytes one rewrite rule compares (the firmware `REWRITE_MATCH_MAX`).
 #define MEDIUS_MAX_REWRITE_MATCH 16
 
+// Payload bytes the box's rewrite table holds across every rule (the firmware `REWRITE_POOL`).
+#define MEDIUS_REWRITE_PAYLOAD_POOL 2048
+
 // The largest advanced control layer byte payload the control link carries in one frame (`MAX_PAYLOAD`):
 // the bound on a `medius_device_raw` write, a rewrite rule's payload, a descriptor patch's bytes,
 // and a control transfer's data stage.
@@ -77,7 +80,8 @@
 // Vendor-interface bulk traffic, keyed by endpoint number and direction.
 #define MEDIUS_CATCH_CLASS_VENDOR_BULK 7
 
-// A proxied control transaction, keyed by endpoint number (0 = EP0).
+// A control transaction the game PC received, keyed by endpoint number (0 = EP0). On EP0 only class
+// and vendor requests raise one.
 #define MEDIUS_CATCH_CLASS_CONTROL 8
 
 // The bytes the clone put on the wire, keyed by endpoint number, direction IN.
@@ -208,6 +212,8 @@ enum MediusStatus
     MEDIUS_STATUS_ERR_CLIP_PACKET_TRIGGER = 33,
     // A rewrite rule with more than `MEDIUS_MAX_REWRITE_MATCH` match bytes.
     MEDIUS_STATUS_ERR_REWRITE_MATCH_TOO_LONG = 34,
+    // A rewrite payload past what the held rules leave of `MEDIUS_REWRITE_PAYLOAD_POOL`.
+    MEDIUS_STATUS_ERR_REWRITE_POOL_FULL = 35,
 };
 #ifndef __cplusplus
 #if __STDC_VERSION__ >= 202311L
@@ -277,18 +283,22 @@ typedef uint8_t MediusRenderMode;
 #endif // __STDC_VERSION__ >= 202311L
 #endif // __cplusplus
 
-// What the real device answered a proxied control transaction with.
+// The handshake the game PC received for a control transaction.
 enum MediusControlStatus
 #if defined(__cplusplus) || __STDC_VERSION__ >= 202311L
   : uint8_t
 #endif // defined(__cplusplus) || __STDC_VERSION__ >= 202311L
  {
+    // The transaction completed.
     MEDIUS_CONTROL_STATUS_OK = 0,
+    // A STALL: from the device, from a rule that refused the request, or, above endpoint 0, for a
+    // request that failed.
     MEDIUS_CONTROL_STATUS_STALLED = 1,
+    // NAKed until the host gave up, on endpoint 0 only.
     MEDIUS_CONTROL_STATUS_NAKED = 2,
-    // A status byte this build does not know. Read `MediusTrafficEvent::flags` for its value. Kept
-    // distinct rather than folded into the nearest known one: a catch-all arm reported a future
-    // firmware's new status as a timeout, which reads as a device fault that never happened.
+    // A handshake value this build does not know. Read `MediusTrafficEvent::flags` bits 0-1 for it.
+    // Kept distinct rather than folded into the nearest known one, so a future firmware's new value
+    // is not reported as a device fault that never happened.
     MEDIUS_CONTROL_STATUS_OTHER = 3,
 };
 #ifndef __cplusplus
@@ -809,9 +819,9 @@ typedef uint8_t MediusRebootTarget;
 #endif // __STDC_VERSION__ >= 202311L
 #endif // __cplusplus
 
-// What the winning rewrite rule does to a matched packet (§3.14). Crosses the ABI as the `action`
-// byte. `Drop` is a report surface only; `Answer`/`Stall`/`Nak` and the two reply rewrites are
-// control-only, mirroring the box's own admissibility check.
+// What the top-ranked matching rewrite rule does to the packet (§3.14). Crosses the ABI as the
+// `action` byte. `Drop` is a report surface only; `Answer`/`Stall`/`Nak` and the two reply
+// rewrites are control-only, mirroring the box's own admissibility check.
 enum MediusRewriteAction
 #if defined(__cplusplus) || __STDC_VERSION__ >= 202311L
   : uint8_t
@@ -837,7 +847,8 @@ typedef uint8_t MediusRewriteAction;
 
 // A traffic class a rewrite rule addresses (§3.14). Crosses the ABI as the `class` byte of a
 // `MediusRewriteRule`/`MediusRewriteEntry`; these are the write-direction `CATCH` classes the box
-// will rewrite. `Any` is the wire wildcard `0xFF`.
+// will rewrite. `Any` is the wire wildcard `0xFF`: `Pass`/`Patch`/`Replace` only, applied at every
+// surface a packet crosses.
 enum MediusRewriteClass
 #if defined(__cplusplus) || __STDC_VERSION__ >= 202311L
   : uint8_t
@@ -979,9 +990,10 @@ typedef struct MediusClipTrigger {
 // vendor classes and `CONTROL` carry either, and every class takes `MEDIUS_DIRECTION_BOTH`.
 //
 // The box reads a packet for its triggers as the packet arrived, ahead of the rewrite table, and the
-// two are independent: one packet can fire a trigger and win a rewrite rule. One trigger wins a
-// packet, most specific first: an exact `id` beats `MEDIUS_CATCH_ID_ANY`, more masked bits beat
-// fewer, `POSITIVE` or `NEGATIVE` beats `MEDIUS_DIRECTION_BOTH`, then the trigger bound earlier.
+// two are independent: one packet can fire a trigger and have a rewrite rule act on it. Of the
+// triggers a packet matches, only the most specific acts on it: an exact `id` ranks above
+// `MEDIUS_CATCH_ID_ANY`, more masked bits above fewer, `POSITIVE` or `NEGATIVE` above
+// `MEDIUS_DIRECTION_BOTH`, then the trigger bound earlier.
 //
 // The same shape `medius_clip_query_config` reads back, so a read trigger replays as a bind.
 typedef struct MediusClipPacketTrigger {
@@ -996,8 +1008,8 @@ typedef struct MediusClipPacketTrigger {
     uint8_t direction;
     // A `MEDIUS_CLIP_ACTION_*` value.
     uint8_t action;
-    // Drop every packet the trigger wins, before the rewrite table sees it. Dropping traffic alters
-    // the wire, so the box holds a consuming trigger only under
+    // Drop every packet the trigger matches as the top-ranked trigger, before the rewrite table
+    // sees it. Dropping traffic alters the wire, so the box holds a consuming trigger only under
     // `medius_device_allow_imperfect_clones`, on any class but `CONTROL`.
     uint8_t consume;
     // Drive `action` on the first packet of a run of matching ones, so a device that repeats a held
@@ -1016,9 +1028,9 @@ typedef struct MediusClipPacketTrigger {
     // Every set bit of `match_bytes[0..match_len]` is set in `mask`. The two go to the box as given.
     uint8_t match_bytes[MEDIUS_MAX_PKT_MATCH];
     uint8_t mask[MEDIUS_MAX_PKT_MATCH];
-    // Packets the trigger has won since it was bound or overwritten (saturating). A `once_per_run`
-    // trigger wins every packet of a run and drives its action on the first. Filled by
-    // `medius_clip_query_config` and read by `medius_mock_set_clip_settings`;
+    // Packets the trigger has matched as the top-ranked trigger since it was bound or overwritten
+    // (saturating). A `once_per_run` trigger counts every packet of a run and drives its action on
+    // the first. Filled by `medius_clip_query_config` and read by `medius_mock_set_clip_settings`;
     // `medius_clip_bind_packet` sends the trigger without it.
     uint16_t hits;
 } MediusClipPacketTrigger;
@@ -1190,16 +1202,18 @@ typedef struct MediusRewriteEntry {
     uint16_t offset;
     // How many payload bytes the rule carries.
     uint16_t payload_len;
-    // Packets the rule has matched since it was installed (saturating).
+    // Packets the rule has matched as the top-ranked rule since it was installed or last
+    // overwritten, a `MEDIUS_REWRITE_ACTION_PASS` rule included (saturating).
     uint16_t hits;
 } MediusRewriteEntry;
 
 // Decoded `RESP(REWRITE)` (§4.17): the rewrite table's summary in `entries[0..n]`, in installation
 // order (the order the box holds them, not the most-specific-first order it selects a match by).
 typedef struct MediusRewriteTable {
-    // The table is full: a further rule was, or would be, refused.
+    // Set when the box refused the last new rule or overwrite for room: all 32 entries in use, or no
+    // space left in the 2048-byte payload pool. The next change to the table, or a clear, resets it.
     uint8_t table_full;
-    // The generation counter; bumps only on a change that alters the table.
+    // Bumps on a table change; reset, detach, link loss, re-clone or opt-in off return it to 0.
     uint8_t generation;
     // The number of valid entries in `entries`.
     uint16_t n;
@@ -1209,7 +1223,8 @@ typedef struct MediusRewriteTable {
 // A descriptor patch (§3.14), keyed by `(section, cfg, index, offset)`.
 //
 // `bytes[0..len]` overwrites the descriptor from `offset`; an empty `bytes` (`len` 0) removes the
-// patch at that key. A patch never changes a descriptor's byte count. The same shape
+// patch at that key. An overwrite moves the patch to the end of the set, unless it holds those bytes
+// already. Every section but `String` keeps the descriptor's byte count. The same shape
 // `medius_device_query_patch_entry` reads back, so a read patch replays as a set.
 typedef struct MediusPatch {
     // One of `MEDIUS_PATCH_SECTION_*`. A byte rather than `MediusPatchSection`, so the boundary can
@@ -1243,13 +1258,19 @@ typedef struct MediusPatchEntry {
 
 // Decoded `RESP(PATCHES)` (§4.17): the stored patch set in `entries[0..n]` plus its apply state.
 typedef struct MediusPatchSet {
-    // The stored set is applied to the live clone.
+    // The clone serves a non-empty patched set, which a later store leaves alone until the clone is
+    // next presented.
     uint8_t applied;
-    // A stored change has not been applied yet.
+    // The stored set differs from the one the clone serves, in its patches, bytes or order: not applied
+    // yet, changed or emptied since, refused, or held back because the opt-in is off.
     uint8_t pending;
-    // The last apply was refused (a patched descriptor's length no longer matched what it serves).
+    // The stored set failed a check (a clone check, or a consistency check: a descriptor's length or
+    // type fields, `bcdUSB` with no BOS, a HID `wDescriptorLength`, an interrupt-IN `wMaxPacketSize`)
+    // that the unpatched descriptors pass, when last presented, and is unchanged since, so the device
+    // is served unpatched.
     uint8_t refused;
-    // The store is full: a further patch was, or would be, refused.
+    // Set when the box refused the last new patch or overwrite for room: 16 entries in use, or no
+    // space left in the 1024-byte pool. The next change to the set, or a clear, resets it.
     uint8_t table_full;
     // The number of valid entries in `entries`.
     uint16_t n;
@@ -1319,7 +1340,7 @@ typedef struct MediusHealth {
     uint8_t kbd_attached;
     // The rewrite-rule table (§3.14) is non-empty (v3.4.0).
     uint8_t rewrite_on;
-    // A descriptor-patch set (§3.14) is applied to the clone (v3.4.0).
+    // The clone is serving a patched descriptor set (§3.14) (v3.4.0).
     uint8_t patch_on;
     // A field transform is active (v3.4.0).
     uint8_t transform_on;
@@ -1392,6 +1413,9 @@ typedef struct MediusStats {
     // draining, or an OUT packet past the relay's one-per-frame ceiling. Expected under load, and
     // counted apart from `tx_drops` because nothing of the player's input goes missing with it.
     uint32_t relay_drops;
+    // The times the box released the session state a host set. It wraps, so compare it for
+    // inequality; 0 at boot.
+    uint16_t session;
 } MediusStats;
 
 // One entry in a decoded `RESP(LOCKS)`: the locked target and which edges are locked.
@@ -1540,6 +1564,8 @@ typedef struct MediusCountersSnapshot {
     uint64_t frames_rx;
     uint64_t crc_drops;
     uint64_t reconnects;
+    // Device-chip restarts the library recovered from by re-sending the state it holds.
+    uint64_t restarts;
 } MediusCountersSnapshot;
 
 // A keyboard key, addressed by HID Keyboard/Keypad usage. Modifiers are `0xE0..=0xE7`.
@@ -1578,8 +1604,8 @@ typedef struct MediusTrafficEvent {
     // as one; C++ renders the enum as `enum : uint8_t`, so assigning this to a `MediusDirection`
     // there needs a cast.
     uint8_t direction;
-    // Class-specific; read it with `medius_traffic_event_control_status`, `..._bus_event` or
-    // `..._transfer_status`.
+    // Class-specific; read it with `medius_traffic_event_control_status`, `..._rule_acted`,
+    // `..._bus_event`, `..._transfer_status` or the bulk accessors.
     uint8_t flags;
     // The packet's length before `capture` truncated it.
     uint16_t true_len;
@@ -2057,6 +2083,11 @@ MediusStatus medius_clip_clear(struct MediusClip *clip);
 // Finalize a retained clip: fix its end so it can replay and loop.
 MediusStatus medius_clip_finalize(struct MediusClip *clip);
 
+// Whether the box dropped the clip appended since the last `medius_clip_clear`: its device chip
+// restarted, the box released the session, or a reconnect found it gone. Set once the box takes a
+// reload again, and reset by the next append or clear.
+bool medius_clip_lost(const struct MediusClip *clip);
+
 // Query the ring depth, progress, and playback counters. A `Faulted` state means recover with `medius_clip_clear`.
 MediusStatus medius_clip_query_status(struct MediusClip *clip,
                                       struct MediusClipStatus *out);
@@ -2101,7 +2132,7 @@ MediusStatus medius_device_move_rel(struct MediusDevice *dev, int16_t dx, int16_
 
 MediusStatus medius_device_wheel(struct MediusDevice *dev, int16_t delta);
 
-// A cursor move that bypasses movement riding: it emits on the box's own clock.
+// A cursor move that bypasses movement riding: it leaves on the next mouse report the box sends.
 MediusStatus medius_device_move_rel_now(struct MediusDevice *dev, int16_t dx, int16_t dy);
 
 // A wheel move that bypasses movement riding.
@@ -2230,7 +2261,12 @@ MediusStatus medius_device_reconnect(struct MediusDevice *dev);
 // `MEDIUS_STATUS_ERR_INVALID_ARG`.
 MediusStatus medius_device_reboot(struct MediusDevice *dev, uint8_t target);
 
-MediusStatus medius_device_allow_imperfect_clones(struct MediusDevice *dev, bool allow);
+// `OPTION(IMPERFECT)`: opt into cloning a device the box cannot clone faithfully, or back to
+// faithful-only. A toggle that changes the patch set the clone serves presents the clone again, which
+// releases the session like a replug of the device; the library re-sends what it holds once the new
+// clone is up, and `medius_clip_lost` reports a clip it dropped.
+MediusStatus medius_device_allow_imperfect_clones(struct MediusDevice *dev,
+                                                  bool allow);
 
 // `RAW` (§3.14): put `bytes[0..len]` verbatim on cloned endpoint number `ep_num` in `dir`,
 // fire-and-forget. `ep_num` is the bare endpoint number (0 to 15); `dir` is a `MEDIUS_DIRECTION_*`
@@ -2276,7 +2312,10 @@ MediusStatus medius_device_transfer_timeout(struct MediusDevice *dev,
 // (`..._REWRITE_MATCH_TOO_LONG`), the action must be valid for the class
 // (`..._REWRITE_ACTION_CLASS`), the direction must not be bearing-relative
 // (`..._RELATIVE_DIRECTION`), and the payload must fit the box's head
-// (`..._REWRITE_PAYLOAD_TOO_LARGE`). `medius_device_query_rewrite` confirms what the box holds.
+// (`..._REWRITE_PAYLOAD_TOO_LARGE`). A new rule past `MEDIUS_MAX_REWRITE_ENTRIES` is
+// `..._REWRITE_TABLE_FULL`, and a payload past what the held rules leave of
+// `MEDIUS_REWRITE_PAYLOAD_POOL` is `..._REWRITE_POOL_FULL`. `medius_device_query_rewrite` confirms
+// what the box holds.
 MediusStatus medius_device_set_rewrite(struct MediusDevice *dev,
                                        const struct MediusRewriteRule *rule);
 
@@ -2302,16 +2341,23 @@ MediusStatus medius_device_query_rewrite_entry(struct MediusDevice *dev,
 
 // `PATCH` (§3.14): store one descriptor patch, keyed by `(section, cfg, index, offset)`. A patch
 // with `len` 0 removes the patch at that key. Storing is not gated on the opt-in (the box always
-// stores it); it takes effect only once `medius_device_apply_patch` re-presents the clone under the
-// opt-in. `patch->section` takes a `MEDIUS_PATCH_SECTION_*` constant; any other value is
-// `MEDIUS_STATUS_ERR_INVALID_ARG`.
-MediusStatus medius_device_set_patch(struct MediusDevice *dev, const struct MediusPatch *patch);
+// stores it); the set reaches the game PC when the clone is next presented under the opt-in:
+// `medius_device_apply_patch`, the opt-in turning on, or the device attaching. `patch->section` takes
+// a `MEDIUS_PATCH_SECTION_*` constant; any other value is `MEDIUS_STATUS_ERR_INVALID_ARG`.
+MediusStatus medius_device_set_patch(struct MediusDevice *dev,
+                                     const struct MediusPatch *patch);
 
 // `PATCH` APPLY (§3.14): re-present the clone with the stored patch set (one replug to the game PC).
 // Gated on the imperfect-clone opt-in; with it off this is `MEDIUS_STATUS_ERR_IMPERFECT_REQUIRED`.
+// The box re-presents only while the stored set differs from the one served, so applying an emptied
+// set serves the device unpatched, and it leaves a refused set that has not changed since. Presenting
+// the clone again releases the session like a replug of the device; the library re-sends what it
+// holds once the new clone is up, and `medius_clip_lost` reports a clip it dropped.
 MediusStatus medius_device_apply_patch(struct MediusDevice *dev);
 
-// `PATCH` CLEAR (§3.14): drop every patch for this device and re-present the clone unpatched.
+// `PATCH` CLEAR (§3.14): erase this device's stored set (the last attached one's when unplugged). A
+// clone serving patches re-presents unpatched (one replug to the game PC), which releases the session
+// as `medius_device_apply_patch` does, and the library re-sends it the same way.
 MediusStatus medius_device_clear_patch(struct MediusDevice *dev);
 
 // `QUERY(PATCHES)` → `*out` (§4.17): the stored patch set and its apply state, a row per patch
@@ -2618,7 +2664,7 @@ const uint8_t *medius_traffic_event_setup(const struct MediusTrafficEvent *event
 const uint8_t *medius_traffic_event_data(const struct MediusTrafficEvent *event,
                                          uintptr_t *out_len);
 
-// What the real device answered, written to `*out`; false for any class but CONTROL. Mirrors
+// The handshake the game PC received, written to `*out`; false for any class but CONTROL. Mirrors
 // `medius::TrafficEvent::control_status`.
 bool medius_traffic_event_control_status(const struct MediusTrafficEvent *event,
                                          MediusControlStatus *out);
@@ -2633,6 +2679,11 @@ bool medius_traffic_event_transfer_status(const struct MediusTrafficEvent *event
 // `medius::TrafficEvent::bus_event`.
 bool medius_traffic_event_bus_event(const struct MediusTrafficEvent *event,
                                     struct MediusBusEvent *out);
+
+// Whether a rewrite rule at this event's class changed, dropped, answered or refused the packet: flags
+// bit 7 on HID_IN, HID_OUT, VENDOR_INTERRUPT, VENDOR_BULK, CONTROL and EMIT, false for any other
+// class. Mirrors `medius::TrafficEvent::rule_acted`.
+bool medius_traffic_event_rule_acted(const struct MediusTrafficEvent *event);
 
 // Whether this event carries end-of-transfer, for a VEND_BULK event. Mirrors
 // `medius::TrafficEvent::bulk_end_of_transfer`.
@@ -2970,10 +3021,10 @@ void medius_mock_set_clip_settings(struct MediusMockBox *mock, struct MediusClip
 #if defined(MEDIUS_FEATURE_MOCK)
 // Run one packet through the mock's packet triggers, as the box does for a packet crossing `class`
 // at `id` in `direction` whose first bytes are `head[0..head_len]`. The most specific trigger the
-// head matches wins it and counts it in its `hits`. Returns whether the winner drives its action on
-// this packet, with the `MEDIUS_CLIP_ACTION_*` value in `*out_action`; false when no trigger wins,
-// and when the winner is `once_per_run` and the packet continues a run. `*out_consumed` is whether
-// the winner consumes the packet, whatever the return. A null out is skipped.
+// head matches counts it in its `hits`. Returns whether that trigger drives its action on this
+// packet, with the `MEDIUS_CLIP_ACTION_*` value in `*out_action`; false when no trigger matches,
+// and when that trigger is `once_per_run` and the packet continues a run. `*out_consumed` is
+// whether that trigger consumes the packet, whatever the return. A null out is skipped.
 //
 // A packet travels `POSITIVE` (IN) or `NEGATIVE` (OUT) across a surface that carries that flow: IN
 // for `MEDIUS_CATCH_CLASS_HID_IN` and `_EMIT`, OUT for `_HID_OUT`, either for the vendor classes and
@@ -2987,6 +3038,32 @@ bool medius_mock_clip_packet(struct MediusMockBox *mock,
                              uintptr_t head_len,
                              uint8_t *out_action,
                              bool *out_consumed);
+#endif
+
+#if defined(MEDIUS_FEATURE_MOCK)
+// Simulate a device-chip restart: the mock drops its session state, keeps what it stores, sends its
+// hello now and again on the next frame it receives, and has its clone back 100 ms later.
+void medius_mock_restart(struct MediusMockBox *mock);
+#endif
+
+#if defined(MEDIUS_FEATURE_MOCK)
+// Simulate the inter-chip link dropping and coming back: the mock releases the session a host set
+// (counted in `MediusStats::session`) and the clone stays up.
+void medius_mock_link_lost(struct MediusMockBox *mock);
+#endif
+
+#if defined(MEDIUS_FEATURE_MOCK)
+// Simulate the real device detaching: the mock releases the session a host set at once. With
+// `back_within_grace` the same device re-attaches inside the 250 ms grace and the clone stays up;
+// otherwise the clone is torn down when the grace ends, which counts again only after a command
+// arrived in it, and stays down until `medius_mock_attach`.
+void medius_mock_detach(struct MediusMockBox *mock, bool back_within_grace);
+#endif
+
+#if defined(MEDIUS_FEATURE_MOCK)
+// Simulate the device attaching again: inside a detach's grace the clone stays as it is; after the
+// teardown a fresh clone starts, which has nothing to release.
+void medius_mock_attach(struct MediusMockBox *mock);
 #endif
 
 #if defined(MEDIUS_FEATURE_MOCK)

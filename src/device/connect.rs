@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use crate::error::{Error, Result};
 use crate::link::reconnect::BoxIdentity;
-use crate::protocol::opcode::{Q_CAPS, Q_VERSION};
+use crate::protocol::opcode::{Q_CAPS, Q_STATS, Q_VERSION};
 use crate::protocol::{PROTO_VER, Resp, parse_resp};
 use crate::transport::Transport;
 use crate::types::Version;
@@ -79,6 +79,13 @@ impl Device {
                 .desired()
                 .lock()
                 .note_declared_buttons(caps.mouse.n_buttons);
+        }
+        // The box's session counter as it stands, so a release from here on is noticed however soon
+        // it comes.
+        if let Ok(payload) = self.link.query_timeout(Q_STATS, HANDSHAKE_ATTEMPT_TIMEOUT)
+            && let Some(Resp::Stats(stats)) = parse_resp(&payload)
+        {
+            self.link.restart_watch().note_session(stats.session);
         }
         Ok(version)
     }

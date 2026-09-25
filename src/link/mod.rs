@@ -6,6 +6,7 @@ pub(crate) mod logs;
 pub(crate) mod reader;
 pub(crate) mod reconcile;
 pub(crate) mod reconnect;
+pub(crate) mod restart;
 pub(crate) mod slot;
 
 use std::collections::HashMap;
@@ -26,6 +27,7 @@ use correlation::PendingEntry;
 use counters::Counters;
 use reconcile::DesiredState;
 use reconnect::BoxIdentity;
+use restart::RestartWatch;
 use slot::TransportSlot;
 
 /// Default `RESP` wait before [`Error::QueryTimeout`](crate::Error::QueryTimeout).
@@ -60,6 +62,7 @@ pub(crate) struct LinkInner {
     // The opened box's stable identity (CH343 serial + device MAC), set once the handshake succeeds.
     // Reconnect anchors to it so a rescan never adopts a different box that happens to be present.
     identity: Arc<Mutex<Option<BoxIdentity>>>,
+    restart: Arc<RestartWatch>,
     query_timeout: Duration,
     reader: Option<JoinHandle<()>>,
     keepalive: Option<JoinHandle<()>>,
@@ -122,6 +125,7 @@ impl Link {
         let reconnect_lock = Arc::new(Mutex::new(()));
         let identity: Arc<Mutex<Option<BoxIdentity>>> = Arc::new(Mutex::new(None));
         let held_updates: Arc<Mutex<Vec<Vec<u8>>>> = Arc::new(Mutex::new(Vec::new()));
+        let restart = Arc::new(RestartWatch::default());
 
         let reader = reader::spawn_reader(
             Arc::clone(&transport),
@@ -132,6 +136,7 @@ impl Link {
             Arc::clone(&events),
             Arc::clone(&counters),
             Arc::clone(&stop),
+            Arc::clone(&restart),
             reconnect::ReconnectCtx {
                 transport: Arc::clone(&transport),
                 write_lock: Arc::clone(&write_lock),
@@ -143,6 +148,7 @@ impl Link {
                 catch_lock: Arc::clone(&catch_lock),
                 held_updates: Arc::clone(&held_updates),
                 updates_rx: updates_rx.clone(),
+                restart: Arc::clone(&restart),
             },
         );
 
@@ -155,6 +161,9 @@ impl Link {
             catch_lock: Arc::clone(&catch_lock),
             stop: Arc::clone(&stop),
             cadence: keepalive_cadence,
+            pending: Arc::clone(&pending),
+            query_gen: Arc::clone(&query_gen),
+            restart: Arc::clone(&restart),
         });
 
         Link {
@@ -177,6 +186,7 @@ impl Link {
                 stop,
                 reconnect_lock,
                 identity,
+                restart,
                 query_timeout,
                 reader: Some(reader),
                 keepalive: Some(keepalive),
@@ -214,6 +224,10 @@ impl Link {
 
     pub(crate) fn desired(&self) -> &Mutex<DesiredState> {
         &self.inner.desired
+    }
+
+    pub(crate) fn restart_watch(&self) -> &RestartWatch {
+        &self.inner.restart
     }
 
     // Held across a rewrite-table mutation and its send so a keepalive/reconnect re-assert can't
@@ -269,6 +283,9 @@ fn write_frame(
     ty: FrameType,
     payload: &[u8],
 ) -> Result<()> {
+    if let Some(got) = transport.refused() {
+        return Err(crate::Error::BadProtoVer { got });
+    }
     let frame = encode(ty, seq, payload)?;
     let current = transport.current();
     {

@@ -186,11 +186,11 @@ class MockBox:
     ) -> Tuple[Optional[ClipAction], bool]:
         """Run one packet through the packet triggers, as the box does for a packet crossing
         `traffic_class` at `id` in `direction` whose first bytes are `head`. The most specific trigger
-        `head` matches wins it and counts it in its ``hits``.
+        `head` matches counts it in its ``hits``.
 
-        Returns the action the winner drives on this packet, and whether the winner consumes the
-        packet. The action is `None` when no trigger wins, and when the winner is ``once_per_run`` and
-        the packet continues a run.
+        Returns the action that trigger drives on this packet, and whether that trigger consumes the
+        packet. The action is `None` when no trigger matches, and when that trigger is
+        ``once_per_run`` and the packet continues a run.
 
         A packet travels ``IN`` or ``OUT`` across a surface that carries that flow: ``IN`` for
         ``HID_IN`` and ``EMIT``, ``OUT`` for ``HID_OUT``, either for the vendor classes and
@@ -210,6 +210,29 @@ class MockBox:
             ctypes.byref(consumed),
         )
         return (ClipAction(action.value) if fired else None, bool(consumed.value))
+
+    def restart(self):
+        """Simulate a device-chip restart: the mock drops its session state, keeps what it stores,
+        sends its hello now and again on the next frame it receives, and has its clone back 100 ms
+        later."""
+        _native.lib.medius_mock_restart(self._handle)
+
+    def link_lost(self):
+        """Simulate the inter-chip link dropping and coming back: the mock releases the session a host
+        set (counted in `Stats.session`) and the clone stays up."""
+        _native.lib.medius_mock_link_lost(self._handle)
+
+    def detach(self, back_within_grace: bool = False):
+        """Simulate the real device detaching: the mock releases the session a host set. With
+        `back_within_grace` the same device re-attaches inside the 250 ms grace and the clone stays up;
+        otherwise the clone is torn down when the grace ends, which counts again only after a command
+        arrived in it, and stays down until `attach`."""
+        _native.lib.medius_mock_detach(self._handle, bool(back_within_grace))
+
+    def attach(self):
+        """Simulate the device attaching again: inside a detach's grace the clone stays as it is; after
+        the teardown a fresh clone starts, which has nothing to release."""
+        _native.lib.medius_mock_attach(self._handle)
 
     def silent(self):
         """Make the mock stop answering queries (one-way, for timeout tests)."""

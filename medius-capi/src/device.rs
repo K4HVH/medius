@@ -254,7 +254,7 @@ pub unsafe extern "C" fn medius_device_wheel(dev: *mut MediusDevice, delta: i16)
     with_device(dev, |d| d.wheel(delta))
 }
 
-/// A cursor move that bypasses movement riding: it emits on the box's own clock.
+/// A cursor move that bypasses movement riding: it leaves on the next mouse report the box sends.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_device_move_rel_now(
     dev: *mut MediusDevice,
@@ -571,6 +571,10 @@ pub unsafe extern "C" fn medius_device_reboot(dev: *mut MediusDevice, target: u8
     with_device(dev, |d| d.reboot(target))
 }
 
+/// `OPTION(IMPERFECT)`: opt into cloning a device the box cannot clone faithfully, or back to
+/// faithful-only. A toggle that changes the patch set the clone serves presents the clone again, which
+/// releases the session like a replug of the device; the library re-sends what it holds once the new
+/// clone is up, and `medius_clip_lost` reports a clip it dropped.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_device_allow_imperfect_clones(
     dev: *mut MediusDevice,
@@ -718,7 +722,10 @@ fn with_rewrite_rule(
 /// (`..._REWRITE_MATCH_TOO_LONG`), the action must be valid for the class
 /// (`..._REWRITE_ACTION_CLASS`), the direction must not be bearing-relative
 /// (`..._RELATIVE_DIRECTION`), and the payload must fit the box's head
-/// (`..._REWRITE_PAYLOAD_TOO_LARGE`). `medius_device_query_rewrite` confirms what the box holds.
+/// (`..._REWRITE_PAYLOAD_TOO_LARGE`). A new rule past `MEDIUS_MAX_REWRITE_ENTRIES` is
+/// `..._REWRITE_TABLE_FULL`, and a payload past what the held rules leave of
+/// `MEDIUS_REWRITE_PAYLOAD_POOL` is `..._REWRITE_POOL_FULL`. `medius_device_query_rewrite` confirms
+/// what the box holds.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_device_set_rewrite(
     dev: *mut MediusDevice,
@@ -784,9 +791,9 @@ fn with_patch(
 
 /// `PATCH` (§3.14): store one descriptor patch, keyed by `(section, cfg, index, offset)`. A patch
 /// with `len` 0 removes the patch at that key. Storing is not gated on the opt-in (the box always
-/// stores it); it takes effect only once `medius_device_apply_patch` re-presents the clone under the
-/// opt-in. `patch->section` takes a `MEDIUS_PATCH_SECTION_*` constant; any other value is
-/// `MEDIUS_STATUS_ERR_INVALID_ARG`.
+/// stores it); the set reaches the game PC when the clone is next presented under the opt-in:
+/// `medius_device_apply_patch`, the opt-in turning on, or the device attaching. `patch->section` takes
+/// a `MEDIUS_PATCH_SECTION_*` constant; any other value is `MEDIUS_STATUS_ERR_INVALID_ARG`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_device_set_patch(
     dev: *mut MediusDevice,
@@ -797,12 +804,18 @@ pub unsafe extern "C" fn medius_device_set_patch(
 
 /// `PATCH` APPLY (§3.14): re-present the clone with the stored patch set (one replug to the game PC).
 /// Gated on the imperfect-clone opt-in; with it off this is `MEDIUS_STATUS_ERR_IMPERFECT_REQUIRED`.
+/// The box re-presents only while the stored set differs from the one served, so applying an emptied
+/// set serves the device unpatched, and it leaves a refused set that has not changed since. Presenting
+/// the clone again releases the session like a replug of the device; the library re-sends what it
+/// holds once the new clone is up, and `medius_clip_lost` reports a clip it dropped.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_device_apply_patch(dev: *mut MediusDevice) -> MediusStatus {
     with_device(dev, |d| d.apply_patch())
 }
 
-/// `PATCH` CLEAR (§3.14): drop every patch for this device and re-present the clone unpatched.
+/// `PATCH` CLEAR (§3.14): erase this device's stored set (the last attached one's when unplugged). A
+/// clone serving patches re-presents unpatched (one replug to the game PC), which releases the session
+/// as `medius_device_apply_patch` does, and the library re-sends it the same way.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_device_clear_patch(dev: *mut MediusDevice) -> MediusStatus {
     with_device(dev, |d| d.clear_patch())

@@ -3,6 +3,7 @@ use crate::link::reconcile::StoredRewrite;
 use crate::protocol::command::rewrite_payload;
 use crate::protocol::opcode::{
     MAX_PAYLOAD, Q_REWRITE, Q_REWRITE_ENTRY, REWRITE_MATCH_MAX, REWRITE_MAX_ENTRIES,
+    REWRITE_PAYLOAD_POOL,
 };
 use crate::protocol::{FrameType, Resp, parse_resp};
 use crate::types::rewrite::{REWRITE_CLEAR_ID, rewrite_entry_from_payload};
@@ -16,9 +17,15 @@ impl Device {
     /// The on-box rewrite table matches traffic in flight and rewrites, answers, refuses or drops it
     /// per the rule's [`action`](RewriteRule::action). A rule is keyed by
     /// `(class, id, direction, match, mask)`; setting one whose key exists overwrites it. Rules are
-    /// session state, re-asserted on reconnect and held alive by the keepalive exactly like a
-    /// [`lock`](Device::lock) or a catch subscription, and cleared on control-PC silence,
-    /// [`reset`](Device::reset), a re-clone, or the opt-in going off.
+    /// session state, re-asserted after a reconnect, a device-chip restart or any release of the
+    /// session the box counts, and held alive by the keepalive exactly like a [`lock`](Device::lock).
+    /// The box clears them on control-PC silence, [`reset`](Device::reset), a device detach, a link
+    /// drop, a re-clone, or the opt-in going off.
+    ///
+    /// A new rule past [`REWRITE_MAX_ENTRIES`](crate::REWRITE_MAX_ENTRIES) is
+    /// [`Error::RewriteTableFull`](crate::Error::RewriteTableFull), and a payload past what the other
+    /// held rules leave of [`REWRITE_PAYLOAD_POOL`](crate::REWRITE_PAYLOAD_POOL) is
+    /// [`Error::RewritePoolFull`](crate::Error::RewritePoolFull).
     ///
     /// Gated on [`allow_imperfect_clones`](Device::allow_imperfect_clones): with the opt-in off this
     /// returns [`Error::ImperfectRequired`](crate::Error::ImperfectRequired). The rule's `match` and
@@ -40,8 +47,18 @@ impl Device {
         let _serial = self.link.reassert_guard();
         {
             let d = self.link.desired().lock();
-            if !d.holds_rewrite(&to_stored(rule).key()) && d.rewrite_count() >= REWRITE_MAX_ENTRIES
-            {
+            let key = to_stored(rule).key();
+            // Costed as the box costs it: the payload against the pool less the bytes an overwrite
+            // gives back, then the entry count for a new key.
+            let free = REWRITE_PAYLOAD_POOL.saturating_sub(d.rewrite_pool_used_except(&key));
+            if rule.payload.len() > free {
+                return Err(Error::RewritePoolFull {
+                    len: rule.payload.len(),
+                    free,
+                    limit: REWRITE_PAYLOAD_POOL,
+                });
+            }
+            if !d.holds_rewrite(&key) && d.rewrite_count() >= REWRITE_MAX_ENTRIES {
                 return Err(Error::RewriteTableFull {
                     limit: REWRITE_MAX_ENTRIES,
                 });

@@ -212,51 +212,145 @@ mod mock_roundtrip {
         assert_eq!(read.bytes, vec![0xAB; 300]);
     }
 
+    // pending is the stored set against the one the clone serves, and applied is that one being
+    // non-empty: an edit, or emptying the set, after an apply leaves the clone as it was until the
+    // next apply.
     #[test]
-    fn pending_and_applied_are_mutually_exclusive() {
-        // usbdev_pack_patches derives pending = (n && !applied), so the two are never both set. Storing
-        // a further patch after an apply does not un-apply the set, and pending stays clear.
+    fn pending_is_the_stored_set_against_the_one_served() {
         let device = Device::with_mock(MockBox::new().with_imperfect(true));
-        device
-            .set_patch(&Patch::new(PatchSection::Device, 8, [0x34, 0x12]))
-            .unwrap();
-        let set = device.query_patches().unwrap();
-        assert!(set.pending && !set.applied);
+        let flags = || {
+            let set = device.query_patches().unwrap();
+            (set.applied, set.pending)
+        };
+        let a = Patch::new(PatchSection::Device, 8, [0x34, 0x12]);
+        device.set_patch(&a).unwrap();
+        assert_eq!(flags(), (false, true), "stored, not yet applied");
         device.apply_patch().unwrap();
-        let set = device.query_patches().unwrap();
-        assert!(set.applied && !set.pending);
-        // A store after the apply leaves applied standing (the box does not un-apply on a store), so the
-        // derived pending stays clear; the sticky-bools bug reported applied and pending both true.
+        assert_eq!(flags(), (true, false));
+
         device
             .set_patch(&Patch::new(PatchSection::Device, 10, [0x56]))
             .unwrap();
-        let set = device.query_patches().unwrap();
-        assert!(set.applied, "a store does not un-apply the set");
-        assert!(
-            !set.pending,
-            "pending is (n && !applied): mutually exclusive with applied, never both stuck true"
-        );
+        assert_eq!(flags(), (true, true), "an edit after an apply is pending");
+        device.apply_patch().unwrap();
+        assert_eq!(flags(), (true, false));
+
+        // Emptied over an applied clone: still served patched until the apply re-presents it bare.
+        for off in [8, 10] {
+            device
+                .set_patch(&Patch::new(PatchSection::Device, off, []))
+                .unwrap();
+        }
+        assert_eq!(flags(), (true, true), "an emptied set is pending");
+        assert!(device.query_health().unwrap().patch_on);
+        device.apply_patch().unwrap();
+        assert_eq!(flags(), (false, false));
+        assert!(!device.query_health().unwrap().patch_on);
+
+        // With the opt-in off the clone is served bare, and a stored set waits. The toggle presents
+        // the clone on the box's next loop tick, not inside the command.
+        let settle = |want: (bool, bool), what: &str| {
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
+            while flags() != want {
+                assert!(std::time::Instant::now() < deadline, "{what}");
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+        };
+        device.set_patch(&a).unwrap();
+        device.apply_patch().unwrap();
+        device.allow_imperfect_clones(false).unwrap();
+        settle((false, true), "the opt-in going off withdraws the set");
+        device.allow_imperfect_clones(true).unwrap();
+        settle((true, false), "the opt-in coming back re-presents the set");
     }
 
     #[test]
-    fn table_full_recomputes_on_removal() {
-        // full = (n >= PATCH_MAX), recomputed each pack: filling the store sets it, removing a patch
-        // clears it again rather than latching the way a sticky flag would.
+    fn clear_serves_the_clone_bare_in_place() {
+        let device = Device::open_mock(MockBox::new().with_imperfect(true)).unwrap();
+        device
+            .set_patch(&Patch::new(PatchSection::Device, 8, [0x34, 0x12]))
+            .unwrap();
+        device.apply_patch().unwrap();
+        device.clear_patch().unwrap();
+        let set = device.query_patches().unwrap();
+        assert!(set.entries.is_empty() && !set.applied && !set.pending);
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        assert_eq!(device.counters().restarts, 0, "a clear is no restart");
+    }
+
+    // full is the last store refused for room, by count or by pool, and any change the box takes
+    // resets it. It does not describe how many patches are stored.
+    #[test]
+    fn table_full_is_the_last_store_refused_for_room() {
         let device = Device::with_mock(MockBox::new());
+        let full = || device.query_patches().unwrap().table_full;
         for off in 0..PATCH_MAX_ENTRIES {
             device
                 .set_patch(&Patch::new(PatchSection::Device, off as u16, [0xAB]))
                 .unwrap();
         }
-        let set = device.query_patches().unwrap();
-        assert_eq!(set.entries.len(), PATCH_MAX_ENTRIES);
-        assert!(set.table_full);
-        // Remove one (empty bytes at its key); the store drops below the cap and full clears.
+        assert_eq!(
+            device.query_patches().unwrap().entries.len(),
+            PATCH_MAX_ENTRIES
+        );
+        assert!(!full(), "a store at the count is no refusal");
         device
-            .set_patch(&Patch::new(PatchSection::Device, 0, []))
+            .set_patch(&Patch::new(PatchSection::Device, 99, [0xAB]))
             .unwrap();
-        let set = device.query_patches().unwrap();
-        assert_eq!(set.entries.len(), PATCH_MAX_ENTRIES - 1);
-        assert!(!set.table_full);
+        assert!(full());
+        assert_eq!(
+            device.query_patches().unwrap().entries.len(),
+            PATCH_MAX_ENTRIES
+        );
+        // Overwriting a stored key needs no new entry, so it goes in, and clears the flag.
+        device
+            .set_patch(&Patch::new(PatchSection::Device, 0, [0xCD]))
+            .unwrap();
+        assert!(!full());
+
+        // The pool: 1024 bytes across every patch. An overwrite that does not fit keeps the old one.
+        let device = Device::with_mock(MockBox::new());
+        let full = || device.query_patches().unwrap().table_full;
+        let big = |off: u16, len: usize| Patch::new(PatchSection::Device, off, vec![0x11; len]);
+        device.set_patch(&big(0, 500)).unwrap();
+        device.set_patch(&big(1, 500)).unwrap();
+        device.set_patch(&big(2, 25)).unwrap();
+        assert!(full(), "1025 bytes");
+        device.set_patch(&big(2, 24)).unwrap();
+        assert!(!full(), "1024 bytes fit");
+        device.set_patch(&big(1, 501)).unwrap();
+        assert!(full());
+        assert_eq!(device.query_patch_entry(1).unwrap().bytes.len(), 500);
+        device.set_patch(&big(2, 0)).unwrap();
+        assert!(!full(), "a removal is a change");
+    }
+
+    // The bytes a key already holds change nothing: the patch keeps its place in the set, and a
+    // refusal for room stays reported.
+    #[test]
+    fn re_storing_the_bytes_held_changes_nothing() {
+        let device = Device::with_mock(MockBox::new());
+        let first = Patch::new(PatchSection::Device, 8, [0x34, 0x12]);
+        let second = Patch::new(PatchSection::Device, 10, [0x56]);
+        device.set_patch(&first).unwrap();
+        device.set_patch(&second).unwrap();
+        device.set_patch(&first).unwrap();
+        assert_eq!(device.query_patch_entry(0).unwrap(), first);
+        // A new value for the key is a change, and moves it to the end.
+        let changed = Patch::new(PatchSection::Device, 8, [0x35, 0x12]);
+        device.set_patch(&changed).unwrap();
+        assert_eq!(device.query_patch_entry(1).unwrap(), changed);
+
+        for off in [12, 13, 14] {
+            device
+                .set_patch(&Patch::new(PatchSection::Device, off, vec![0x11; 500]))
+                .unwrap();
+        }
+        assert!(device.query_patches().unwrap().table_full);
+        device.set_patch(&second).unwrap();
+        assert!(
+            device.query_patches().unwrap().table_full,
+            "an identical re-store is no change"
+        );
     }
 }
