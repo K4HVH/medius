@@ -1,4 +1,4 @@
-//! Decoded `RESP(CAPS)`: unified capabilities of the whole cloned device (§4.4).
+//! Decoded `RESP(CAPS)`: capabilities of the whole cloned device (§4.4).
 
 use super::{KbdCaps, MouseCaps};
 use crate::protocol::opcode::{
@@ -6,16 +6,18 @@ use crate::protocol::opcode::{
     KBC_NKRO, KBC_REPORT_ID, KBC_SYSTEM,
 };
 
-/// A semantic capability summary of the whole cloned device, mouse and keyboard, from one [`caps()`](crate::Device::caps) query.
+/// Capability summary of the cloned device, mouse and keyboard, from one
+/// [`caps()`](crate::Device::caps) query.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct Caps {
     /// Mouse capabilities (all-zero when no mouse is bound).
     pub mouse: MouseCaps,
     /// Keyboard capabilities (all-zero when no keyboard is bound).
     pub keyboard: KbdCaps,
-    /// The mouse class is change-driven; always `false` because mouse motion is continuous.
+    /// Mouse class is change-driven; always `false`, as mouse motion is continuous.
     pub mouse_change_driven: bool,
-    /// The keyboard/media class is change-driven; `true` when a keyboard is bound, since it reports only on a key change.
+    /// Keyboard/media class is change-driven; `true` when a keyboard is bound, as it reports only on
+    /// a key change.
     pub kbd_change_driven: bool,
 }
 
@@ -35,7 +37,7 @@ impl Caps {
         self.mouse.n_hid > 1
     }
 
-    /// Decode a `RESP(CAPS)` payload (§4.4): `[what][n_buttons][axis_flags][n_hid][n_keys][kbd_flags][change_driven]`.
+    /// `[what][n_buttons][axis_flags][n_hid][n_keys][kbd_flags][change_driven]` (§4.4).
     pub(crate) fn from_payload(p: &[u8]) -> Option<Caps> {
         if p.len() < 7 {
             return None;

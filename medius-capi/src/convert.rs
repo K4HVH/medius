@@ -41,9 +41,8 @@ fn read_cstr(src: &[c_char]) -> String {
     String::from_utf8_lossy(&bytes).into_owned()
 }
 
-// Every enum crosses this boundary as a byte, because materialising a `#[repr(u8)]` enum from one a
-// caller chose is undefined behaviour before any check can run. These are the total maps back, keyed
-// on the C ABI's own discriminants; each answers `None` for a byte no constant names.
+// Every enum crosses as a byte: materialising a `#[repr(u8)]` enum from a caller's byte is
+// undefined behaviour before any check can run.
 
 fn kind_to_c(k: DeviceKind) -> u8 {
     let k = match k {
@@ -212,7 +211,7 @@ impl From<Bearing> for MediusBearing {
     }
 }
 
-/// A `MEDIUS_BLANKET_*` byte to a [`Blanket`], or `None` for a value the enum does not name.
+/// A `MEDIUS_BLANKET_*` byte to a [`Blanket`], or `None` for an unnamed value.
 pub(crate) fn blanket_from_c(v: u8) -> Option<Blanket> {
     Some(match v {
         0 => Blanket::Aim,
@@ -249,8 +248,7 @@ pub(crate) fn lock_target_to_medius(v: MediusLockTarget) -> Option<LockTarget> {
     })
 }
 
-// `MediusUsage` to a [`Usage`]; `None` for a `kind` no constant names, or a button/key id past a
-// `u8` (any button id fits a button, so only a value above 255 is refused).
+// `MediusUsage` to a [`Usage`]; `None` for an unnamed `kind`, or a button/key id above 255.
 pub(crate) fn input_to_medius(v: MediusUsage) -> Option<Usage> {
     Some(match Class::from_u8(v.kind)? {
         Class::Button => Usage::from(Button::from_id(u8::try_from(v.id).ok()?)),
@@ -276,8 +274,8 @@ fn lock_target_to_c(t: LockTarget) -> MediusLockTarget {
     }
 }
 
-/// The `MediusLockTargetKind` that names an axis. The four axis kinds share the `MediusAxis` values,
-/// so this is total over [`Axis`].
+/// The `MediusLockTargetKind` naming an axis; total over [`Axis`], since the four axis kinds share
+/// the `MediusAxis` values.
 fn axis_lock_kind(a: Axis) -> MediusLockTargetKind {
     match a {
         Axis::X => MediusLockTargetKind::X,
@@ -451,6 +449,10 @@ impl From<Stats> for MediusStats {
             wakeups: s.wakeups,
             reset_count: s.reset_count,
             config_count: s.config_count,
+            link_rx_drops: s.link_rx_drops,
+            host_rx_drops: s.host_rx_drops,
+            relay_drops: s.relay_drops,
+            session: s.session,
         }
     }
 }
@@ -514,14 +516,13 @@ pub(crate) fn catch_filter_to_c(f: CatchFilter) -> MediusCatchFilter {
     }
 }
 
-// The C struct back to a [`CatchFilter`]; `None` when the four values address nothing the box would
-// accept: an unknown class, an unknown direction, or the wildcard class carrying a real id.
+// The C struct back to a [`CatchFilter`]; `None` for an unknown class or direction, or the wildcard
+// class with a real id.
 pub(crate) fn catch_filter_from_c(f: MediusCatchFilter) -> Option<CatchFilter> {
     CatchFilter::from_wire(f.class, f.id, f.direction, f.capture)
 }
 
-// A decoded [`InputEvent`] to the C struct. The unused arms are zeroed rather than left undefined:
-// a C caller reading `dx` on a press must see 0, not whatever was on the stack.
+// A decoded [`InputEvent`] to the C struct, unused arms zeroed so `dx` on a press reads 0.
 pub(crate) fn input_event_to_c(e: InputEvent) -> MediusInputEvent {
     let blank = blank_usage();
     let (kind, usage, dx, dy, dz, pan) = match e.input {
@@ -596,15 +597,10 @@ impl From<ImperfectStatus> for MediusImperfectStatus {
     }
 }
 
-// The advanced control layer (§3.14): raw injection, control transfers, rewrite rules and descriptor
-// patches. The class/action/direction/section enums cross the boundary as bytes, mapped back through
-// the crate's own `from_u8`, so a byte no variant names becomes `None` and is refused rather than
-// materialised as an enum. The variable-length fields follow the catch-event convention: a fixed max
-// array plus a length, truncated at the array's capacity.
+// Advanced control layer (§3.14): raw injection, control transfers, rewrite rules, descriptor
+// patches.
 
-// A read-only byte slice from a caller pointer + length. `from_raw_parts` needs a non-null aligned
-// pointer even for a zero length, so an empty request maps to a real empty slice, and a null pointer
-// with a non-zero length is refused before it is read.
+// A read-only byte slice from a caller pointer and length.
 pub(crate) unsafe fn opt_slice<'a>(ptr: *const u8, len: usize) -> Option<&'a [u8]> {
     if len == 0 {
         Some(&[])
@@ -639,8 +635,8 @@ impl From<TransferOutcome> for MediusTransferOutcome {
     }
 }
 
-// `len` bytes of a match or mask array, zero-filled past the array's end so the length checks see
-// the length the caller declared.
+// `len` bytes of a match or mask array, zero-filled past its end so the length checks see the
+// declared length.
 fn match_field(bytes: &[u8], len: u16) -> Vec<u8> {
     let len = len as usize;
     let mut v = bytes[..len.min(bytes.len())].to_vec();
@@ -649,8 +645,7 @@ fn match_field(bytes: &[u8], len: u16) -> Vec<u8> {
 }
 
 // A `MediusRewriteRule` to a [`RewriteRule`]; `None` for a class, action or direction byte no
-// constant names. `match_len` and `mask_len` are kept separate so an unequal pair still reaches the
-// crate, which refuses it with `RewriteMaskLength` rather than this layer papering over it.
+// constant names.
 pub(crate) fn rewrite_rule_from_c(c: &MediusRewriteRule) -> Option<RewriteRule> {
     let pl = (c.payload_len as usize).min(MEDIUS_MAX_DEV_PAYLOAD);
     Some(RewriteRule {
@@ -731,8 +726,8 @@ impl From<RewriteTable> for MediusRewriteTable {
     }
 }
 
-// A `MediusPatch` to a [`Patch`]; `None` for a section byte no constant names (the `APPLY`/`CLEAR`
-// engine verbs are not sections and decode to `None`).
+// A `MediusPatch` to a [`Patch`]; `None` for a section byte no constant names and for the
+// `APPLY`/`CLEAR` verbs.
 pub(crate) fn patch_from_c(c: &MediusPatch) -> Option<Patch> {
     let n = (c.len as usize).min(MEDIUS_MAX_DEV_PAYLOAD);
     Some(Patch {
@@ -795,10 +790,8 @@ impl From<PatchSet> for MediusPatchSet {
     }
 }
 
-// A `MediusTransform` to a [`Transform`]; `None` for an op, source or dest byte no constant names. A
-// transform addresses a field the same way a lock does, so both cross as a `MediusLockTarget`. The
-// structural refusal (an op a class pair cannot take, including a field named as both ends) is the
-// crate's, made when the transform is sent.
+// A `MediusTransform` to a [`Transform`]; `None` for an op, source or dest byte no constant names.
+// Transforms address fields as locks do, so both cross as a `MediusLockTarget`.
 pub(crate) fn transform_from_c(c: &MediusTransform) -> Option<Transform> {
     Some(Transform {
         op: TransformOp::from_u8(c.op)?,
@@ -845,9 +838,8 @@ fn clip_state_to_c(s: ClipState) -> u8 {
     s as u8
 }
 
-// An out struct is zeroed whole and then written a field at a time, so every byte a caller reads is
-// defined, the padding between fields included. A struct built by value and copied out carries
-// whatever its padding held, and two reads of one state then differ under `memcmp`.
+// Out structs are zeroed whole, then written field by field, so every byte a caller reads is
+// defined, padding included.
 fn write_usage(dst: &mut MediusUsage, u: Usage) {
     dst.kind = u.class.as_u8();
     dst.id = u.id;
@@ -878,9 +870,8 @@ pub(crate) fn traffic_class_from_c(v: u8) -> Option<TrafficClass> {
     TrafficClass::try_from(CatchClass::from_u8(v)?).ok()
 }
 
-// The `(class, id, direction, match, mask)` key of a `MediusClipPacketTrigger`, as a trigger that
-// drives `action`; `None` for a class or direction byte no constant names. `match_len` and `mask_len`
-// are kept separate so an unequal pair still reaches the crate, which refuses it.
+// A `MediusClipPacketTrigger`'s `(class, id, direction, match, mask)` key, as a trigger driving
+// `action`; `None` for a class or direction byte no constant names.
 fn clip_packet_key_from_c(
     c: &MediusClipPacketTrigger,
     action: medius::ClipAction,
@@ -933,8 +924,8 @@ fn write_clip_packet_trigger(c: &mut MediusClipPacketTrigger, e: &ClipPacketTrig
     c.hits = e.hits;
 }
 
-// Write `s` to `*out`, which must be valid for a write of one `MediusClipSettings`: autolock as a
-// `CLIP_LOCK_*` bitmask, each kind of trigger into its fixed array. A slot past its count reads zero.
+// Write `s` to `*out`, which must be valid for one `MediusClipSettings` write: autolock as a
+// `CLIP_LOCK_*` bitmask, each trigger kind into its fixed array. A slot past its count reads zero.
 pub(crate) unsafe fn clip_settings_to_c(s: &medius::ClipSettings, out: *mut MediusClipSettings) {
     unsafe { std::ptr::write_bytes(out, 0, 1) };
     let c = unsafe { &mut *out };
@@ -988,7 +979,7 @@ fn blanket_bit(b: Blanket) -> u8 {
     }
 }
 
-// Deserialise clip settings from the C struct (the inverse of [`clip_settings_to_c`]).
+// Clip settings from the C struct, the inverse of [`clip_settings_to_c`].
 #[cfg(feature = "mock")]
 pub(crate) fn clip_settings_from_c(c: &MediusClipSettings) -> medius::ClipSettings {
     let n = (c.n as usize).min(MEDIUS_CLIP_TRIG_MAX);
@@ -1102,6 +1093,7 @@ impl From<CountersSnapshot> for MediusCountersSnapshot {
             frames_rx: c.frames_rx,
             crc_drops: c.crc_drops,
             reconnects: c.reconnects,
+            restarts: c.restarts,
         }
     }
 }
@@ -1300,6 +1292,10 @@ impl From<MediusStats> for Stats {
             wakeups: s.wakeups,
             reset_count: s.reset_count,
             config_count: s.config_count,
+            link_rx_drops: s.link_rx_drops,
+            host_rx_drops: s.host_rx_drops,
+            relay_drops: s.relay_drops,
+            session: s.session,
         }
     }
 }

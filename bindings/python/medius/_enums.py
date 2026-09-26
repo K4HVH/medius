@@ -6,7 +6,7 @@ from enum import IntEnum
 
 
 class ImageState(IntEnum):
-    """What the bootloader thinks of the image a chip is running (§4.16)."""
+    """The bootloader's state for the image a chip is running (§4.16)."""
 
     NEW = 0
     PENDING_VERIFY = 1
@@ -59,6 +59,7 @@ class Status(IntEnum):
     ERR_CLIP_TRANSFER_DATA = 32
     ERR_CLIP_PACKET_TRIGGER = 33
     ERR_REWRITE_MATCH_TOO_LONG = 34
+    ERR_REWRITE_POOL_FULL = 35
 
 
 class DeviceKind(IntEnum):
@@ -99,7 +100,7 @@ class PendingMotion(IntEnum):
 
 
 class ClipState(IntEnum):
-    """The device-side clip lifecycle state (`ClipStatus.state`)."""
+    """Device-side clip lifecycle state (`ClipStatus.state`)."""
 
     IDLE = 0
     PLAYING = 1
@@ -107,17 +108,17 @@ class ClipState(IntEnum):
     FAULTED = 3
 
 
-#: The most edges one clip frame carries.
+#: Most edges per clip frame.
 CLIP_EDGES_MAX = 8
-#: The most raw reports one clip frame carries.
+#: Most raw reports per clip frame.
 CLIP_RAW_MAX = 8
-#: The most bytes one clip frame encodes to: one CLIP_APPEND payload.
+#: Most bytes a clip frame encodes to: one CLIP_APPEND payload.
 CLIP_ENTRY_MAX = 512
-#: The most packet triggers the box holds, beside its input triggers.
+#: Most packet triggers the box holds, beside its input triggers.
 CLIP_PKT_TRIG_MAX = 8
-#: The match bytes the box holds across every packet trigger.
+#: Match bytes the box holds across all packet triggers.
 CLIP_PKT_MATCH_POOL = 112
-#: The most match bytes one packet trigger compares.
+#: Most match bytes one packet trigger compares.
 PKT_MATCH_MAX = 16
 
 
@@ -130,7 +131,7 @@ class Edge(IntEnum):
 
 
 class ClipAction(IntEnum):
-    """The engine action a `ClipTrigger` or a `ClipPacketTrigger` drives."""
+    """The clip action a `ClipTrigger` or `ClipPacketTrigger` drives."""
 
     START = 0
     STOP = 1
@@ -154,7 +155,8 @@ class EmitMode(IntEnum):
 
 
 class RenderMode(IntEnum):
-    """The texture the box renders motion with: OFF is the paced fill, the rest render the device's learned texture and differ only in the onboard smoother."""
+    """Motion render texture: OFF is the paced fill; the rest render the device's learned texture
+    and differ only in the onboard smoother."""
 
     OFF = 0
     STOCK = 1
@@ -176,14 +178,14 @@ class LedMode(IntEnum):
 
 
 class Direction(IntEnum):
-    """Which way, on the one byte LOCK, CLIP and CATCH all carry.
+    """The direction byte LOCK, CLIP and CATCH all carry.
 
-    The members are named for the axis reading; `PRESS`/`RELEASE` and `IN`/`OUT` are the same two
-    values under names that read at the call site. The class selects which applies.
+    Members are named for axes; `PRESS`/`RELEASE` and `IN`/`OUT` alias the same two values for
+    momentary usages and traffic. The class selects which reading applies.
 
-    `WITH` and `AGAINST` name a sign relative to the bearing, the direction the box is currently
-    injecting, so the sign they cover follows the injection instead of the axis. Axes only, and
-    inert until a bearing is live (see `Device.set_bearing`).
+    `WITH` and `AGAINST` name a sign relative to the bearing, the direction the box is injecting, so
+    the sign they cover follows the injection. Axes only, and inert until a bearing is live
+    (`Device.set_bearing`).
     """
 
     BOTH = 0
@@ -209,14 +211,12 @@ Direction.OUT = Direction.NEGATIVE
 
 
 class BearingMode(IntEnum):
-    """How the box reads whether physical motion runs with or against its own injection."""
+    """How the box reads whether physical motion runs with or against its injection."""
 
-    #: Each axis compares its own sign against its own bearing, independently.
+    #: Each axis compares its sign against its own bearing.
     PER_AXIS = 0
-    #: The physical delta is projected onto the injected XY vector. One
-    #: relative scale governs both axes, the lower of X's and Y's, and that is what reads back.
-    #: Each axis's absolute scale then applies to what the projection left, not to the sign the report
-    #: carried: it governs what reaches the PC.
+    #: Projects the physical delta onto the injected XY vector. One relative scale, the lower of X's
+    #: and Y's, governs both axes and is what reads back.
     VECTOR = 1
 
 
@@ -226,15 +226,15 @@ LOCK_SCALE_BLOCK = 0
 LOCK_SCALE_PASS = 100
 #: LOCK scale ceiling: 2.55x.
 LOCK_SCALE_MAX = 255
-#: LOCK scale floor: the most a scale can reverse by. A negative one weighs the physical value and
-#: reverses what it keeps, so -100 is a plain inversion. Axes only.
+#: LOCK scale floor. A negative scale weighs the physical value and reverses what it keeps: -100
+#: inverts. Axes only.
 LOCK_SCALE_MIN = -255
-#: The bearing window the box holds before any host sets one, in ms.
+#: Bearing window before any host sets one, in ms.
 BEARING_WINDOW_DEFAULT_MS = 20
 
 
 class Axis(IntEnum):
-    """A relative axis. Values match the wire axis id a CATCH or LOCK entry carries."""
+    """A relative axis; values are the wire axis ids in CATCH and LOCK entries."""
 
     X = 0
     Y = 1
@@ -252,7 +252,7 @@ class LockTargetKind(IntEnum):
 
 
 class Blanket(IntEnum):
-    # ABI-local ordinals matching the Rust MediusBlanket, not the CLIP_LOCK_* wire bits.
+    # ABI ordinals of the Rust MediusBlanket, not the CLIP_LOCK_* wire bits.
     AIM = 0
     WHEEL = 1
     BUTTONS = 2
@@ -275,7 +275,8 @@ class CatchEventKind(IntEnum):
 
 
 class CatchClass(IntEnum):
-    """What a `CatchFilter` addresses. 0-3 are the classes LOCK and INJECT address; 4-11 are byte-oriented traffic."""
+    """What a `CatchFilter` addresses. 0-3 are the LOCK and INJECT classes; 4-11 are byte-oriented
+    traffic."""
 
     BUTTON = 0
     KEY = 1
@@ -291,7 +292,7 @@ class CatchClass(IntEnum):
     CLIP_TRANSFER = 11
 
     def is_input(self) -> bool:
-        """A parsed-input class: it arrives decoded and carries no packet, so a capture means nothing."""
+        """A parsed-input class: it arrives decoded with no packet, so capture does not apply."""
         return self <= CatchClass.AXIS
 
     def is_traffic(self) -> bool:
@@ -321,29 +322,30 @@ class InputKind(IntEnum):
 
 
 class ClockDomain(IntEnum):
-    """Which chip's clock stamped an event. The two boot independently, so never subtract across domains."""
+    """Which chip's clock stamped an event. The chips boot independently: never subtract across
+    domains."""
 
     HOST_CHIP = 0
     DEVICE_CHIP = 1
 
 
 class ControlStatus(IntEnum):
-    """What the real device answered a proxied control transaction with."""
+    """The handshake the game PC received for a control transaction. `STALLED` covers a device STALL,
+    a request a rule refused, and above endpoint 0 a request that failed; `NAKED` is endpoint 0 only."""
 
     OK = 0
     STALLED = 1
     NAKED = 2
-    #: A status byte this build does not know; read `TrafficEvent.flags` for its value. Distinct from
-    #: the three, so a future firmware's new status is not reported as a device fault that never
-    #: happened, and so decoding one does not raise.
+    #: A handshake value this build does not know; `TrafficEvent.flags` bits 0-1 hold it.
     OTHER = 3
 
 
 class RewriteClass(IntEnum):
     """A traffic class a rewrite rule addresses (§3.14).
 
-    These are the write-direction CATCH classes the box will rewrite; the parsed-input and bus classes
-    are not rewritable. `ANY` is the wire wildcard, matching every rewritable class at once.
+    The write-direction CATCH classes the box rewrites. `ANY` is the wire wildcard:
+    `PASS`/`PATCH`/`REPLACE` only, applied at every surface a packet crosses, so a native report can
+    hit it at `HID_IN` and again at `EMIT`.
     """
 
     HID_IN = 4
@@ -356,10 +358,11 @@ class RewriteClass(IntEnum):
 
 
 class RewriteAction(IntEnum):
-    """What the winning rewrite rule does to a matched packet (§3.14).
+    """What the top-ranked matching rewrite rule does to the packet (§3.14).
 
     A report class may `PASS`, `DROP`, `PATCH` or `REPLACE`. The control class adds `ANSWER`, `STALL`,
-    `NAK` and the two reply rewrites, which the box refuses on any other class.
+    `NAK` and the two reply rewrites, which the box refuses on any other class. On `CONTROL`, `PATCH`
+    and `REPLACE` act on an OUT request's data stage only.
     """
 
     PASS = 0
@@ -386,8 +389,8 @@ class PatchSection(IntEnum):
 class TransferStatus(IntEnum):
     """How a control transfer ended (§3.14).
 
-    A status other than `OK` is a real protocol outcome, not a link error. A wire byte no member names
-    is a status this build does not know, kept as its integer value rather than raising.
+    A non-`OK` status is a protocol outcome, not a link error. An unnamed wire byte is a status this
+    build does not know, kept as its integer value without raising.
     """
 
     OK = 0x00
@@ -402,11 +405,11 @@ class TransferStatus(IntEnum):
 
 
 class TransformOp(IntEnum):
-    """The operation a `Transform` performs on its fields (§3.15).
+    """What a `Transform` does to its fields (§3.15).
 
     `SWAP` exchanges two axes; `REMAP` moves a source field into a destination (axis→axis or
-    button→button in one report, or button→key / button→media across classes). To weigh a field, or
-    reverse it, use `Device.scale`.
+    button→button in one report, or button→key / button→media across classes). To weigh or reverse a
+    field, use `Device.scale`.
     """
 
     REMAP = 0

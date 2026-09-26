@@ -5,32 +5,32 @@ use crate::types::LogLine;
 
 use super::Device;
 
-/// A receiver for the device `LOG` stream.
+/// Receiver for the device `LOG` stream.
 #[derive(Clone, Debug)]
 pub struct LogStream(flume::Receiver<LogLine>);
 
 impl LogStream {
-    /// Block until the next `LOG` line arrives.
+    /// Block until the next `LOG` line.
     pub fn recv(&self) -> Result<LogLine> {
         self.0.recv().map_err(|_| Error::Disconnected)
     }
 
-    /// The next buffered `LOG` line, or `None` if none is queued (never blocks).
+    /// Next buffered `LOG` line, or `None` if none is queued. Never blocks.
     pub fn try_recv(&self) -> Option<LogLine> {
         self.0.try_recv().ok()
     }
 
-    /// Block up to `timeout` for the next `LOG` line; `None` on timeout (or a closed channel).
+    /// Block up to `timeout` for the next `LOG` line; `None` on timeout or a closed channel.
     pub fn recv_timeout(&self, timeout: Duration) -> Option<LogLine> {
         self.0.recv_timeout(timeout).ok()
     }
 
-    /// Drain every currently-buffered `LOG` line without blocking.
+    /// Drain buffered `LOG` lines without blocking.
     pub fn try_iter(&self) -> impl Iterator<Item = LogLine> + '_ {
         self.0.try_iter()
     }
 
-    /// Await the next `LOG` line. Runtime-agnostic (the same `flume` channel as the sync methods).
+    /// Await the next `LOG` line; runtime-agnostic (same `flume` channel as the sync methods).
     #[cfg(feature = "async")]
     pub async fn recv_async(&self) -> Result<LogLine> {
         self.0.recv_async().await.map_err(|_| Error::Disconnected)
@@ -47,7 +47,7 @@ impl IntoIterator for LogStream {
 }
 
 impl Device {
-    /// A [`LogStream`] over the device `LOG` stream.
+    /// [`LogStream`] over the device `LOG` stream.
     pub fn logs(&self) -> LogStream {
         LogStream(self.link.logs_rx())
     }

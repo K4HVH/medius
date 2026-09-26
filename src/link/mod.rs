@@ -6,6 +6,7 @@ pub(crate) mod logs;
 pub(crate) mod reader;
 pub(crate) mod reconcile;
 pub(crate) mod reconnect;
+pub(crate) mod restart;
 pub(crate) mod slot;
 
 use std::collections::HashMap;
@@ -26,6 +27,7 @@ use correlation::PendingEntry;
 use counters::Counters;
 use reconcile::DesiredState;
 use reconnect::BoxIdentity;
+use restart::RestartWatch;
 use slot::TransportSlot;
 
 /// Default `RESP` wait before [`Error::QueryTimeout`](crate::Error::QueryTimeout).
@@ -34,7 +36,7 @@ pub const DEFAULT_QUERY_TIMEOUT: Duration = Duration::from_secs(1);
 /// Replies parked for another caller. A window is 16 frames; this is slack on top.
 const HELD_UPDATES_MAX: usize = 64;
 
-/// Default keepalive cadence for refreshing a held override.
+/// Default keepalive cadence for re-sending a held override.
 pub const DEFAULT_KEEPALIVE_CADENCE: Duration = Duration::from_millis(500);
 
 pub(crate) struct LinkInner {
@@ -51,15 +53,16 @@ pub(crate) struct LinkInner {
     desired: Arc<Mutex<DesiredState>>,
     events: Arc<Mutex<CatchReg>>,
     catch_gen: Arc<AtomicU64>,
-    // Serialises a subscribe/unsubscribe sequence, or a rewrite-table mutation and its send, against
-    // the keepalive/reconnect re-assertion so neither commits out of order and strands the box.
+    // Serialises a subscribe/unsubscribe, or a rewrite-table mutation and its send, against
+    // re-asserts, so neither commits out of order and strands the box.
     catch_lock: Arc<Mutex<()>>,
     counters: Arc<Counters>,
     stop: Arc<AtomicBool>,
     reconnect_lock: Arc<Mutex<()>>,
-    // The opened box's stable identity (CH343 serial + device MAC), set once the handshake succeeds.
-    // Reconnect anchors to it so a rescan never adopts a different box that happens to be present.
+    // CH343 serial + device MAC, set after the handshake, so a reconnect never adopts a different
+    // box that happens to be present.
     identity: Arc<Mutex<Option<BoxIdentity>>>,
+    restart: Arc<RestartWatch>,
     query_timeout: Duration,
     reader: Option<JoinHandle<()>>,
     keepalive: Option<JoinHandle<()>>,
@@ -106,8 +109,8 @@ impl Link {
         let query_timeout = DEFAULT_QUERY_TIMEOUT;
         let pending: Arc<Mutex<HashMap<u8, PendingEntry>>> = Arc::new(Mutex::new(HashMap::new()));
         let (logs_tx, logs_rx) = flume::bounded(logs::LOGS_CAPACITY);
-        // Unbounded: a stalled reader must never drop an acknowledgement, since the sender is blocked
-        // waiting for exactly that frame before it may send the next window.
+        // Unbounded: a stalled reader must never drop an acknowledgement; the sender blocks on it
+        // before the next window.
         let (updates_tx, updates_rx) = flume::unbounded();
         let counters = Arc::new(Counters::default());
         let stop = Arc::new(AtomicBool::new(false));
@@ -122,6 +125,7 @@ impl Link {
         let reconnect_lock = Arc::new(Mutex::new(()));
         let identity: Arc<Mutex<Option<BoxIdentity>>> = Arc::new(Mutex::new(None));
         let held_updates: Arc<Mutex<Vec<Vec<u8>>>> = Arc::new(Mutex::new(Vec::new()));
+        let restart = Arc::new(RestartWatch::default());
 
         let reader = reader::spawn_reader(
             Arc::clone(&transport),
@@ -132,6 +136,7 @@ impl Link {
             Arc::clone(&events),
             Arc::clone(&counters),
             Arc::clone(&stop),
+            Arc::clone(&restart),
             reconnect::ReconnectCtx {
                 transport: Arc::clone(&transport),
                 write_lock: Arc::clone(&write_lock),
@@ -143,6 +148,7 @@ impl Link {
                 catch_lock: Arc::clone(&catch_lock),
                 held_updates: Arc::clone(&held_updates),
                 updates_rx: updates_rx.clone(),
+                restart: Arc::clone(&restart),
             },
         );
 
@@ -155,6 +161,9 @@ impl Link {
             catch_lock: Arc::clone(&catch_lock),
             stop: Arc::clone(&stop),
             cadence: keepalive_cadence,
+            pending: Arc::clone(&pending),
+            query_gen: Arc::clone(&query_gen),
+            restart: Arc::clone(&restart),
         });
 
         Link {
@@ -177,6 +186,7 @@ impl Link {
                 stop,
                 reconnect_lock,
                 identity,
+                restart,
                 query_timeout,
                 reader: Some(reader),
                 keepalive: Some(keepalive),
@@ -216,8 +226,12 @@ impl Link {
         &self.inner.desired
     }
 
-    // Held across a rewrite-table mutation and its send so a keepalive/reconnect re-assert can't
-    // interleave and strand the box holding a rule DesiredState dropped (the lock the catch path uses).
+    pub(crate) fn restart_watch(&self) -> &RestartWatch {
+        &self.inner.restart
+    }
+
+    // Held across a rewrite-table mutation and its send, so a re-assert cannot strand the box holding
+    // a rule DesiredState dropped (the catch path's lock).
     pub(crate) fn reassert_guard(&self) -> parking_lot::MutexGuard<'_, ()> {
         self.inner.catch_lock.lock()
     }
@@ -226,13 +240,12 @@ impl Link {
         &self.inner.updates_rx
     }
 
-    /// Replies taken off the channel that answer somebody else's op; see `Device::recv_update`.
+    /// Replies taken off the channel for another caller's op; see `Device::recv_update`.
     pub(crate) fn held_updates(&self) -> &Mutex<Vec<Vec<u8>>> {
         &self.inner.held_updates
     }
 
-    // Puts a reply on the channel as if the box had sent it, for tests about what happens to a
-    // reply that outlived the caller who asked for it.
+    // Injects a reply as if from the box, for tests of a reply outliving its caller.
     #[cfg(all(test, feature = "mock"))]
     pub(crate) fn inject_update(&self, payload: Vec<u8>) {
         let _ = self.inner.updates_tx.send(payload);
@@ -269,6 +282,9 @@ fn write_frame(
     ty: FrameType,
     payload: &[u8],
 ) -> Result<()> {
+    if let Some(got) = transport.refused() {
+        return Err(crate::Error::BadProtoVer { got });
+    }
     let frame = encode(ty, seq, payload)?;
     let current = transport.current();
     {

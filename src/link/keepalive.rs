@@ -1,16 +1,18 @@
+use std::collections::HashMap;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
 use std::thread::JoinHandle;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use parking_lot::Mutex;
 
 use crate::protocol::FrameType;
-use crate::protocol::command::{catch_payload, query_payload, rewrite_payload, transform_payload};
-use crate::protocol::opcode::Q_HEALTH;
+use crate::protocol::command::{catch_payload, rewrite_payload, transform_payload};
 
+use super::correlation::PendingEntry;
 use super::counters::Counters;
 use super::reconcile::DesiredState;
+use super::restart::{self, Cause, Outcome, Pending, RestartWatch};
 use super::slot::TransportSlot;
 use super::write_frame;
 
@@ -22,15 +24,14 @@ pub(crate) struct KeepaliveCtx {
     pub(crate) seq: Arc<AtomicU8>,
     pub(crate) counters: Arc<Counters>,
     pub(crate) desired: Arc<Mutex<DesiredState>>,
-    // The same lock subscribe and unsubscribe commit under. Held across this thread's read of the
-    // desired set AND its sends, because between the two an unsubscribe can commit, and then this
-    // thread re-adds the entry it just removed. The box would hold a table no subscriber wants and
-    // the crate's own set does not contain, so no later diff would ever remove it, and because the
-    // table stays non-empty the firmware's silence clear never fires either. On a vendor-bulk entry
-    // that is a quarter of a megabyte a second the link cannot carry, for the life of the connection.
+    // The same lock subscribe and unsubscribe commit under.
     pub(crate) catch_lock: Arc<Mutex<()>>,
     pub(crate) stop: Arc<AtomicBool>,
     pub(crate) cadence: Duration,
+    // The query path and the hello watch a restart recovery runs on.
+    pub(crate) pending: Arc<Mutex<HashMap<u8, PendingEntry>>>,
+    pub(crate) query_gen: Arc<AtomicU64>,
+    pub(crate) restart: Arc<RestartWatch>,
 }
 
 pub(crate) fn spawn_keepalive(ctx: KeepaliveCtx) -> JoinHandle<()> {
@@ -41,108 +42,104 @@ pub(crate) fn spawn_keepalive(ctx: KeepaliveCtx) -> JoinHandle<()> {
 }
 
 fn keepalive_loop(ctx: KeepaliveCtx) {
+    let mut tick_at = Instant::now() + ctx.cadence;
+    let mut pending: Option<Pending> = None;
     loop {
-        if sleep_cadence(&ctx.stop, ctx.cadence) {
+        if ctx.stop.load(Ordering::SeqCst) {
             return;
         }
-        let _serial = ctx.catch_lock.lock();
-        let (idle, catch, rewrites, transforms) = {
-            let d = ctx.desired.lock();
-            (
-                d.is_idle(),
-                d.catch(),
-                d.held_rewrites(),
-                d.held_transforms(),
-            )
-        };
+        let now = Instant::now();
+        if ctx.restart.take_owed() {
+            pending = Some(Pending::new(Cause::Restart, now));
+        }
+        if let Some(p) = pending.as_mut()
+            && now >= p.next
+        {
+            match restart::step(&ctx, p.cause) {
+                Outcome::Done => pending = None,
+                Outcome::Again => *p = Pending::new(Cause::Restart, Instant::now()),
+                Outcome::Wait => p.wait(Instant::now()),
+            }
+            continue;
+        }
+        let idle = ctx.desired.lock().is_idle();
+        if now < tick_at {
+            // After a command that can re-present the clone, check every slice, not every tick, so
+            // released state goes back as soon as the clone is up.
+            if pending.is_none()
+                && !idle
+                && ctx.restart.expecting_represent(now)
+                && restart::session_released(&ctx)
+            {
+                ctx.restart.begin_release();
+                pending = Some(Pending::new(Cause::Released, Instant::now()));
+                continue;
+            }
+            std::thread::sleep(KEEPALIVE_STOP_POLL.min(tick_at - now));
+            continue;
+        }
+        tick_at = now + ctx.cadence;
         if idle {
             continue;
         }
-        // Any frame feeds the firmware silence timer (§5.4) to hold a held override/lock/subscription
-        // /rewrite alive. Re-sending the CATCH and REWRITE entries (not a bare QUERY) also rebuilds
-        // those tables if a device blip or re-clone cleared them box-side. Only add/overwrite goes
-        // out, never a remove: a blanket clear and re-add here would punch a hole on every cadence.
-        // A rewrite re-set the box already holds byte-for-byte is a no-op there and does not bump gen.
-        let mut sent_any = false;
-        if !catch.is_empty() {
-            for f in catch.values() {
-                let seq = ctx.seq.fetch_add(1, Ordering::Relaxed);
-                let (class, id) = f.wire();
-                let _ = write_frame(
-                    &ctx.transport,
-                    &ctx.write_lock,
-                    &ctx.counters,
-                    seq,
-                    FrameType::Catch,
-                    &catch_payload(class, id, f.direction().as_u8(), 1, f.capture().as_u8()),
-                );
-            }
-            sent_any = true;
-        }
-        if !rewrites.is_empty() {
-            for r in rewrites {
-                let seq = ctx.seq.fetch_add(1, Ordering::Relaxed);
-                let _ = write_frame(
-                    &ctx.transport,
-                    &ctx.write_lock,
-                    &ctx.counters,
-                    seq,
-                    FrameType::Rewrite,
-                    &rewrite_payload(
-                        r.class,
-                        r.id,
-                        r.direction,
-                        1,
-                        r.action,
-                        r.offset,
-                        &r.match_bytes,
-                        &r.mask,
-                        &r.payload,
-                    ),
-                );
-            }
-            sent_any = true;
-        }
-        if !transforms.is_empty() {
-            for t in transforms {
-                let seq = ctx.seq.fetch_add(1, Ordering::Relaxed);
-                let _ = write_frame(
-                    &ctx.transport,
-                    &ctx.write_lock,
-                    &ctx.counters,
-                    seq,
-                    FrameType::Transform,
-                    &transform_payload(t.op, t.sclass, t.sid, t.dclass, t.did, 1),
-                );
-            }
-            sent_any = true;
-        }
-        if sent_any {
+        // The query feeds the firmware silence timer (§5.4) as well.
+        if pending.is_none() && restart::session_released(&ctx) {
+            ctx.restart.begin_release();
+            pending = Some(Pending::new(Cause::Released, Instant::now()));
             continue;
         }
-        let seq = ctx.seq.fetch_add(1, Ordering::Relaxed);
-        let (ty, payload): (FrameType, Vec<u8>) =
-            (FrameType::Query, query_payload(Q_HEALTH).to_vec());
-        let _ = write_frame(
-            &ctx.transport,
-            &ctx.write_lock,
-            &ctx.counters,
-            seq,
-            ty,
-            &payload,
-        );
-    }
-}
-
-fn sleep_cadence(stop: &AtomicBool, cadence: Duration) -> bool {
-    let mut remaining = cadence;
-    while !remaining.is_zero() {
-        if stop.load(Ordering::SeqCst) {
-            return true;
+        // Whether the ring holds the clip, so a later release marks lost only a clip the box had.
+        if ctx.desired.lock().clip_ring_held() {
+            restart::read_ring(&ctx);
         }
-        let slice = remaining.min(KEEPALIVE_STOP_POLL);
-        std::thread::sleep(slice);
-        remaining -= slice;
+        let _serial = ctx.catch_lock.lock();
+        let (catch, rewrites, transforms) = {
+            let d = ctx.desired.lock();
+            (d.catch(), d.held_rewrites(), d.held_transforms())
+        };
+        for f in catch.values() {
+            let seq = ctx.seq.fetch_add(1, Ordering::Relaxed);
+            let (class, id) = f.wire();
+            let _ = write_frame(
+                &ctx.transport,
+                &ctx.write_lock,
+                &ctx.counters,
+                seq,
+                FrameType::Catch,
+                &catch_payload(class, id, f.direction().as_u8(), 1, f.capture().as_u8()),
+            );
+        }
+        for r in rewrites {
+            let seq = ctx.seq.fetch_add(1, Ordering::Relaxed);
+            let _ = write_frame(
+                &ctx.transport,
+                &ctx.write_lock,
+                &ctx.counters,
+                seq,
+                FrameType::Rewrite,
+                &rewrite_payload(
+                    r.class,
+                    r.id,
+                    r.direction,
+                    1,
+                    r.action,
+                    r.offset,
+                    &r.match_bytes,
+                    &r.mask,
+                    &r.payload,
+                ),
+            );
+        }
+        for t in transforms {
+            let seq = ctx.seq.fetch_add(1, Ordering::Relaxed);
+            let _ = write_frame(
+                &ctx.transport,
+                &ctx.write_lock,
+                &ctx.counters,
+                seq,
+                FrameType::Transform,
+                &transform_payload(t.op, t.sclass, t.sid, t.dclass, t.did, 1),
+            );
+        }
     }
-    stop.load(Ordering::SeqCst)
 }

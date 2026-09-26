@@ -8,26 +8,26 @@
 
 Custom firmware for MAKCU mouse-passthrough boxes, and the Rust library that drives it.
 
-A MAKCU box sits inline between a mouse and a PC: the real mouse passes through to the PC while a control program injects movement, buttons, and scroll over USB-serial. medius replaces the stock firmware with a clean binary protocol; this crate binds its commands 1:1 and adds what you need to run the box reliably (handshake, keepalive, reconnect). Each call sends one firmware frame.
+A MAKCU box sits between a mouse and a PC: the mouse passes through while a control program injects movement, buttons and scroll over USB-serial. medius replaces the stock firmware with a binary protocol; this crate binds its commands 1:1 (one call, one frame) and adds handshake, keepalive and reconnect.
 
-Flash and test a box from your browser at **[medius.k4tech.net/dashboard](https://medius.k4tech.net/dashboard)**: no drivers, nothing to install. Full documentation is at **[medius.k4tech.net](https://medius.k4tech.net)**.
+Flash and test a box in the browser, with no drivers or install: **[medius.k4tech.net/dashboard](https://medius.k4tech.net/dashboard)**. Docs: **[medius.k4tech.net](https://medius.k4tech.net)**.
 
-## Why medius vs stock firmware
+## medius vs stock firmware
 
-Same MAKCU box, different firmware. Both clone your mouse's USB descriptor byte for byte, since that's the hardware. What changes is how the firmware behaves:
+Same box, different firmware. Both clone the mouse's USB descriptor byte for byte, since that's the hardware. The differences:
 
 | | medius | stock MAKCU |
 |---|---|---|
-| **Your motion** | Injection **adds** to your real movement. Both go through, nothing lost. | Injection **overwrites** it. At 1 kHz your real motion never arrives. |
-| **Detection** | Measured against the native mouse and matched: timing, control values, USB conformance. | Copies the descriptor; no published native-behaviour audit. |
-| **Reliability** | Clears all injection after 1 s of host silence, so a crashed controller never leaves a button held. | No silence release documented; a forced button stays held until you clear it. |
-| **Link** | Binary frames with CRC and request IDs, at a fixed baud. | An ASCII command prompt, replies matched by arrival order, behind a baud handshake that doesn't persist a power cycle. |
+| **Your motion** | Injection **adds** to physical motion; both arrive. | Injection **overwrites** it; at 1 kHz physical motion never arrives. |
+| **Detection** | Timing, control values and USB conformance measured against the native mouse and matched. | Copies the descriptor; no published native-behaviour audit. |
+| **Reliability** | Clears all injection after 1 s of host silence, so a crashed controller never leaves a button held. | No documented silence release; a forced button stays held until you clear it. |
+| **Link** | Binary frames with CRC and request IDs at a fixed baud. | ASCII command prompt; replies matched by arrival order; a baud handshake lost on power cycle. |
 
 ## Quick start
 
 ```toml
 [dependencies]
-medius = "3.3"
+medius = "3.4"
 ```
 
 ```rust
@@ -41,19 +41,19 @@ fn main() -> Result<()> {
     device.press(Button::Left)?;
     device.release(Button::Left)?;
     device.wheel(-3)?;
-    device.reset()?;                          // back to pure passthrough
+    device.reset()?;                          // back to passthrough
     Ok(())
 }
 ```
 
 ## Features
 
-The base crate is the lean sync core. Optional features:
+The base crate is the sync core. Optional features:
 
 | Feature   | Description |
 |-----------|-------------|
-| `async`   | `AsyncDevice`, async queries over the same core, runtime-agnostic (no tokio) |
-| `mock`    | `MockBox`, an in-process fake box for tests without hardware |
+| `async`   | `AsyncDevice`: async queries over the same core, runtime-agnostic |
+| `mock`    | `MockBox`: an in-process fake box for hardware-free tests |
 | `tracing` | per-frame TX/RX `tracing` instrumentation |
 
 ```toml
@@ -85,9 +85,9 @@ let k = Device::find_keyboard_box()?;         // the box cloning a keyboard
 let d = Device::open_by_id("5a4e00111e28")?;  // by device MAC (or CH343 serial)
 ```
 
-Each box's identity is its device-chip MAC; a reopened box reconnects to the same physical unit even after ports renumber.
+A box's identity is its device-chip MAC, so a reopen reaches the same unit after ports renumber.
 
-A box on another control protocol than `PROTO_VER` is listed with `device: None`, and `open_by_id` and the `find_*` helpers answer `Error::BadProtoVer` with the protocol it reported. Update its firmware from the [dashboard](https://medius.k4tech.net/dashboard).
+A box on a protocol other than `PROTO_VER` lists with `device: None`; `open_by_id` and `find_*` return `Error::BadProtoVer` carrying the protocol it reported. Update it from the [dashboard](https://medius.k4tech.net/dashboard).
 
 ### Mouse control
 
@@ -96,14 +96,14 @@ device.move_rel(100, -50)?;          // relative move (+x right, +y down)
 device.wheel(3)?;                    // scroll
 
 device.press(Button::Left)?;         // force down
-device.release(Button::Left)?;  // release our press (a physical hold stays)
+device.release(Button::Left)?;       // release our press (a physical hold stays)
 device.force_release(Button::Left)?; // force up, masking a physical hold
 device.inject(Button::Right, Action::Press)?; // the generic form
 
 device.reset()?;                     // clear all injection → passthrough
 ```
 
-Buttons are `Left`, `Right`, `Middle`, `Side1`, `Side2`. Move and wheel take a full `i16`; the firmware clamps to the mouse's descriptor with carry, so `move_rel(2000, 0)` lands as exactly 2000.
+Buttons are `Left`, `Right`, `Middle`, `Side1`, `Side2`. Move and wheel take a full `i16`; the firmware clamps to the descriptor with carry, so `move_rel(2000, 0)` lands exactly 2000.
 
 ### Keyboard & media
 
@@ -119,11 +119,11 @@ device.press(MediaKey::VOLUME_UP)?; // a media key by 16-bit Consumer usage
 device.release(MediaKey::VOLUME_UP)?;
 ```
 
-Keys are HID keycodes (`Key::A`, `Key::ENTER`, the eight modifiers, F-keys, arrows…) or any usage via `Key::new(0x04)`; media keys are Consumer usages (`MediaKey::VOLUME_UP`, `PLAY_PAUSE`, `MUTE`…). The tri-state `Action` (press / soft-release / force-release) is shared with buttons. Held keys and media survive a reconnect, like buttons. Both are present-gated: a key the board can't report is a silent no-op; see `caps()`.
+Keys are HID keycodes (`Key::A`, `Key::ENTER`, the eight modifiers, F-keys, arrows…) or any usage via `Key::new(0x04)`; media keys are Consumer usages (`MediaKey::VOLUME_UP`, `PLAY_PAUSE`, `MUTE`…). Like buttons, they take the tri-state `Action` (press / soft-release / force-release) and stay held across a reconnect. Both are present-gated: a key the board can't report is a no-op with no error; see `caps()`.
 
 ### Sustained motion
 
-You drive sustained motion yourself, one fire-and-forget `move_rel` per tick. The firmware merges additively with no halving and carries the remainder, so a tight 1 kHz loop lands the full distance (the box paces the emitted reports to the mouse's native report rate):
+Send one fire-and-forget `move_rel` per tick. The firmware merges additively, never halves, and carries the remainder, so a 1 kHz loop lands the full distance; the box paces emitted reports to the native report rate:
 
 ```rust
 for _ in 0..1000 {
@@ -134,7 +134,7 @@ for _ in 0..1000 {
 
 ### Emit pacing
 
-`set_emit_pace` carries two settings in one `OPTION(EMIT)` frame, both persisted in NVS: what paces injected motion, and what rate the clone advertises.
+`set_emit_pace` sets two NVS-persisted settings in one `OPTION(EMIT)` frame: what paces injected motion, and the rate the clone advertises.
 
 ```rust
 use medius::EmitPace;
@@ -144,15 +144,14 @@ device.set_emit_pace(EmitPace::Fixed(500), Some(1000))?;
 let s = device.query_emit_pace()?;  // mode, resolved_hz, force_hz, advertised_hz, force_active
 ```
 
-`EmitPace::Learned` (the default) paces to the mouse's learnt native report rate, `EmitPace::Interval` to the clone's `bInterval` poll rate, and `EmitPace::Fixed(hz)` to a rate you name, which the 1 ms frame clock snaps to `1000/n` Hz and caps at `EMIT_MAX_HZ`.
+`EmitPace::Learned` (default) paces to the learnt native report rate, `EmitPace::Interval` to the clone's `bInterval` poll rate, and `EmitPace::Fixed(hz)` to `hz`, snapped by the 1 ms frame clock to `1000/n` Hz and capped at `EMIT_MAX_HZ`.
 
-A non-zero `force_hz` re-clones the box to advertise a `bInterval` the device did not, snapping to `1000/n` Hz; it needs `allow_imperfect_clones`, and `None` leaves the native interval.
+A non-zero `force_hz` re-clones the box with a `bInterval` the device did not advertise, snapped to `1000/n` Hz; it needs `allow_imperfect_clones`. `None` keeps the native interval.
 
-### The texture motion is rendered with
+### Rendering
 
-`set_render` carries the texture and whether native motion goes through it in one
-`OPTION(RENDER)` frame, both persisted in NVS. The model on the box is
-[ABCurves](https://github.com/optima-manent/ABCurves) (MIT).
+`set_render` sets the texture, and whether native motion goes through it, in one NVS-persisted
+`OPTION(RENDER)` frame. The model is [ABCurves](https://github.com/optima-manent/ABCurves) (MIT).
 
 ```rust
 use medius::RenderMode;
@@ -165,67 +164,64 @@ let s = device.query_render()?;  // mode, full, ready
 |---|---|
 | `Off` | the paced fill, renderer off |
 | `Stock` | rendered with the bit-exact triangular smoother |
-| `Despiked` | rendered with the smoother's onset ramped rather than stepped (the box's factory default) |
+| `Despiked` | rendered with the smoother's onset ramped, not stepped (factory default) |
 | `Unsmoothed` | rendered with no smoother; the model receives raw injection |
 
-`full` extends the same model to native motion, so one texture reaches the wire instead of an injected stream beside a relayed one. Rendering adds a small amount of latency, which reaches native motion under `full`, so `full` is off by default.
+`full` extends the model to native motion, so one texture reaches the wire instead of an injected stream beside a relayed one. Rendering adds a little latency, which `full` puts on native motion too. `full` is off by default.
 
-Nothing is rendered until the box has learned a profile for the attached device. `RenderStatus::ready` is that state: until it is true, motion is relayed and injection takes the paced fill. The profile lives in RAM, so every box passes through it after a power cut and arms once the mouse moves.
+Nothing renders until the box learns a profile for the attached device (`RenderStatus::ready`); until then motion is relayed and injection takes the paced fill. The profile lives in RAM, so after a power cut every box is unready again until the mouse moves.
 
-### Weighing the user's own input
+### Input scale
 
-`lock` blocks the physical device on one input while injection still drives it. `scale` is the same
-command with the number exposed: a percent of the physical value the box keeps, so 0 is a lock, 100 is
-an unlock, and everything between is reachable. Above 100 amplifies, to 255. The percent is signed
-down to -255: a negative one weighs the physical value and reverses it, so `-100` on an axis is a plain
-inversion. Only an axis takes one.
+`lock` blocks physical input on one field while injection still drives it. `scale` is the same
+command with the number exposed: the percent of the physical value kept, 0 (lock) to 100 (unlock)
+and every value between, up to 255 to amplify. Down to -255, a negative scale weighs the physical
+value and reverses it, so `-100` on an axis inverts it. Only an axis takes a negative.
 
 ```rust
 use medius::{Axis, Blanket, Direction};
 
 device.lock(Axis::X, Direction::Both)?;          // block horizontal motion (scale 0)
 device.scale(Axis::Y, Direction::Negative, 60)?; // keep 60% of upward motion
-device.unlock(Axis::X, Direction::Both)?;        // back to passing untouched (scale 100)
+device.unlock(Axis::X, Direction::Both)?;        // pass untouched (scale 100)
 ```
 
-`Direction::With` and `Direction::Against` are measured against the **bearing**, the direction the box
-is currently injecting, rather than a fixed sign. That makes the merge asymmetric: motion helping the
-aim passes while motion fighting it is damped, resolved on the box at the merge point where the pending
-injection and the arriving report are in hand at once. Set how long a bearing is held with
-`set_bearing`; past that window an axis has no bearing, the relative directions stop applying, and the
-physical delta reaches the PC unweighed, with no host command.
+`Direction::With` and `Direction::Against` are measured against the **bearing** (the direction the
+box is injecting), not a fixed sign, so motion along the injection and against it take separate
+scales. The box resolves them at the merge point, where the pending injection and the arriving report
+are both in hand. `set_bearing` sets how long a bearing is held; past that window the axis has no
+bearing, relative directions stop applying, and the physical delta reaches the PC unweighed, with no
+host command.
 
 ```rust
 use medius::{Axis, BearingMode, Direction};
 use std::time::Duration;
 
 device.set_bearing(Some(Duration::from_millis(20)), BearingMode::PerAxis)?;
-device.scale(Axis::X, Direction::Against, 40)?;  // counter-aim damped to 40%
-device.scale(Axis::X, Direction::With, 130)?;    // and helping motion given a push
+device.scale(Axis::X, Direction::Against, 40)?;  // motion against the bearing kept at 40%
+device.scale(Axis::X, Direction::With, 130)?;    // motion along it amplified to 130%
 ```
 
-A delta picks up at most two scales, its fixed direction's and its relative direction's, and they
-multiply, so a block in either wins. `Direction::Both` is the exception: it writes the scale to the two
-fixed signs and a full pass to the relative pair, so a `Both` of 50 is 50% with a bearing live and 50%
-without, not 25%. `BearingMode::Vector` projects onto the injected vector instead, leaving motion
-across it untouched; one relative scale then governs both axes, the lower of X's and Y's, and
-`query_locks` reports that effective number on both axes. Each axis's absolute scale applies to what
-the projection left rather than to the sign the report carried, so a block still covers motion the
-projection put on that axis.
+A delta takes at most two scales, its fixed direction's and its relative direction's, and they
+multiply, so a block in either zeroes the product. `Direction::Both` writes the scale to the two fixed
+signs and a full pass to the relative pair, so a `Both` of 50 is 50% with or without a live bearing.
+`BearingMode::Vector` instead projects the physical delta onto the injected vector, leaving motion
+across it untouched; one relative scale, the lower of X's and Y's, then governs both axes, and
+`query_locks` reports it on both. Each axis's absolute scale applies to what the projection left, not
+the sign the report carried, so a block still covers motion the projection put on that axis.
 
 Only an axis has a bearing, so `With`/`Against` on a button, key or media usage is
-`Error::RelativeDirection` rather than a frame the box would drop. A button, key, or media usage
-carries one bit: any scale from zero to 100 locks it, any scale at or above 100 unlocks it, and a
-negative on one is `Error::LockScaleUsage` since there is nothing to reverse. A media usage has
-no edges at all (it is suppressed whole), so an edge on one is sent as `Both`, which is what
-`query_locks` reports. `lock_all(Blanket::Keys, ...)` does honour the edge: `Positive` blocks presses
-only, `Negative` releases only.
+`Error::RelativeDirection` instead of a frame the box would drop. A button, key or media usage
+carries one bit: a scale below 100 locks it, 100 or above unlocks it, and a negative is
+`Error::LockScaleUsage`. A media usage has no edges (it is suppressed whole), so an edge on one is
+sent as `Both`, which `query_locks` reports. `lock_all(Blanket::Keys, ...)` honours the edge:
+`Positive` blocks presses only, `Negative` releases only.
 
-### Buffered clip playback
+### Clip playback
 
-For jitter-free playback, preload per-frame input into a device-side ring and let the box drain one entry per native frame, box-clocked, so it carries none of the host's scheduling jitter and none of the per-command send floor.
+Preload per-frame input into a ring on the box, which drains one entry per native frame on its own clock, free of host scheduling jitter and the per-command send floor.
 
-Motion is a per-frame delta, edges (buttons/keys/media) are sticky until changed, and a gap run emits nothing for N frames. Pace top-ups off `query_status().free`.
+Motion is a per-frame delta, edges (buttons/keys/media) hold until changed, and a gap emits nothing for N frames. Pace top-ups by `query_status().free`.
 
 ```rust
 use medius::{ClipBuilder, Button};
@@ -248,17 +244,17 @@ let h = device.query_health()?;   // link_up, mouse_attached, clone_configured, 
 let info = device.device_info()?;       // cloned device identity: vid:pid, bcd, flags, kind, product
 let caps = device.caps()?;              // unified caps; caps.is_composite(), caps.mouse.n_buttons, caps.keyboard.nkro, caps.keyboard.has_consumer, caps.keyboard.n_keys
 let rate = device.query_rate()?;        // live native report rate; rate.native_hz()
-let stats = device.query_stats()?;      // delivery counters; stats.tx_drops / stats.tx_wedges
+let stats = device.query_stats()?;      // delivery counters; stats.tx_drops / stats.tx_wedges / stats.link_rx_drops / stats.relay_drops
 let locks = device.query_locks()?;      // active input scales; locks.scale_of(...) / locks.is_locked(...)
-let catch = device.query_catch()?;      // the live catch table, its drop counts, the inter-chip clock
+let catch = device.query_catch()?;      // catch table, drop counts, inter-chip clock
 ```
 
-### Catch (observing what passes through the box)
+### Catch
 
-Subscribe to what the box carries: the user's real input, the raw HID and vendor traffic either way,
+Subscribe to what the box carries: physical input, HID and vendor traffic in both directions,
 proxied control transfers, the bytes the clone emits, and bus lifecycle. Input is reported *before*
-any lock suppression or injection, so intercepting an input (lock it) and rebinding it (catch it) is
-one loop. Dropping the stream unsubscribes.
+lock suppression or injection, so one loop can lock an input and catch it to rebind it. Dropping the
+stream unsubscribes.
 
 For input, `input_events` decodes the box's held-usage snapshots into edges:
 
@@ -274,12 +270,11 @@ for ev in device.input_events([CatchFilter::watch(Key::ESCAPE)])? {
 }
 ```
 
-`CatchFilter::watch` takes what `lock` takes, so an input is addressed the same way in both. Use
-`CatchFilter::all_input()` for every class, or `watch_class` / `watch_axis` to narrow.
+`CatchFilter::watch` takes what `lock` takes. `CatchFilter::all_input()` covers every class;
+`watch_class` / `watch_axis` narrow it.
 
-For traffic, `catch_events` yields the raw frames. A `Capture` caps how much of each packet comes
-back, which matters because a vendor bulk pipe at whole packets saturates the 6 Mbaud control link on
-its own:
+For traffic, `catch_events` yields raw frames. A `Capture` caps the bytes kept per packet; a vendor
+bulk pipe at whole packets saturates the 6 Mbaud control link by itself:
 
 ```rust
 use medius::{Capture, CatchEvent, CatchFilter, TrafficClass};
@@ -293,24 +288,24 @@ while let Ok(CatchEvent::Traffic(t)) = events.recv() {
 }
 ```
 
-Both streams are bounded and lossy under back-pressure (`dropped()`), held alive by the keepalive,
-and re-asserted across a reconnect. Under `async`, `recv_async().await`. `Timeline` puts a box stamp
-on this machine's clock, unwrapping the 32-bit rollover and both chips' domains.
+Both streams are bounded and drop under back-pressure (`dropped()`), stay open through the
+keepalive, and are re-asserted across a reconnect. Under `async`, `recv_async().await`. `Timeline`
+maps a box stamp onto this machine's clock, unwrapping the 32-bit rollover and both chips' domains.
 
 ### Box management
 
 ```rust
 device.reboot(RebootTarget::DeviceRun)?;  // restart a chip (run / ROM-download × device / host)
 device.reconnect()?;                      // rescan VID/PID, reopen, re-assert held state
-device.reapply()?;                        // re-send currently-held overrides on demand
+device.reapply()?;                        // re-send held overrides now
 
 let fw = device.firmware_info()?;         // both chips' firmware versions and booted app slots
 device.update_firmware(UpdateTarget::Device, &image, &mut |p| println!("{}%", p.percent()))?;
 ```
 
-`update_firmware` writes the image into the chip's spare app slot over the control port and boots it; the box reverts an image that will not run. It needs a box this build can open, so a box on another control protocol is updated from the dashboard.
+`update_firmware` writes the image to the chip's spare app slot over the control port and boots it; the box reverts an image that will not run. It needs a box this build can open, so update a box on another control protocol from the dashboard.
 
-The reader also reconnects on its own if the link drops.
+The reader reconnects by itself if the link drops. When the device chip restarts under a live link, or the box releases the program's state without a restart (a patch apply or clear, an opt-in toggle, a detached device, the inter-chip link dropping), the crate re-sends what it holds once the clone is up; `ClipHandle::lost` reports a dropped clip.
 
 ### Observability
 
@@ -319,12 +314,12 @@ for line in device.logs() {       // device LOG stream
     println!("[{:?}] {}", line.level, line.text);
 }
 
-let c = device.counters();        // frames_tx / frames_rx / crc_drops / reconnects
+let c = device.counters();        // frames_tx / frames_rx / crc_drops / reconnects / restarts
 ```
 
 ### Async (feature = `async`)
 
-The async wrapper is the same core. Only queries await; the fire-and-forget commands are identical:
+The same core; only queries await, and fire-and-forget commands are unchanged:
 
 ```rust
 let device = Device::find()?.into_async();
@@ -332,7 +327,7 @@ device.move_rel(10, 0)?;                // instant, not async
 let v = device.query_version().await?;  // awaits the correlated reply
 ```
 
-It uses `flume`'s async recv, so there's no runtime dependency and it runs on any executor.
+It uses `flume`'s async recv, so it has no runtime dependency and runs on any executor.
 
 ### Mock (feature = `mock`)
 
@@ -361,22 +356,21 @@ cargo run --example hw_full --all-features   # on-hardware validation suite (Lin
 
 ## Architecture
 
-Four layers, `protocol → transport → link → device`, each depending only on the one below it.
+Four layers, `protocol → transport → link → device`, each using only the one below.
 
 | Layer | What |
 |---|---|
-| `protocol` | the wire codec: framed binary (SOF, type, rolling SEQ, length, payload, CRC16), no I/O |
-| `transport` | the byte pipe (no `unsafe`) plus VID/PID discovery, over `serialport` everywhere except Windows, where `serial2`'s overlapped COM handle keeps a read and a write in flight at once |
-| `link` | the live connection: the reader thread, SEQ-correlated queries, keepalive, and reconnect |
-| `device` | the typed API on top, where each command is one `link.send(...)` |
+| `protocol` | wire codec: framed binary (SOF, type, rolling SEQ, length, payload, CRC16), no I/O |
+| `transport` | byte pipe (no `unsafe`) and VID/PID discovery over `serialport`; on Windows, `serial2`'s overlapped COM handle keeps a read and a write in flight at once |
+| `link` | live connection: reader thread, SEQ-correlated queries, keepalive, reconnect |
+| `device` | typed API; each command is one `link.send(...)` |
 
-`Device` takes `&self`, is `Send + Sync`, and clones cheaply. The link runs at a fixed 6 Mbaud in framed binary (no baud dance, no ASCII REPL), and queries correlate by SEQ rather than arrival order. If the host goes quiet for ~1 s the firmware clears all injection, so a crash never leaves a button stuck; a keepalive thread keeps an intentionally-held button alive. Tested on Linux and Windows.
+`Device` methods take `&self`; it is `Send + Sync` and clones cheaply. The link runs framed binary at a fixed 6 Mbaud, and queries correlate by SEQ. After ~1 s of host silence the firmware clears all injection, so a crash never leaves a button stuck; a keepalive thread keeps a deliberately held button held. Tested on Linux and Windows.
 
 ## Other languages
 
-A C ABI (the `medius-capi` crate) exports the whole API for other languages. The
-generated header compiles as C and C++, and a ctypes Python package rides on top.
-See [`bindings/`](bindings/).
+The `medius-capi` crate exports the whole API as a C ABI. Its generated header compiles as C and
+C++, and a ctypes Python package wraps it. See [`bindings/`](bindings/).
 
 ## License
 

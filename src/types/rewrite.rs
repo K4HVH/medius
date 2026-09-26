@@ -1,10 +1,10 @@
-//! `REWRITE` (§3.14) vocabulary: the rule a host installs, its action and class, and the decoded
-//! `RESP(REWRITE)` / `RESP(REWRITE_ENTRY)` readbacks.
+//! `REWRITE` (§3.14) vocabulary: rules, actions, classes, and decoded `RESP(REWRITE)` /
+//! `RESP(REWRITE_ENTRY)`.
 //!
-//! The on-box rewrite table matches traffic in flight and rewrites, answers, refuses or drops it. It
-//! is gated on [`allow_imperfect_clones`](crate::Device::allow_imperfect_clones) and addressed in the
-//! same `(class, id, direction)` space `CATCH` uses, in the write direction. A rule is session state,
-//! re-asserted on reconnect exactly like a lock or a catch subscription.
+//! The box's rewrite table matches traffic in flight and rewrites, answers, refuses or drops it. It
+//! is gated on [`allow_imperfect_clones`](crate::Device::allow_imperfect_clones) and addressed in
+//! `CATCH`'s `(class, id, direction)` space, in the write direction. A rule is session state,
+//! re-asserted on reconnect like a lock or a catch subscription.
 
 use crate::protocol::opcode::{
     CATCH_CLS_CONTROL, CATCH_CLS_EMIT, CATCH_CLS_HID_IN, CATCH_CLS_HID_OUT, CATCH_CLS_VEND_BULK,
@@ -13,42 +13,45 @@ use crate::protocol::opcode::{
 };
 use crate::types::Direction;
 
-/// A traffic class a rewrite rule may address (§3.14).
+/// Traffic class a rewrite rule may address (§3.14).
 ///
-/// These are `CATCH`'s traffic classes in the write direction, the exact set the box will rewrite:
-/// the parsed-input classes (button, key, media, axis) and the bus class are not rewritable and have
-/// no variant here. [`Any`](RewriteClass::Any) matches every rewritable class at once.
+/// `CATCH`'s traffic classes in the write direction, exactly the set the box rewrites; the
+/// parsed-input classes (button, key, media, axis) and the bus class have no variant.
+/// [`Any`](RewriteClass::Any) acts at every surface a packet crosses.
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum RewriteClass {
-    /// The device's HID input report, before the renderer; `id` is the interface number.
+    /// Native HID input report as it arrived; `id` is the interface number. On the bound mouse a
+    /// motion rewrite here survives only on reports the host chip leaves alone; rewrite motion at
+    /// `Emit`.
     HidIn = CATCH_CLS_HID_IN,
-    /// An interrupt-OUT report the game PC wrote, relayed to the device; `id` is the endpoint number
-    /// and the `direction` is [`OUT`](crate::Direction::OUT).
+    /// Interrupt-OUT report the game PC wrote, relayed to the device; `id` is the endpoint number,
+    /// `direction` [`OUT`](crate::Direction::OUT).
     HidOut = CATCH_CLS_HID_OUT,
-    /// Interrupt traffic on a vendor interface; `id` is the endpoint number and the `direction` is
+    /// Interrupt traffic on a vendor interface; `id` is the endpoint number, `direction`
     /// [`IN`](crate::Direction::IN) or [`OUT`](crate::Direction::OUT).
     VendorInterrupt = CATCH_CLS_VEND_INTR,
-    /// Bulk traffic on a vendor interface; `id` is the endpoint number and the `direction` is
+    /// Bulk traffic on a vendor interface; `id` is the endpoint number, `direction`
     /// [`IN`](crate::Direction::IN) or [`OUT`](crate::Direction::OUT).
     VendorBulk = CATCH_CLS_VEND_BULK,
-    /// A proxied control transfer; `id` is the endpoint number (0 = EP0). The one class that may
-    /// `Answer`/`Stall`/`Nak` or rewrite the device's reply.
+    /// Proxied control transfer; `id` is the endpoint number (0 = EP0). On EP0 only class and vendor
+    /// requests reach a rule (change descriptors with `PATCH`); above EP0 every request does.
     Control = CATCH_CLS_CONTROL,
-    /// The outgoing wire, after the renderer; `id` is the endpoint number and the `direction` is
-    /// [`IN`](crate::Direction::IN). Catches injected and rendered frames as well as relayed ones.
+    /// Outgoing wire, after the renderer; `id` is the endpoint number, `direction`
+    /// [`IN`](crate::Direction::IN). Matches injected and rendered frames besides relayed ones.
     Emit = CATCH_CLS_EMIT,
-    /// Every rewritable class at once (the wire wildcard `0xFF`).
+    /// Wire wildcard `0xFF`: ranked below every other rule, `id` not compared, `Pass`, `Patch` and
+    /// `Replace` only. It acts at each surface, so a native report can hit it at `HidIn` and `Emit`.
     Any = 0xFF,
 }
 
 impl RewriteClass {
-    /// The wire `class` byte.
+    /// Wire `class` byte.
     pub fn as_u8(self) -> u8 {
         self as u8
     }
 
-    /// Map a wire `class` byte to a [`RewriteClass`], or `None` for one that is not rewritable.
+    /// Decodes a wire `class` byte; `None` if not rewritable.
     pub fn from_u8(v: u8) -> Option<RewriteClass> {
         Some(match v {
             CATCH_CLS_HID_IN => RewriteClass::HidIn,
@@ -62,38 +65,41 @@ impl RewriteClass {
         })
     }
 
-    /// Whether this is the control class, the only one that may answer or rewrite a device reply.
+    /// Whether this is the control class, the only one that can answer or rewrite a device reply.
     pub fn is_control(self) -> bool {
         matches!(self, RewriteClass::Control)
     }
 }
 
-/// What the winning rewrite rule does to a matched packet (§3.14).
+/// What the top-ranked matching rewrite rule does to the packet (§3.14).
 ///
 /// A report class ([`HidIn`](RewriteClass::HidIn), [`HidOut`](RewriteClass::HidOut),
-/// [`Emit`](RewriteClass::Emit), the vendor classes) may [`Pass`](RewriteAction::Pass),
-/// [`Drop`](RewriteAction::Drop), [`Patch`](RewriteAction::Patch) or [`Replace`](RewriteAction::Replace).
-/// The control class adds [`Answer`](RewriteAction::Answer), [`Stall`](RewriteAction::Stall),
-/// [`Nak`](RewriteAction::Nak) and the two reply rewrites. [`is_valid_for`](RewriteAction::is_valid_for)
-/// mirrors the box's own admissibility check.
+/// [`Emit`](RewriteClass::Emit), the vendor classes) takes [`Pass`](RewriteAction::Pass),
+/// [`Drop`](RewriteAction::Drop), [`Patch`](RewriteAction::Patch) or
+/// [`Replace`](RewriteAction::Replace); [`Any`](RewriteClass::Any) takes `Pass`, `Patch` and `Replace`
+/// only. The control class adds [`Answer`](RewriteAction::Answer), [`Stall`](RewriteAction::Stall),
+/// [`Nak`](RewriteAction::Nak) and the two reply rewrites.
+/// [`is_valid_for`](RewriteAction::is_valid_for) mirrors the box's check.
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Default)]
 pub enum RewriteAction {
-    /// Matched a rule but leaves the packet untouched (a shadow over a broader rule).
+    /// Leaves the matched packet untouched (shadows a broader rule).
     #[default]
     Pass = RW_PASS,
-    /// Report class: the packet is not delivered. An `Emit` drop mutes the wire; a `HidIn` drop drops
-    /// the device's contribution while injection still emits.
+    /// Report class: the packet is not delivered. An `Emit` drop mutes the wire; a `HidIn` drop
+    /// removes the device's contribution while injection still emits.
     Drop = RW_DROP,
-    /// Overwrite the payload bytes at `offset`, length preserved.
+    /// Overwrite the payload bytes at `offset`, length preserved. On `Control`, an OUT request's data
+    /// stage only.
     Patch = RW_PATCH,
-    /// The packet becomes the payload.
+    /// The packet becomes the payload. On `Control`, the payload overwrites the start of an OUT
+    /// request's data stage and `wLength` is kept.
     Replace = RW_REPLACE,
     /// Control: answer from the payload without asking the device.
     Answer = RW_ANSWER,
     /// Control: protocol STALL.
     Stall = RW_STALL,
-    /// Control: NAK to a timeout.
+    /// Control: NAK on EP0 until the host times out; STALL on a control endpoint above 0.
     Nak = RW_NAK,
     /// Control IN: overwrite the device's reply at `offset`.
     ReplyPatch = RW_REPLY_PATCH,
@@ -102,12 +108,12 @@ pub enum RewriteAction {
 }
 
 impl RewriteAction {
-    /// The wire `action` byte.
+    /// Wire `action` byte.
     pub fn as_u8(self) -> u8 {
         self as u8
     }
 
-    /// Map a wire `action` byte to a [`RewriteAction`], or `None` for an unknown value.
+    /// Decodes a wire `action` byte; `None` if unknown.
     pub fn from_u8(v: u8) -> Option<RewriteAction> {
         Some(match v {
             RW_PASS => RewriteAction::Pass,
@@ -123,7 +129,7 @@ impl RewriteAction {
         })
     }
 
-    /// Whether this action carries a payload the rule must supply.
+    /// Whether the rule must supply a payload for this action.
     pub fn carries_payload(self) -> bool {
         matches!(
             self,
@@ -136,7 +142,7 @@ impl RewriteAction {
     }
 
     /// Whether this action is admissible on `class`, mirroring the box's `rewrite_action_ok`: `Drop`
-    /// is a report surface only, and `Answer`/`Stall`/`Nak`/the reply rewrites are control-only.
+    /// on report surfaces only, `Answer`/`Stall`/`Nak`/the reply rewrites on control only.
     pub fn is_valid_for(self, class: RewriteClass) -> bool {
         let ctl = class.is_control();
         let any = matches!(class, RewriteClass::Any);
@@ -152,14 +158,14 @@ impl RewriteAction {
     }
 }
 
-/// A rewrite rule the host installs on the box.
+/// Rewrite rule the host installs on the box.
 ///
-/// A rule is keyed by `(class, id, direction, match, mask)`: two rules that differ in any of those are
-/// separate table entries; setting one whose key already exists overwrites it. `match` and `mask` must
-/// be the same length (the box compares the packet head byte-for-byte under `mask`); an empty match
-/// matches every packet on the address. `offset` is where [`Patch`](RewriteAction::Patch) and
-/// [`ReplyPatch`](RewriteAction::ReplyPatch) write; other actions ignore it. `payload` is the bytes an
-/// action that [carries one](RewriteAction::carries_payload) supplies.
+/// Keyed by `(class, id, direction, match, mask)`: rules differing in any of those are separate
+/// entries; setting an existing key overwrites it. `match` and `mask` are one length (the box compares
+/// the packet head byte for byte under `mask`); an empty match takes every packet on the address.
+/// `offset` is where [`Patch`](RewriteAction::Patch) and [`ReplyPatch`](RewriteAction::ReplyPatch)
+/// write; other actions ignore it. `payload` is the bytes an action that
+/// [carries one](RewriteAction::carries_payload) supplies.
 ///
 /// ```no_run
 /// # use medius::{Device, Direction, Result};
@@ -167,42 +173,41 @@ impl RewriteAction {
 /// # fn main() -> Result<()> {
 /// let device = Device::find()?;
 /// device.allow_imperfect_clones(true)?;
-/// // Mute the clone's own wire on interrupt-IN endpoint 1 (Emit is an IN endpoint).
+/// // Mute the clone's wire on interrupt-IN endpoint 1 (Emit is an IN endpoint).
 /// device.set_rewrite(&RewriteRule::new(RewriteClass::Emit, 1, Direction::IN, RewriteAction::Drop))?;
 /// # Ok(()) }
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct RewriteRule {
-    /// The traffic class the rule addresses.
+    /// Addressed class.
     pub class: RewriteClass,
-    /// The address within the class: an interface number or an endpoint number.
+    /// Interface or endpoint number within the class.
     pub id: u16,
-    /// The flow the rule matches. `REWRITE` uses `Both`/`Positive`/`Negative` only; the bearing-relative
-    /// directions are rejected by the box. For an endpoint class it carries the endpoint's
-    /// [`IN`](crate::Direction::IN)/[`OUT`](crate::Direction::OUT).
+    /// Matched flow: `Both`/`Positive`/`Negative` only (the box rejects the bearing-relative ones).
+    /// For an endpoint class, the endpoint's [`IN`](crate::Direction::IN)/[`OUT`](crate::Direction::OUT).
     pub direction: Direction,
     /// What the rule does to a matched packet.
     pub action: RewriteAction,
     /// Where [`Patch`](RewriteAction::Patch)/[`ReplyPatch`](RewriteAction::ReplyPatch) write.
     pub offset: u16,
-    /// The head bytes compared under [`mask`](RewriteRule::mask); empty matches every packet.
+    /// Head bytes compared under [`mask`](RewriteRule::mask); empty matches every packet.
     pub match_bytes: Vec<u8>,
-    /// The mask over [`match_bytes`](RewriteRule::match_bytes); same length.
+    /// Mask over [`match_bytes`](RewriteRule::match_bytes); same length.
     pub mask: Vec<u8>,
-    /// The bytes an action that carries a payload supplies.
+    /// Payload for an action that carries one.
     pub payload: Vec<u8>,
 }
 
 impl Default for RewriteClass {
-    /// [`Emit`](RewriteClass::Emit): the outgoing wire, the class a rule most often addresses.
+    /// [`Emit`](RewriteClass::Emit): the outgoing wire, the most common target.
     fn default() -> Self {
         RewriteClass::Emit
     }
 }
 
 impl RewriteRule {
-    /// A rule with no match, no payload and `offset` 0. Add a masked match with
-    /// [`matching`](Self::matching) and a payload with [`with_payload`](Self::with_payload).
+    /// Rule with no match, no payload and `offset` 0; add them with [`matching`](Self::matching) and
+    /// [`with_payload`](Self::with_payload).
     pub fn new(
         class: RewriteClass,
         id: u16,
@@ -218,27 +223,27 @@ impl RewriteRule {
         }
     }
 
-    /// Narrow the rule to packets whose head compares equal to `match_bytes` under `mask`. Both slices
-    /// must be the same length; a longer packet still matches on its head.
+    /// Narrow to packets whose head equals `match_bytes` under `mask`. Both are one length; a longer
+    /// packet matches on its head.
     pub fn matching(mut self, match_bytes: impl Into<Vec<u8>>, mask: impl Into<Vec<u8>>) -> Self {
         self.match_bytes = match_bytes.into();
         self.mask = mask.into();
         self
     }
 
-    /// Set the write offset for [`Patch`](RewriteAction::Patch)/[`ReplyPatch`](RewriteAction::ReplyPatch).
+    /// Write offset for [`Patch`](RewriteAction::Patch)/[`ReplyPatch`](RewriteAction::ReplyPatch).
     pub fn at_offset(mut self, offset: u16) -> Self {
         self.offset = offset;
         self
     }
 
-    /// Supply the payload for an action that [carries one](RewriteAction::carries_payload).
+    /// Payload for an action that [carries one](RewriteAction::carries_payload).
     pub fn with_payload(mut self, payload: impl Into<Vec<u8>>) -> Self {
         self.payload = payload.into();
         self
     }
 
-    /// The `(class, id, direction, match, mask)` key that identifies this rule in the table.
+    /// The rule's `(class, id, direction, match, mask)` table key.
     pub fn key(&self) -> RewriteKey {
         RewriteKey {
             class: self.class,
@@ -250,63 +255,64 @@ impl RewriteRule {
     }
 }
 
-/// The `(class, id, direction, match, mask)` key that identifies one table entry.
+/// `(class, id, direction, match, mask)` key of one table entry.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RewriteKey {
-    /// The traffic class the rule addresses.
+    /// Addressed class.
     pub class: RewriteClass,
-    /// The address within the class.
+    /// Address within the class.
     pub id: u16,
-    /// The flow the rule matches.
+    /// Matched flow.
     pub direction: Direction,
-    /// The head bytes the rule matched on.
+    /// Head bytes matched on.
     pub match_bytes: Vec<u8>,
-    /// The mask over the match.
+    /// Mask over the match.
     pub mask: Vec<u8>,
 }
 
-/// One row of the decoded [`RewriteTable`] summary (§4.17): the rule's address, action and live
-/// counters, without the match/mask/payload bytes. Read the full rule with
-/// [`query_rewrite_entry`](crate::Device::query_rewrite_entry).
+/// Row of the decoded [`RewriteTable`] summary (§4.17): a rule's address, action and live counters,
+/// without match/mask/payload bytes. [`query_rewrite_entry`](crate::Device::query_rewrite_entry)
+/// reads the full rule.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RewriteEntry {
-    /// The traffic class the rule addresses.
+    /// Addressed class.
     pub class: RewriteClass,
-    /// The address within the class.
+    /// Address within the class.
     pub id: u16,
-    /// The flow the rule matches.
+    /// Matched flow.
     pub direction: Direction,
     /// What the rule does to a matched packet.
     pub action: RewriteAction,
-    /// How many `match`/`mask` bytes the rule compares.
+    /// `match`/`mask` bytes compared.
     pub match_len: u8,
-    /// The write offset for a patching action.
+    /// Write offset for a patching action.
     pub offset: u16,
-    /// How many payload bytes the rule carries.
+    /// Payload bytes carried.
     pub payload_len: u16,
-    /// How many packets the rule has matched since it was installed (saturating).
+    /// Packets matched as the top-ranked rule since install or last overwrite, a
+    /// [`Pass`](RewriteAction::Pass) rule included (saturating).
     pub hits: u16,
 }
 
-/// The decoded `RESP(REWRITE)` (§4.17): the whole rewrite table's summary.
+/// Decoded `RESP(REWRITE)` (§4.17): the rewrite table summary.
 ///
-/// `generation` bumps only on a change that alters the table, so a host that holds a last-seen value
-/// re-sends its rules only when the box's diverges (a device blip or re-clone can clear the table
-/// while the control link stays up). The crate does this for you; the field is exposed for a host that
-/// runs its own reconcile.
+/// `generation` bumps on a table change and on a clear of a non-empty table. A reset, detach, link
+/// loss, re-clone or the opt-in going off empties the table and returns it to 0. The crate ignores
+/// it: its keepalive re-sends every held rule.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct RewriteTable {
-    /// The table is full: a further rule was, or would be, refused.
+    /// The box refused the last new rule or overwrite for room: all 32 entries in use, or the
+    /// 2048-byte payload pool full. The next table change, or a clear, resets it.
     pub table_full: bool,
-    /// The table's generation counter (see the type docs).
+    /// Generation counter (see the type docs).
     pub generation: u8,
-    /// One row per installed rule, in installation order (the order the box holds them). The
-    /// most-specific-first ordering is how the box *selects* a match, not how it lists the table here.
+    /// One row per installed rule, in installation order (the box's order). The box selects a match
+    /// most specific first, whatever its order here.
     pub entries: Vec<RewriteEntry>,
 }
 
 impl RewriteTable {
-    /// Decode a `RESP(REWRITE)` payload (§4.17): `[what][flags u8][gen u8][n u8]` then `n` ×
+    /// `[what][flags u8][gen u8][n u8]` then `n` ×
     /// `[cls u8][id u16][dir u8][action u8][mlen u8][off u16][plen u16][hits u16]`.
     pub(crate) fn from_payload(p: &[u8]) -> Option<RewriteTable> {
         if p.len() < 4 {
@@ -319,8 +325,7 @@ impl RewriteTable {
         for i in 0..n {
             let o = 4 + 12 * i;
             let row = p.get(o..o + 12)?;
-            // A byte the crate does not have an enum for (a class or action a newer box added) is
-            // skipped rather than aborting the whole decode: the rest of the table still reads.
+            // A class or action a newer box added is skipped; the rest of the table still reads.
             let (Some(class), Some(action)) = (
                 RewriteClass::from_u8(row[0]),
                 RewriteAction::from_u8(row[4]),
@@ -349,10 +354,9 @@ impl RewriteTable {
     }
 }
 
-/// Decode a `RESP(REWRITE_ENTRY)` payload (§4.17) back into the [`RewriteRule`] that replays it:
-/// `[what][index][cls][id u16][dir][state=1][action][off u16][mlen][match mlen][mask mlen][payload]`.
+// `[what][index][cls][id u16][dir][state=1][action][off u16][mlen][match mlen][mask mlen][payload]`,
+// decoded into the rule that replays it.
 pub(crate) fn rewrite_entry_from_payload(p: &[u8]) -> Option<RewriteRule> {
-    // what + index + cls + id(2) + dir + state + action + off(2) + mlen = 11 bytes of header.
     let hdr = p.get(0..11)?;
     let class = RewriteClass::from_u8(hdr[2])?;
     let id = u16::from_le_bytes([hdr[3], hdr[4]]);
@@ -375,6 +379,5 @@ pub(crate) fn rewrite_entry_from_payload(p: &[u8]) -> Option<RewriteRule> {
     })
 }
 
-/// The wire sentinels the whole-table clear uses (`class 0xFF, id 0xFFFF, state 0`), so a caller
-/// reading the encoders can see the clear is not a real rule.
+// Whole-table clear sentinel (`class 0xFF, id 0xFFFF, state 0`).
 pub(crate) const REWRITE_CLEAR_ID: u16 = CATCH_ID_ANY;

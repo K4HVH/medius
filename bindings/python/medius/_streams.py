@@ -55,8 +55,8 @@ class EventStream:
     def is_connected(self) -> bool:
         """Whether the box is still delivering.
 
-        `try_recv` and `recv_timeout` both return `None` for "nothing yet" and for "nothing ever
-        again". This separates them: one means wait longer, the other means stop.
+        `try_recv` and `recv_timeout` return `None` both for "nothing yet" and for "nothing ever
+        again"; this tells them apart.
         """
         return bool(_native.lib.medius_event_stream_is_connected(self._handle))
 
@@ -97,8 +97,8 @@ class EventStream:
 class InputStream:
     """A live stream of decoded input: press and release edges, and motion.
 
-    The box sends held-usage snapshots; this diffs them into the edges they represent. Iterate it to
-    consume events until the link drops.
+    The box sends held-usage snapshots; this diffs them into edges. Iterate it to consume events
+    until the link drops.
     """
 
     def __init__(self, handle, device=None):
@@ -124,7 +124,7 @@ class InputStream:
         return None
 
     def held(self, input_class: Class) -> List[Usage]:
-        """Which usages of `input_class` this stream currently holds."""
+        """The usages of `input_class` this stream holds."""
         cap = 16
         while True:
             buf = (_native.MediusUsage * cap)()
@@ -176,17 +176,17 @@ class InputStream:
 class Timeline:
     """Puts box stamps on this machine's clock.
 
-    A catch stamp is microseconds on a chip that booted before this process did: it wraps every ~71.6
-    minutes and has no relation to any clock here. Feed every event in as it arrives, in order::
+    A catch stamp is microseconds on a chip that booted before this process: it wraps every ~71.6
+    minutes and is unrelated to any clock here. Feed every event in as it arrives, in order::
 
         with dev.catch_events(CatchFilter.all_input()) as events:
             time = Timeline()
             for ev in events:
                 print(ev, time.observe(ev).host_ns)
 
-    Each domain is tracked separately. The mapping keeps a per-domain minimum of (elapsed here minus
-    elapsed on the box) rather than an average, because the error is one-sided (an event can arrive
-    late but never early), so it improves as it runs and never degrades.
+    Each domain is tracked separately, by a minimum of (elapsed here minus elapsed on the box): the
+    error is one-sided (an event can arrive late, never early), so the mapping improves as it runs
+    and never degrades.
     """
 
     def __init__(self):
@@ -197,8 +197,8 @@ class Timeline:
     def observe(self, event, now_ns: Optional[int] = None) -> Stamped:
         """Place `event` on this machine's clock. `now_ns` defaults to `time.monotonic_ns()`.
 
-        Takes a `CatchEvent` or an `InputEvent`; both share one timeline, so a caller reading the
-        decoded and the raw stream together gets one comparable ordering.
+        Takes a `CatchEvent` or an `InputEvent`; both share one timeline, so events from the decoded
+        and raw streams order together.
         """
         if now_ns is None:
             now_ns = time.monotonic_ns()
@@ -214,8 +214,8 @@ class Timeline:
             ):
                 raise MediusError(Status.ERR_INVALID_ARG, "timeline observe failed")
             return Stamped(int(out.host_ns), int(out.box_us), int(out.excess_ns))
-        # Only the stamp and the domain are read; rebuilding those two is cheaper and safer than
-        # carrying the whole union back across the boundary.
+        # Only stamp and domain are read, so rebuild those two instead of carrying the whole union
+        # back across the boundary.
         c = _native.MediusCatchEvent(
             kind=int(event.kind),
             ts_us=int(event.ts_us),

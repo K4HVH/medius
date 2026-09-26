@@ -1,5 +1,5 @@
-//! `TRANSFORM` (§3.15): the payload bytes, the op/field vocabulary, `RESP(TRANSFORMS)` decode (no
-//! per-entry state byte), and the MockBox round-trip through the whole table lifecycle.
+//! `TRANSFORM` (§3.15): payload bytes, op/field vocabulary, `RESP(TRANSFORMS)` decode (no per-entry
+//! state byte), and the MockBox round-trip through the table lifecycle.
 
 use crate::protocol::command::transform_payload;
 use crate::protocol::{Resp, parse_resp};
@@ -7,8 +7,7 @@ use crate::types::{Axis, Button, Class, Key, LockTarget, MediaKey, Transform, Tr
 
 #[test]
 fn transform_payload_bytes() {
-    // REMAP X (axis class 3, id 0) → Y (id 1), state add. No scale field: a transform moves a field,
-    // it does not weigh one.
+    // REMAP X (axis class 3, id 0) → Y (id 1), state add.
     let p = transform_payload(0, 3, 0, 3, 1, 1);
     assert_eq!(p, [0, 3, 0x00, 0x00, 3, 0x01, 0x00, 1]);
 }
@@ -102,8 +101,8 @@ fn transform_field_class_id_roundtrips() {
 
 #[test]
 fn transform_key_identifies_the_entry() {
-    // Two transforms with the same (source, dest) share a key (the box overwrites the op in place),
-    // and one that differs in either field does not.
+    // Same (source, dest) is one key (the box overwrites the op in place); differing in either field
+    // is another.
     let a = Transform::remap(Axis::X, Axis::Y);
     let b = Transform::swap(Axis::X, Axis::Y);
     let c = Transform::remap(Axis::X, Axis::Wheel);
@@ -115,8 +114,8 @@ fn transform_key_identifies_the_entry() {
 
 #[test]
 fn a_built_transform_equals_its_own_readback() {
-    // The readback is meant to be the command that rebuilds the entry, so what the caller built has to
-    // compare equal to what comes back. Every field the frame carries is in the RESP row.
+    // The readback is the command that rebuilds the entry, so it compares equal to what was built;
+    // every frame field is in the RESP row.
     let t = Transform::swap(Axis::X, Axis::Y);
     let (sc, si) = t.source.class_id();
     let (dc, di) = t.dest.class_id();
@@ -224,8 +223,7 @@ mod mock_roundtrip {
 
     #[test]
     fn transform_is_ungated_no_opt_in_needed() {
-        // The default mock has the imperfect opt-in OFF; a transform still installs, because it is
-        // faithful and never needed the gate the rewrite/raw/patch layer does.
+        // The default mock has the opt-in off; a transform still installs, as it is faithful.
         let device = Device::with_mock(MockBox::new());
         assert!(!device.query_imperfect().unwrap().allowed);
         device.transform_swap(Axis::X, Axis::Y).unwrap();
@@ -306,8 +304,8 @@ mod mock_roundtrip {
 
     #[test]
     fn a_field_onto_itself_is_rejected_before_the_wire() {
-        // Both ops MOVE a value, so a source that is also the destination names no operation at all.
-        // Weighing a field in place is the lock's, and it has its own command.
+        // Both ops move a value, so one field as both ends names no operation. Weighing in place is
+        // `scale`.
         let mock = MockBox::new();
         let device = Device::with_mock(mock.clone());
         for bad in [
@@ -325,8 +323,8 @@ mod mock_roundtrip {
 
     #[test]
     fn the_box_refuses_a_self_pair_on_its_own() {
-        // The crate refuses one too, so go around it with the raw send: a host that lost its guard must
-        // not be able to install a field onto itself, which would silently zero it.
+        // The crate refuses one too, so use the raw send: a host without the guard must not install a
+        // field onto itself, which would zero it with no error.
         let mock = MockBox::new();
         let device = Device::with_mock(mock.clone());
         device
@@ -344,9 +342,8 @@ mod mock_roundtrip {
 
     #[test]
     fn the_crate_refuses_a_set_past_the_ceiling_rather_than_holding_it_forever() {
-        // Without this the host keeps an entry the box refused: the keepalive re-sends it every tick,
-        // the state never reads idle, and after a reconnect the replay order decides which entries
-        // actually land.
+        // Otherwise the host keeps an entry the box refused: the keepalive re-sends it every tick, the
+        // state never reads idle, and after a reconnect the replay order decides which entries land.
         let mock = MockBox::new();
         let device = Device::with_mock(mock.clone());
         for i in 0..Transforms::CAPACITY {
@@ -373,8 +370,8 @@ mod mock_roundtrip {
 
     #[test]
     fn an_undeclared_field_is_refused_by_the_box_not_the_crate() {
-        // The default mock has no AC Pan and no keyboard, so the crate sends these (they are
-        // structurally valid) and the box refuses them: absent from the readback, the frame still went.
+        // The default mock has no AC Pan or keyboard, so these structurally valid entries go out and
+        // the box refuses them: sent, but absent from the readback.
         let mock = MockBox::new();
         let device = Device::with_mock(mock.clone());
         device.transform_remap(Axis::X, Axis::Pan).unwrap(); // pan not declared
@@ -454,9 +451,8 @@ mod mock_roundtrip {
 
     #[test]
     fn a_reapply_re_sends_held_transforms_in_installation_order() {
-        // The box applies transforms in table order and two that write the same field do not commute,
-        // so the replay is only correct if it rebuilds the ORDER, not just the set. Installed here so
-        // the second entry sorts BELOW the first by wire key: a map-backed store would swap them.
+        // The box applies transforms in table order and two writing one field do not commute, so the
+        // replay must rebuild the order, not just the set.
         let mock = MockBox::new();
         let device = Device::with_mock(mock.clone());
         let swap_y_wheel = Transform::swap(Axis::Y, Axis::Wheel); // key (3,1,3,2)
@@ -477,9 +473,7 @@ mod mock_roundtrip {
 
     #[test]
     fn the_readback_comes_back_in_apply_order() {
-        // The host→box half of the ordering claim is covered by the replay tests; this is the box→host
-        // half. RESP(TRANSFORMS) is meant to read back as the commands that rebuild the table, which it
-        // can only do if it carries the order the box applies them in.
+        // The box→host half of ordering; the replay tests cover host→box.
         let device = Device::with_mock(MockBox::new());
         let first = Transform::swap(Axis::Y, Axis::Wheel); // key (3,1,3,2)
         let second = Transform::remap(Axis::X, Axis::Y); // key (3,0,3,1), sorts BELOW the first

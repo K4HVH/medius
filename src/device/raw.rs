@@ -7,16 +7,16 @@ use crate::types::{Direction, Setup, TransferOutcome, TransferStatus};
 
 use super::Device;
 
-/// How long a [`transfer`](Device::transfer) waits for the device's answer before
-/// [`Error::QueryTimeout`](crate::Error::QueryTimeout). A control transfer to a real device can be
-/// slower than a box-local query, so this is longer than [`DEFAULT_QUERY_TIMEOUT`](crate::DEFAULT_QUERY_TIMEOUT).
+/// How long a [`transfer`](Device::transfer) waits for the device's reply before
+/// [`Error::QueryTimeout`](crate::Error::QueryTimeout). Longer than
+/// [`DEFAULT_QUERY_TIMEOUT`](crate::DEFAULT_QUERY_TIMEOUT), as a real device can be slower than a
+/// box-local query.
 pub const DEFAULT_TRANSFER_TIMEOUT: Duration = Duration::from_millis(1500);
 
 impl Device {
-    /// Return [`Error::ImperfectRequired`] unless the box reports the imperfect-clone opt-in on. The
-    /// advanced control layer (§3.14) is admitted by that opt-in and nothing else; a frame sent with it off is
-    /// silently dropped box-side, so the config-rate setters read the state first and turn that into a real
-    /// error. [`raw`](Device::raw) does not: it runs per report, and a query per call costs a round trip.
+    // The box drops an advanced-layer (§3.14) frame with no reply while the opt-in is off, so the
+    // config-rate setters check first. `raw` does not: it runs per report, and a query costs a round
+    // trip.
     pub(crate) fn require_imperfect(&self) -> Result<()> {
         if self.query_imperfect()?.allowed {
             Ok(())
@@ -25,21 +25,25 @@ impl Device {
         }
     }
 
-    /// `RAW` (§3.14): put `bytes` verbatim on cloned endpoint number `ep` in `direction`, fire-and-forget.
+    /// `RAW` (§3.14): put `bytes` verbatim on cloned endpoint `ep` in `direction`; fire-and-forget.
     ///
-    /// `ep` is the bare endpoint number (0 to 15); `direction` names the flow. [`Direction::IN`] emits
-    /// toward the game PC; [`Direction::OUT`] relays to the real device. Only those two are addressable:
-    /// [`Direction::Both`] returns [`Error::RawDirection`] and the bearing-relative pair returns
-    /// [`Error::RelativeDirection`], both before any frame goes out. The write is stateless and one-shot:
-    /// the next native report on that endpoint carries the device's own state, not the raw one, and
-    /// `RAW` bypasses the [rewrite rules](Device::set_rewrite). An interrupt payload past the endpoint's
-    /// `wMaxPacketSize` is dropped box-side; a bulk transfer splits at the packet size and terminates
-    /// with a short packet.
+    /// `ep` is the bare endpoint number (0 to 15). [`Direction::IN`] emits to the game PC;
+    /// [`Direction::OUT`] relays to the real device. [`Direction::Both`] gives [`Error::RawDirection`]
+    /// and the bearing-relative pair [`Error::RelativeDirection`], before any frame goes out. The
+    /// write is stateless and one-shot: the next native report on that endpoint carries native state,
+    /// and `RAW` bypasses the [rewrite rules](Device::set_rewrite). A raw IN report never rides a
+    /// native one, so on an endpoint the device reports on every poll it takes its own poll, within
+    /// two device reports.
+    ///
+    /// `bytes` is at most 510 long, else [`Error::FrameTooLong`]. The box drops an interrupt payload
+    /// past the endpoint's `wMaxPacketSize`, in either direction. A bulk payload splits at
+    /// `wMaxPacketSize` on the wire and ends with a short packet, or a zero-length one on an exact
+    /// multiple.
     ///
     /// Admitted by [`allow_imperfect_clones`](Device::allow_imperfect_clones): with the opt-in off the
-    /// box drops the frame and says nothing, so this still returns `Ok`.
-    /// [`query_imperfect`](Device::query_imperfect) reports the state; read it once at setup rather than
-    /// per call, which is a round trip each time.
+    /// box drops the frame with no reply, and this still returns `Ok`.
+    /// [`query_imperfect`](Device::query_imperfect) reports the state; read it once at setup, not per
+    /// call (a round trip each).
     ///
     /// ```no_run
     /// # use medius::{Device, Direction, Result};
@@ -55,25 +59,25 @@ impl Device {
             .send(FrameType::Raw, &raw_payload(ep, direction, bytes))
     }
 
-    /// `TRANSFER` (§3.14): run one control transfer against the real device and return its answer.
+    /// `TRANSFER` (§3.14): run one control transfer against the real device and return its reply.
     ///
-    /// `ep` is 0 for EP0 or a control endpoint the device declares. `setup` is the eight-byte USB setup
-    /// packet; `out` is the OUT data stage (empty for an IN transfer). The returned [`TransferOutcome`]
-    /// carries the [`status`](TransferOutcome::status) and any IN data: a status other than
-    /// [`Ok`](TransferStatus::Ok) is a real protocol result, not a link error, so it is returned rather
-    /// than raised, and the surrounding `Ok` means the box answered at all.
+    /// `ep` is 0 for EP0 or a control endpoint the device declares. `setup` is the eight-byte setup
+    /// packet; `out` the OUT data stage (empty for an IN transfer). The [`TransferOutcome`] carries
+    /// the [`status`](TransferOutcome::status) and any IN data: a status other than
+    /// [`Ok`](TransferStatus::Ok) is a protocol result, not a link error, so it is returned, not
+    /// raised; the surrounding `Ok` means the box replied.
     ///
-    /// This is admitted by [`allow_imperfect_clones`](Device::allow_imperfect_clones): with the opt-in
-    /// off the box answers [`Refused`](TransferStatus::Refused) rather than reaching the device. It
-    /// rides its own inter-chip link pair, never the game PC's EP0 proxy, and is single-outstanding.
-    /// Uses [`DEFAULT_TRANSFER_TIMEOUT`]; see [`transfer_timeout`](Device::transfer_timeout) to choose.
+    /// Admitted by [`allow_imperfect_clones`](Device::allow_imperfect_clones): with the opt-in off the
+    /// box replies [`Refused`](TransferStatus::Refused) without reaching the device. Runs over its own
+    /// inter-chip link pair, apart from the game PC's EP0 proxy, one at a time. Uses
+    /// [`DEFAULT_TRANSFER_TIMEOUT`]; [`transfer_timeout`](Device::transfer_timeout) sets another.
     ///
     /// ```no_run
     /// # use medius::{Device, Result, Setup, TransferStatus};
     /// # fn main() -> Result<()> {
     /// let device = Device::find()?;
     /// device.allow_imperfect_clones(true)?;
-    /// // GET_DESCRIPTOR(Device): standard device-to-host request for the 18-byte device descriptor.
+    /// // GET_DESCRIPTOR(Device): the 18-byte device descriptor.
     /// let reply = device.transfer(0, Setup::new(0x80, 0x06, 0x0100, 0x0000, 18), &[])?;
     /// if reply.status == TransferStatus::Ok {
     ///     println!("device descriptor: {:02x?}", reply.data());
@@ -86,10 +90,10 @@ impl Device {
 
     /// [`transfer`](Device::transfer) with an explicit reply timeout.
     ///
-    /// The box gives up on a control transfer after its own ~800 ms window, so a `timeout` shorter than
-    /// that abandons the wait before a slow device would answer and, only if 256 further transfers to the
-    /// same `ep` then wrap the sequence number inside that window, could let a late answer correlate to a
-    /// later transfer. Keep it at or above the box window; [`DEFAULT_TRANSFER_TIMEOUT`] does.
+    /// The box gives up on a control transfer after its ~800 ms window. A shorter `timeout` abandons
+    /// the wait before a slow device replies, and if 256 further transfers to the same `ep` then wrap
+    /// the sequence number inside that window, a late reply can correlate to a later transfer. Keep it
+    /// at or above the box window, as [`DEFAULT_TRANSFER_TIMEOUT`] is.
     pub fn transfer_timeout(
         &self,
         ep: u8,
@@ -105,10 +109,8 @@ impl Device {
     }
 }
 
-/// A raw injection goes on one endpoint flow, so only [`Direction::IN`] and [`Direction::OUT`] address
-/// one. The bearing-relative pair is measured at emit time, which a raw write has none of, and
-/// [`Direction::Both`] names two flows at once; both are refused before the wire rather than sent as a
-/// frame the box would resolve to OUT.
+// Only IN and OUT name one endpoint flow. The bearing-relative pair needs an emit time a raw write
+// lacks, and `Both` names two flows; the box would resolve either to OUT.
 pub(crate) fn validate_raw_direction(direction: Direction) -> Result<()> {
     match direction {
         Direction::Positive | Direction::Negative => Ok(()),

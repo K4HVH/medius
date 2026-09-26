@@ -23,7 +23,7 @@ pub enum Input {
 }
 
 impl Input {
-    /// The usage this is an edge on, or `None` for motion.
+    /// Usage the edge is on; `None` for motion.
     pub fn usage(self) -> Option<Usage> {
         match self {
             Input::Press(u) | Input::Release(u) => Some(u),
@@ -50,7 +50,7 @@ impl Input {
         }
     }
 
-    /// The axes a motion report moved, with their deltas; empty for an edge.
+    /// Axes a motion report moved, with their deltas; empty for an edge.
     pub fn axes(self) -> impl Iterator<Item = (Axis, i16)> + use<> {
         let d = match self {
             Input::Motion { dx, dy, dz, pan } => [
@@ -68,7 +68,7 @@ impl Input {
 /// One [`Input`] and when the real device produced it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct InputEvent {
-    /// The report's arrival stamp, in the stamping chip's microseconds.
+    /// Report arrival stamp, in the stamping chip's microseconds.
     pub ts_us: u32,
     /// Which chip's clock stamped it; always [`ClockDomain::HostChip`] for physical input.
     pub clock: ClockDomain,

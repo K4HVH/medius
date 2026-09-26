@@ -1,6 +1,6 @@
-//! Measure how long `move_rel` blocks the calling thread, so a host-side write stall shows up as a
-//! number instead of a feeling. Reports the percentiles, every call over the stall threshold, and
-//! the share of wall clock spent inside the library.
+//! Measures how long `move_rel` blocks the calling thread, so a host-side write stall shows as a
+//! number. Reports percentiles, every call over the stall threshold, and the share of wall clock
+//! spent in the library.
 
 use std::time::{Duration, Instant};
 

@@ -18,14 +18,15 @@ impl Device {
                 max: LOCK_SCALE_MAX,
             });
         }
-        // One bit has nothing to reverse, so a negative names an operation the target cannot perform.
+        // One bit has nothing to reverse.
         if scale < 0 && class != LOCK_CLS_AXIS {
             return Err(Error::LockScaleUsage { scale, class });
         }
         let dir = lock_direction(class, direction)?.as_u8();
-        // Recorded before the write so a reconnect racing it still replays the lock, and rolled back
-        // when the frame never went out: a desired state the box was never told about holds the
-        // keepalive open for a lock nothing is applying.
+        // Serialised against recovery re-sends, or a stale lock can land after this one. Recorded
+        // before the write so a racing reconnect replays it; rolled back if the frame never went out,
+        // or the keepalive stays open for a lock nothing applies.
+        let _serial = self.link.reassert_guard();
         let undo = self
             .link
             .desired()
@@ -40,46 +41,44 @@ impl Device {
         sent
     }
 
-    /// `LOCK` weighs physical input on a target while host injection still drives it; reverts on
+    /// `LOCK`: weigh physical input on a target while host injection still drives it; reverts on
     /// control-PC silence.
     ///
-    /// `scale` is the percent of the physical value the box keeps on that direction:
-    /// [`LOCK_SCALE_BLOCK`] blocks it, [`LOCK_SCALE_PASS`] passes it untouched, and above that
-    /// amplifies, to [`LOCK_SCALE_MAX`](crate::LOCK_SCALE_MAX) = 2.55x.
-    /// [`lock`](Self::lock) and [`unlock`](Self::unlock) are the two ends of this one number.
+    /// `scale` is the percent of the physical value kept on that direction: [`LOCK_SCALE_BLOCK`]
+    /// blocks, [`LOCK_SCALE_PASS`] passes untouched, and above that amplifies, up to
+    /// [`LOCK_SCALE_MAX`](crate::LOCK_SCALE_MAX) = 2.55x. [`lock`](Self::lock) and
+    /// [`unlock`](Self::unlock) are its two ends.
     ///
-    /// The percent is signed, down to [`LOCK_SCALE_MIN`](crate::LOCK_SCALE_MIN): a negative one weighs
-    /// the physical value and reverses it, so `-100` is a plain inversion. The slot is picked from the
-    /// sign of the delta before the weigh, so a `Positive` of `-100` turns what arrived rightward into
-    /// leftward and leaves what arrived leftward alone. Only an axis takes one:
-    /// [`Error::LockScaleUsage`](crate::Error::LockScaleUsage) otherwise, and
+    /// Signed down to [`LOCK_SCALE_MIN`](crate::LOCK_SCALE_MIN): a negative scale weighs the physical
+    /// value and reverses it, so `-100` inverts. The slot is picked by the delta's sign before the
+    /// weigh, so a `Positive` of `-100` turns rightward motion leftward and leaves leftward motion
+    /// alone. Axes only: [`Error::LockScaleUsage`](crate::Error::LockScaleUsage) otherwise, and
     /// [`Error::LockScaleRange`](crate::Error::LockScaleRange) outside the range.
     ///
-    /// A delta picks up at most two scales, its absolute direction's and its relative direction's, and
-    /// they multiply: a `Negative` of 50 with an `Against` of 40 lands leftward-while-injecting-right at
-    /// 20%. A block anywhere therefore wins outright.
+    /// A delta takes at most two scales, its absolute direction's and its relative direction's, and
+    /// they multiply: a `Negative` of 50 with an `Against` of 40 puts leftward motion, while injecting
+    /// rightward, at 20%. A block in either zeroes the product.
     ///
-    /// [`Direction::Both`] addresses the whole target, writing the scale to the two absolute directions
-    /// and a full pass to the two relative ones. Writing it to all four would square it, so a plain
-    /// `Both` of 50 would mean 50% with no bearing live and 25% with one. Name a relative direction to
-    /// weigh it.
+    /// [`Direction::Both`] writes the scale to the two absolute directions and a full pass to the two
+    /// relative ones; writing all four would square it (50% with no bearing, 25% with one). Name a
+    /// relative direction to weigh it.
     ///
     /// [`Direction::With`] and [`Direction::Against`] are measured against the bearing and do nothing
     /// until one is live; see [`set_bearing`](Self::set_bearing). Only an axis has a bearing, so a
     /// relative direction on a button, key or media usage is
-    /// [`Error::RelativeDirection`](crate::Error::RelativeDirection) rather than a frame the box
-    /// discards. A momentary usage carries one bit, so any scale from zero to a full pass locks it and
-    /// there is nothing in between; a scale at or above a full pass on one is an unlock.
+    /// [`Error::RelativeDirection`](crate::Error::RelativeDirection) instead of a frame the box
+    /// discards. A momentary usage carries one bit: any scale below a full pass locks it, and a full
+    /// pass or more unlocks it.
     ///
-    /// A media usage has no edges (it is suppressed whole), so an edge direction on one is sent as
-    /// [`Direction::Both`], which is what `RESP(LOCKS)` reports it as.
+    /// A media usage has no edges (it is suppressed whole), so an edge direction on one is sent, and
+    /// reported by `RESP(LOCKS)`, as [`Direction::Both`].
     ///
     /// ```no_run
     /// # use medius::{Axis, Device, Direction, Result};
     /// # fn main() -> Result<()> {
     /// let device = Device::find()?;
     /// device.scale(Axis::X, Direction::Against, 40)?;   // 40% of physical motion opposing the injection
-    /// device.scale(Axis::X, Direction::With, 130)?;     // 130% of physical helping it
+    /// device.scale(Axis::X, Direction::With, 130)?;     // 130% of physical motion along it
     /// # Ok(()) }
     /// ```
     pub fn scale(
@@ -92,23 +91,22 @@ impl Device {
         self.send_lock(class, id, direction, scale)
     }
 
-    /// `LOCK` blocks physical input on a target while host injection still drives it; reverts on
-    /// control-PC silence. The same as [`scale`](Self::scale) at [`LOCK_SCALE_BLOCK`].
+    /// `LOCK`: block physical input on a target while host injection still drives it; reverts on
+    /// control-PC silence. [`scale`](Self::scale) at [`LOCK_SCALE_BLOCK`].
     pub fn lock(&self, target: impl Into<LockTarget>, direction: Direction) -> Result<()> {
         self.scale(target, direction, LOCK_SCALE_BLOCK)
     }
 
-    /// Release a lock on the given target/direction, back to passing untouched. The same as
-    /// [`scale`](Self::scale) at [`LOCK_SCALE_PASS`].
+    /// Release a lock, back to passing untouched: [`scale`](Self::scale) at [`LOCK_SCALE_PASS`].
     ///
-    /// [`Direction::Both`] clears every direction of the target, the relative pair included, so an
-    /// unlock never walks away from a bearing scale that would go on weighing unseen. It is total in a
-    /// way a `Both` at any other scale is not: only a full pass reaches the relative pair.
+    /// [`Direction::Both`] clears every direction of the target, the relative pair included, so no
+    /// bearing scale stays behind weighing unseen. Only a full pass reaches the relative pair this
+    /// way; a `Both` at any other scale does not.
     pub fn unlock(&self, target: impl Into<LockTarget>, direction: Direction) -> Result<()> {
         self.scale(target, direction, LOCK_SCALE_PASS)
     }
 
-    /// `LOCK` a relative axis by sign; convenience for `lock(axis, direction)`.
+    /// `LOCK` a relative axis by sign; `lock(axis, direction)`.
     pub fn lock_axis(&self, axis: Axis, direction: Direction) -> Result<()> {
         self.lock(axis, direction)
     }
@@ -118,12 +116,12 @@ impl Device {
         self.unlock(axis, direction)
     }
 
-    /// Weigh a relative axis by sign; convenience for `scale(axis, direction, scale)`.
+    /// Weigh a relative axis by sign; `scale(axis, direction, scale)`.
     pub fn scale_axis(&self, axis: Axis, direction: Direction, scale: i16) -> Result<()> {
         self.scale(axis, direction, scale)
     }
 
-    /// `LOCK` a whole [`Blanket`] group (X and Y, the wheel, or every button / key / media usage).
+    /// `LOCK` a [`Blanket`] group (X and Y, the wheel, or every button / key / media usage).
     ///
     /// [`Blanket::Keys`] honours the direction: `Positive` blocks press edges only, `Negative`
     /// release edges only.
@@ -136,7 +134,7 @@ impl Device {
         self.blanket(what, direction, LOCK_SCALE_PASS)
     }
 
-    /// Weigh a whole [`Blanket`] group; see [`scale`](Self::scale) for what the number means.
+    /// Weigh a [`Blanket`] group; see [`scale`](Self::scale) for the number.
     pub fn scale_all(&self, what: Blanket, direction: Direction, scale: i16) -> Result<()> {
         self.blanket(what, direction, scale)
     }
@@ -156,8 +154,7 @@ impl Device {
 }
 
 // Only an axis has a bearing to be with or against; the box drops a relative direction on any other
-// class with no reply. A media usage has no edges either (it is suppressed whole, and RESP(LOCKS)
-// reports every media lock as Both), so an edge there becomes the Both the box will report back.
+// class with no reply.
 fn lock_direction(class: u8, direction: Direction) -> Result<Direction> {
     if class == LOCK_CLS_AXIS {
         return Ok(direction);

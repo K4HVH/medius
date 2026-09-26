@@ -163,6 +163,29 @@ fn scale_of_reports_the_percentage_and_is_locked_does_not() {
 }
 
 #[test]
+fn an_unnamed_direction_reads_as_pass_even_against_a_both_entry() {
+    let mute = medius_lock_target_usage(medius_usage_media(MEDIUS_MEDIA_MUTE));
+    let locks = locks_with(&[MediusLockEntry {
+        target: mute,
+        is_blanket: false,
+        direction: MediusDirection::Both as u8,
+        scale: MEDIUS_LOCK_SCALE_BLOCK,
+    }]);
+    unsafe {
+        assert!(medius_locks_is_locked(
+            &locks,
+            mute,
+            MediusDirection::Both as u8
+        ));
+        assert_eq!(
+            medius_locks_scale_of(&locks, mute, 99),
+            MEDIUS_LOCK_SCALE_PASS
+        );
+        assert!(!medius_locks_is_locked(&locks, mute, 99));
+    }
+}
+
+#[test]
 fn rate_native_hz_divides_the_period() {
     let mut hz = 0.0f32;
     let rate = MediusRate {
@@ -275,8 +298,7 @@ fn usage_snapshot_count_caps_at_capacity_without_wrapping() {
 
 #[test]
 fn an_empty_snapshot_crosses_the_c_boundary_still_naming_its_class() {
-    // n == 0 is the release of the last held usage. Without the class in the struct a C caller could
-    // not tell which class went quiet, and the edge is the whole point of subscribing.
+    // n == 0 is the last held usage's release; the class says which class went quiet.
     for (class, want) in [
         (medius::Class::Button, MediusClass::Button),
         (medius::Class::Key, MediusClass::Key),
@@ -338,8 +360,8 @@ fn catch_filter_wildcards_round_trip_through_the_sentinels() {
     let exact = medius_catch_filter_traffic(MEDIUS_CATCH_CLASS_VENDOR_INTERRUPT, 1);
     assert_eq!(exact.id, 1);
 
-    // A wildcard is `None` on the Rust side and the sentinel on the C side, and the pair has to come
-    // back byte-identical or a re-sent subscription would address something else.
+    // A wildcard is `None` in Rust and the sentinel in C; the pair must round-trip byte-identical
+    // or a re-sent subscription addresses something else.
     for f in [all, class_only, exact] {
         let native = crate::convert::catch_filter_from_c(f).unwrap();
         assert_eq!(crate::convert::catch_filter_to_c(native), f);
@@ -393,7 +415,7 @@ fn the_input_filter_constructors_mirror_the_rust_ones() {
         ]
     );
     assert!(four.iter().all(|f| f.id == MEDIUS_CATCH_ID_ANY));
-    // And they match what the Rust constructor produces, entry for entry.
+    // And match the Rust constructor, entry for entry.
     for (c, r) in four.iter().zip(medius::CatchFilter::all_input()) {
         assert_eq!(crate::convert::catch_filter_from_c(*c).unwrap(), r);
     }
@@ -482,9 +504,9 @@ fn traffic_event_splits_setup_from_the_data_stage() {
     );
     assert!(!unsafe { medius_traffic_event_truncated(&e) });
 
-    // A packet shorter than the setup stage has no setup to read AND no data stage: the bytes that
-    // survived snaplen are the request, and returning them as the answer labels a GET_DESCRIPTOR
-    // request as the descriptor. This asserted the opposite while the Rust side asserted this.
+    // A packet shorter than the setup stage has no setup AND no data stage: the bytes that survived
+    // snaplen are the request, and returning them as data labels a GET_DESCRIPTOR request as the
+    // descriptor.
     let short = control_event(&[0x80, 0x06], 0x00);
     assert!(unsafe { medius_traffic_event_setup(&short) }.is_null());
     let d = unsafe { medius_traffic_event_data(&short, &mut len) };
@@ -514,7 +536,7 @@ fn traffic_event_splits_setup_from_the_data_stage() {
 #[test]
 fn traffic_event_decodes_control_status_and_bus_events() {
     let mut status = MediusControlStatus::Ok;
-    let stalled = control_event(&[0; 8], 0xFD);
+    let stalled = control_event(&[0; 8], 0x01);
     assert!(unsafe { medius_traffic_event_control_status(&stalled, &mut status) });
     assert_eq!(status, MediusControlStatus::Stalled);
 
@@ -522,13 +544,19 @@ fn traffic_event_decodes_control_status_and_bus_events() {
     assert!(unsafe { medius_traffic_event_control_status(&ok, &mut status) });
     assert_eq!(status, MediusControlStatus::Ok);
 
-    let naked = control_event(&[0; 8], 0xFE);
+    let naked = control_event(&[0; 8], 0x02);
     assert!(unsafe { medius_traffic_event_control_status(&naked, &mut status) });
     assert_eq!(status, MediusControlStatus::Naked);
 
-    // An unknown status stays unknown. A catch-all arm reported it as a timeout, so a future
-    // firmware.s new status read as a device fault that never happened; the raw byte is in .flags.
-    let other = control_event(&[0; 8], 0x42);
+    // The handshake is bits 0-1 alone: the rule bit beside it changes nothing.
+    let ruled = control_event(&[0; 8], 0x81);
+    assert!(unsafe { medius_traffic_event_control_status(&ruled, &mut status) });
+    assert_eq!(status, MediusControlStatus::Stalled);
+    assert!(unsafe { medius_traffic_event_rule_acted(&ruled) });
+    assert!(!unsafe { medius_traffic_event_rule_acted(&stalled) });
+
+    // An unknown value stays unknown, with the raw byte in .flags.
+    let other = control_event(&[0; 8], 0x03);
     assert!(unsafe { medius_traffic_event_control_status(&other, &mut status) });
     assert_eq!(status, MediusControlStatus::Other);
 
@@ -632,4 +660,30 @@ fn a_listed_box_on_another_protocol_carries_no_device() {
     assert_eq!(current.has_device, 1);
     assert_eq!(current.device.vid, 0x046D);
     assert_eq!(current.device.kind, MediusDeviceKind::Mouse as u8);
+}
+
+// Bit 7 is the rule bit on the six classes a rule acts at, and means nothing on the rest: a clip
+// transfer's flags are a TRANSFER status, whose 0xFD STALL has bit 7 set.
+#[test]
+fn the_rule_bit_is_read_only_where_a_rule_acts() {
+    for class in [
+        MEDIUS_CATCH_CLASS_HID_IN,
+        MEDIUS_CATCH_CLASS_HID_OUT,
+        MEDIUS_CATCH_CLASS_VENDOR_INTERRUPT,
+        MEDIUS_CATCH_CLASS_VENDOR_BULK,
+        MEDIUS_CATCH_CLASS_CONTROL,
+        MEDIUS_CATCH_CLASS_EMIT,
+    ] {
+        let mut e = control_event(&[0; 8], 0x80);
+        e.class = class;
+        assert!(unsafe { medius_traffic_event_rule_acted(&e) }, "{class}");
+        e.flags = 0x03;
+        assert!(!unsafe { medius_traffic_event_rule_acted(&e) }, "{class}");
+    }
+    for class in [MEDIUS_CATCH_CLASS_CLIP_TRANSFER, MEDIUS_CATCH_CLASS_BUS] {
+        let mut e = control_event(&[0; 8], 0xFD);
+        e.class = class;
+        assert!(!unsafe { medius_traffic_event_rule_acted(&e) }, "{class}");
+    }
+    assert!(!unsafe { medius_traffic_event_rule_acted(std::ptr::null()) });
 }

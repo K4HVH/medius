@@ -117,7 +117,7 @@ class Device:
         """Open the first box whose clone is a mouse.
 
         Raises `BadProtoVerError` when no other box clones a mouse and a box on another control
-        protocol, whose clone is unread, is connected."""
+        protocol (clone unread) is connected."""
         out = ctypes.c_void_p()
         check(_native.lib.medius_device_find_mouse_box(ctypes.byref(out)))
         return cls(out.value)
@@ -127,7 +127,7 @@ class Device:
         """Open the first box whose clone is a keyboard.
 
         Raises `BadProtoVerError` when no other box clones a keyboard and a box on another control
-        protocol, whose clone is unread, is connected."""
+        protocol (clone unread) is connected."""
         out = ctypes.c_void_p()
         check(_native.lib.medius_device_find_keyboard_box(ctypes.byref(out)))
         return cls(out.value)
@@ -162,7 +162,7 @@ class Device:
         check(_native.lib.medius_device_wheel(self._handle, _i16(delta, "delta")))
 
     def move_rel_now(self, dx, dy):
-        """A cursor move that bypasses movement riding: it emits on the box's own clock."""
+        """A cursor move that bypasses movement riding, sent on the box's next mouse report."""
         check(_native.lib.medius_device_move_rel_now(self._handle, _i16(dx, "dx"), _i16(dy, "dy")))
 
     def wheel_now(self, delta):
@@ -215,26 +215,24 @@ class Device:
     def scale(self, target: LockTarget, direction: Direction, scale: int):
         """Weigh physical input on a target and direction.
 
-        `scale` is the percent of the physical value the box keeps: 0 blocks, 100 passes it
-        untouched, above that amplifies to 255 (2.55x). `lock` and `unlock` are its two ends.
+        `scale` is the percent of the physical value kept: 0 blocks, 100 passes, above that
+        amplifies up to 255 (2.55x). `lock` and `unlock` are its two ends.
 
-        The percent is signed, down to `LOCK_SCALE_MIN`: a negative one weighs the physical value and
-        reverses it, so -100 is a plain inversion. The slot comes from the sign of the delta before the
-        weigh, so -100 on `Direction.POSITIVE` turns what arrived rightward into leftward and leaves
-        what arrived leftward alone. Only an axis takes one: a momentary usage carries one bit and has
-        nothing to reverse, which raises `LockScaleUsageError`, and a magnitude outside the range
-        raises `LockScaleRangeError`.
+        A negative percent, down to `LOCK_SCALE_MIN`, weighs and reverses: -100 inverts. The slot
+        comes from the delta's sign before the weigh, so -100 on `Direction.POSITIVE` turns
+        rightward input leftward and leaves leftward input alone. Axes only: on a momentary usage,
+        which carries one bit, it raises `LockScaleUsageError`. A magnitude out of range raises
+        `LockScaleRangeError`.
 
         A delta picks up at most two scales, its absolute direction's and its relative direction's,
-        and they multiply, so a block anywhere wins. `Direction.BOTH` is the exception: it writes the
-        scale to the two fixed signs and a full pass to the relative pair, so a `BOTH` of 50 is 50%
-        with or without a bearing rather than 25% with one. Name a relative direction to weigh it.
+        and they multiply, so a block anywhere zeroes the product. `Direction.BOTH` writes the scale
+        to the two fixed signs and a full pass to the relative pair, so a `BOTH` of 50 is 50% with
+        or without a bearing. Name a relative direction to weigh it.
 
-        `Direction.WITH` and `Direction.AGAINST` need a live bearing (see `set_bearing`) and only an
-        axis has one, so either on a button, key or media usage raises `RelativeDirectionError`. A
-        momentary usage carries one bit, so any scale below a full pass locks it and any scale at or
-        above one unlocks it. A media usage has no edges and is sent as `Direction.BOTH` whatever
-        edge is named, which is what `query_locks` reports it as.
+        `Direction.WITH` and `Direction.AGAINST` need a live bearing (`set_bearing`), which only an
+        axis has; on a button, key or media usage either raises `RelativeDirectionError`. Any scale
+        below a full pass locks a momentary usage; at or above one unlocks it. A media usage has no
+        edges: it is sent, and `query_locks` reports it, as `Direction.BOTH` whatever edge is named.
         """
         direction = _enum(direction, Direction, "direction")
         check(
@@ -280,13 +278,20 @@ class Device:
     def reset(self):
         check(_native.lib.medius_device_reset(self._handle))
 
+    def factory_reset(self):
+        """RESET with the NVS flag: the ``reset`` release, then the box erases its persistent store
+        and reboots to its defaults under its MAC-derived name. Erases the box name, every option,
+        and all learned per-device data. While it reboots the control port stays enumerated but
+        silent, so queries time out; the link does not drop."""
+        check(_native.lib.medius_device_factory_reset(self._handle))
+
     def reapply(self):
         check(_native.lib.medius_device_reapply(self._handle))
 
     def reconnect(self):
         """Rescan, reopen this box, and re-apply held state.
 
-        Raises `BadProtoVerError` when the box answers on another control protocol; it stays
+        Raises `BadProtoVerError` when the box replies on another control protocol; it stays
         disconnected."""
         check(_native.lib.medius_device_reconnect(self._handle))
 
@@ -295,6 +300,10 @@ class Device:
         check(_native.lib.medius_device_reboot(self._handle, int(target)))
 
     def allow_imperfect_clones(self, allow: bool):
+        """`OPTION(IMPERFECT)`: opt into cloning devices the box cannot clone faithfully, or back to
+        faithful-only. A toggle that changes the served patch set re-presents the clone, releasing
+        the session like a device replug; the library re-sends its held state once the new clone is
+        up, and `ClipHandle.lost` reports a dropped clip."""
         check(_native.lib.medius_device_allow_imperfect_clones(self._handle, bool(allow)))
 
     def set_movement_riding(self, window_ms: Optional[int]):
@@ -307,7 +316,7 @@ class Device:
         )
 
     def set_emit_pace(self, pace: EmitPace, force_hz: Optional[int] = None):
-        """Set what paces injected motion (`hz` matters only for `EmitPace.fixed`) and what rate the
+        """Set injected-motion pacing (`hz` matters only for `EmitPace.fixed`) and the rate the
         clone advertises and the box polls the device at (`force_hz`, None = native)."""
         mode = _enum(pace.mode, EmitMode, "mode")
         check(
@@ -321,7 +330,7 @@ class Device:
         check(_native.lib.medius_device_set_name(self._handle, name.encode("utf-8")))
 
     def clear_name(self):
-        """Clear the custom name, reverting the box to its synthesised `Medius-XXXX` default."""
+        """Clear the custom name, reverting to the synthesised `Medius-XXXX` default."""
         check(_native.lib.medius_device_clear_name(self._handle))
 
     def set_bearing(self, window_ms: Optional[int], mode: BearingMode):
@@ -331,8 +340,8 @@ class Device:
         it off, leaving the relative directions inert whatever their scale. It saturates at 65535 ms,
         as the Rust API does.
 
-        Both fields ride one frame and the box persists them together, so `mode` is required: a
-        default here would revert a box configured for `VECTOR` on any window change.
+        Both fields share one frame and persist together, so `mode` is required: a default would
+        revert a `VECTOR` box on any window change.
         """
         mode = _enum(mode, BearingMode, "mode")
         check(
@@ -342,13 +351,13 @@ class Device:
         )
 
     def set_render(self, mode: RenderMode, full: bool):
-        """Set the texture the box renders motion with, and whether native motion is rendered by
-        the model rather than relayed.
+        """Set the render texture, and whether the model renders native motion instead of relaying
+        it.
 
-        Both ride one command and both persist, so `full` is required: an omitted one would silently
-        rewrite a setting you did not name. Rendering adds a small amount of latency, which reaches
-        native motion when `full` is on, so `full` is off by default. Nothing is rendered until the
-        box has learned a profile for the attached device (`RenderStatus.ready`).
+        Both share one command and persist, so `full` is required: omitting it would rewrite a
+        setting you did not name. Rendering adds a small latency, which reaches native motion when
+        `full` is on. `full` is off by default. Nothing renders until the box has learned the
+        attached device's profile (`RenderStatus.ready`).
 
         Motion asking for exact timing skips the model: `move_rel_now`, `flush_motion` and
         `discard_motion` take the paced path, and with `full` on the rendered stream ignores
@@ -357,11 +366,11 @@ class Device:
         check(_native.lib.medius_device_set_render(self._handle, int(mode), bool(full)))
 
     def set_spread(self, percent: int):
-        """Set the percent of the host's command interval an injected delta is released across. 0
-        puts the whole delta on the next report the box emits, 100 releases that delta across one
-        command interval, and above 100 overlaps. A loop at the native report rate keeps each command
-        whole, on a report of its own. The box releases nothing across an interval until it has
-        learned the host's command period from MOVE arrivals (`SpreadStatus.span_us`)."""
+        """Set the percent of the host's command interval an injected delta is released across: 0
+        puts it all on the box's next report, 100 spreads it across one command interval, above 100
+        overlaps. A loop at the native report rate keeps each command whole on its own report. Until
+        the box learns the host's command period from MOVE arrivals (`SpreadStatus.span_us`), each
+        delta goes out whole."""
         check(_native.lib.medius_device_set_spread(self._handle, int(percent)))
 
     def query_version(self) -> Version:
@@ -370,7 +379,7 @@ class Device:
         return version_from_c(out)
 
     def firmware_info(self) -> FirmwareInfo:
-        """Both chips' firmware versions and which app slot each booted."""
+        """Both chips' firmware versions and booted app slots."""
         out = _native.MediusFirmwareInfo()
         check(_native.lib.medius_device_firmware_info(self._handle, ctypes.byref(out)))
         return firmware_info_from_c(out)
@@ -484,7 +493,7 @@ class Device:
         return render_status_from_c(out)
 
     def query_spread(self) -> SpreadStatus:
-        """How far an injected delta is spread, and the interval the box is releasing across."""
+        """Injection spread percent and the span the box releases across."""
         out = _native.MediusSpreadStatus()
         check(_native.lib.medius_device_query_spread(self._handle, ctypes.byref(out)))
         return spread_status_from_c(out)
@@ -494,17 +503,18 @@ class Device:
         check(_native.lib.medius_device_counters(self._handle, ctypes.byref(out)))
         return counters_from_c(out)
 
-    # The advanced control layer (§3.14): raw injection, control transfers, rewrite rules and descriptor
-    # patches. Admitted by the imperfect-clone opt-in (`allow_imperfect_clones`).
+    # Advanced control layer (§3.14): raw injection, control transfers, rewrite rules, descriptor
+    # patches. Gated on `allow_imperfect_clones`.
 
     def raw(self, ep: int, direction: Direction, data: bytes) -> None:
-        """`RAW` (§3.14): put `data` verbatim on cloned endpoint number `ep` in `direction`, fire-and-forget.
+        """`RAW` (§3.14): put `data` verbatim on cloned endpoint `ep` in `direction`,
+        fire-and-forget.
 
-        `ep` is the bare endpoint number (0 to 15). `Direction.IN` emits toward the game PC;
-        `Direction.OUT` relays to the real device. Only those two address one: `Direction.BOTH` raises
-        `RawDirectionError` and the bearing-relative pair raises `RelativeDirectionError`. Admitted by
-        the imperfect-clone opt-in: with it off the box drops the frame and says nothing, so this still
-        returns. `query_imperfect()` reports the state.
+        `ep` is the bare endpoint number (0 to 15). `Direction.IN` emits to the game PC;
+        `Direction.OUT` relays to the real device. `Direction.BOTH` raises `RawDirectionError`, the
+        bearing-relative pair `RelativeDirectionError`. Gated on the imperfect-clone opt-in: with it
+        off the box drops the frame with no reply, and this still returns. `query_imperfect()`
+        reports the state.
         """
         direction = _enum(direction, Direction, "direction")
         buf, n = _bytes_buf(data, "data")
@@ -513,14 +523,14 @@ class Device:
     def transfer(
         self, ep: int, setup: Setup, out: bytes = b"", timeout_ms: Optional[int] = None
     ) -> TransferOutcome:
-        """`TRANSFER` (§3.14): run one control transfer against the real device and return its answer.
+        """`TRANSFER` (§3.14): run one control transfer against the real device and return its
+        reply.
 
         `ep` is 0 for EP0 or a control endpoint the device declares; `out` is the OUT data stage
-        (empty for an IN transfer). A `TransferOutcome.status` other than `TransferStatus.OK` is a real
-        protocol outcome returned rather than raised; the box answers `REFUSED` while the opt-in is off.
-        `timeout_ms` is the reply wait; the default is `default_transfer_timeout_ms()`, and the box gives
-        up on a transfer after its own ~800 ms window, so a shorter one abandons the wait before a slow
-        device answers.
+        (empty for IN). A non-OK `TransferOutcome.status` is a protocol outcome, returned, not
+        raised; the box replies `REFUSED` while the opt-in is off. `timeout_ms` is the reply wait,
+        default `default_transfer_timeout_ms()`; the box abandons a transfer after its own ~800 ms,
+        so a shorter wait gives up before a slow device replies.
         """
         buf, n = _bytes_buf(out, "out")
         outcome = _native.MediusTransferOutcome()
@@ -545,10 +555,10 @@ class Device:
         return transfer_outcome_from_c(outcome)
 
     def set_rewrite(self, rule: RewriteRule) -> None:
-        """`REWRITE` (§3.14): install (add or overwrite) one rewrite rule. Needs the opt-in.
+        """`REWRITE` (§3.14): add or overwrite one rewrite rule; needs the opt-in.
 
-        `match_bytes` and `mask` must be the same length (`RewriteMaskLengthError`) and at most
-        16 bytes (`RewriteMatchTooLongError`), the action must be valid for the class
+        `match_bytes` and `mask` must be equal in length (`RewriteMaskLengthError`) and at most
+        16 bytes (`RewriteMatchTooLongError`), the action must suit the class
         (`RewriteActionClassError`), the direction must not be bearing-relative
         (`RelativeDirectionError`), and the payload must fit the box's head
         (`RewritePayloadTooLargeError`). `query_rewrite` confirms what the box holds.
@@ -558,7 +568,7 @@ class Device:
 
     def remove_rewrite(self, rule: RewriteRule) -> None:
         """`REWRITE` remove (§3.14): drop the rule keyed by `rule`'s
-        ``(rewrite_class, id, direction, match_bytes, mask)``; its action and payload are ignored."""
+        ``(rewrite_class, id, direction, match_bytes, mask)``, ignoring its action and payload."""
         c = rewrite_rule_to_c(rule)
         check(_native.lib.medius_device_remove_rewrite(self._handle, ctypes.byref(c)))
 
@@ -567,7 +577,7 @@ class Device:
         check(_native.lib.medius_device_clear_rewrite(self._handle))
 
     def query_rewrite(self) -> RewriteTable:
-        """`QUERY(REWRITE)` (§4.17): the whole table's summary, a row per rule without its bytes."""
+        """`QUERY(REWRITE)` (§4.17): the table summary, a row per rule without its bytes."""
         out = _native.MediusRewriteTable()
         check(_native.lib.medius_device_query_rewrite(self._handle, ctypes.byref(out)))
         return rewrite_table_from_c(out)
@@ -583,18 +593,25 @@ class Device:
         return rewrite_rule_from_c(out)
 
     def set_patch(self, patch: Patch) -> None:
-        """`PATCH` (§3.14): store one descriptor patch. A patch with empty `bytes` removes the patch at
-        its key. Storing is not gated on the opt-in; it takes effect once `apply_patch` re-presents the
-        clone under the opt-in."""
+        """`PATCH` (§3.14): store one descriptor patch; empty `bytes` removes the patch at its key.
+        The box stores it whatever the opt-in; the set reaches the game PC when the clone is next
+        presented under the opt-in: `apply_patch`, the opt-in turning on, or the device
+        attaching."""
         c = patch_to_c(patch)
         check(_native.lib.medius_device_set_patch(self._handle, ctypes.byref(c)))
 
     def apply_patch(self) -> None:
-        """`PATCH` APPLY (§3.14): re-present the clone with the stored patch set. Needs the opt-in."""
+        """`PATCH` APPLY (§3.14): re-present the clone with the stored patch set; needs the opt-in.
+        The box re-presents only while the stored set differs from the served one: applying an
+        emptied set serves the device unpatched, and a refused set unchanged since is left alone.
+        Re-presenting releases the session like a device replug; the library re-sends its held state
+        once the new clone is up, and `ClipHandle.lost` reports a dropped clip."""
         check(_native.lib.medius_device_apply_patch(self._handle))
 
     def clear_patch(self) -> None:
-        """`PATCH` CLEAR (§3.14): drop every patch for this device and re-present the clone unpatched."""
+        """`PATCH` CLEAR (§3.14): erase this device's stored set (the last attached one's when
+        unplugged). A clone serving patches re-presents unpatched, releasing the session and
+        re-sending held state as `apply_patch` does."""
         check(_native.lib.medius_device_clear_patch(self._handle))
 
     def query_patches(self) -> PatchSet:
@@ -613,25 +630,24 @@ class Device:
         )
         return patch_from_c(out)
 
-    # Field transforms (§3.15): a faithful field operation on the semantic path. Unlike the advanced control
-    # layer above, a transform needs no imperfect-clone opt-in.
+    # Field transforms (§3.15): faithful field operations on the semantic path, with no
+    # imperfect-clone opt-in.
 
     def transform(self, t: Transform) -> None:
-        """`TRANSFORM` (§3.15): install (add or overwrite) one field transform.
+        """`TRANSFORM` (§3.15): add or overwrite one field transform.
 
-        A transform swaps or remaps a field the clone already declares, so it is faithful and needs
-        no `allow_imperfect_clones`. It is structural only: how much of a field survives is `scale`'s,
-        which runs first. An entry is keyed by its `(source, dest)`, and entries apply in installation
-        order. A combination the op cannot address raises `TransformOpFieldsError`, and one past the
-        table's capacity raises `TransformTableFullError`. `query_transforms` confirms what the box
-        holds.
+        It swaps or remaps a field the clone already declares, so it is faithful and needs no
+        `allow_imperfect_clones`. How much of a field is kept is `scale`'s, which runs first.
+        Entries are keyed by `(source, dest)` and apply in installation order. A combination the op
+        cannot address raises `TransformOpFieldsError`; an entry past the table's capacity raises
+        `TransformTableFullError`. `query_transforms` confirms what the box holds.
         """
         c = transform_to_c(t)
         check(_native.lib.medius_device_transform(self._handle, ctypes.byref(c)))
 
     def untransform(self, t: Transform) -> None:
-        """`TRANSFORM` remove (§3.15): drop the transform keyed by `t`'s `(source, dest)`; its op is
-        ignored. A no-op on the box if no such entry is held."""
+        """`TRANSFORM` remove (§3.15): drop the transform keyed by `t`'s `(source, dest)`, ignoring
+        its op; a no-op on the box if no such entry is held."""
         c = transform_to_c(t)
         check(_native.lib.medius_device_untransform(self._handle, ctypes.byref(c)))
 
@@ -655,7 +671,7 @@ class Device:
         check(_native.lib.medius_device_transform_remap(self._handle, s._c, d._c))
 
     def query_transforms(self) -> Transforms:
-        """`QUERY(TRANSFORMS)` (§4.18): the whole transform table, a row per entry in the shape
+        """`QUERY(TRANSFORMS)` (§4.18): the transform table, a row per entry in the shape
         `transform` takes, so a read entry replays as a set."""
         out = _native.MediusTransforms()
         check(_native.lib.medius_device_query_transforms(self._handle, ctypes.byref(out)))
@@ -668,10 +684,10 @@ class Device:
         return ClipHandle(out.value, self)
 
     def catch_events(self, filters: Union[CatchFilter, Sequence[CatchFilter]]) -> EventStream:
-        """Subscribe to the catch stream for one filter or a sequence of them.
+        """Subscribe to the catch stream for one filter or a sequence.
 
-        Overlapping subscriptions from different callers collapse into the one table the box holds,
-        and each consumer still receives everything it asked for.
+        Overlapping subscriptions from different callers merge into the box's one table; each
+        consumer still receives everything it asked for.
         """
         seq = [filters] if isinstance(filters, CatchFilter) else list(filters)
         if not seq:
@@ -690,7 +706,7 @@ class Device:
 
         Every filter must name an input class and cover both edges; build them with
         `CatchFilter.watch*` or `CatchFilter.all_input()`. A traffic class, `everything()`, or a
-        filter narrowed to one edge is refused rather than silently yielding nothing.
+        one-edge filter is refused.
         """
         seq = [filters] if isinstance(filters, CatchFilter) else list(filters)
         if not seq:

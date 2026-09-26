@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicU8, AtomicU64, Ordering};
 use std::time::Duration;
 
 use parking_lot::Mutex;
@@ -14,12 +14,55 @@ use super::{Link, LinkInner};
 
 pub(crate) struct PendingEntry {
     gen_id: u64,
-    // Both the frame type and its first byte have to match, so a stale `RESP` reusing a `SEQ` a
-    // `TRANSFER` now waits on cannot be delivered as that transfer's answer: the two frames differ in
-    // type (`Resp` vs `TransferResp`) even when their first byte (a selector vs an endpoint) collides.
+    // Type and first byte must both match, so a stale `RESP` reusing a waiting `TRANSFER`'s `SEQ`
+    // is never taken as its reply, even when a selector and an endpoint byte collide.
     expected_ty: FrameType,
     expected_what: u8,
     tx: flume::Sender<Vec<u8>>,
+}
+
+/// `SEQ` of the box's unsolicited `RESP(VERSION)` hello; no awaited reply uses it.
+pub(crate) const HELLO_SEQ: u8 = 0;
+
+// Takes a free `SEQ` for a reply to wait on, never the hello's.
+pub(crate) fn register(
+    pending: &Mutex<HashMap<u8, PendingEntry>>,
+    query_gen: &AtomicU64,
+    seq_counter: &AtomicU8,
+    expected_ty: FrameType,
+    expected_what: u8,
+) -> (u8, u64, flume::Receiver<Vec<u8>>) {
+    let gen_id = query_gen.fetch_add(1, Ordering::Relaxed);
+    let (tx, rx) = flume::bounded::<Vec<u8>>(1);
+    let mut pending = pending.lock();
+    let next = || seq_counter.fetch_add(1, Ordering::Relaxed);
+    let mut seq = next();
+    for _ in 0..256 {
+        if seq != HELLO_SEQ && !pending.contains_key(&seq) {
+            break;
+        }
+        seq = next();
+    }
+    if seq == HELLO_SEQ {
+        seq = next();
+    }
+    pending.insert(
+        seq,
+        PendingEntry {
+            gen_id,
+            expected_ty,
+            expected_what,
+            tx,
+        },
+    );
+    (seq, gen_id, rx)
+}
+
+pub(crate) fn cancel(pending: &Mutex<HashMap<u8, PendingEntry>>, seq: u8, gen_id: u64) {
+    let mut pending = pending.lock();
+    if pending.get(&seq).is_some_and(|e| e.gen_id == gen_id) {
+        pending.remove(&seq);
+    }
 }
 
 pub(crate) fn deliver(
@@ -39,10 +82,7 @@ pub(crate) fn deliver(
 
 impl LinkInner {
     pub(crate) fn cancel_query(&self, seq: u8, gen_id: u64) {
-        let mut pending = self.pending.lock();
-        if pending.get(&seq).is_some_and(|e| e.gen_id == gen_id) {
-            pending.remove(&seq);
-        }
+        cancel(&self.pending, seq, gen_id);
     }
 }
 
@@ -52,26 +92,13 @@ impl Link {
         expected_ty: FrameType,
         expected_what: u8,
     ) -> (u8, u64, flume::Receiver<Vec<u8>>) {
-        let gen_id = self.inner.query_gen.fetch_add(1, Ordering::Relaxed);
-        let (tx, rx) = flume::bounded::<Vec<u8>>(1);
-        let mut pending = self.inner.pending.lock();
-        let mut seq = self.next_seq();
-        for _ in 0..256 {
-            if !pending.contains_key(&seq) {
-                break;
-            }
-            seq = self.next_seq();
-        }
-        pending.insert(
-            seq,
-            PendingEntry {
-                gen_id,
-                expected_ty,
-                expected_what,
-                tx,
-            },
-        );
-        (seq, gen_id, rx)
+        register(
+            &self.inner.pending,
+            &self.inner.query_gen,
+            &self.inner.seq,
+            expected_ty,
+            expected_what,
+        )
     }
 
     pub(crate) fn cancel_query(&self, seq: u8, gen_id: u64) {
@@ -87,8 +114,8 @@ impl Link {
         self.register_query_with(what, &query_payload(what))
     }
 
-    // The option query's request is `[Q_OPTIONS][id]` but its reply still leads with the Q_OPTIONS
-    // selector, so correlation matches on `expected_what` while SEQ disambiguates concurrent reads.
+    // The reply leads with the Q_OPTIONS selector, not the id, so correlation matches on
+    // `expected_what` and SEQ separates concurrent reads.
     pub(crate) fn register_query_with(
         &self,
         expected_what: u8,
@@ -102,16 +129,16 @@ impl Link {
         Ok((seq, gen_id, rx))
     }
 
-    /// `QUERY [what][index]`: read one indexed entry (a rewrite rule or descriptor patch), correlated
-    /// on the `what` selector the reply leads with, exactly like [`query_option`](Self::query_option).
+    /// `QUERY [what][index]`: one indexed entry (a rewrite rule or descriptor patch), correlated on
+    /// the reply's leading `what` selector, like [`query_option`](Self::query_option).
     pub(crate) fn query_indexed(&self, what: u8, index: u8) -> Result<Vec<u8>> {
         let timeout = self.query_timeout_default();
         let (seq, gen_id, rx) = self.register_query_with(what, &[what, index])?;
         self.recv_query(seq, gen_id, &rx, what, timeout)
     }
 
-    /// Run one `TRANSFER` and wait for its `TRANSFER_RESP`, correlated by `SEQ` on the answer's own
-    /// opcode. Returns `(status, in_data)`; the surrounding `Ok` means the box answered at all.
+    /// One `TRANSFER`, awaiting its `TRANSFER_RESP` (correlated by `SEQ` on the reply's opcode).
+    /// Returns `(status, in_data)`; the surrounding `Ok` means the box replied.
     pub(crate) fn transfer(
         &self,
         ep: u8,
@@ -139,7 +166,7 @@ impl Link {
         self.recv_query(seq, gen_id, &rx, what, timeout)
     }
 
-    /// `QUERY(OPTIONS, id)`: read one persistent box option, correlated on the `Q_OPTIONS` selector.
+    /// `QUERY(OPTIONS, id)`: one persistent box option, correlated on the `Q_OPTIONS` selector.
     pub(crate) fn query_option(&self, id: u8) -> Result<Vec<u8>> {
         let timeout = self.query_timeout_default();
         let (seq, gen_id, rx) = self.register_query_with(Q_OPTIONS, &[Q_OPTIONS, id])?;
@@ -252,8 +279,8 @@ impl Link {
     }
 }
 
-// Split a `TRANSFER_RESP` payload `[ep][status][in-data…]` into `(status, in-data)`. A reply too
-// short to carry a status reads as `Refused` (0xFC), the same byte the box sends when it declines.
+// `[ep][status][in-data…]` → `(status, in-data)`. A reply too short for a status reads as
+// `Refused` (0xFC), the byte the box sends when it declines.
 fn split_transfer_resp(payload: &[u8]) -> (u8, Vec<u8>) {
     let status = payload.get(1).copied().unwrap_or(0xFC);
     let data = payload.get(2..).unwrap_or(&[]).to_vec();

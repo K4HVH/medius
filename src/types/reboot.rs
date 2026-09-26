@@ -1,6 +1,6 @@
 //! `REBOOT_DL` target vocabulary.
 
-/// A `REBOOT_DL` target; discriminants are the wire `target` byte.
+/// `REBOOT_DL` target; discriminants are the wire `target` byte.
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum RebootTarget {
@@ -11,12 +11,12 @@ pub enum RebootTarget {
 }
 
 impl RebootTarget {
-    /// The wire `target` byte for this reboot target.
+    /// Wire `target` byte.
     pub fn as_u8(self) -> u8 {
         self as u8
     }
 
-    /// Map a wire `target` byte to a [`RebootTarget`], or `None` if unknown.
+    /// Decodes a wire `target` byte; `None` if unknown.
     pub fn from_u8(v: u8) -> Option<Self> {
         Some(match v {
             0 => RebootTarget::DeviceDownload,
