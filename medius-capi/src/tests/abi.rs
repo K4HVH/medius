@@ -559,7 +559,7 @@ fn the_render_option_reads_back_what_was_set_through_the_boundary() {
     );
     assert_eq!(st.mode, MediusRenderMode::Unsmoothed);
     assert_eq!(st.full, 1);
-    // `ready` is the box's own state, not something the host sets, so it comes from the mock.
+    // `ready` is box state the host does not set, so it comes from the mock.
     unsafe { medius_mock_set_render(mock, MediusRenderMode::Stock as u8, false, true) };
     assert_eq!(
         unsafe { medius_device_query_render(dev, &mut st) },
@@ -587,15 +587,15 @@ fn the_spread_option_reads_back_what_was_set_through_the_boundary() {
     );
     assert_eq!(st.percent, 100);
     assert_eq!(st.span_us, 0);
-    // The period is the box's own state, not something the host sets.
+    // The period is box state the host does not set.
     unsafe { medius_mock_set_spread_learned(mock, 8000) };
     assert_eq!(
         unsafe { medius_device_query_spread(dev, &mut st) },
         MediusStatus::Ok
     );
     assert_eq!(st.span_us, 8000);
-    // A percent past 100 overlaps rather than being clamped, and both fields survive the trip. Past
-    // a byte too: 250 would round-trip through a u8 boundary and prove nothing about the width.
+    // A percent past 100 overlaps, unclamped, and both fields survive the trip. Past 255 too: 250
+    // fits a u8 and proves nothing about the width.
     assert_eq!(
         unsafe { medius_device_set_spread(dev, 1000) },
         MediusStatus::Ok
@@ -742,7 +742,7 @@ fn a_relative_direction_with_no_bearing_to_read_has_its_own_status() {
 #[test]
 fn an_unnamed_direction_byte_in_a_caller_built_lock_entry_is_dropped() {
     // `MediusLockEntry.direction` is a `uint8_t` the caller fills in through
-    // `medius_mock_set_locks`, and Python has always handed it a raw byte.
+    // `medius_mock_set_locks`, and Python passes it a raw byte.
     const BAD: u8 = 40;
     let mock = medius_mock_new();
     let x = medius_lock_target_axis(MediusLockTargetKind::X as u8);
@@ -785,8 +785,8 @@ fn an_unnamed_direction_byte_in_a_caller_built_lock_entry_is_dropped() {
 
 #[test]
 fn an_unnamed_direction_byte_in_a_catch_filter_is_refused() {
-    // `MediusCatchFilter.direction` is a `uint8_t` the caller fills in, and Python has always
-    // handed it a raw byte.
+    // `MediusCatchFilter.direction` is a `uint8_t` the caller fills in, and Python passes it a raw
+    // byte.
     const BAD: u8 = 40;
     let mock = medius_mock_new();
     let mut dev: *mut MediusDevice = ptr::null_mut();
@@ -859,8 +859,7 @@ fn a_byte_no_constant_names_is_refused_at_every_entry_point() {
         ("unlock_all what", unsafe {
             medius_device_unlock_all(dev, BAD, both)
         }),
-        // Two named values is one ABI bit while the parameter is an enum, which folded every stray
-        // byte onto Vector. As a byte it is refused like any other.
+        // A stray byte is refused, not folded onto Vector.
         ("set_bearing mode", unsafe {
             medius_device_set_bearing(dev, 20, BAD)
         }),
@@ -1552,8 +1551,8 @@ fn no_clock_estimate_is_distinguishable_from_a_zero_age_one() {
         unsafe { medius_device_query_catch(dev, &mut got) },
         MediusStatus::Ok
     );
-    // Zeroing the struct would have produced age_ms == 0, which means a fresh estimate of exactly
-    // zero offset. The sentinel has to survive so a caller does not apply an unmeasured offset.
+    // age_ms == 0 means a fresh estimate of zero offset; the sentinel must survive so a caller does
+    // not apply an unmeasured offset.
     assert_eq!(got.clock.age_ms, MEDIUS_CLOCK_AGE_NONE);
 
     set.clock.age_ms = 0;
@@ -2289,8 +2288,8 @@ fn a_read_back_past_the_arrays_is_clamped_to_them() {
     }
 }
 
-// The bytes `query` writes into a buffer prefilled with `fill`, read without a typed copy of `T`, which
-// would leave its padding undefined again.
+// The bytes `query` writes into a buffer prefilled with `fill`, read without a typed copy of `T`,
+// which would leave its padding undefined.
 unsafe fn out_bytes<T>(fill: u8, query: impl FnOnce(*mut T) -> MediusStatus) -> Vec<u8> {
     let mut out = std::mem::MaybeUninit::<T>::uninit();
     unsafe { ptr::write_bytes(out.as_mut_ptr(), fill, 1) };
@@ -4496,7 +4495,7 @@ fn transfer_roundtrips_the_devices_answer() {
 
 #[test]
 fn a_refused_transfer_carries_no_data() {
-    // With the opt-in off the box answers REFUSED and no data, whatever a caller passes.
+    // With the opt-in off the box replies REFUSED with no data, whatever a caller passes.
     let mock = medius_mock_new();
     let mut dev: *mut MediusDevice = ptr::null_mut();
     assert_eq!(

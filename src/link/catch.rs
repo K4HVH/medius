@@ -20,8 +20,8 @@ use super::Link;
 /// Host-side buffer depth per subscription (~0.25 s at 1 kHz).
 pub(crate) const CATCH_CAPACITY: usize = 256;
 
-// One entry per box table slot. The box holds a single entry per `(class, id, direction)`, so the
-// host has to collapse onto the same key or two subscribers silently overwrite each other.
+// The box holds one entry per `(class, id, direction)`, so the host collapses onto that key or two
+// subscribers overwrite each other with no error.
 pub(crate) type FilterSet = BTreeMap<FilterKey, CatchFilter>;
 
 // Collapse filters onto one entry per address, keeping the widest capture.
@@ -35,8 +35,8 @@ pub(crate) fn collapse(filters: impl IntoIterator<Item = CatchFilter>) -> Filter
     out
 }
 
-// Whether `o` is no more specific than `f` and addresses the same thing, so an event resolving to
-// `f` is one `o` asked for.
+// Whether `o` addresses what `f` does and is no more specific, so an event resolving to `f` is one
+// `o` asked for.
 fn covers(o: CatchFilter, f: CatchFilter) -> bool {
     let class_ok = match (o.class(), f.class()) {
         (None, _) => true,
@@ -51,7 +51,7 @@ fn covers(o: CatchFilter, f: CatchFilter) -> bool {
     if !(class_ok && id_ok) {
         return false;
     }
-    // Direction ranks in specificity ONLY between two entries at the same address.
+    // Direction ranks in specificity only between entries at the same address.
     if o.class() == f.class() && o.id() == f.id() {
         o.direction() == Direction::Both
     } else {
@@ -59,11 +59,10 @@ fn covers(o: CatchFilter, f: CatchFilter) -> bool {
     }
 }
 
-// The box raises BUS events with direction BOTH, and its matcher lets a BOTH event match an entry of
-// any direction, so two siblings at one address with opposite named directions tie on rank, and the
-// firmware breaks the tie by registration order. Nothing on this side models that. Collapsing the
-// pair into the one BOTH entry the box can represent exactly removes the tie; it costs no extra
-// traffic, because two named entries already had the box sending both directions.
+// The box raises BUS events with direction BOTH, which match an entry of any direction, so opposite
+// named siblings at one address tie on rank and the firmware breaks the tie by registration order,
+// which this side does not model. Collapsing the pair to one BOTH entry removes the tie at no extra
+// traffic: the named pair already had the box sending both directions.
 fn collapse_opposite_siblings(set: &mut FilterSet) {
     let addresses: Vec<(Option<CatchClass>, Option<u16>)> = set
         .values()
@@ -95,8 +94,8 @@ pub(crate) struct CatchSub {
     id: u64,
     filters: FilterSet,
     tx: flume::Sender<CatchEvent>,
-    // Reader-side clone for drop-oldest eviction; the consumer's own receiver lives in the
-    // EventStream, both sharing the one MPMC channel.
+    // Reader-side clone for drop-oldest eviction; the consumer's receiver is in the EventStream, on
+    // the same MPMC channel.
     evict_rx: flume::Receiver<CatchEvent>,
     dropped: Arc<AtomicU64>,
 }
@@ -107,8 +106,7 @@ pub(crate) struct CatchReg {
 }
 
 impl CatchReg {
-    // The union every subscriber together asks for, each entry's capture widened to satisfy every
-    // subscription that covers it.
+    // Union of all subscriptions, each entry's capture widened to satisfy every one covering it.
     fn effective(&self) -> FilterSet {
         let all: Vec<CatchFilter> = self
             .subs
@@ -137,13 +135,11 @@ fn decode_event(ty: FrameType, payload: &[u8]) -> Option<CatchEvent> {
     }
 }
 
-// Whether this subscriber asked for this event. A traffic event carries its own `(class, id,
-// direction)` and matches directly.
+// A traffic event carries its `(class, id, direction)` and matches directly.
 fn wanted(sub: &CatchSub, event: &CatchEvent) -> bool {
     let any = |class, id, dir| sub.filters.values().any(|f| f.matches(class, id, dir));
     match event {
-        // One report can move several axes. It is delivered if ANY axis it moved was subscribed,
-        // with that axis's own sign.
+        // Delivered if any axis the report moved was subscribed, with that axis's sign.
         CatchEvent::Motion(m) => {
             let mut moved = m.axes().peekable();
             if moved.peek().is_none() {
@@ -154,7 +150,7 @@ fn wanted(sub: &CatchSub, event: &CatchEvent) -> bool {
             }
             moved.any(|(ax, d)| any(CatchClass::Axis, ax.as_u16(), Direction::of_delta(d)))
         }
-        // A snapshot is the CLASS's state, not one usage's, so it routes on class and edge.
+        // A snapshot is the class's state, so it routes on class and edge.
         CatchEvent::Usages(u) => sub.filters.values().any(|f| {
             f.matches_class_only(CatchClass::from(u.class)) && f.direction().admits(u.direction)
         }),
@@ -162,8 +158,7 @@ fn wanted(sub: &CatchSub, event: &CatchEvent) -> bool {
     }
 }
 
-// Deliver one decoded catch frame to the subscribers that asked for it, dropping the oldest on a
-// full buffer.
+// Drops the oldest on a full buffer.
 pub(crate) fn deliver_event(reg: &Mutex<CatchReg>, ty: FrameType, payload: &[u8]) {
     let Some(event) = decode_event(ty, payload) else {
         return;
@@ -186,15 +181,11 @@ pub(crate) fn deliver_event(reg: &Mutex<CatchReg>, ty: FrameType, payload: &[u8]
 }
 
 impl Link {
-    // Send an unsubscribe for anything `prev` holds that `next` does not, and a subscribe for every
-    // entry that is new or whose capture changed.
-    //
-    // Only what changed, not all of `next`. This runs holding `catch_lock` and every frame is a
-    // blocking serial write, so re-sending the whole table made dropping one stream cost up to a
-    // write per entry, ahead of any other subscribe and of the keepalive.
+    // Sends only the changes: this holds `catch_lock` and each frame is a blocking serial write, so
+    // re-sending the whole table cost a write per entry ahead of other subscribes and the keepalive.
     pub(crate) fn catch_sync(&self, prev: &FilterSet, next: &FilterSet) -> Result<()> {
-        // An unsubscribe of the wildcard entry is byte-for-byte the frame the box treats as "clear
-        // the whole table": it does not look at the direction.
+        // Unsubscribing the wildcard entry is byte for byte the box's "clear the whole table"
+        // frame, whatever the direction.
         let wildcard_removed = prev
             .iter()
             .any(|(key, f)| f.class().is_none() && !next.contains_key(key));
@@ -238,14 +229,13 @@ impl Link {
         Ok(())
     }
 
-    // Register a subscription, widen the box's table to the new union, and return the receiver plus
-    // drop counter.
+    // Registers, widens the box's table to the new union, returns the receiver and drop counter.
     pub(crate) fn catch_subscribe(
         &self,
         filters: FilterSet,
     ) -> Result<(u64, flume::Receiver<CatchEvent>, Arc<AtomicU64>)> {
-        // Serialise subscribe/unsubscribe so the registry mutate, union recompute and CATCH sends
-        // commit atomically; interleaving could leave the box streaming a table the registry dropped.
+        // Registry mutate, union recompute and CATCH sends commit atomically, or the box can stream
+        // a table the registry dropped.
         let _serial = self.inner.catch_lock.lock();
         let (tx, rx) = flume::bounded::<CatchEvent>(CATCH_CAPACITY);
         let evict_rx = rx.clone();
@@ -263,9 +253,8 @@ impl Link {
             });
             reg.effective()
         };
-        // Refused BEFORE anything is sent, and before the registry keeps the subscription: the box
-        // silently drops entries past its table and reports it only in a flag nothing was obliged to
-        // read, so the caller's stream would just be missing the addresses that did not fit.
+        // Refused before any send or registration: the box drops entries past its table, flagged
+        // only in `table_full`, so the stream would miss the addresses that did not fit.
         if effective.len() > CATCH_MAX_ENTRIES {
             let needed = effective.len();
             self.inner.events.lock().subs.retain(|s| s.id != id);
@@ -276,10 +265,9 @@ impl Link {
         }
         self.inner.desired.lock().set_catch(effective.clone());
         if let Err(e) = self.catch_sync(&prev, &effective) {
-            // The send failed PART WAY: entries before the failure are live in the box, and undoing
-            // only the registry would leave the box streaming a table nothing on this side records --
-            // so no later diff could narrow it, and on a vendor-bulk entry that is a quarter of a
-            // megabyte a second for the life of the connection. Narrow the box back to `prev` too.
+            // A partial send leaves earlier entries live on the box; undoing only the registry
+            // leaves a table no later diff narrows (a vendor-bulk entry streams ~250 KB/s for the
+            // connection's life). Narrow the box back to `prev` too.
             let restored = self.detach_sub(id);
             let _ = self.catch_sync(&effective, &restored);
             return Err(e);
@@ -295,8 +283,8 @@ impl Link {
         let _ = self.catch_sync(&prev, &effective);
     }
 
-    // Tear down every catch subscription (used by `reset()`, which holds the lock subscribe and
-    // unsubscribe commit under). One blanket clear rather than a per-entry diff: nothing is left.
+    // For `reset()`, which holds the subscribe/unsubscribe lock. One blanket clear, since nothing
+    // is left.
     pub(crate) fn catch_disconnect_all_locked(&self) {
         self.inner.events.lock().subs.clear();
         self.inner.desired.lock().set_catch(FilterSet::new());

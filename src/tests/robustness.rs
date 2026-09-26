@@ -66,12 +66,11 @@ fn truncated_frame_does_not_panic_and_reader_recovers() {
     );
 }
 
-// Every reply the box builds is bounded, and past its bound the firmware appends what fits and
-// answers anyway (ctrl_locks_append, ctrl_catch_append, ctrl_clip_held_append, ctrl_clip_trig_append,
+// Every box reply is bounded; past the bound the firmware appends what fits and replies anyway
+// (ctrl_locks_append, ctrl_catch_append, ctrl_clip_held_append, ctrl_clip_trig_append,
 // ctrl_usage_append, ctrl_pack_traffic_event, usbdev_box_name_copy, the DEVICE_INFO product copy).
-// The mock's builders take caller-supplied lengths from public setters, so each has to truncate the
-// same way: unbounded, the count byte wraps past 255 or the payload outgrows a frame, and the
-// `encode` failure unwinds out of the caller's own query instead of answering it.
+// The mock's builders take lengths from public setters, so each truncates alike; unbounded, the count
+// byte wraps past 255 or the payload outgrows a frame, and `encode` fails the caller's query.
 use crate::types::{
     CatchClass, CatchEntry, CatchFilter, CatchState, ClipAction, ClipPacketTrigger,
     ClipPacketTriggerEntry, ClipSettings, ClipStatus, ClipTrigger, ClockDomain, DeviceInfo,
@@ -270,8 +269,7 @@ fn a_traffic_packet_past_the_wire_cap_still_arrives() {
 
 #[test]
 fn a_log_line_past_what_a_frame_carries_still_arrives() {
-    // The protocol names no LOG text bound, so the frame's own is the one to hold: MAX_PAYLOAD less
-    // the level byte.
+    // The only LOG text bound is the frame's: MAX_PAYLOAD less the level byte.
     let mock = MockBox::new();
     let device = Device::with_mock(mock.clone());
     let rx = device.logs();

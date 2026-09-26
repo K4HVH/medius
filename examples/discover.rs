@@ -1,4 +1,4 @@
-//! Enumerate every connected box, then open one by device kind and by id.
+//! Lists every connected box, then opens one by device kind and by id.
 
 fn main() -> medius::Result<()> {
     let boxes = medius::Device::list();

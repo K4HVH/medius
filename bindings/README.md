@@ -1,9 +1,9 @@
 # medius bindings
 
-The [`medius`](../README.md) library is Rust, but the box can be driven from any
-language through a C ABI. The `medius-capi` crate exports a flat C API over the
-safe core; the generated header compiles as C and C++, and the Python package
-rides on it. See [Differences from the Rust API](#differences-from-the-rust-api).
+The [`medius`](../README.md) library is Rust; a C ABI drives the box from any
+language. `medius-capi` exports a flat C API over the safe core, its generated
+header compiles as C and C++, and the Python package is built on it. See
+[Differences from the Rust API](#differences-from-the-rust-api).
 
 ```
 medius (safe Rust crate)
@@ -23,20 +23,19 @@ cargo build -p medius-capi --release --features mock   # the mock box, for tests
 
 The header is `medius-capi/include/medius.h`, committed and regenerated with
 `tools/gen-header.sh` (cbindgen). It compiles as C99, C23, and C++. The mock
-surface is wrapped in `#if defined(MEDIUS_FEATURE_MOCK)`; define that macro when
-you built the library with the `mock` cargo feature.
+surface sits under `#if defined(MEDIUS_FEATURE_MOCK)`; define that macro for a
+library built with the `mock` cargo feature.
 
 Conventions: every fallible call returns a `MediusStatus` (`MEDIUS_STATUS_OK` is 0)
 and writes its result through an out-param. `medius_last_error_message()` gives the
 last failure's text on the calling thread. Handles (`MediusDevice`, `MediusEventStream`,
 `MediusLogStream`, `MediusMockBox`) are opaque pointers with a `*_free`. Catch events
-and log lines are fixed-size PODs sized to the protocol's own limits, so there is
-nothing to free per event.
+and log lines are fixed-size PODs sized to the protocol's limits; nothing is freed
+per event.
 
-Check the ABI once at start-up. `medius_abi_version()` is the loaded library's number
-and `MEDIUS_ABI_VERSION` is the header's. On a mismatch, call nothing else: the
-header's structs are laid out differently from the library's, so rebuild against
-the header that ships with that library.
+Check the ABI once at start-up: `medius_abi_version()` is the loaded library's number,
+`MEDIUS_ABI_VERSION` the header's. On a mismatch call nothing else; the struct layouts
+differ, so rebuild against the header shipped with that library.
 
 ```c
 #include <medius.h>
@@ -52,8 +51,7 @@ medius_device_reset(dev);
 medius_device_free(dev);
 ```
 
-C++ programs use the same header and the same library: `#include <medius.h>` and
-call the C API directly (it compiles as C++). There is no separate C++ wrapper.
+C++ includes the same header, links the same library and calls the C API directly.
 
 ## Python
 
@@ -75,17 +73,16 @@ with medius.Device.find() as dev:
             ...
 ```
 
-The wheel bundles its own `libmedius_capi`, so `pip install` needs no Rust
-toolchain. For development, point `MEDIUS_LIB` at a locally built library
-(e.g. `target/debug/libmedius_capi.so`, built with `--features mock` for the
-test suite). Import compares the library's `medius_abi_version()` with the ABI
-the package's ctypes mirrors were written for and raises `ImportError`, naming
-both numbers, when they differ, so a library from another release fails at
-import.
+The wheel bundles `libmedius_capi`, so `pip install` needs no Rust toolchain. For
+development, point `MEDIUS_LIB` at a local build (e.g.
+`target/debug/libmedius_capi.so`; the test suite needs `--features mock`). Import
+raises `ImportError`, naming both numbers, when the library's
+`medius_abi_version()` differs from the ABI the ctypes mirrors target, so a library
+from another release fails at import.
 
 ## Differences from the Rust API
 
-The bindings cover everything; only the shape changes at the boundary.
+The bindings cover the whole API; only the shape changes at the boundary.
 
 | | Rust | C | Python |
 |---|---|---|---|
@@ -97,28 +94,24 @@ The direct verbs (`press`, `key_down`, `media_down`, …) are unchanged in all t
 
 ## Packages
 
-Publishing rides the crate's existing release flow in `.github/workflows/ci.yml`:
-bump the version (`tools/bump_version.sh`) and push to master, and the `publish`
-job publishes the crate and creates the GitHub Release, then the bindings jobs
-build and ship the wheels and C/C++ assets for that same version.
+Publishing follows the crate's release flow in `.github/workflows/ci.yml`: bump the
+version (`tools/bump_version.sh`) and push to master; the `publish` job publishes the
+crate and creates the GitHub Release, then the bindings jobs ship the wheels and
+C/C++ assets for that version.
 
 ### Python → PyPI
 
-Builds the wheel matrix + sdist and uploads via PyPI trusted publishing (OIDC, no
-token). One-time setup, before the first publish (the project doesn't exist on PyPI
-yet): register a *pending publisher* at `pypi.org/manage/account/publishing/` with
+Builds the wheel matrix and sdist and uploads through PyPI trusted publishing (OIDC,
+no token). One-time setup before the first publish, while the project isn't on PyPI:
+register a *pending publisher* at `pypi.org/manage/account/publishing/` with
 project `medius`, owner `K4HVH`, repo `medius`, **workflow `ci.yml`**, environment
 `pypi`. Then `pip install medius`.
 
 ### C / C++ → GitHub Release assets
 
 Attaches a `medius-capi-<target>.tar.gz` per platform to the release, each with
-`include/medius.h` and the prebuilt `libmedius_capi` (shared + static). Download,
-include the header, link the library; the same header works in C and C++.
+`include/medius.h` and the prebuilt `libmedius_capi` (shared + static). Include the
+header and link the library, from C or C++.
 
-There's no vcpkg or Conan port: those registries build C/C++ from source in
-hermetic CI with no Rust toolchain, so a Rust-backed library doesn't fit. C/C++
-consumers use the release tarballs, or build `medius-capi` from source.
-
-`medius-capi` is `publish = false` (a substrate for other languages, not a Rust
-dependency), so it isn't on crates.io; Rust users use the `medius` crate.
+C/C++ consumers use these tarballs or build `medius-capi` from source. It is
+`publish = false`, so it isn't on crates.io; Rust users depend on `medius`.

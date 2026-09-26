@@ -232,8 +232,8 @@ fn a_device_chip_reboot_is_recovered_like_any_restart() {
     );
 }
 
-// A box power-cycled while the control link was down answers the reconnect's probe after its hello.
-// Its clone is not up yet, so the held state waits for the recovery rather than going out at once.
+// A box power-cycled while the link was down answers the reconnect probe after its hello. Its clone
+// is not up yet, so held state waits for the recovery.
 #[test]
 fn a_reconnect_that_finds_the_chip_rebooted_runs_the_recovery() {
     let device = Device::from_transport_with_cadence(
@@ -288,8 +288,8 @@ fn a_reconnect_to_a_box_that_kept_running_is_no_restart() {
     assert_eq!(device.counters().reconnects, 1);
 }
 
-// A hello that lands while the recovery waits for the clone is the same boot's: the boot hello can
-// trail the first-contact one and the reply behind it.
+// A hello during the recovery's wait is the same boot's: the boot hello can trail the first-contact
+// one and its reply.
 #[test]
 fn a_hello_while_the_clone_is_awaited_is_the_same_restart() {
     use crate::{Caps, MouseCaps};
@@ -329,8 +329,8 @@ fn a_hello_while_the_clone_is_awaited_is_the_same_restart() {
     assert_eq!(device.counters().restarts, 1);
 }
 
-// The box drops an append made before its clone is up, so an append during the recovery's wait is
-// lost as well, and only a ring the box reports once it is up counts as kept.
+// The box drops an append made before its clone is up, so one during the recovery's wait is lost;
+// only a ring reported once the clone is up counts as kept.
 #[test]
 fn the_box_decides_whether_an_appended_clip_survived() {
     use crate::ClipStatus;
@@ -440,9 +440,9 @@ fn at(mock: &MockBox, from: usize, ty: FrameType) -> usize {
         .expect("the frame went out")
 }
 
-// APPLY, CLEAR and the opt-in toggle present the clone again, which releases the session like a
-// replug of the device and sends no hello. The crate sees the game PC enumerate the new clone and
-// re-sends what it holds, after the frame that took the old clone down.
+// APPLY, CLEAR and the opt-in toggle re-present the clone, releasing the session like a replug, with
+// no hello. The crate sees the game PC enumerate the new clone and re-sends what it holds after the
+// frame that took the old clone down.
 #[test]
 fn a_clone_the_crate_presents_again_gets_back_what_it_held() {
     use crate::{Patch, PatchSection};
@@ -484,8 +484,8 @@ fn a_clone_the_crate_presents_again_gets_back_what_it_held() {
     }
 }
 
-// A clone presented again by another program's APPLY reaches the crate through the game PC's
-// enumeration counters on the next keepalive tick.
+// A re-presentation by another program's APPLY reaches the crate through the game PC's enumeration
+// counters on the next keepalive tick.
 #[test]
 fn a_clone_presented_again_from_elsewhere_is_noticed_on_the_next_tick() {
     use crate::protocol::command::patch_apply_payload;
@@ -503,8 +503,7 @@ fn a_clone_presented_again_from_elsewhere_is_noticed_on_the_next_tick() {
     assert_everything_back(&mock, &device, &clip, &rule, &trigger, from);
 }
 
-// A box whose clone stays put gets its state once: the keepalive's look at the counters re-sends
-// nothing.
+// A clone that stays put gets its state once; the keepalive's counter check re-sends nothing.
 #[test]
 fn a_clone_left_alone_is_not_recovered() {
     let mock = MockBox::new();
@@ -520,8 +519,8 @@ fn a_clone_left_alone_is_not_recovered() {
     assert!(looked >= 2, "the keepalive looked {looked} times");
 }
 
-// A command that can present the clone again has the keepalive look every slice, so the state comes
-// back well before its next tick.
+// After a command that can re-present the clone, the keepalive checks every slice, so state returns
+// well before its next tick.
 #[test]
 fn the_crate_watches_closely_after_a_command_that_presents_the_clone() {
     use crate::{Patch, PatchSection};
@@ -565,8 +564,8 @@ fn scale_x(device: &Device) -> i16 {
         .scale_of(Axis::X, Direction::Positive)
 }
 
-// The inter-chip link dropping and a detach the device comes back from inside the grace release the
-// session with no re-clone and no hello. The box counts it, and the crate re-sends at once, the clone
+// An inter-chip link drop, or a detach the device returns from within the grace, releases the
+// session with no re-clone or hello. The box counts it and the crate re-sends at once, the clone
 // being up.
 #[test]
 fn a_release_that_leaves_the_clone_up_is_recovered() {
@@ -589,8 +588,8 @@ fn a_release_that_leaves_the_clone_up_is_recovered() {
     }
 }
 
-// A detach past the grace takes the clone down, and nothing the crate sends can land until another
-// device is cloned: the recovery waits for it, however long, and re-sends then.
+// A detach past the grace takes the clone down, and nothing can land until another device is
+// cloned: the recovery waits, however long, then re-sends.
 #[test]
 fn a_detach_waits_for_the_next_clone() {
     let mock = MockBox::new();
@@ -638,8 +637,8 @@ fn the_mock_counts_a_release_only_after_a_command() {
     mock.link_lost();
     mock.detach(true);
     assert_eq!(session(), 1, "one command, one release counted");
-    // A detach counts at once; its teardown after the grace counts again only after a command in it,
-    // and the device coming back to a torn-down clone starts a fresh one, which releases nothing.
+    // A detach counts at once; its teardown after the grace counts again only if a command came in
+    // it, and a device returning to a torn-down clone starts a fresh one, releasing nothing.
     device.scale(Axis::X, Direction::Both, 40).unwrap();
     mock.detach(false);
     assert_eq!(session(), 2);
@@ -666,8 +665,8 @@ fn the_mock_counts_a_release_only_after_a_command() {
     mock.attach();
     std::thread::sleep(Duration::from_millis(300));
     assert_eq!(session(), 5);
-    // A RESET marks nothing itself: it counts what a command before it set, and leaves nothing marked.
-    // Sent bare, since `reset()` clears the catch table with a command of its own first.
+    // A RESET counts what an earlier command set and leaves nothing marked. Sent bare, since
+    // `reset()` first clears the catch table with its own command.
     let reset = || device.link.send(FrameType::Reset, &[0]).unwrap();
     reset();
     assert_eq!(session(), 5, "nothing set since the last count");
@@ -683,8 +682,8 @@ fn the_mock_counts_a_release_only_after_a_command() {
     assert_eq!(session(), 0, "and a commanded reboot boots clean");
 }
 
-// A user's release or unlock waits out a re-send in progress, so the stale press or lock the re-send
-// copied cannot land after it.
+// A release or unlock waits out a re-send in progress, so the re-send's stale press or lock cannot
+// land after it.
 #[test]
 fn a_command_waits_for_a_re_send_in_progress() {
     for what in ["inject", "lock", "reset"] {
@@ -706,9 +705,8 @@ fn a_command_waits_for_a_re_send_in_progress() {
     }
 }
 
-// A detach whose teardown falls between the re-send's reading of the counter and the re-send itself
-// takes the re-send with it and counts nothing: the recovery sees the clone gone and waits for the
-// next one.
+// A teardown between the re-send's counter reading and the re-send takes the re-send with it and
+// counts nothing: the recovery sees the clone gone and waits for the next.
 #[test]
 fn a_re_send_that_lands_on_a_going_clone_is_sent_again() {
     let mock = MockBox::new();
@@ -720,8 +718,8 @@ fn a_re_send_that_lands_on_a_going_clone_is_sent_again() {
     await_that("the scale never went back", || scale_x(&device) == 40);
 }
 
-// The opt-in going off releases in two parts: its rules at once, and the clone on the box's next loop
-// tick. The close watch stays open for the second, so the scale is back without waiting for a tick.
+// The opt-in going off releases in two parts: rules at once, the clone on the box's next loop tick.
+// The close watch stays open for the second, so the scale returns without waiting a tick.
 #[test]
 fn the_second_part_of_a_release_is_caught_by_the_close_watch() {
     use crate::{Patch, PatchSection};
@@ -762,8 +760,8 @@ fn a_boot_during_another_recovery_is_counted() {
     assert_eq!(scale_x(&device), 40);
 }
 
-// A clip the box had already emptied (a streaming clip that was stopped or played out) is no loss
-// when the box then releases the session.
+// A clip the box had emptied (a streaming clip stopped or played out) is no loss at a later session
+// release.
 #[test]
 fn a_ring_the_box_had_emptied_is_not_lost() {
     use crate::ClipStatus;
@@ -786,9 +784,8 @@ fn a_ring_the_box_had_emptied_is_not_lost() {
     assert!(!clip.lost());
 }
 
-// Rules and packet triggers go back in the box's own order, which decides a tie between equally
-// specific entries: an overwrite that changes a rule moves it to the end, one that changes a packet
-// trigger keeps its place.
+// Rules and packet triggers return in the box's order, the tie-break between equally specific
+// entries: a changed rule moves to the end, a changed packet trigger keeps its place.
 #[test]
 fn a_re_send_rebuilds_the_tables_in_the_box_s_order() {
     let mock = MockBox::new().with_imperfect(true);
@@ -860,7 +857,7 @@ fn dropping_the_device_does_not_wait_out_a_recovery() {
     );
 }
 
-// A presentation asked for inside a detach's grace waits for it to end, and happens only if the device
+// A presentation requested inside a detach's grace waits for its end, and happens only if the device
 // came back.
 #[test]
 fn the_mock_holds_a_presentation_through_a_detach_s_grace() {
@@ -885,8 +882,8 @@ fn the_mock_holds_a_presentation_through_a_detach_s_grace() {
     }
 }
 
-// A ring read that a release overtakes shows the ring empty with nothing reported yet: it is left to
-// that release's recovery, which reports the clip lost.
+// A ring read overtaken by a release shows it empty with nothing reported yet; that release's
+// recovery reports the clip lost.
 #[test]
 fn a_ring_read_across_a_release_is_left_to_its_recovery() {
     let mock = MockBox::new();

@@ -17,10 +17,10 @@ fn class_index(class: Class) -> usize {
     }
 }
 
-/// A live stream of decoded [`InputEvent`]s: press and release edges, and motion.
+/// Live stream of decoded [`InputEvent`]s: press and release edges, and motion.
 ///
-/// Built on the same subscription as [`EventStream`], with the held-usage snapshots turned into the
-/// edges they represent. One report can produce several events, so `recv` takes `&mut self`.
+/// An [`EventStream`] subscription with held-usage snapshots decoded into edges. One report can
+/// produce several events, so `recv` takes `&mut self`.
 #[derive(Debug)]
 pub struct InputStream {
     events: EventStream,
@@ -39,14 +39,10 @@ impl InputStream {
         }
     }
 
-    // A snapshot is the CLASS's state, so the box sends every held usage of that class once ANY
-    // subscriber in the process has widened the table: routing has to be class-only or the release
-    // edge is lost. That is right for delivery and wrong for decoding: a stream that asked for one
-    // key would otherwise report edges for every key someone else subscribed to. Filter here instead,
-    // where the subscriber's own address is still known.
-    //
-    // The class check is not redundant: each usage carries its own class byte, and one that disagrees
-    // with the frame's would otherwise be filed under the wrong class and could never be released.
+    // A snapshot lists every held usage of the class once any subscriber widens the table, so
+    // routing is class-only (or the release edge is lost) and each stream filters to its own address
+    // here. The class check matters: a usage whose class byte disagrees with the frame's would be
+    // filed under the wrong class and never released.
     fn subscribed(&self, class: Class, usage: Usage) -> bool {
         usage.class == class
             && self
@@ -57,7 +53,6 @@ impl InputStream {
 
     fn pump(&mut self, event: CatchEvent) {
         match event {
-            // A report that moved nothing is not motion.
             CatchEvent::Motion(m) if m.axes().next().is_some() => {
                 self.pending.push_back(InputEvent {
                     ts_us: m.ts_us,
@@ -73,8 +68,8 @@ impl InputStream {
             CatchEvent::Motion(_) => {}
             CatchEvent::Usages(u) => {
                 let slot = class_index(u.class);
-                // Deduplicated: a malformed snapshot listing one usage twice would otherwise fire two
-                // presses with no release between them, and leave `held` a multiset.
+                // Deduplicated: a snapshot listing a usage twice would fire two presses with no
+                // release between, and leave `held` a multiset.
                 let mut now: Vec<Usage> = Vec::with_capacity(u.usages.len());
                 for usage in u.usages {
                     if self.subscribed(u.class, usage) && !now.contains(&usage) {
@@ -113,7 +108,7 @@ impl InputStream {
         }
     }
 
-    /// The next decoded event, or `None` if nothing is queued (never blocks).
+    /// Next decoded event, or `None` if nothing is queued. Never blocks.
     pub fn try_recv(&mut self) -> Option<InputEvent> {
         loop {
             if let Some(e) = self.pending.pop_front() {
@@ -126,11 +121,10 @@ impl InputStream {
 
     /// Block up to `timeout` for the next input event.
     ///
-    /// `None` means "nothing yet" **or** "nothing ever again", and on a closed stream it returns at
+    /// `None` means "nothing yet" **or** "nothing ever again"; on a closed stream it returns at
     /// once, so a poll loop that ignores [`Self::is_connected`] spins.
     pub fn recv_timeout(&mut self, timeout: Duration) -> Option<InputEvent> {
-        // A timeout too large to add to `now` is a caller asking to wait indefinitely, not one asking
-        // to give up immediately, which is what `?` on the overflow would have done.
+        // A timeout too large to add to `now` means wait indefinitely; `?` would give up at once.
         let Some(deadline) = Instant::now().checked_add(timeout) else {
             return self.recv().ok();
         };
@@ -138,15 +132,15 @@ impl InputStream {
             if let Some(e) = self.pending.pop_front() {
                 return Some(e);
             }
-            // A report can decode to nothing at all (an empty snapshot for a class that was already
-            // empty), so the deadline has to survive a pump that yields no event.
+            // A report can decode to nothing (an empty snapshot for an already-empty class), so the
+            // deadline must survive a pump that yields no event.
             let left = deadline.checked_duration_since(Instant::now())?;
             let event = self.events.recv_timeout(left)?;
             self.pump(event);
         }
     }
 
-    /// Await the next input event; runtime-agnostic, runs under any executor.
+    /// Await the next input event; runs under any executor.
     #[cfg(feature = "async")]
     pub async fn recv_async(&mut self) -> Result<InputEvent> {
         loop {
@@ -158,19 +152,18 @@ impl InputStream {
         }
     }
 
-    /// Events the underlying subscription dropped because the consumer fell behind.
+    /// Events the subscription dropped because the consumer fell behind.
     pub fn dropped(&self) -> u64 {
         self.events.dropped()
     }
 
-    /// Whether the box is still delivering to this stream. [`Self::recv_timeout`] and
-    /// [`Self::try_recv`] answer `None` for both "nothing yet" and "nothing ever again"; this
-    /// separates them.
+    /// Whether the box still delivers to this stream. Separates the two meanings of `None` from
+    /// [`Self::recv_timeout`] and [`Self::try_recv`]: "nothing yet" and "nothing ever again".
     pub fn is_connected(&self) -> bool {
         !self.pending.is_empty() || self.events.is_connected()
     }
 
-    /// Which usages of `class` are currently held, as this stream has tracked them.
+    /// Usages of `class` held, as this stream tracked them.
     pub fn held(&self, class: Class) -> &[Usage] {
         &self.held[class_index(class)]
     }
@@ -204,9 +197,8 @@ impl Device {
     ///
     /// Every filter must name an input class and cover both edges. A traffic class gives
     /// [`Error::NotAnInputFilter`], [`CatchFilter::everything`] gives [`Error::WildcardNotInput`]
-    /// (use [`CatchFilter::all_input`]), and a filter narrowed to one edge gives
-    /// [`Error::HalfEdgeInputFilter`]. The missing edge is what tells a fresh press from a chord, so
-    /// match on [`Input::Press`] instead.
+    /// (use [`CatchFilter::all_input`]), and a one-edge filter gives [`Error::HalfEdgeInputFilter`]:
+    /// the missing edge tells a fresh press from a chord, so match on [`Input::Press`] instead.
     pub fn input_events(
         &self,
         filters: impl IntoIterator<Item = CatchFilter>,

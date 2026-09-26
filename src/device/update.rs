@@ -13,18 +13,18 @@ use crate::types::{FirmwareInfo, UpdateProgress, UpdateStatus, UpdateTarget};
 
 use super::Device;
 
-/// How long one op may take to answer. `BEGIN` erases the whole slot before it replies.
+// `BEGIN` erases the whole slot before it replies.
 pub(crate) const OP_TIMEOUT: Duration = Duration::from_secs(20);
-/// `ACTIVATE` reboots the host chip and waits for it back on the link before the device chip follows.
+// `ACTIVATE` reboots the host chip and waits for it back on the link before the device chip follows.
 pub(crate) const ACTIVATE_TIMEOUT: Duration = Duration::from_secs(60);
-/// How often a blocked receive wakes to check what another caller may have parked for it.
+// How often a blocked receive wakes to check for a reply another caller parked.
 const HELD_POLL: Duration = Duration::from_millis(50);
 
-/// Outlasts the mouse-side chip's 40 s probation, which is the longer of the two.
+// Outlasts the mouse-side chip's 40 s probation, the longer of the two.
 pub(crate) const CONFIRM_TIMEOUT: Duration = Duration::from_secs(55);
 
-// The chunking and credit accounting for one staged image, with no transport in it. The sync and
-// async transfers both drive this, so the wire logic exists once and cannot drift between them.
+// Chunking and credit accounting for one staged image, transport-free, so the sync and async
+// transfers share one copy of the wire logic.
 pub(crate) struct ChunkPlan<'a> {
     image: &'a [u8],
     target: UpdateTarget,
@@ -54,7 +54,7 @@ impl<'a> ChunkPlan<'a> {
         self.sent >= self.image.len() && self.unacked == 0
     }
 
-    /// The next `DATA` frame, or `None` when everything sent is still waiting to be acknowledged.
+    // `None` while everything sent awaits acknowledgement.
     pub(crate) fn next_frame(&mut self) -> Option<Vec<u8>> {
         if self.sent >= self.image.len() || self.unacked >= self.credit {
             return None;
@@ -71,7 +71,7 @@ impl<'a> ChunkPlan<'a> {
         Some(frame)
     }
 
-    /// True once the window is full or the image is out, which is when the box owes an answer.
+    // The box owes a reply once the window is full or the image is out.
     pub(crate) fn awaiting_ack(&self) -> bool {
         self.unacked > 0 && (self.unacked >= self.credit || self.sent >= self.image.len())
     }
@@ -84,8 +84,8 @@ impl<'a> ChunkPlan<'a> {
                 arg,
             });
         }
-        // The box reports the chunk it expects next. A disagreement means the two sides no longer
-        // share an offset, and writing on would put bytes in the wrong place.
+        // The box reports the chunk it expects next; a mismatch means the offsets diverged and
+        // writing on would misplace bytes.
         if arg != u32::from(self.seq) {
             return Err(Error::Update {
                 op: OTA_OP_DATA,
@@ -102,7 +102,7 @@ impl<'a> ChunkPlan<'a> {
     }
 }
 
-/// The `BEGIN` body: the image length and the digest the box checks at `END`.
+// Image length and the digest the box checks at `END`.
 pub(crate) fn begin_body(image: &[u8]) -> Vec<u8> {
     let mut body = Vec::with_capacity(4 + 32);
     body.extend_from_slice(&(image.len() as u32).to_le_bytes());
@@ -111,7 +111,7 @@ pub(crate) fn begin_body(image: &[u8]) -> Vec<u8> {
 }
 
 impl Device {
-    /// Both chips' firmware versions and which app slot each booted (§4.16).
+    /// Both chips' firmware versions and booted app slots (§4.16).
     pub fn firmware_info(&self) -> Result<FirmwareInfo> {
         let payload = self.link.query(Q_FIRMWARE)?;
         match parse_resp(&payload) {
@@ -120,17 +120,16 @@ impl Device {
         }
     }
 
-    /// Block until neither chip is still on probation. A chip that has not confirmed the image it
-    /// booted refuses to open another update. The device chip confirms after ten seconds of running;
-    /// the mouse-side chip confirms only on a completed clock exchange over the inter-chip link.
+    /// Block until neither chip is on probation; a chip that has not confirmed its booted image
+    /// refuses another update. The device chip confirms after ten seconds of running; the mouse-side
+    /// chip only on a completed clock exchange over the inter-chip link.
     pub fn wait_firmware_confirmed(&self) -> Result<FirmwareInfo> {
         let deadline = Instant::now() + CONFIRM_TIMEOUT;
         loop {
-            // This is the call you make right after an activate, when the box is rebooting into the
-            // image it is about to confirm.
+            // Called right after an activate, while the box reboots into the image it will confirm.
             let info = match self.firmware_info() {
                 Ok(i) => i,
-                // Only a timeout. The CH343 stays enumerated while the chip behind it reboots, so a
+                // Only a timeout: the CH343 stays enumerated while the chip behind it reboots, so a
                 // reboot reads as an unanswered query.
                 Err(Error::QueryTimeout) if Instant::now() < deadline => {
                     std::thread::sleep(Duration::from_millis(500));
@@ -152,9 +151,9 @@ impl Device {
         }
     }
 
-    /// Write one image into the target chip's spare slot. It stays inert until
-    /// [`activate_firmware`](Self::activate_firmware): nothing boots it, and a power cut brings the
-    /// running image back.
+    /// Write one image into the target chip's spare slot. Inert until
+    /// [`activate_firmware`](Self::activate_firmware): nothing boots it, and a power cut restores the
+    /// running image.
     pub fn stage_firmware(
         &self,
         target: UpdateTarget,
@@ -203,7 +202,7 @@ impl Device {
         Ok(arg)
     }
 
-    /// Drop whatever is staged or in flight for one target. The clone comes back without a reboot.
+    /// Drop whatever is staged or in flight for one target; the clone returns without a reboot.
     pub fn abort_update(&self, target: UpdateTarget) -> Result<()> {
         let (status, arg) = self.update_op(OTA_OP_ABORT, target, &[], OP_TIMEOUT)?;
         if status != UpdateStatus::OK {
@@ -216,7 +215,7 @@ impl Device {
         Ok(())
     }
 
-    /// Commit every staged image and reboot into it. The host chip goes first and has to be back on
+    /// Commit every staged image and reboot into it. The host chip goes first and must be back on
     /// the inter-chip link before the device chip follows, so this can take tens of seconds.
     pub fn activate_firmware(&self) -> Result<()> {
         let (status, arg) =
@@ -239,8 +238,7 @@ impl Device {
         progress: &mut dyn FnMut(UpdateProgress),
     ) -> Result<()> {
         self.stage_firmware(target, image, progress)?;
-        // A refused activate leaves the image staged and armed, so a later unrelated activate would
-        // commit it on its own. Disarm it.
+        // A refused activate leaves the image armed for a later unrelated activate; disarm it.
         if let Err(e) = self.activate_firmware() {
             let _ = self.abort_update(target);
             return Err(e);
@@ -255,8 +253,8 @@ impl Device {
         body: &[u8],
         timeout: Duration,
     ) -> Result<(UpdateStatus, u32)> {
-        // Anything already queued for THIS op answers an earlier command, and taking it as this
-        // one's reply would report a stale outcome.
+        // Anything queued for this op answers an earlier command; taking it would report a stale
+        // outcome.
         while let Ok(p) = self.link.updates_rx().try_recv() {
             if p.first() != Some(&op) {
                 self.link.hold_update(p);
@@ -271,18 +269,14 @@ impl Device {
         self.recv_update(op, timeout)
     }
 
-    // The next `UPDATE_RESP` for `op`. Matched on the op byte, not `SEQ`: one acknowledgement answers
-    // a whole window of `DATA` frames, so it carries a rolling `SEQ` of its own.
-    //
-    // A reply for another op is put BACK, not dropped. The channel is one shared MPMC receiver and
-    // `AsyncDevice::offload` runs transfers on threads of their own, so discarding here would eat
-    // another caller's answer and leave it timing out against a box that replied correctly.
+    // Matched on the op byte, not `SEQ`: one acknowledgement answers a window of `DATA` frames and
+    // carries its own rolling `SEQ`. A reply for another op is parked, not dropped: the MPMC channel
+    // is shared and `AsyncDevice::offload` runs transfers on their own threads, so dropping it would
+    // time out another caller whose box replied.
     pub(crate) fn recv_update(&self, op: u8, timeout: Duration) -> Result<(UpdateStatus, u32)> {
         let deadline = Instant::now() + timeout;
         loop {
-            // Checked on EVERY wake, not just before the first wait: another caller can park this
-            // op's reply at any point, and only looking once would leave it sitting there until the
-            // next call while this one timed out.
+            // Checked on every wake: another caller can park this op's reply at any point.
             if let Some(p) = self.take_held(op) {
                 return Ok((
                     UpdateStatus(p[2]),
@@ -293,8 +287,7 @@ impl Device {
             if left.is_zero() {
                 return Err(Error::QueryTimeout);
             }
-            // Bounded, so a reply parked while this thread is blocked is noticed promptly rather
-            // than only when the channel happens to deliver something.
+            // Bounded, so a reply parked while blocked is noticed promptly.
             match self.link.updates_rx().recv_timeout(left.min(HELD_POLL)) {
                 Ok(p) if p.len() >= UPD_RESP_LEN && p[0] == op => {
                     return Ok((
@@ -302,8 +295,8 @@ impl Device {
                         u32::from_le_bytes([p[3], p[4], p[5], p[6]]),
                     ));
                 }
-                // Park it where its own caller looks. Re-sending it into the channel after this call
-                // finished would arrive long after that caller had given up.
+                // Parked where its caller looks; re-sent into the channel later, it would arrive after
+                // that caller gave up.
                 Ok(p) => self.link.hold_update(p),
                 Err(flume::RecvTimeoutError::Timeout) => continue,
                 Err(_) => return Err(Error::Disconnected),

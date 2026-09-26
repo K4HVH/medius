@@ -16,7 +16,7 @@ const HANDSHAKE_ATTEMPTS: usize = 5;
 const HANDSHAKE_ATTEMPT_TIMEOUT: Duration = Duration::from_millis(250);
 
 impl Device {
-    /// Open the box at serial `path`, run the version handshake, and return a ready [`Device`].
+    /// Open the box at serial `path` and run the version handshake.
     pub fn open(path: impl AsRef<Path>) -> Result<Device> {
         let path = path.as_ref();
         let serial = crate::transport::serial::SerialTransport::open(path)?;
@@ -66,11 +66,10 @@ impl Device {
             fw_patch = version.fw_patch,
             "connected",
         );
-        // Read CAPS once the version is confirmed, so the declared button count is known before the
-        // caller takes any lock: a button blanket set before their own caps() call then re-asserts
-        // every declared button across a reconnect instead of narrowing to the five named ones.
-        // Best-effort and bounded like a handshake attempt: a box with no device bound reports zero,
-        // which is left uncached so the count falls back to the named buttons until a real caps().
+        // CAPS now, so a button blanket set before the caller's own caps() re-asserts every declared
+        // button across a reconnect, not just the five named ones. Best-effort, bounded like a
+        // handshake attempt; a box with no device reports zero, left uncached so the named buttons
+        // apply until a real caps().
         if let Ok(payload) = self.link.query_timeout(Q_CAPS, HANDSHAKE_ATTEMPT_TIMEOUT)
             && let Some(Resp::Caps(caps)) = parse_resp(&payload)
             && caps.mouse.n_buttons > 0
@@ -80,8 +79,7 @@ impl Device {
                 .lock()
                 .note_declared_buttons(caps.mouse.n_buttons);
         }
-        // The box's session counter as it stands, so a release from here on is noticed however soon
-        // it comes.
+        // Baseline session counter, so any later release is noticed.
         if let Ok(payload) = self.link.query_timeout(Q_STATS, HANDSHAKE_ATTEMPT_TIMEOUT)
             && let Some(Resp::Stats(stats)) = parse_resp(&payload)
         {
@@ -90,8 +88,8 @@ impl Device {
         Ok(version)
     }
 
-    // The box's `RESP(VERSION)`, whatever protocol it reports. Discovery reads it to list a box this
-    // build does not speak to; the handshake reads it and then checks the number.
+    // Whatever protocol the box reports: discovery lists a box this build cannot speak to; the
+    // handshake then checks the number.
     pub(crate) fn read_version(&self) -> Result<Version> {
         for _ in 0..HANDSHAKE_ATTEMPTS {
             match self
@@ -114,7 +112,7 @@ impl Device {
         Err(Error::NoReply)
     }
 
-    /// Discover the first medius box by VID/PID, open it, and handshake.
+    /// Open the first box found by VID/PID, with the handshake.
     pub fn find() -> Result<Device> {
         let port = crate::transport::scan::find_medius()
             .into_iter()

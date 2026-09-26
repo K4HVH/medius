@@ -1,21 +1,21 @@
 //! Keyboard command vocabulary: a key by HID keycode, and the keyboard catch snapshot.
 
-/// A keyboard key, addressed by HID Usage (Keyboard/Keypad page, §3.10).
+/// Keyboard key by HID usage (Keyboard/Keypad page, §3.10).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct Key(pub u8);
 
 impl Key {
-    /// A key from a raw HID Keyboard/Keypad usage.
+    /// Key from a raw HID Keyboard/Keypad usage.
     pub const fn new(usage: u8) -> Key {
         Key(usage)
     }
 
-    /// The HID usage byte.
+    /// HID usage byte.
     pub const fn usage(self) -> u8 {
         self.0
     }
 
-    /// Whether this key is one of the eight modifiers (usages `0xE0..=0xE7`).
+    /// Whether this is one of the eight modifiers (usages `0xE0..=0xE7`).
     pub const fn is_modifier(self) -> bool {
         self.0 >= 0xE0 && self.0 <= 0xE7
     }

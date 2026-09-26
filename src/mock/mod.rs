@@ -64,12 +64,10 @@ struct State {
     emit_pace: EmitPace,
     render_mode: RenderMode,
     render_full: bool,
-    /// Whether the box has learned a profile. A real box arms this off native motion, so a mock
-    /// starts unarmed and a test that needs the armed path says so.
+    // A real box arms this off native motion, so the mock starts unarmed.
     render_ready: bool,
     spread_percent: u16,
-    /// The command period the box has learned off MOVE arrivals, in microseconds. 0 is a box that has
-    /// not seen enough of them, which is where every session starts.
+    // Learned off MOVE arrivals, in microseconds; 0 until enough arrive, as every session starts.
     spread_learned_us: u32,
     emit_force_hz: Option<u16>,
     advertised_hz: u16,
@@ -147,8 +145,7 @@ impl MockRewrite {
     }
 }
 
-// One packet trigger the mock holds, in wire fields plus what the box keeps beside them: the hit
-// count and whether the last packet of a RUN trigger's stream met its condition.
+// Wire fields plus the hit count and whether a RUN trigger's last stream packet met its condition.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct MockPacketTrigger {
     class: u8,
@@ -295,8 +292,8 @@ impl PacketTriggers {
         self.rows.retain(|r| r.flags & CLIP_TRIG_F_CONSUME == 0);
     }
 
-    // clip_ptrig_packet: one packet through the set. Every RUN trigger on this exact address has
-    // its run brought up to date, top-ranked or not. The top-ranked trigger is charged a hit.
+    // clip_ptrig_packet: every RUN trigger on this exact address updates its run, top-ranked or not;
+    // the top-ranked trigger is charged a hit.
     fn packet(&mut self, class: u8, id: u16, dir: u8, head: &[u8]) -> (Option<u8>, bool) {
         let mut top: Option<(usize, u32)> = None;
         for (i, r) in self.rows.iter().enumerate() {
@@ -378,8 +375,8 @@ impl Default for State {
             },
             health: Health::from_flags(0),
             device_info: DeviceInfo::default(),
-            // A plain five-button mouse by default, so the lock table's button cap agrees with the
-            // count `RESP(CAPS)` reports; a test wanting buttons past five or AC Pan sets its own caps.
+            // A five-button mouse, so the lock table's button cap agrees with `RESP(CAPS)`; a test
+            // wanting more buttons or AC Pan sets its own caps.
             caps: Caps {
                 mouse: MouseCaps {
                     n_buttons: 5,
@@ -448,8 +445,7 @@ impl Default for State {
     }
 }
 
-// The box's lock table, modelled the way the firmware holds it so the mock answers `RESP(LOCKS)`
-// the way a box would rather than echoing what the host sent.
+// The box's lock table, modelled as the firmware holds it, so `RESP(LOCKS)` replies as a box does.
 const LOCK_TGT_BTN_BASE: usize = 4; // CTRL_LOCK_TGT_BTN_BASE: 4 axes (X, Y, wheel, pan) precede the buttons
 const LOCK_TGT_COUNT: usize = LOCK_TGT_BTN_BASE + MAX_BUTTONS as usize; // 4 axes + 16 buttons
 const LOCK_SLOT_WITH: usize = 2;
@@ -523,9 +519,8 @@ impl LockTable {
                 };
             }
             if i >= LOCK_SLOT_WITH {
-                // A button has no bearing, so a named relative direction on one is refused outright;
-                // Both reaches the relative pair with a pass, never with the scale, since the two
-                // multiply.
+                // A button has no bearing, so a named relative direction is refused; Both writes a
+                // pass to the relative pair, never the scale, since the two multiply.
                 if target >= LOCK_TGT_BTN_BASE && dir != LOCK_DIR_BOTH {
                     continue;
                 }
@@ -537,11 +532,11 @@ impl LockTable {
         }
     }
 
-    // `n_buttons` is the clone's declared button count: a button blanket writes that many rows and a
-    // button id past it is dropped, exactly as the firmware caps at `nbtn`.
+    // A button blanket writes `n_buttons` rows and a higher id is dropped, as the firmware caps at
+    // `nbtn`.
     pub(crate) fn apply(&mut self, class: u8, id: u16, dir: u8, scale: i16, n_buttons: u8) {
-        // One bit has nothing to reverse, so the box writes nothing at all for a negative on a
-        // momentary class (usbdev_set_lock).
+        // One bit has nothing to reverse, so the box writes nothing for a negative on a momentary
+        // class (usbdev_set_lock).
         if scale < 0 && class != LOCK_CLS_AXIS {
             return;
         }
@@ -568,8 +563,8 @@ impl LockTable {
             }
             LOCK_CLS_KEY => {
                 if id == LOCK_ID_ALL {
-                    // The blanket carries the two edge slots only, and honours the direction: a
-                    // relative one names neither and is dropped.
+                    // The blanket carries the two edge slots only; a relative direction names
+                    // neither and is dropped.
                     let m = slot_mask(dir) & 0x03;
                     if m == 0 {
                         return;
@@ -593,7 +588,7 @@ impl LockTable {
                 }
             }
             LOCK_CLS_MEDIA => {
-                // A media usage is suppressed whole, so the direction byte is not read at all.
+                // A media usage is suppressed whole; the direction byte is ignored.
                 if id == LOCK_ID_ALL {
                     self.media_blanket = on;
                 } else if id != 0 {
@@ -612,8 +607,8 @@ impl LockTable {
         }
     }
 
-    // In vector mode one relative scale governs both axes, the lower of X's and Y's, so the
-    // readback names that number on both axes instead of each axis's stored byte.
+    // In vector mode one relative scale, the lower of X's and Y's, governs both axes, so the
+    // readback reports it on both.
     fn reported(&self, t: usize, slot: usize, vector: bool) -> i16 {
         let sc = self.mouse[t][slot];
         if !vector || slot < LOCK_SLOT_WITH || t > Axis::Y.as_u16() as usize {
@@ -658,9 +653,8 @@ impl LockTable {
                 push(LockScope::Blanket(Class::Key), dir, LOCK_SCALE_BLOCK);
             }
         }
-        // Media before granular keys: media is bounded at MEDIA_LOCK_MAX and granular keys are not,
-        // so enumerating keys last is what keeps the unbounded class from crowding the bounded one out at
-        // the entry cap. A media usage is suppressed whole, so the direction it reports is Both.
+        // Media (bounded at MEDIA_LOCK_MAX) before the unbounded granular keys, so keys cannot crowd
+        // media out at the entry cap. A media usage is suppressed whole, so it reports Both.
         if self.media_blanket {
             push(
                 LockScope::Blanket(Class::Media),
@@ -675,8 +669,8 @@ impl LockTable {
                 LOCK_SCALE_BLOCK,
             );
         }
-        // Granular keys last, on whatever is left of the cap. Past it they truncate silently (the
-        // reply has nowhere to say so), which is why nothing bounded is enumerated after them.
+        // Granular keys last, on what is left of the cap; past it they truncate with no signal, so
+        // nothing bounded follows them.
         for u in 0..256u16 {
             let usage = LockScope::Target(LockTarget::Usage(Usage::new(Class::Key, u)));
             if self.key_press[u as usize] {
@@ -706,8 +700,8 @@ impl State {
         );
     }
 
-    // Apply a REWRITE frame the way the box would: keyed add/overwrite/remove, a monotonic gen, a
-    // whole-table clear, and the caps that raise `full`. Dropped whole while the opt-in is off.
+    // As the box: keyed add/overwrite/remove, a monotonic gen, a whole-table clear, and the caps that
+    // raise `full`. Dropped whole while the opt-in is off.
     fn apply_rewrite_frame(&mut self, p: &[u8]) {
         if p.len() < 9 {
             return;
@@ -768,16 +762,16 @@ impl State {
             }
             return;
         }
-        // An identical re-set is no change: gen stays (§3.14) and so does full, or the keepalive
-        // re-sending every held rule would clear a refusal the moment it was reported.
+        // An identical re-set changes nothing: gen stays (§3.14) and so does full, or the keepalive's
+        // re-sends would clear a refusal as soon as it was reported.
         if let Some(i) = pos {
             let r = &self.rewrites[i];
             if r.action == action && r.offset == offset && r.payload == payload {
                 return;
             }
         }
-        // rewrite_tab_set costs the payload against the pool less what an overwrite gives back, and
-        // then the entry count; a refusal for room of either kind sets full.
+        // rewrite_tab_set costs the payload against the pool less what an overwrite frees, then the
+        // entry count; either refusal for room sets full.
         let used: usize = self
             .rewrites
             .iter()
@@ -852,12 +846,11 @@ impl State {
     }
 
     // The clip config goes with the rest of the box's soft state (clip_lifecycle_reset_locked).
-    // What RST_F_NVS takes with it: everything the box keeps in NVS. The values here are the ones
-    // `State::default` starts from, so the mock lands where a wiped box boots.
+    // RST_F_NVS wipes everything in NVS, back to `State::default`'s values, where a wiped box boots.
     fn reset_persistent(&mut self) {
         self.version.name = String::new();
-        // Only `allowed` is stored. over_capacity and clone_imperfect describe the attached
-        // device, which the box re-derives when it clones again after the reboot.
+        // Only `allowed` is stored; the box re-derives over_capacity and clone_imperfect when it
+        // clones again after the reboot.
         self.imperfect.allowed = ImperfectStatus::default().allowed;
         self.move_ride_ms = 0;
         self.bearing = Bearing::default();
@@ -873,11 +866,11 @@ impl State {
     }
 
     // A device-chip boot: the session goes, NVS stays, the clone is presented afresh from the stored
-    // patch set, and the box says hello now and again on the first frame it hears.
+    // patch set, and the box says hello now and on the first frame it hears.
     fn restart(&mut self) {
         self.release_session();
-        // The counters live in RAM and start again at zero, and the clone comes back once the snapshot
-        // is in, with nothing to release.
+        // The RAM counters restart at zero; the clone returns once the snapshot is in, with nothing to
+        // release.
         self.stats.reset_count = 0;
         self.stats.config_count = 0;
         self.stats.session = 0;
@@ -953,8 +946,8 @@ impl State {
         }
     }
 
-    // APPLY, CLEAR and the opt-in going on or off: present the clone again when that changes what it
-    // serves. That is a re-clone: the session goes, and the game PC enumerates the clone again.
+    // APPLY, CLEAR and an opt-in toggle re-present the clone when what it serves changes: a re-clone,
+    // so the session goes and the game PC enumerates the clone again.
     fn present_patches(&mut self) {
         // Inside a detach's grace the snapshot may be of a device that has gone: the request waits.
         if self.grace_until.is_some() {
@@ -972,8 +965,8 @@ impl State {
         }
     }
 
-    // PATCH CLEAR: erase the stored set, and present a clone that serves patches again without them,
-    // the way APPLY presents it.
+    // PATCH CLEAR: erase the stored set and re-present a patched clone without patches, as APPLY
+    // presents it.
     fn clear_patches(&mut self) {
         self.patches.clear();
         self.patch_refused = false;
@@ -1019,8 +1012,7 @@ impl State {
         }
     }
 
-    // Apply a TRANSFORM frame (§3.15), modelled on transform_tab_set. Ungated: a transform is
-    // faithful, so unlike REWRITE this runs whatever the imperfect opt-in.
+    // Modelled on transform_tab_set (§3.15). A transform is faithful, so it runs whatever the opt-in.
     fn apply_transform_frame(&mut self, p: &[u8]) {
         if p.len() < 8 {
             return;
@@ -1075,9 +1067,9 @@ impl State {
         }
     }
 
-    // Whether the bound clone declares this field, mirroring transform_field_present over RESP(CAPS):
-    // an axis is present when its flag is set, a button when its id is under the declared count and the
-    // box's ceiling, a key when a keyboard collection is bound, media when a consumer collection is.
+    // Mirrors transform_field_present over RESP(CAPS): an axis when its flag is set, a button under
+    // the declared count and the box's ceiling, a key with a keyboard collection bound, media with a
+    // consumer collection.
     fn transform_field_present(&self, cls: u8, id: u16) -> bool {
         if !self.clone_up {
             return false;
@@ -1098,8 +1090,8 @@ impl State {
         }
     }
 
-    // Apply a PATCH frame: APPLY (only under the opt-in), CLEAR, or a keyed store (kept whatever the
-    // opt-in, as the box does; empty bytes removes the patch at that key).
+    // APPLY (only under the opt-in), CLEAR, or a keyed store (whatever the opt-in, as the box does;
+    // empty bytes removes the patch at that key).
     fn apply_patch_frame(&mut self, p: &[u8]) {
         let Some(&section) = p.first() else {
             return;
@@ -1137,8 +1129,8 @@ impl State {
         if pos.is_some_and(|i| self.patches[i].bytes == bytes) {
             return;
         }
-        // patch_set_put costs the bytes against the pool less what an overwrite gives back, and then
-        // the entry count; a refusal for room of either kind sets full and keeps what was stored.
+        // patch_set_put costs the bytes against the pool less what an overwrite frees, then the entry
+        // count; either refusal for room sets full and keeps what was stored.
         let used: usize = self
             .patches
             .iter()
@@ -1174,8 +1166,8 @@ impl State {
                 let changed = self.imperfect.allowed != (*allow != 0);
                 self.imperfect.allowed = *allow != 0;
                 if !self.imperfect.allowed {
-                    // Opt-off clears the rewrite table (usbdev_set_imperfect_allowed) so nothing in this
-                    // layer rewrites while the clone is faithful-only; gen stays monotonic across the clear.
+                    // Opt-off clears the rewrite table (usbdev_set_imperfect_allowed); gen stays
+                    // monotonic across the clear.
                     let held = self.packet_triggers.rows.len();
                     self.packet_triggers.drop_consuming();
                     let dropped =
@@ -1199,8 +1191,8 @@ impl State {
                 self.move_ride_ms = u16::from_le_bytes([*lo, *hi])
             }
             (Some(OPT_EMIT), [mode, lo, hi, flo, fhi, ..]) => {
-                // The box discards the whole command on a mode it does not know, force_hz included,
-                // and answers nothing. Coercing here would model a box that does not exist.
+                // The box discards the whole command on an unknown mode, force_hz included, with no
+                // reply.
                 if let Some(p) = match *mode {
                     0 => Some(EmitPace::Learned),
                     1 => Some(EmitPace::Interval),
@@ -1426,8 +1418,7 @@ fn options_emit_payload(
     native_hz: u16,
     allowed: bool,
 ) -> Vec<u8> {
-    // `render` is not echoed here any more (it has its own option), but the rendered gate still
-    // decides the resolved rate, so the pace reply still depends on it.
+    // Rendering has its own option, but its gate still sets the resolved rate in the pace reply.
     let (mode, fixed_hz, mut resolved) = match pace {
         EmitPace::Learned => (0u8, 0u16, 0u16),
         EmitPace::Interval => (1, 0, 0),
@@ -1437,8 +1428,8 @@ fn options_emit_payload(
             (2, hz, (1000 / n) as u16)
         }
     };
-    // The texture rides its own option beside the pace, but only forces resolved to 1 kHz when the
-    // pace resolved to no period of its own; a Fixed rate keeps its snapped value.
+    // The texture forces resolved to 1 kHz only when the pace resolved to no period of its own; a
+    // Fixed rate keeps its snapped value.
     if render != RenderMode::Off && render_ready && resolved == 0 {
         resolved = 1000;
     }
@@ -1447,8 +1438,8 @@ fn options_emit_payload(
     let (advertised, active) = match force_hz.filter(|hz| *hz != 0 && allowed) {
         None => (native_hz, false),
         Some(hz) => {
-            // Mirror rate_force_binterval: a host rounds a full-speed interval down to a power of two,
-            // so the box only ever advertises one of those. Echoing the request would diverge.
+            // As rate_force_binterval: a host rounds a full-speed interval down to a power of two,
+            // so the box advertises only those.
             let n = ((1000u32 + hz as u32 / 2) / hz as u32).min(128);
             let mut p = 1u32;
             while p * 2 <= n {
@@ -1470,8 +1461,8 @@ fn options_render_payload(mode: RenderMode, full: bool, ready: bool) -> Vec<u8> 
     vec![9u8, OPT_RENDER, mode.to_wire(), full as u8, ready as u8]
 }
 
-// The box resolves the interval from a command period it has learned off MOVE arrivals, and answers
-// 0 while it has none or the option is off.
+// The interval comes from the command period learned off MOVE arrivals; 0 while none is learned or
+// the option is off.
 fn options_spread_payload(percent: u16, learned_us: u32) -> Vec<u8> {
     let span = if percent == 0 || learned_us == 0 {
         0
@@ -1712,15 +1703,15 @@ fn usage_event_payload(
     p
 }
 
-/// A scriptable fake medius box for hardware-free tests (feature = `mock`).
+/// Scriptable fake box for hardware-free tests (feature = `mock`).
 #[derive(Clone, Debug)]
 pub struct MockBox {
     state: Arc<Mutex<State>>,
     transport: Arc<MockTransport>,
 }
 
-// The box's side of an update session, so a transfer against the mock exercises the same sequencing
-// the firmware does. A handler that just answered OK would let every deliberate break pass.
+// The box's side of an update session, sequenced as the firmware does; a handler replying OK to
+// everything would pass every deliberate break.
 #[derive(Debug, Clone, Default)]
 pub(crate) struct MockUpdate {
     pub(crate) active: bool,
@@ -1767,8 +1758,8 @@ impl MockUpdate {
         (0x01, 16)
     }
 
-    // Returns `Some((status, arg))` only when the box owes an answer, exactly like the firmware:
-    // a chunk inside an open window is written and not acknowledged.
+    // `Some((status, arg))` only when the box owes a reply, as in the firmware: a chunk inside an open
+    // window is written unacknowledged.
     fn data(&mut self, body: &[u8]) -> Option<(u8, u32)> {
         // Length before state, and BAD_STATE names the op it wanted, exactly as the firmware does.
         if body.len() < 3 {
@@ -1843,7 +1834,7 @@ impl Default for MockBox {
 }
 
 impl MockBox {
-    /// Create a mock box with default config that records commands and auto-answers `QUERY`.
+    /// Mock box with default config that records commands and replies to `QUERY`.
     pub fn new() -> Self {
         let state = Arc::new(Mutex::new(State::default()));
         let responder_state = Arc::clone(&state);
@@ -2124,7 +2115,7 @@ impl MockBox {
             }
             let unsolicited = std::mem::take(&mut st.unsolicited);
             let out = [lead, out, unsolicited].concat();
-            // Kept so a test can assert what the box ANSWERED, not just what the host asked.
+            // Kept so a test can assert the box's replies, not just the host's requests.
             if !out.is_empty() {
                 st.replied.push(out.clone());
             }
@@ -2169,7 +2160,8 @@ impl MockBox {
         self
     }
 
-    /// Set the keyboard half of the [`Caps`] answered to `QUERY(CAPS)`, marking the keyboard class change-driven.
+    /// Set the keyboard half of the [`Caps`] answered to `QUERY(CAPS)`, marking the keyboard class
+    /// change-driven.
     #[must_use]
     pub fn with_kbd_caps(self, keyboard: KbdCaps) -> Self {
         let mut st = self.state.lock();
@@ -2193,9 +2185,9 @@ impl MockBox {
         self
     }
 
-    /// Pin the [`Locks`] answered to `QUERY(LOCKS)` (builder style), for a reply the mock's own lock
-    /// table would never build. Without one it answers from that table, which the `LOCK` frames it
-    /// receives maintain the way the box maintains its own.
+    /// Pin the [`Locks`] answered to `QUERY(LOCKS)` (builder style), for a reply the mock's lock
+    /// table would never build. Otherwise it answers from that table, which `LOCK` frames maintain as
+    /// on the box.
     #[must_use]
     pub fn with_locks(self, locks: Locks) -> Self {
         self.state.lock().locks = Some(locks);
@@ -2223,7 +2215,8 @@ impl MockBox {
         self
     }
 
-    /// Set the movement-riding window answered to `QUERY(OPTIONS, MOVE_RIDE)` (builder style); `None` = off.
+    /// Set the movement-riding window answered to `QUERY(OPTIONS, MOVE_RIDE)` (builder style);
+    /// `None` = off.
     #[must_use]
     pub fn with_movement_riding(self, window: Option<std::time::Duration>) -> Self {
         self.state.lock().move_ride_ms = crate::device::options::ride_window_ms(window);
@@ -2247,8 +2240,8 @@ impl MockBox {
         self.state.lock().script_imperfect(imperfect);
     }
 
-    /// Enable or disable the imperfect-clone opt-in the advanced control layer (§3.14) is gated on (builder
-    /// style). A shorthand for scripting [`ImperfectStatus::allowed`] before a `raw`/`transfer`/`rewrite`.
+    /// Imperfect-clone opt-in, which gates the advanced control layer (§3.14) (builder style);
+    /// shorthand for scripting [`ImperfectStatus::allowed`] before a `raw`/`transfer`/`rewrite`.
     /// With the opt-in off the mock drops its consuming clip packet triggers, as the box does when
     /// `OPTION(IMPERFECT)` goes off.
     pub fn with_imperfect(self, allow: bool) -> Self {
@@ -2263,8 +2256,8 @@ impl MockBox {
         self
     }
 
-    /// Set the canned `(status, IN data)` a `TRANSFER` is answered with while the opt-in is on
-    /// (builder style). With the opt-in off the mock answers `0xFC` (refused) regardless.
+    /// Canned `(status, IN data)` reply to a `TRANSFER` while the opt-in is on (builder style). With
+    /// the opt-in off the mock replies `0xFC` (refused).
     pub fn with_transfer_reply(self, status: u8, data: &[u8]) -> Self {
         {
             let mut st = self.state.lock();
@@ -2314,14 +2307,14 @@ impl MockBox {
         self
     }
 
-    /// Set whether the mock reports a learned profile, which is what gates rendering on a real box.
+    /// Whether the mock reports a learned profile, which gates rendering on a real box.
     #[must_use]
     pub fn with_render_ready(self, ready: bool) -> Self {
         self.set_render_ready(ready);
         self
     }
 
-    /// Update what `QUERY(OPTIONS, RENDER)` answers in place, like every other option's setter.
+    /// Update what `QUERY(OPTIONS, RENDER)` answers in place.
     pub fn set_render(&self, mode: RenderMode, full: bool) {
         let mut st = self.state.lock();
         st.render_mode = mode;
@@ -2333,8 +2326,8 @@ impl MockBox {
         self.state.lock().render_ready = ready;
     }
 
-    /// Set the command period the mock has learned, in microseconds (builder style). 0 is a box that
-    /// has not seen enough `MOVE`s yet, which answers a span of 0 whatever the percent is.
+    /// Learned command period in microseconds (builder style). 0 is a box that has not seen enough
+    /// `MOVE`s, which answers a span of 0 whatever the percent.
     #[must_use]
     pub fn with_spread_learned(self, period_us: u32) -> Self {
         self.set_spread_learned(period_us);
@@ -2358,7 +2351,7 @@ impl MockBox {
         self.state.lock().emit_force_hz = force_hz.filter(|hz| *hz != 0);
     }
 
-    /// Set the rate the mock's clone advertises unforced, in Hz; 0 is the default and means no clone.
+    /// Unforced rate the clone advertises, in Hz; 0 (the default) means no clone.
     #[must_use]
     pub fn with_advertised_hz(self, hz: u16) -> Self {
         self.state.lock().advertised_hz = hz;
@@ -2372,21 +2365,20 @@ impl MockBox {
         self
     }
 
-    /// Update the [`ClipStatus`] answered to `QUERY(CLIP)` in place (e.g. to simulate the ring draining).
+    /// Update the [`ClipStatus`] answered to `QUERY(CLIP)` in place (e.g. the ring draining).
     pub fn set_clip_status(&self, clip: ClipStatus) {
         self.state.lock().clip = clip;
     }
 
     /// Set the [`ClipSettings`] answered to `QUERY(CLIP)` (builder style).
     ///
-    /// The packet triggers are bound in order, as [`bind_packet`](crate::ClipHandle::bind_packet)
-    /// binds them, under the opt-in the mock holds when it is scripted. The mock holds the ones the
-    /// box would take, each with its scripted `hits`, and leaves out the rest as the box's own answer
-    /// would: a direction the class never carries, a match bit outside the mask, a run with no
-    /// condition, [`consume`](crate::ClipPacketTrigger::consume) on `Control` or with the opt-in off,
-    /// and entries past the count or the match pool. Script the opt-in before a consuming trigger.
-    /// The triggers held are the set `bind_packet` adds to and [`clip_packet`](Self::clip_packet)
-    /// runs a packet through.
+    /// Packet triggers are bound in order, as [`bind_packet`](crate::ClipHandle::bind_packet) binds
+    /// them, under the opt-in held when scripted. The mock keeps those the box would take, each with
+    /// its scripted `hits`, and omits the rest as the box would: a direction the class never
+    /// carries, a match bit outside the mask, a run with no condition,
+    /// [`consume`](crate::ClipPacketTrigger::consume) on `Control` or with the opt-in off, and entries
+    /// past the count or the match pool. Script the opt-in before a consuming trigger. The held
+    /// triggers are the set `bind_packet` adds to and [`clip_packet`](Self::clip_packet) runs.
     #[must_use]
     pub fn with_clip_settings(self, settings: ClipSettings) -> Self {
         self.state.lock().script_clip_settings(settings);
@@ -2400,16 +2392,16 @@ impl MockBox {
     }
 
     /// Run one packet through the packet triggers, as the box does for a packet crossing `class` at
-    /// `id` in `direction`. The most specific trigger `head` matches counts it in its `hits`. Returns
-    /// the action that trigger drives on this packet, and whether that trigger consumes the packet.
-    /// The action is `None` when no trigger matches, and when that trigger is
+    /// `id` in `direction`. The most specific trigger `head` matches counts it in `hits`. Returns
+    /// that trigger's action on this packet and whether it consumes the packet; the action is `None`
+    /// when no trigger matches, or the trigger is
     /// [`once_per_run`](crate::ClipPacketTrigger::once_per_run) and the packet continues a run.
     ///
-    /// A packet travels [`IN`](Direction::IN) or [`OUT`](Direction::OUT) across a surface that carries
-    /// that flow: `IN` for [`HidIn`](TrafficClass::HidIn) and [`Emit`](TrafficClass::Emit), `OUT` for
+    /// A packet travels [`IN`](Direction::IN) or [`OUT`](Direction::OUT) on a surface carrying that
+    /// flow: `IN` for [`HidIn`](TrafficClass::HidIn) and [`Emit`](TrafficClass::Emit), `OUT` for
     /// [`HidOut`](TrafficClass::HidOut), either for the vendor classes and
-    /// [`Control`](TrafficClass::Control). Any other `class` and `direction` is no packet: it returns
-    /// `(None, false)`, counts in no `hits` and leaves every run as it was.
+    /// [`Control`](TrafficClass::Control). Any other `class` and `direction` returns `(None, false)`,
+    /// counts in no `hits` and leaves every run unchanged.
     pub fn clip_packet(
         &self,
         class: TrafficClass,
@@ -2428,9 +2420,9 @@ impl MockBox {
         (verb.and_then(ClipAction::from_u8), consumed)
     }
 
-    /// Simulate a device-chip restart: the session state goes (locks, rules, transforms, the clip), the
-    /// stored state stays, the box says hello now and on the next frame it receives, and the clone is
-    /// back 100 ms later. `RESET` with its store flag and
+    /// Simulate a device-chip restart: session state goes (locks, rules, transforms, the clip),
+    /// stored state stays, the box says hello now and on the next frame, and the clone is back 100 ms
+    /// later. `RESET` with its store flag and
     /// [`RebootTarget::DeviceRun`](crate::RebootTarget::DeviceRun) restart it too.
     pub fn restart(&self) {
         let hello = {
@@ -2443,8 +2435,8 @@ impl MockBox {
         self.transport.push_bytes(&hello);
     }
 
-    /// Simulate the inter-chip link dropping and coming back: the box releases the session a host set
-    /// (counted in [`Stats::session`](crate::Stats::session)) and the clone stays up.
+    /// Simulate an inter-chip link drop and return: the box releases host-set session state (counted
+    /// in [`Stats::session`](crate::Stats::session)) and the clone stays up.
     pub fn link_lost(&self) {
         let mut st = self.state.lock();
         st.advance(std::time::Instant::now());
@@ -2452,10 +2444,10 @@ impl MockBox {
         st.release_session();
     }
 
-    /// Simulate the real device detaching: the box releases the session a host set at once. With
-    /// `back_within_grace` the same device re-attaches inside the 250 ms grace and the clone stays up;
-    /// otherwise the clone is torn down when the grace ends, which counts again only after a command
-    /// arrived in it, and stays down until [`attach`](Self::attach).
+    /// Simulate the real device detaching: the box releases host-set session state at once. With
+    /// `back_within_grace` the device re-attaches inside the 250 ms grace and the clone stays up;
+    /// otherwise the clone is torn down when the grace ends (counted again only if a command arrived
+    /// during it) and stays down until [`attach`](Self::attach).
     pub fn detach(&self, back_within_grace: bool) {
         let mut st = self.state.lock();
         st.advance(std::time::Instant::now());
@@ -2467,8 +2459,8 @@ impl MockBox {
         }
     }
 
-    /// Simulate the device attaching again. Inside a detach's grace the clone stays as it is; after the
-    /// teardown a fresh clone starts, which has nothing to release.
+    /// Simulate the device re-attaching. Inside a detach's grace the clone is unchanged; after the
+    /// teardown a fresh clone starts, with nothing to release.
     pub fn attach(&self) {
         let mut st = self.state.lock();
         st.advance(std::time::Instant::now());
@@ -2481,8 +2473,8 @@ impl MockBox {
         }
     }
 
-    // A main loop slower to present the clone the opt-in toggled, so a test can put the second part of
-    // that release clear of the first one's recovery.
+    // A slower main loop presenting the clone after an opt-in toggle, so a test can separate the
+    // release's second part from the first one's recovery.
     #[cfg(test)]
     pub(crate) fn set_represent_delay(&self, delay: std::time::Duration) {
         self.state.lock().represent_delay = delay;
@@ -2494,8 +2486,8 @@ impl MockBox {
         self.state.lock().link_lost_before_clip_query = true;
     }
 
-    // A detach whose teardown lands just before the next command, with nothing marked since the
-    // detach counted: the window a re-send can fall into.
+    // A detach whose teardown lands just before the next command, nothing marked since the detach
+    // counted: the window a re-send can fall into.
     #[cfg(test)]
     pub(crate) fn detach_torn_down_before_next_command(&self) {
         let mut st = self.state.lock();
@@ -2504,23 +2496,22 @@ impl MockBox {
         st.teardown_before_command = true;
     }
 
-    /// Make the box unresponsive (builder style): it records commands but never answers a `QUERY`.
+    /// Unresponsive box (builder style): records commands, never replies to a `QUERY`.
     #[must_use]
     pub fn silent(self) -> Self {
         self.state.lock().respond = false;
         self
     }
 
-    /// Inject raw bytes into the host's inbound stream, exactly as if the box put them on the wire.
+    /// Inject raw bytes into the host's inbound stream, as if from the box.
     pub fn push_raw(&self, bytes: &[u8]) {
         self.transport.push_bytes(bytes);
     }
 
-    /// Push a `LOG` line as if the box emitted it; it surfaces on the device's `logs()` channel.
+    /// Push a `LOG` line as if from the box; it surfaces on `logs()`.
     pub fn push_log(&self, level: LogLevel, text: &str) {
-        // The protocol names no bound on LOG text (emit_log_frame's 160-byte line buffer is one
-        // emitter's, not the wire's), so the only bound to hold is the frame's own, less the level
-        // byte. Bytes, as the box copies them; a split char decodes lossily.
+        // The only bound on LOG text is the frame's, less the level byte (emit_log_frame's 160-byte
+        // buffer is one emitter's). Cut in bytes, as the box copies; a split char decodes lossily.
         let n = text.len().min(crate::protocol::opcode::MAX_PAYLOAD - 1);
         let mut payload = Vec::with_capacity(1 + n);
         payload.push(level.as_u8());
@@ -2528,9 +2519,9 @@ impl MockBox {
         self.transport.push_frame(FrameType::Log, 0, &payload);
     }
 
-    /// Push a `MOTION_EVENT` as if the box emitted it; surfaces as [`CatchEvent::Motion`](crate::CatchEvent).
-    /// `ts_us` is the raw wire timestamp, so a test can drive the `u32` wrap and the clock-restart case.
-    /// The four axes are X, Y, wheel and AC Pan (`dpan`).
+    /// Push a `MOTION_EVENT` as if from the box; surfaces as
+    /// [`CatchEvent::Motion`](crate::CatchEvent). `ts_us` is the raw wire timestamp, so a test can
+    /// drive the `u32` wrap and the clock restart. The axes are X, Y, wheel and AC Pan (`dpan`).
     pub fn push_motion(&self, seq: u8, ts_us: u32, dx: i16, dy: i16, dz: i16, dpan: i16) {
         self.transport.push_frame(
             FrameType::MotionEvent,
@@ -2539,9 +2530,8 @@ impl MockBox {
         );
     }
 
-    /// Push a `USAGE_EVENT` (a held-usage snapshot); surfaces as [`CatchEvent::Usages`](crate::CatchEvent).
-    /// Push a `TRAFFIC_EVENT` as if the box emitted it (surfaces as a `Traffic` catch event).
-    /// `true_len` may exceed `bytes.len()`, which is how a snaplen-truncated capture looks.
+    /// Push a `TRAFFIC_EVENT` as if from the box; surfaces as a `Traffic` catch event. `true_len`
+    /// may exceed `bytes.len()`, as in a snaplen-truncated capture.
     #[allow(clippy::too_many_arguments)]
     pub fn push_traffic(
         &self,
@@ -2566,17 +2556,17 @@ impl MockBox {
         p.push(direction.as_u8());
         p.push(flags);
         p.extend_from_slice(&true_len.to_le_bytes());
-        // ctrl_pack_traffic_event cuts the copy at CTRL_TRAFFIC_DATA_MAX; `true_len` still names the
-        // packet's length before the cut, which is what makes a truncated capture self-describing.
+        // ctrl_pack_traffic_event cuts the copy at CTRL_TRAFFIC_DATA_MAX; `true_len` keeps the
+        // pre-cut length, so a truncated capture describes itself.
         p.extend_from_slice(&bytes[..bytes.len().min(TRAFFIC_DATA_MAX)]);
         self.transport.push_frame(FrameType::TrafficEvent, seq, &p);
     }
 
-    /// `ts_us` is the raw wire timestamp, as for [`push_motion`](Self::push_motion).
-    /// A held-usage snapshot. `class` is carried in the frame rather than inferred, so a test can
-    /// push the EMPTY snapshot (the release of the last held usage) and still say which class
-    /// went quiet.
-    /// `direction` is the edge that produced the snapshot: the subscribed set grew or shrank.
+    /// Push a `USAGE_EVENT` (held-usage snapshot); surfaces as
+    /// [`CatchEvent::Usages`](crate::CatchEvent). `ts_us` is the raw wire timestamp, as for
+    /// [`push_motion`](Self::push_motion). `class` travels in the frame, so a test can push the empty
+    /// snapshot (release of the last held usage) and still name its class. `direction` is the edge
+    /// that produced it: the subscribed set grew or shrank.
     pub fn push_usages(
         &self,
         seq: u8,
@@ -2592,8 +2582,8 @@ impl MockBox {
         );
     }
 
-    /// Every frame the mock has answered with, decoded, in order. The recorded-command log says
-    /// nothing about replies, and the reply `SEQ` is exactly what a client must not correlate on.
+    /// Every reply frame the mock sent, decoded, in order: the command log omits replies, and the
+    /// reply `SEQ` is what a client must not correlate on.
     pub fn replied_frames(&self) -> Vec<DecodedFrame> {
         let mut out = Vec::new();
         let mut dec = crate::protocol::FrameDecoder::new();
@@ -2603,12 +2593,12 @@ impl MockBox {
         out
     }
 
-    /// A snapshot copy of every command the host has sent so far, decoded, in order.
+    /// Every command the host has sent so far, decoded, in order.
     pub fn recorded_frames(&self) -> Vec<DecodedFrame> {
         self.state.lock().recorded.clone()
     }
 
-    /// The number of commands recorded so far.
+    /// Commands recorded so far.
     pub fn recorded(&self) -> usize {
         self.state.lock().recorded.len()
     }
@@ -2618,7 +2608,7 @@ impl MockBox {
         self.state.lock().recorded.iter().any(|f| f.ty == ty)
     }
 
-    /// Clear the recorded-command log (e.g. to assert only on commands after a setup phase).
+    /// Clear the command log (e.g. to assert only on commands after setup).
     pub fn clear_recorded(&self) {
         self.state.lock().recorded.clear();
     }
@@ -2629,12 +2619,12 @@ impl MockBox {
 }
 
 impl crate::Device {
-    /// Build a [`Device`](crate::Device) driven by a [`MockBox`], without running the handshake.
+    /// [`Device`](crate::Device) over a [`MockBox`], without the handshake.
     pub fn with_mock(mock: MockBox) -> crate::Device {
         crate::Device::from_transport(mock.transport())
     }
 
-    /// Build a [`Device`](crate::Device) over a [`MockBox`] and run the version handshake.
+    /// [`Device`](crate::Device) over a [`MockBox`], with the version handshake.
     pub fn open_mock(mock: MockBox) -> crate::Result<crate::Device> {
         crate::Device::open_transport(mock.transport())
     }

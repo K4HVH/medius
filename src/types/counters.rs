@@ -1,16 +1,16 @@
-//! Diagnostics snapshot of the device's always-on counters.
+//! Snapshot of the always-on link counters.
 
-/// A plain, copyable snapshot of the device's always-on counters, for display / diagnostics.
+/// Copyable snapshot of the always-on link counters, for diagnostics.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct CountersSnapshot {
-    /// Total frames written to the transport.
+    /// Frames written to the transport.
     pub frames_tx: u64,
-    /// Total frames decoded from the transport.
+    /// Frames decoded from the transport.
     pub frames_rx: u64,
-    /// Total frames dropped for a failed CRC.
+    /// Frames dropped for a failed CRC.
     pub crc_drops: u64,
-    /// Total successful reconnects.
+    /// Successful reconnects.
     pub reconnects: u64,
-    /// Device-chip restarts the crate recovered from by re-sending the state it holds.
+    /// Device-chip restarts recovered by re-sending the held state.
     pub restarts: u64,
 }

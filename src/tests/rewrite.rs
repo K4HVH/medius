@@ -101,8 +101,8 @@ fn resp_rewrite_table_full_flag() {
 
 #[test]
 fn resp_rewrite_high_bytes_decode() {
-    // Hand-computed [12][flags 0][gen 0][n 1] then one entry carrying a nonzero high byte in offset
-    // (0x0102 = 258), payload_len (3) and hits (0xFFFF = 65535).
+    // Hand-computed [12][flags 0][gen 0][n 1] then one entry with nonzero high bytes in offset
+    // (0x0102 = 258) and hits (0xFFFF = 65535), payload_len 3.
     let p = [
         12, 0x00, 0x00, 1, // what, flags, gen, n
         0x09, 0x01, 0x00, 0x01, 0x03, 0x04, 0x02, 0x01, 0x03, 0x00, 0xFF, 0xFF,
@@ -156,8 +156,8 @@ fn resp_rewrite_entry_replays_as_a_set() {
 
 #[test]
 fn resp_rewrite_entry_high_offset_and_long_payload() {
-    // A control ReplyPatch at offset 0x0102 (258) with a 300-byte payload: the offset must survive as a
-    // u16 (a u8 read gives 2) and the whole payload must decode past the 256-byte boundary.
+    // A control ReplyPatch at offset 0x0102 (258) with a 300-byte payload: the offset survives as
+    // a u16 (a u8 read gives 2) and the payload decodes past 256 bytes.
     let mut p = vec![
         13, 0, // what, index
         0x08, 0x00, 0x00, 0x00, 0x01, 0x07, 0x02, 0x01,
@@ -338,8 +338,8 @@ mod mock_roundtrip {
         .with_payload(vec![0x5A; len])
     }
 
-    // The box counts payload bytes only, and an overwrite gives its old payload back before the new
-    // one is costed. A rule past what is left never reaches the wire.
+    // The box counts payload bytes only, and an overwrite frees its old payload before the new one is
+    // costed. A rule past what is left never reaches the wire.
     #[test]
     fn the_payload_pool_is_checked_before_the_wire() {
         use crate::REWRITE_PAYLOAD_POOL;
@@ -380,8 +380,8 @@ mod mock_roundtrip {
         assert!(!table.table_full);
     }
 
-    // full is the last rule refused for room, by count or by pool, and any change the box takes
-    // resets it; the keepalive's identical re-sends change nothing and leave it standing.
+    // full means the last rule was refused for room (count or pool); any accepted change resets it,
+    // and the keepalive's identical re-sends leave it standing.
     #[test]
     fn table_full_is_the_last_rule_refused_for_room() {
         use crate::protocol::FrameType;
@@ -459,8 +459,8 @@ mod mock_roundtrip {
 
     #[test]
     fn opt_off_drops_held_rewrites() {
-        // The box clears its rewrite table when the opt-in goes off (firmware safety_clear); the crate
-        // drops the held copy to match, or the keepalive re-asserts the rules when the opt-in returns.
+        // The box clears its rewrite table when the opt-in goes off (safety_clear); the crate drops
+        // its copy, or the keepalive re-asserts the rules when the opt-in returns.
         let device = Device::with_mock(allowed_mock());
         let rule = RewriteRule::new(RewriteClass::Emit, 1, Direction::IN, RewriteAction::Drop);
         device.set_rewrite(&rule).unwrap();
@@ -471,8 +471,8 @@ mod mock_roundtrip {
             device.link.desired().lock().held_rewrites().is_empty(),
             "opt-off must clear held rewrites so a re-enable cannot resurrect them"
         );
-        // The box clears its own table too (usbdev_set_imperfect_allowed): RESP(REWRITE) reads empty and
-        // HEALTH's rewrite_on falls, so a re-enable's keepalive has nothing to resurrect from the box side.
+        // The box's table clears too (usbdev_set_imperfect_allowed): RESP(REWRITE) reads empty and
+        // HEALTH's rewrite_on falls.
         assert!(
             device.query_rewrite().unwrap().entries.is_empty(),
             "opt-off must clear the box's rewrite table, not just the held copy"
@@ -483,8 +483,8 @@ mod mock_roundtrip {
     #[test]
     fn oversized_payload_is_rejected_before_the_wire() {
         let device = Device::with_mock(allowed_mock());
-        // A Replace on a report surface (Emit) with a 100-byte payload: the box holds 64, so it
-        // refuses; the crate rejects it before the wire rather than hold a rule the box drops.
+        // A 100-byte Replace on Emit exceeds the box's 64-byte head; the crate rejects it before the
+        // wire.
         let big = RewriteRule::new(RewriteClass::Emit, 1, Direction::IN, RewriteAction::Replace)
             .with_payload(vec![0u8; 100]);
         assert!(matches!(
@@ -504,8 +504,8 @@ mod mock_roundtrip {
 
     #[test]
     fn large_offset_and_payload_survive_the_roundtrip() {
-        // A control ReplyPatch with offset >= 0x0100 and a 300-byte payload must round-trip through the
-        // mock's store, the summary and the entry readback intact: a u16->u8 regression anywhere drops it.
+        // A control ReplyPatch at offset >= 0x0100 with a 300-byte payload round-trips through the
+        // store, summary and entry readback; a u16->u8 regression anywhere drops it.
         let device = Device::with_mock(allowed_mock());
         let rule = RewriteRule::new(
             RewriteClass::Control,
@@ -530,8 +530,8 @@ mod mock_roundtrip {
 
     #[test]
     fn match_bytes_are_part_of_the_key() {
-        // Two rules with the same (class, id, direction) but different match bytes are two table rows,
-        // not an overwrite: match and mask are part of the key.
+        // Same (class, id, direction), different match bytes: two rows, since match and mask are part
+        // of the key.
         let device = Device::with_mock(allowed_mock());
         let a = RewriteRule::new(RewriteClass::Emit, 1, Direction::IN, RewriteAction::Drop)
             .matching(vec![0x01], vec![0xFF]);
@@ -548,8 +548,8 @@ mod mock_roundtrip {
 
     #[test]
     fn summary_is_in_insertion_order() {
-        // RESP(REWRITE) lists the table in installation order (usbdev_pack_rewrite), not the
-        // most-specific-first order the box uses to select a match.
+        // RESP(REWRITE) lists installation order (usbdev_pack_rewrite), not the most-specific-first
+        // selection order.
         let device = Device::with_mock(allowed_mock());
         device
             .set_rewrite(&RewriteRule::new(
@@ -594,8 +594,7 @@ mod mock_roundtrip {
 
     #[test]
     fn reply_actions_survive_the_roundtrip() {
-        // Only the admissibility of ReplyPatch/ReplyReplace is unit-tested elsewhere; prove they also
-        // store and read back through the mock intact (control-only actions, one carrying an offset).
+        // ReplyPatch/ReplyReplace (control-only, one with an offset) store and read back intact.
         let device = Device::with_mock(allowed_mock());
         let rp = RewriteRule::new(
             RewriteClass::Control,
@@ -651,8 +650,7 @@ fn resp_health_u16_roundtrips_through_parse() {
     assert!(h.rewrite_on && h.patch_on && !h.transform_on);
 }
 
-// What the box refuses of any rule: a match past its compare length, and a rule its own read-back
-// reply cannot carry.
+// The box refuses a match past its compare length and a rule its read-back reply cannot carry.
 mod box_limits {
     use crate::device::rewrite::validate_rule;
     use crate::error::Error;

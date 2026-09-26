@@ -124,8 +124,7 @@ def test_mock_feature_present():
 
 
 def test_meta_functions():
-    # These are a hand-written mirror of the C structs, so a bumped ABI means they are stale until
-    # someone re-reads the header. Pin it rather than accept anything newer.
+    # The ctypes structs hand-mirror the C header, so a bumped ABI leaves them stale: pin it.
     assert medius.abi_version() == 9
     assert medius._native.ABI_VERSION == 9
     assert medius.version_string()
@@ -543,8 +542,8 @@ def test_an_unnamed_direction_byte_never_reaches_a_subscription():
 
 
 def test_set_bearing_requires_the_mode():
-    # Both fields ride one frame and the box persists them together, so a Python-only default would
-    # revert a box configured for VECTOR on any window change.
+    # Both fields share one frame and persist together, so a Python-only default would revert a
+    # VECTOR box on any window change.
     with MockBox() as mock, Device.with_mock(mock) as d:
         with pytest.raises(TypeError):
             d.set_bearing(50)
@@ -665,8 +664,8 @@ def test_catch_state_roundtrip():
 
 
 def test_catch_state_clock_age_none_is_not_a_zero_age():
-    # An offset that was never measured also reads as zero, so the sentinel has to survive the
-    # round trip: applying an unmeasured offset would silently shift every cross-domain stamp.
+    # An unmeasured offset also reads as zero, so the sentinel must survive the round trip: applying
+    # it would shift every cross-domain stamp.
     never = _query_catch(CatchState(clock=ClockEstimate(offset_us=500, age_ms=None)))
     fresh = _query_catch(CatchState(clock=ClockEstimate(offset_us=500, age_ms=0)))
     assert never.clock.age_ms is None
@@ -787,8 +786,8 @@ def test_render_roundtrip():
         assert d.query_render() == RenderStatus(RenderMode.STOCK, True, True)
         d.set_emit_pace(EmitPace.learned())
         assert d.query_emit_pace().resolved_hz == 1000
-        # full has no default: OPTION(RENDER) persists both fields, so an omitted one would silently
-        # rewrite a setting the caller never named.
+        # full has no default: OPTION(RENDER) persists both fields, so omitting it would rewrite a
+        # setting the caller never named.
         with pytest.raises(TypeError):
             d.set_render(RenderMode.STOCK)
 
@@ -816,8 +815,8 @@ def test_rate_force_roundtrip():
 
 
 def test_rate_force_needs_the_imperfect_opt_in():
-    # The box leaves a force inert without the opt-in, so a mock that applied it regardless would green
-    # -light host code that disagrees with every real box.
+    # The box leaves a force inert without the opt-in; a mock applying it anyway would pass host
+    # code every real box disagrees with.
     with MockBox() as mock:
         mock.set_advertised_hz(125)
         with Device.with_mock(mock) as d:
@@ -2071,7 +2070,7 @@ def test_input_events_decode_snapshots_into_edges():
 
 def test_input_events_refuse_what_they_cannot_decode():
     # Each refusal has its own status across the ABI, so a caller can tell a wrong filter from a
-    # dead link. Folding them into ERR_UNKNOWN would lose exactly that.
+    # dead link.
     with MockBox() as mock, Device.with_mock(mock) as d:
         with pytest.raises(medius.NotAnInputFilterError):
             d.input_events(CatchFilter.traffic_class(TrafficClass.VENDOR_BULK))
@@ -2081,10 +2080,9 @@ def test_input_events_refuse_what_they_cannot_decode():
             d.input_events(CatchFilter.watch(Usage.key(Key.A)).on_press())
         with pytest.raises(medius.CaptureNotApplicableError):
             d.catch_events(CatchFilter.watch_class(Class.KEY).with_capture(8))
-        # 0xFFFF is the every-id sentinel, and a MediusCatchFilter carries nothing that could tell an
-        # exact id apart from the blanket, so across this ABI a media usage of 0xFFFF IS the class
-        # blanket. The native API refuses it outright; here it is a documented wire limitation, and
-        # what matters is that it is the blanket rather than something narrower.
+        # 0xFFFF is the every-id sentinel and a MediusCatchFilter cannot tell an exact id from the
+        # blanket, so across this ABI a media usage of 0xFFFF IS the class blanket. The native API
+        # refuses it; here it must be the blanket, not something narrower.
         assert CatchFilter.watch(Usage.media(0xFFFF)).id is None
         assert CatchFilter.watch(Usage.media(0xFFFF)) == CatchFilter.watch_class(Class.MEDIA)
         with d.input_events(CatchFilter.all_input()) as s:
@@ -2092,8 +2090,7 @@ def test_input_events_refuse_what_they_cannot_decode():
 
 
 def test_the_filter_constructors_address_inputs_like_lock_does():
-    # The whole point of the input constructors: a key enum goes straight in, as it does for lock.
-    # Requiring Usage.key(Key.A) here would put back the id arithmetic the rework removed.
+    # A key enum goes straight into the input constructors, as it does for lock.
     assert CatchFilter.watch(Key.A) == CatchFilter.watch(Usage.key(Key.A))
     assert CatchFilter.watch(Button.LEFT) == CatchFilter.watch(Usage.button(Button.LEFT))
     assert CatchFilter.watch(MediaKey.VOLUME_UP) == CatchFilter.watch(
@@ -2162,9 +2159,8 @@ def test_timeline_unwraps_the_rollover_and_maps_onto_the_callers_clock():
 
 
 def test_every_enum_parameter_is_checked_before_it_reaches_the_boundary():
-    # Each of these used to hand the C ABI a byte it materialised as a `#[repr(u8)]` enum before any
-    # check could run: SIGSEGV where the value fell outside the jump table, and the wrong command on
-    # the wire where it did not. There is no status to read back from a crashed interpreter.
+    # Each of these must refuse a stray byte before the C ABI would materialise it as a
+    # `#[repr(u8)]` enum: SIGSEGV outside the jump table, the wrong command on the wire inside it.
     with MockBox() as mock, Device.with_mock(mock) as d:
         with pytest.raises(ValueError):
             d.led(LedTarget.DEVICE, 77, 5)
@@ -2585,7 +2581,7 @@ def test_buttons_past_five_address_by_id():
 
 
 def test_transform_verbs_reach_the_wire_ungated():
-    # A transform is faithful, so it needs no imperfect-clone opt-in (unlike the rewrite/patch layer).
+    # A transform is faithful, so it needs no imperfect-clone opt-in.
     with MockBox() as mock, Device.with_mock(mock) as d:
         d.transform_swap(Axis.X, Axis.Y)
         d.transform_remap(Axis.X, Axis.WHEEL)
@@ -2619,8 +2615,8 @@ def test_a_transform_survives_the_query_roundtrip():
 
 
 def test_the_op_bytes_are_the_ones_the_wire_uses():
-    # A disagreement here is a wrong transform on the wire, not a type error, because `op` crosses
-    # the ABI as a plain byte. Weighing is the lock's, so there is no scale op and no invert.
+    # `op` crosses the ABI as a plain byte, so a disagreement here is a wrong transform on the wire,
+    # not a type error.
     assert (int(TransformOp.REMAP), int(TransformOp.SWAP)) == (0, 1)
     assert not hasattr(TransformOp, "SCALE")
     assert not hasattr(TransformOp, "INVERT")
@@ -2678,8 +2674,8 @@ def test_a_negative_lock_scale_reverses_and_is_refused_where_it_cannot():
         assert locks.scale_of(x, Direction.NEGATIVE) == -100
         # A reversal is not a block: everything still arrives, the other way round.
         assert not locks.is_locked(x, Direction.BOTH)
-        # One bit has nothing to reverse, and a magnitude past the bound is refused rather than
-        # applied at the bound with the readback echoing what was sent. Neither reaches the wire.
+        # A one-bit usage cannot reverse, and a magnitude past the bound is refused, not clamped.
+        # Neither reaches the wire.
         before = mock.recorded()
         with pytest.raises(medius.LockScaleUsageError):
             d.scale(LockTarget.button(Button.LEFT), Direction.POSITIVE, -100)

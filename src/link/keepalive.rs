@@ -64,8 +64,8 @@ fn keepalive_loop(ctx: KeepaliveCtx) {
         }
         let idle = ctx.desired.lock().is_idle();
         if now < tick_at {
-            // After a command that can present the clone again, look for it every slice rather than
-            // every tick, so what it released goes back as soon as the clone is up.
+            // After a command that can re-present the clone, check every slice, not every tick, so
+            // released state goes back as soon as the clone is up.
             if pending.is_none()
                 && !idle
                 && ctx.restart.expecting_represent(now)
@@ -88,7 +88,7 @@ fn keepalive_loop(ctx: KeepaliveCtx) {
             pending = Some(Pending::new(Cause::Released, Instant::now()));
             continue;
         }
-        // Whether the ring still holds the clip, so a later release loses only a clip the box had.
+        // Whether the ring holds the clip, so a later release marks lost only a clip the box had.
         if ctx.desired.lock().clip_ring_held() {
             restart::read_ring(&ctx);
         }

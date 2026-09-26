@@ -1,33 +1,30 @@
-//! `TRANSFORM` (§3.15) vocabulary: the field operation a host installs, and the decoded
-//! `RESP(TRANSFORMS)` readback.
+//! `TRANSFORM` (§3.15) vocabulary: field operations and decoded `RESP(TRANSFORMS)`.
 
 use crate::protocol::opcode::{TF_F_FULL, TF_OP_COUNT, TF_REMAP, TF_SWAP, TRANSFORM_MAX_ENTRIES};
 use crate::types::{Class, LockTarget};
 
-/// The operation a [`Transform`] performs on its fields (§3.15).
-///
-/// Both move a value from one field to another. To weigh a field, or reverse it, use
-/// [`scale`](crate::Device::scale).
+/// Operation a [`Transform`] performs (§3.15); both move a value between fields. To weigh a field, or
+/// reverse it, use [`scale`](crate::Device::scale).
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TransformOp {
     /// Move a source field's value into a destination, clearing the source.
     Remap = TF_REMAP,
-    /// Exchange two axes: read both, then write both, so it is not two remaps.
+    /// Exchange two axes: read both, then write both (not two remaps).
     Swap = TF_SWAP,
 }
 
-// The op space is dense and `Swap` is the top of it, so the count has to be one past it. A box op
-// with no variant here decodes as `None`, and that readback row is dropped with nothing marking it.
+// `Swap` tops the dense op space. A box op with no variant decodes as `None`, and its readback row
+// is dropped with nothing marking it.
 const _: () = assert!(TF_SWAP + 1 == TF_OP_COUNT);
 
 impl TransformOp {
-    /// The wire `op` byte.
+    /// Wire `op` byte.
     pub const fn as_u8(self) -> u8 {
         self as u8
     }
 
-    /// Map a wire `op` byte to a [`TransformOp`], or `None` for an unknown value.
+    /// Decodes a wire `op` byte; `None` if unknown.
     pub fn from_u8(v: u8) -> Option<TransformOp> {
         Some(match v {
             TF_REMAP => TransformOp::Remap,
@@ -36,9 +33,8 @@ impl TransformOp {
         })
     }
 
-    /// Whether this op admits the given `source`/`dest` pair, mirroring the box's own check. A pair
-    /// whose source and destination are the same field is refused. Whether the fields are declared is
-    /// the box's to answer.
+    /// Whether this op admits `source`/`dest`, mirroring the box's check; one field as both ends is
+    /// refused. Whether the fields are declared is for the box to check.
     pub fn admits(self, source: LockTarget, dest: LockTarget) -> bool {
         use LockTarget::{Axis, Usage};
         if source == dest {
@@ -58,21 +54,21 @@ impl TransformOp {
     }
 }
 
-/// The `(source, dest)` key that identifies one transform-table entry. Two transforms with this key in
-/// common are the same entry: setting the second overwrites the first's op.
+/// `(source, dest)` key of one transform-table entry; setting a second transform with the same key
+/// overwrites the first's op.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct TransformKey {
-    /// The field the transform reads.
+    /// Field read.
     pub source: LockTarget,
-    /// The field the transform writes.
+    /// Field written.
     pub dest: LockTarget,
 }
 
-/// One field transform: an [operation](TransformOp), the [`source`](Transform::source) field it reads
+/// Field transform: an [operation](TransformOp), the [`source`](Transform::source) field it reads
 /// and the [`dest`](Transform::dest) field it writes.
 ///
-/// A transform says where a field's value lands. To weigh one, or reverse it, use
-/// [`scale`](crate::Device::scale), which runs first and hands the transform what it kept.
+/// A transform sets where a field's value lands. To weigh one, or reverse it, use
+/// [`scale`](crate::Device::scale), which runs first and passes the transform what it kept.
 ///
 /// ```
 /// # use medius::{Axis, Transform, TransformOp};
@@ -81,16 +77,16 @@ pub struct TransformKey {
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Transform {
-    /// What the transform does to its fields.
+    /// Operation.
     pub op: TransformOp,
-    /// The field the transform reads.
+    /// Field read.
     pub source: LockTarget,
-    /// The field the transform writes.
+    /// Field written.
     pub dest: LockTarget,
 }
 
 impl Transform {
-    /// A transform from an explicit op, source and destination.
+    /// Transform from an explicit op, source and destination.
     pub fn new(
         op: TransformOp,
         source: impl Into<LockTarget>,
@@ -113,8 +109,8 @@ impl Transform {
     }
 
     /// Move a source field's value into a destination, clearing the source. Same-report for axis to
-    /// axis and button to button; a button to key or media remap holds the destination through its own
-    /// interface for as long as the button is down.
+    /// axis and button to button; a button to key or media remap holds the destination on its own
+    /// interface while the button is down.
     pub fn remap(source: impl Into<LockTarget>, dest: impl Into<LockTarget>) -> Transform {
         Transform {
             op: TransformOp::Remap,
@@ -123,7 +119,7 @@ impl Transform {
         }
     }
 
-    /// The `(source, dest)` key this entry is filed under.
+    /// The entry's `(source, dest)` key.
     pub fn key(&self) -> TransformKey {
         TransformKey {
             source: self.source,
@@ -132,23 +128,23 @@ impl Transform {
     }
 }
 
-/// The decoded `RESP(TRANSFORMS)` (§4.18): the whole transform table, read back as the commands that
-/// rebuild it, in the order the box applies them.
+/// Decoded `RESP(TRANSFORMS)` (§4.18): the transform table as the commands that rebuild it, in the
+/// order the box applies them.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Transforms {
     /// The table is full: a further entry was, or would be, refused.
     pub table_full: bool,
-    /// One entry per installed transform, in installation order, which is the order the box applies
-    /// them in. Two transforms that write the same field do not commute, so this order is the state.
+    /// One entry per installed transform, in installation order, which the box applies them in.
+    /// Transforms writing one field do not commute, so the order is part of the state.
     pub entries: Vec<Transform>,
 }
 
 impl Transforms {
-    /// The most entries the box holds.
+    /// Max entries the box holds.
     pub const CAPACITY: usize = TRANSFORM_MAX_ENTRIES;
 
-    /// Decode a `RESP(TRANSFORMS)` payload (§4.18): `[what][flags u8][n u8]` then `n` ×
-    /// `[op u8][sclass u8][sid u16][dclass u8][did u16]`, with no `state` byte per entry.
+    /// `[what][flags u8][n u8]` then `n` × `[op u8][sclass u8][sid u16][dclass u8][did u16]`, with no
+    /// `state` byte per entry.
     pub(crate) fn from_payload(p: &[u8]) -> Option<Transforms> {
         if p.len() < 3 {
             return None;
@@ -159,8 +155,7 @@ impl Transforms {
         for i in 0..n {
             let o = 3 + 7 * i;
             let row = p.get(o..o + 7)?;
-            // A byte the crate has no enum for (an op or class a newer box added) skips this entry
-            // rather than aborting the whole decode: the rest of the table still reads.
+            // An op or class a newer box added skips this entry; the rest of the table still reads.
             let (Some(op), Some(source), Some(dest)) = (
                 TransformOp::from_u8(row[0]),
                 LockTarget::from_class_id(row[1], u16::from_le_bytes([row[2], row[3]])),

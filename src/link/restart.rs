@@ -14,17 +14,17 @@ use super::reconnect::reapply_locked;
 use super::slot::TransportSlot;
 use super::write_frame;
 
-// How often a recovery asks whether the clone is up: closely at first, then at a walk for a box that
-// has no device to clone.
+// How often a recovery checks whether the clone is up: often at first, then slowly for a box with
+// no device to clone.
 const CLONE_POLL: Duration = Duration::from_millis(50);
 const CLONE_POLL_SLOW: Duration = Duration::from_millis(500);
 const CLONE_POLL_CLOSE: Duration = Duration::from_secs(5);
 const QUERY_TIMEOUT: Duration = Duration::from_millis(250);
 const QUERY_SLICE: Duration = Duration::from_millis(20);
-// How long after a command that can present the clone again the keepalive looks for it every slice.
+// How long after a command that can re-present the clone the keepalive checks every slice.
 const REPRESENT_WATCH: Duration = Duration::from_secs(5);
 
-/// What sent the box through the recovery.
+/// Cause of the recovery.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Cause {
     /// The device chip booted.
@@ -34,17 +34,17 @@ pub(crate) enum Cause {
     Released,
 }
 
-/// Where one step of a recovery left it.
+/// Outcome of one recovery step.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Outcome {
     Done,
-    /// No clone yet, or no link: ask again later.
+    /// No clone yet, or no link: check again later.
     Wait,
-    /// A hello came after the clone answered: another boot to recover from.
+    /// A hello came after the clone replied: another boot to recover from.
     Again,
 }
 
-/// A recovery the keepalive owes, and when it next asks whether the clone is up.
+/// A recovery the keepalive owes, and when it next checks whether the clone is up.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Pending {
     pub(crate) cause: Cause,
@@ -71,8 +71,8 @@ impl Pending {
     }
 }
 
-/// The device chip's unsolicited hellos as the reader saw them, the recovery one of them owes, and
-/// the box's `RESP(STATS)` session counter.
+/// Device-chip hellos seen by the reader, the recovery one owes, and the `RESP(STATS)` session
+/// counter.
 #[derive(Debug, Default)]
 pub(crate) struct RestartWatch {
     state: Mutex<Watch>,
@@ -80,7 +80,7 @@ pub(crate) struct RestartWatch {
 
 #[derive(Debug, Default)]
 struct Watch {
-    // The chip has answered this link since its last hello, so another hello is a new boot.
+    // The chip has replied on this link since its last hello, so another hello is a new boot.
     armed: bool,
     // One boot sends two hellos (at boot and on first contact); the second lands while this is set.
     recovering: bool,
@@ -88,7 +88,7 @@ struct Watch {
     hellos: u64,
     // A hello landed while a recovery was running: a boot to count when it ends.
     booted: bool,
-    // `RESP(STATS)` session when last read; the box moves it each time it releases what a host set.
+    // `RESP(STATS)` session when last read; it moves on each release of host-set state.
     session: Option<u16>,
     represent_until: Option<Instant>,
 }
@@ -98,8 +98,8 @@ impl RestartWatch {
         self.state.lock().armed = true;
     }
 
-    // A hello the crate did not ask for, which owes a recovery when it is a new boot. A box back on
-    // another protocol is refused the way a reconnect refuses one: every command fails with it.
+    // An unrequested hello owes a recovery when it is a new boot. A box back on another protocol is
+    // refused as a reconnect refuses one: every command fails with it.
     pub(crate) fn note_hello(&self, payload: &[u8], transport: &TransportSlot) {
         let proto = match parse_resp(payload) {
             Some(Resp::Version(v)) => v.proto_ver,
@@ -193,8 +193,8 @@ impl RestartWatch {
         self.state.lock().represent_until.is_some_and(|t| now < t)
     }
 
-    // The close watch stays open: a release can come in two parts (the opt-in going off drops its
-    // rules at once and presents the clone again later), and the second needs the same watch.
+    // The close watch stays open: a release can come in two parts (the opt-in going off drops rules
+    // at once and re-presents the clone later), and the second needs it.
     pub(crate) fn begin_release(&self) {
         self.state.lock().recovering = true;
     }
@@ -204,7 +204,7 @@ impl RestartWatch {
     }
 }
 
-// Whether the box released the session a host set since the last reading of its counter.
+// Whether the box released host-set session state since the counter's last reading.
 pub(crate) fn session_released(ctx: &KeepaliveCtx) -> bool {
     let Some(stats) = read_stats(ctx) else {
         return false;
@@ -228,7 +228,7 @@ fn read_stats(ctx: &KeepaliveCtx) -> Option<Stats> {
     }
 }
 
-// The declared button count when a clone is up; `None` when none is, or the box did not answer.
+// Declared button count when a clone is up; `None` when none is, or the box did not reply.
 fn clone_up(ctx: &KeepaliveCtx) -> Option<u8> {
     match query(ctx, Q_CAPS).as_deref().and_then(parse_resp) {
         Some(Resp::Caps(c)) if c.mouse.n_hid > 0 => Some(c.mouse.n_buttons),
@@ -236,9 +236,9 @@ fn clone_up(ctx: &KeepaliveCtx) -> Option<u8> {
     }
 }
 
-// What the box's ring holds, noted against the append it was read after. A reading that never came
-// says nothing, and one taken across a release or a boot is left to that recovery, which reports the
-// loss: noted here it would clear the ring with nothing lost.
+// The ring's contents, noted against the append it was read after. A missing reading says nothing;
+// one taken across a release or boot is left to that recovery, which reports the loss (noted here it
+// would clear the ring with nothing lost).
 pub(crate) fn read_ring(ctx: &KeepaliveCtx) {
     let seen = ctx.desired.lock().clip_ring_gen();
     let hellos = ctx.restart.hellos();
@@ -254,9 +254,9 @@ pub(crate) fn read_ring(ctx: &KeepaliveCtx) {
     ctx.desired.lock().clip_note_ring(seen, &status, false);
 }
 
-// One step of a recovery, on the keepalive thread. What the crate holds goes back only to a clone that
-// is up, since the box drops a lock, a transform or a clip append sent before it exists; a release
-// that left the clone standing (the link, a silence, a short detach) finds it up at once.
+// On the keepalive thread. Held state goes back only to a clone that is up, since the box drops a
+// lock, transform or clip append sent before it exists; a release that left the clone standing (the
+// link, a silence, a short detach) finds it up at once.
 pub(crate) fn step(ctx: &KeepaliveCtx, cause: Cause) -> Outcome {
     let Some(buttons) = clone_up(ctx) else {
         return Outcome::Wait;
@@ -284,10 +284,9 @@ pub(crate) fn step(ctx: &KeepaliveCtx, cause: Cause) -> Outcome {
     if sent.is_err() {
         return Outcome::Wait;
     }
-    // A release comes in two parts at times (a detach counts at once and takes the clone down after
-    // its grace), and a re-send between them lands on a clone that is going. It stuck, and the ring
-    // read beside it describes this release, only if the clone is still up and nothing was released
-    // since.
+    // A release can come in two parts (a detach counts at once and takes the clone down after its
+    // grace), and a re-send between them lands on a departing clone. It stuck, and the ring reading
+    // describes this release, only if the clone is still up and nothing was released since.
     let up = clone_up(ctx).is_some();
     let ring_seen = ctx.desired.lock().clip_ring_gen();
     let ring = query(ctx, Q_CLIP).and_then(|p| ClipStatus::from_payload(&p));
@@ -313,8 +312,7 @@ fn query(ctx: &KeepaliveCtx, what: u8) -> Option<Vec<u8>> {
     query_sent(ctx, what).flatten()
 }
 
-// One `QUERY` and its reply. The outer `None` is a frame that never went out. The wait gives way to a
-// device being dropped.
+// The outer `None` is a frame that never went out. The wait yields to a device being dropped.
 fn query_sent(ctx: &KeepaliveCtx, what: u8) -> Option<Option<Vec<u8>>> {
     let (seq, gen_id, rx) = correlation::register(
         &ctx.pending,

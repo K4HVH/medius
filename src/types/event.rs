@@ -1,14 +1,14 @@
-//! The three catch event frames (§4.10) and what they decode to.
+//! The three catch event frames (§4.10), decoded.
 
 use crate::protocol::opcode::{
     CATCH_CTRL_MASK, CATCH_CTRL_NAK, CATCH_CTRL_OK, CATCH_CTRL_STALL, CATCH_F_RULE,
 };
 use crate::types::{Axis, CatchClass, Class, ClockDomain, Direction, TransferStatus, Usage};
 
-/// Byte width of the header every catch event frame leads with: `ts_us` (u32) then the clock domain.
+/// Catch event frame header width: `ts_us` (u32) then the clock domain.
 pub(crate) const EVENT_HDR: usize = 5;
 
-/// A relative-axis catch event, a `MOTION_EVENT` frame (§4.10).
+/// Relative-axis catch event, a `MOTION_EVENT` frame (§4.10).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct MotionEvent {
     /// When the real device's report arrived, in that chip's microseconds.
@@ -51,35 +51,34 @@ impl MotionEvent {
         ]
     }
 
-    /// The axes this report actually moved, with their deltas. Empty for a report that moved nothing,
-    /// which the box does not emit but a mock can.
+    /// Axes this report moved, with their deltas. Empty for a report that moved nothing, which the
+    /// box never emits but a mock can.
     pub fn axes(&self) -> impl Iterator<Item = (Axis, i16)> + use<> {
         self.all_axes().into_iter().filter(|(_, d)| *d != 0)
     }
 }
 
-/// A held-usage snapshot catch event, a `USAGE_EVENT` frame (§4.10).
+/// Held-usage snapshot catch event, a `USAGE_EVENT` frame (§4.10).
 ///
-/// A snapshot is the class's state, not one usage's: it lists what is held, so the release of usage U
-/// is the snapshot that does not contain U.
+/// Lists everything held in the class, so the release of usage U is the snapshot without U.
 ///
-/// It lists what the BOX's table matched, which is the union of every subscription in this process,
-/// so a stream watching one key sees the others as soon as unrelated code widens the table.
-/// [`Device::input_events`](crate::Device::input_events) filters against your own addresses and turns
-/// these into press and release edges; decode them yourself only if you want the raw held set.
+/// It lists what the box's table matched: the union of every subscription in this process, so a
+/// stream watching one key sees others once unrelated code widens the table.
+/// [`Device::input_events`](crate::Device::input_events) filters to the requested addresses and
+/// yields press and release edges; decode snapshots directly only for the raw held set.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct UsageSnapshot {
     /// When the real device's report arrived, in that chip's microseconds.
     pub ts_us: u32,
     /// Always [`ClockDomain::HostChip`].
     pub clock: ClockDomain,
-    /// Which class this snapshot is of. Carried in the frame because the empty snapshot, the release
-    /// of the last held usage, has no usages to read it from.
+    /// Snapshot class. In the frame because the empty snapshot (release of the last held usage) has
+    /// no usages to read it from.
     pub class: Class,
-    /// The edge that produced this snapshot: the subscribed set grew ([`Direction::PRESS`]) or shrank
+    /// Edge that produced this snapshot: the subscribed set grew ([`Direction::PRESS`]) or shrank
     /// ([`Direction::RELEASE`]).
     pub direction: Direction,
-    /// The currently-held usages, all of `class`.
+    /// Held usages, all of `class`.
     pub usages: Vec<Usage>,
 }
 
@@ -106,10 +105,10 @@ impl UsageSnapshot {
     }
 }
 
-/// What a [`CatchClass::Bus`] event describes.
+/// [`CatchClass::Bus`] event kind.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum BusEvent {
-    /// A USB bus reset.
+    /// USB bus reset.
     Reset,
     /// The host suspended the bus.
     Suspend,
@@ -121,7 +120,7 @@ pub enum BusEvent {
     Deconfigured,
     /// `SET_INTERFACE` selected this alternate setting on this interface.
     SetInterface { interface: u8, alt: u8 },
-    /// A real device attached on the host chip.
+    /// Real device attached on the host chip.
     DeviceAttached,
     /// The real device detached.
     DeviceDetached,
@@ -131,41 +130,41 @@ pub enum BusEvent {
     CloneDown,
 }
 
-/// The handshake the game PC received for a control transaction.
+/// Handshake the game PC received for a control transaction.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ControlStatus {
-    /// The transaction completed.
+    /// Transaction completed.
     Ok,
-    /// The PC got a STALL: from the device, from a rule that refused the request, or, above endpoint
-    /// 0, for a request that failed.
+    /// STALL to the PC: from the device, from a rule refusing the request, or, above endpoint 0,
+    /// for a failed request.
     Stalled,
     /// NAKed until the host gave up, on endpoint 0 only: the device never answered, or a `Nak` rule.
     Naked,
-    /// A handshake value this build does not know. Distinct from the three, so a future firmware's
-    /// new value is not reported as a device fault that never happened.
+    /// Handshake value unknown to this build, kept distinct so a newer firmware's value does not
+    /// read as a device fault.
     Other(u8),
 }
 
-/// A byte-oriented catch event, a `TRAFFIC_EVENT` frame (§4.10). Everything the box relays that is
-/// not parsed input arrives here.
+/// Byte-oriented catch event, a `TRAFFIC_EVENT` frame (§4.10): everything the box relays besides
+/// parsed input.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct TrafficEvent {
     /// When the tap fired, in the stamping chip's microseconds.
     pub ts_us: u32,
     /// Which chip's clock stamped it.
     pub clock: ClockDomain,
-    /// What this event is.
+    /// Event class.
     pub class: CatchClass,
-    /// Endpoint number or interface number, per the class.
+    /// Endpoint or interface number, per the class.
     pub id: u16,
     /// [`Direction::IN`] is device to PC, [`Direction::OUT`] is PC to device.
     pub direction: Direction,
-    /// Class-specific; read it through [`Self::control_status`], [`Self::rule_acted`],
+    /// Class-specific; read through [`Self::control_status`], [`Self::rule_acted`],
     /// [`Self::transfer_status`], [`Self::bus_event`] or the bulk accessors.
     pub flags: u8,
-    /// The packet's length before the subscription's [`Capture`](crate::Capture) truncated it.
+    /// Packet length before the subscription's [`Capture`](crate::Capture) truncated it.
     pub true_len: u16,
-    /// As much of the packet as the subscription's [`Capture`](crate::Capture) kept.
+    /// Packet bytes the subscription's [`Capture`](crate::Capture) kept.
     pub bytes: Vec<u8>,
 }
 
@@ -186,18 +185,18 @@ impl TrafficEvent {
         })
     }
 
-    /// Whether the capture cut this packet short. Without checking, a truncated capture and a
-    /// genuinely short packet are indistinguishable.
+    /// Whether the capture cut this packet short; the bytes alone cannot tell that from a short
+    /// packet.
     pub fn truncated(&self) -> bool {
         (self.bytes.len() as u16) < self.true_len
     }
 
-    // The two classes whose bytes are `[setup 8][data]`.
+    // Classes whose bytes are `[setup 8][data]`.
     fn is_control_shaped(&self) -> bool {
         matches!(self.class, CatchClass::Control | CatchClass::ClipTransfer)
     }
 
-    /// The 8-byte setup packet, for a [`CatchClass::Control`] or [`CatchClass::ClipTransfer`] event.
+    /// 8-byte setup packet of a [`CatchClass::Control`] or [`CatchClass::ClipTransfer`] event.
     pub fn setup(&self) -> Option<&[u8]> {
         if self.is_control_shaped() && self.bytes.len() >= 8 {
             Some(&self.bytes[..8])
@@ -206,11 +205,11 @@ impl TrafficEvent {
         }
     }
 
-    /// The data stage, for a [`CatchClass::Control`] or [`CatchClass::ClipTransfer`] event; the whole
+    /// Data stage of a [`CatchClass::Control`] or [`CatchClass::ClipTransfer`] event; the whole
     /// packet for any other class.
     ///
-    /// Empty when the capture cut the setup packet itself short. The surviving bytes are the request,
-    /// and returning them would label a GET_DESCRIPTOR request as the descriptor.
+    /// Empty when the capture cut the setup packet itself short: the surviving bytes are the
+    /// request, and returning them would label a GET_DESCRIPTOR request as the descriptor.
     pub fn data(&self) -> &[u8] {
         if !self.is_control_shaped() {
             return &self.bytes;
@@ -222,7 +221,7 @@ impl TrafficEvent {
         }
     }
 
-    /// The handshake the game PC received, for a [`CatchClass::Control`] event.
+    /// Handshake the game PC received, for a [`CatchClass::Control`] event.
     pub fn control_status(&self) -> Option<ControlStatus> {
         if self.class != CatchClass::Control {
             return None;
@@ -236,7 +235,8 @@ impl TrafficEvent {
     }
 
     /// Whether a rewrite rule at this event's class changed, dropped, answered or refused the packet.
-    /// Only the classes a rule acts at carry it; a `Pass` rule, or a `Patch` that changed nothing, does not.
+    /// Carried only by classes a rule acts at; never set by a `Pass` rule or a `Patch` that changed
+    /// nothing.
     pub fn rule_acted(&self) -> bool {
         let ruled = matches!(
             self.class,
@@ -250,13 +250,13 @@ impl TrafficEvent {
         ruled && self.flags & CATCH_F_RULE != 0
     }
 
-    /// How the transfer ended, for a [`CatchClass::ClipTransfer`] event: the status a
-    /// [`transfer`](crate::Device::transfer) returns, or [`Nak`](TransferStatus::Nak) when no answer came.
+    /// How a [`CatchClass::ClipTransfer`] event's transfer ended: the status
+    /// [`transfer`](crate::Device::transfer) returns, or [`Nak`](TransferStatus::Nak) with no reply.
     pub fn transfer_status(&self) -> Option<TransferStatus> {
         (self.class == CatchClass::ClipTransfer).then(|| TransferStatus::from_u8(self.flags))
     }
 
-    /// The lifecycle event, for a [`CatchClass::Bus`] event.
+    /// Lifecycle event of a [`CatchClass::Bus`] event.
     pub fn bus_event(&self) -> Option<BusEvent> {
         if self.class != CatchClass::Bus {
             return None;
@@ -281,39 +281,38 @@ impl TrafficEvent {
         })
     }
 
-    /// Whether this event carries end-of-transfer, for a [`CatchClass::VendorBulk`] event.
+    /// Whether a [`CatchClass::VendorBulk`] event carries end-of-transfer.
     pub fn bulk_end_of_transfer(&self) -> bool {
         self.class == CatchClass::VendorBulk && self.flags & 0x01 != 0
     }
 
-    /// Whether this event is a zero-length packet, for a [`CatchClass::VendorBulk`] event. A ZLP
-    /// terminates a transfer whose length is an exact multiple of the packet size, so it carries no
-    /// bytes and still matters.
+    /// Whether a [`CatchClass::VendorBulk`] event is a zero-length packet, which ends a transfer
+    /// whose length is an exact multiple of the packet size.
     pub fn bulk_zlp(&self) -> bool {
         self.class == CatchClass::VendorBulk && self.flags & 0x02 != 0
     }
 }
 
-/// One event from the catch stream.
+/// Catch stream event.
 ///
-/// Every variant carries `ts_us` and the [`ClockDomain`] that stamped it; both clocks are box-local
-/// and wrap every ~71.6 minutes. [`Timeline`](crate::Timeline) turns one into an
+/// Every variant carries `ts_us` and the stamping [`ClockDomain`]; both clocks are box-local and
+/// wrap every ~71.6 minutes. [`Timeline`](crate::Timeline) turns a stamp into an
 /// [`Instant`](std::time::Instant).
 ///
-/// Idle polls are never reported: a device that reports at every poll interval still only produces
-/// events when something subscribed changes.
+/// Idle polls are never reported: a device reporting at every poll interval produces events only
+/// when something subscribed changes.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum CatchEvent {
-    /// A relative-axis event: cursor motion and/or wheel.
+    /// Relative-axis event: cursor motion and/or wheel.
     Motion(MotionEvent),
-    /// A held-usage snapshot for one class (buttons, keys, or media).
+    /// Held-usage snapshot for one class (buttons, keys, or media).
     Usages(UsageSnapshot),
     /// Byte-oriented traffic: HID, vendor endpoints, control transactions, emitted bytes, or bus.
     Traffic(TrafficEvent),
 }
 
 impl CatchEvent {
-    /// The stamping chip's microsecond stamp, whichever variant this is.
+    /// Stamping chip's microsecond stamp, for any variant.
     pub fn ts_us(&self) -> u32 {
         match self {
             CatchEvent::Motion(m) => m.ts_us,
@@ -322,7 +321,7 @@ impl CatchEvent {
         }
     }
 
-    /// Which chip's clock stamped it. Do not subtract two stamps from different domains.
+    /// Chip whose clock stamped it; never subtract stamps from different domains.
     pub fn clock(&self) -> ClockDomain {
         match self {
             CatchEvent::Motion(m) => m.clock,
@@ -331,7 +330,7 @@ impl CatchEvent {
         }
     }
 
-    /// The class this event belongs to, whichever variant it is.
+    /// Event class, for any variant.
     pub fn class(&self) -> CatchClass {
         match self {
             CatchEvent::Motion(_) => CatchClass::Axis,
@@ -340,7 +339,7 @@ impl CatchEvent {
         }
     }
 
-    /// The address within the class, when the event names one.
+    /// Address within the class, when the event names one.
     ///
     /// `None` for both input variants: a motion report can move three axes at once and a snapshot is
     /// the class's whole held set. See [`MotionEvent::axes`] and [`UsageSnapshot::usages`].
@@ -351,8 +350,8 @@ impl CatchEvent {
         }
     }
 
-    /// The edge, sign or flow this event arrived on. [`Direction::Both`] for motion, where one report
-    /// can move X positive and Y negative; [`MotionEvent::axes`] gives the per-axis signs.
+    /// Edge, sign or flow this event arrived on. [`Direction::Both`] for motion, where one report can
+    /// move X positive and Y negative; [`MotionEvent::axes`] gives per-axis signs.
     pub fn direction(&self) -> Direction {
         match self {
             CatchEvent::Motion(_) => Direction::Both,
@@ -361,7 +360,7 @@ impl CatchEvent {
         }
     }
 
-    /// The captured packet bytes; empty for the two decoded input variants, which carry no packet.
+    /// Captured packet bytes; empty for the two decoded input variants, which carry no packet.
     pub fn bytes(&self) -> &[u8] {
         match self {
             CatchEvent::Motion(_) | CatchEvent::Usages(_) => &[],

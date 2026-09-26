@@ -201,8 +201,8 @@ fn reapply_re_emits_a_scale_at_its_own_value() {
         .filter(|f| f.ty == FrameType::Lock)
         .map(|f| f.payload.clone())
         .collect();
-    // A weighing comes back weighing, not blocked: re-sending these as a blanket lock would turn a
-    // 40% damp into a dead axis across a reconnect the user never saw.
+    // A weighing replays as a weighing: as a blanket lock it would turn 40% into a dead axis across
+    // an unseen reconnect.
     assert_eq!(
         locks,
         vec![vec![3, 0, 0, 4, 40, 0], vec![3, 1, 0, 3, 130, 0]]
@@ -212,8 +212,8 @@ fn reapply_re_emits_a_scale_at_its_own_value() {
 
 #[test]
 fn reapply_re_emits_a_reversal_at_its_own_sign() {
-    // A replay that clamped the scale to zero would put a BLOCK on the wire where the host holds a
-    // REVERSAL, and the box would agree with it: the row is what a reconnect rebuilds from.
+    // A replay clamping the scale to zero would send a block where the host holds a reversal; the
+    // row is what a reconnect rebuilds from.
     use crate::{Axis, Direction};
     let mock = MockBox::new();
     let device = Device::with_mock(mock.clone());
@@ -252,8 +252,8 @@ fn unlocking_both_forgets_the_relative_scales_too() {
         .filter(|f| f.ty == FrameType::Lock)
         .map(|f| f.payload.clone())
         .collect();
-    // Both sweeps the whole target on the box, so the shadow must sweep it too. Re-sending the 40%
-    // here would restore a weighing the caller had already cleared.
+    // Both clears the whole target on the box, so the shadow must too, or a replay restores the
+    // cleared 40%.
     assert!(
         locks.is_empty(),
         "expected nothing re-asserted, got {locks:?}"
@@ -277,8 +277,8 @@ fn releasing_one_sign_of_a_both_lock_is_not_undone_by_a_reapply() {
         .filter(|f| f.ty == FrameType::Lock)
         .map(|f| f.payload.clone())
         .collect();
-    // Both wrote two slots and the unlock cleared one of them, so only the positive sign is still
-    // held. Re-sending the Both would re-block a direction the caller released.
+    // Both wrote two slots and the unlock cleared one, so only the positive sign is held; re-sending
+    // Both would re-block a released direction.
     assert_eq!(locks, vec![vec![3, 0, 0, 1, 0, 0]]);
     drop(device);
 }
@@ -348,8 +348,8 @@ fn a_button_blanket_set_before_any_caps_call_reasserts_the_wide_buttons() {
         has_report_id: false,
         n_hid: 1,
     });
-    // open_mock runs the handshake, which reads CAPS, so the declared count is cached before the caller
-    // takes any lock. No explicit caps() call here: this is the path the bug narrowed to five buttons.
+    // The handshake reads CAPS, so the count is cached before any lock. No caps() call: this is the
+    // path the bug narrowed to five buttons.
     let device = Device::open_mock(mock.clone()).unwrap();
     device.lock_all(Blanket::Buttons, Direction::Both).unwrap();
     mock.clear_recorded();
@@ -377,8 +377,7 @@ fn a_scale_a_one_bit_class_cannot_hold_is_not_held_here_either() {
     mock.clear_recorded();
 
     device.reapply().unwrap();
-    // 150% truncates to a pass on the box, which is an unlock, so there is nothing to hold open the
-    // keepalive and nothing to re-assert.
+    // 150% truncates to a pass (an unlock) on the box: nothing to keep open or re-assert.
     assert!(!mock.saw(FrameType::Lock));
     drop(device);
 }

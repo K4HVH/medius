@@ -12,13 +12,13 @@ license = "MIT"
 keywords = ["medius", "mouse", "hid", "serial", "makcu"]
 categories = ["hardware-support", "api-bindings"]
 
-# Render the feature-gated async queries + mock builders on docs.rs.
+# docs.rs renders the feature-gated async and mock APIs.
 [package.metadata.docs.rs]
 all-features = true
 
 [features]
 default = []
-async = ["dep:futures-core"]            # thin wrapper over the sync core (flume async recv, no runtime dep)
+async = ["dep:futures-core"]            # wrapper over the sync core (flume async recv, no runtime dep)
 mock = []                               # public scriptable fake box
 tracing = ["dep:tracing"]               # library-side instrumentation
 
@@ -31,29 +31,29 @@ serialport = "4"
 tracing = { version = "0.1", optional = true }
 sha2 = { version = "0.11.0", default-features = false }
 
-# Windows I/O goes over serial2's overlapped COM handle. serialport's handle is synchronous, so the
-# kernel serialises reads against writes and injection stalls behind the reader thread; serialport
-# stays for port discovery, which it is the only one of the two to carry USB VID/PID for.
+# Windows I/O uses serial2's overlapped COM handle: on serialport's synchronous one the kernel
+# serialises reads against writes, stalling injection behind the reader thread. serialport stays for
+# port discovery, since only it reports USB VID/PID.
 [target.'cfg(windows)'.dependencies]
 serial2 = { version = "0.2", features = ["windows"] }
 
 [dev-dependencies]
-# Async tests use futures' executor::block_on, NOT tokio (the wrapper is runtime-agnostic).
+# Async tests run on futures' executor::block_on; the wrapper is runtime-agnostic.
 futures = { version = "0.3", default-features = false, features = ["executor"] }
 
-# libc is only used by the Linux `hw_full` example (evdev EVIOCGRAB), not the library itself.
+# Only the Linux `hw_full` example uses libc (evdev EVIOCGRAB).
 [target.'cfg(target_os = "linux")'.dev-dependencies]
 libc = "0.2"
 
-# basic opens a real device: it compiles everywhere, but needs a connected box to RUN.
+# Compiles everywhere; running it needs a connected box.
 [[example]]
 name = "basic"
 
-# hw_full is the on-hardware validation suite (Linux; grabs the clone's evdev node). It compiles
-# without features; build with `--features async` (or `--all-features`) to include the async gate.
+# On-hardware validation suite (Linux; grabs the clone's evdev node). Builds without features;
+# `--features async` (or `--all-features`) adds the async gate.
 [[example]]
 name = "hw_full"
 
-# inject_latency times the injection write path against a connected box; run it per platform.
+# Times the injection write path on a connected box; run it per platform.
 [[example]]
 name = "inject_latency"

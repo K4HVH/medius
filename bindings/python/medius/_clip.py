@@ -55,11 +55,11 @@ class ClipBuilder:
         return self
 
     def byte_len(self) -> int:
-        """The bytes the entries take in the ring: what to hold against `ClipStatus.free` before an append."""
+        """Ring bytes the entries take, to check against `ClipStatus.free` before an append."""
         return int(_native.lib.medius_clip_builder_byte_len(self._ptr))
 
     def gap(self, frames: int) -> "ClipBuilder":
-        """Emit nothing for `frames` native frames (a zero count is a no-op)."""
+        """Emit nothing for `frames` native frames (0 is a no-op)."""
         check(_native.lib.medius_clip_builder_gap(self._ptr, _u16(frames, "frames")))
         return self
 
@@ -79,17 +79,17 @@ class ClipBuilder:
         return self
 
     def press(self, usage: Usage) -> "ClipBuilder":
-        """A frame that presses a usage (a button, key, or media usage)."""
+        """A frame pressing a usage (button, key, or media)."""
         check(_native.lib.medius_clip_builder_press(self._ptr, usage._c))
         return self
 
     def release(self, usage: Usage) -> "ClipBuilder":
-        """A frame that soft-releases a usage (a physical hold is left intact)."""
+        """A frame soft-releasing a usage, leaving a physical hold."""
         check(_native.lib.medius_clip_builder_release(self._ptr, usage._c))
         return self
 
     def force_release(self, usage: Usage) -> "ClipBuilder":
-        """A frame that force-releases a usage (masks a physical hold too)."""
+        """A frame force-releasing a usage, masking a physical hold too."""
         check(_native.lib.medius_clip_builder_force_release(self._ptr, usage._c))
         return self
 
@@ -107,7 +107,8 @@ class ClipBuilder:
         return self
 
     def transfer(self, ep: int, setup: Setup, out: bytes = b"") -> "ClipBuilder":
-        """A frame carrying one control transfer, as `Device.transfer` runs one; the answer arrives as a `TrafficClass.CLIP_TRANSFER` event."""
+        """A frame carrying one control transfer, as `Device.transfer` runs one; the reply arrives
+        as a `TrafficClass.CLIP_TRANSFER` event."""
         buf, n = _bytes_buf(out, "out")
         check(
             _native.lib.medius_clip_builder_transfer(self._ptr, _u8(ep, "ep"), setup_to_c(setup), buf, n)
@@ -158,12 +159,13 @@ class ClipBuilder:
 
 
 class ClipHandle:
-    """A handle to one box's buffered-clip playback, from `Device.clip`; keep one handle per clip session.
+    """A handle to one box's buffered-clip playback, from `Device.clip`; keep one handle per clip
+    session.
 
-    A trigger runs a clip verb on the box, with no host round trip. There are two kinds in one set: an
-    input trigger (`bind`) fires on a button, key or media edge, and a packet trigger (`bind_packet`)
-    fires on a packet crossing a traffic surface. `clear_triggers` removes both and `query_config`
-    reads both back.
+    A trigger runs a clip verb on the box with no host round trip. One set holds two kinds: an input
+    trigger (`bind`) fires on a button, key or media edge; a packet trigger (`bind_packet`) fires on
+    a packet crossing a traffic surface. `clear_triggers` removes both; `query_config` reads both
+    back.
     """
 
     def __init__(self, handle, device=None):
@@ -185,14 +187,15 @@ class ClipHandle:
         self.close()
 
     def append(self, builder: ClipBuilder):
-        """Append the builder's entries to the ring (whole-entry frames, each with the next append seq).
+        """Append the builder's entries to the ring as whole-entry frames, each with the next append
+        seq.
 
         Every entry is checked before the first frame goes out, so a refusal sends nothing: a frame
-        past `CLIP_EDGES_MAX` edges or `CLIP_RAW_MAX` raw reports (`ClipFrameCountError`), one that
-        encodes past `CLIP_ENTRY_MAX` bytes (`ClipFrameTooLongError`), a raw report whose direction is
-        neither `Direction.IN` nor `Direction.OUT` (`RawDirectionError`, or `RelativeDirectionError`
-        for the bearing-relative pair), or a transfer whose data does not match its setup packet
-        (`ClipTransferDataError`).
+        past `CLIP_EDGES_MAX` edges or `CLIP_RAW_MAX` raw reports (`ClipFrameCountError`), one
+        encoding past `CLIP_ENTRY_MAX` bytes (`ClipFrameTooLongError`), a raw report whose direction
+        is neither `Direction.IN` nor `Direction.OUT` (`RawDirectionError`, or
+        `RelativeDirectionError` for the bearing-relative pair), or a transfer whose data disagrees
+        with its setup packet (`ClipTransferDataError`).
         """
         check(_native.lib.medius_clip_append(self._handle, builder._ptr))
 
@@ -231,13 +234,13 @@ class ClipHandle:
         check(_native.lib.medius_clip_unbind(self._handle, usage._c, int(edge)))
 
     def bind_packet(self, trigger: ClipPacketTrigger):
-        """Add or overwrite a packet trigger: a packet `trigger` matches fires its action on the box's
-        next tick, no host round trip. Binding a key the box holds overwrites it.
+        """Add or overwrite a packet trigger: a packet `trigger` matches fires its action on the
+        box's next tick, with no host round trip. Binding a held key overwrites it.
 
-        What the box would refuse is `ClipPacketTriggerError` before anything is sent, and the message
-        says which:
+        A trigger the box would refuse raises `ClipPacketTriggerError` before anything is sent, and
+        the message says why:
 
-        - a `traffic_class` that is ``BUS`` or ``CLIP_TRANSFER``;
+        - `traffic_class` ``BUS`` or ``CLIP_TRANSFER``;
         - a match past `PKT_MATCH_MAX` bytes, or unlike its mask in length;
         - a direction the class never carries: ``OUT`` on ``HID_IN`` or ``EMIT``, ``IN`` on
           ``HID_OUT``;
@@ -249,26 +252,24 @@ class ClipHandle:
 
         A bearing-relative direction is `RelativeDirectionError`.
 
-        The box makes three checks this call cannot. A consuming trigger needs
+        Three checks happen only on the box: a consuming trigger needs
         `Device.allow_imperfect_clones`, the set holds `CLIP_PKT_TRIG_MAX` triggers, and their match
-        bytes share a pool of `CLIP_PKT_MATCH_POOL`. A bind the box refuses leaves its set as it
-        was: a new key is not held, and a key the box holds keeps the trigger that was there, with its
-        own action and flags. To confirm a bind, compare the fields `query_config` reads back with the
-        ones bound.
+        bytes share a `CLIP_PKT_MATCH_POOL`-byte pool. A refused bind leaves the set as it was: a
+        new key is not held, and a held key keeps its previous trigger, action and flags. To confirm
+        a bind, compare what `query_config` reads back with what was bound.
         """
         c = clip_packet_trigger_to_c(trigger)
         check(_native.lib.medius_clip_bind_packet(self._handle, ctypes.byref(c)))
 
     def unbind_packet(self, trigger: ClipPacketTrigger):
         """Remove the packet trigger keyed by `trigger`'s ``(traffic_class, id, direction,
-        match_bytes, mask)``; its other fields are ignored. A key the box cannot hold is refused as
-        `bind_packet` refuses it: the class, the lengths, the direction, and a match bit outside the
-        mask."""
+        match_bytes, mask)``, ignoring its other fields. A key the box cannot hold is refused as
+        `bind_packet` refuses it: class, lengths, direction, and a match bit outside the mask."""
         c = clip_packet_trigger_to_c(trigger, key_only=True)
         check(_native.lib.medius_clip_unbind_packet(self._handle, ctypes.byref(c)))
 
     def clear_triggers(self):
-        """Remove every trigger of both kinds: the input triggers and the packet triggers."""
+        """Remove every input and packet trigger."""
         check(_native.lib.medius_clip_clear_triggers(self._handle))
 
     def start(self):
@@ -280,7 +281,7 @@ class ClipHandle:
         check(_native.lib.medius_clip_stop(self._handle))
 
     def pause(self):
-        """Halt mid-clip, retaining the cursor and any held input."""
+        """Halt mid-clip, keeping the cursor and held input."""
         check(_native.lib.medius_clip_pause(self._handle))
 
     def resume(self):
@@ -310,13 +311,14 @@ class ClipHandle:
         return bool(_native.lib.medius_clip_lost(self._handle))
 
     def query_status(self) -> ClipStatus:
-        """The ring depth, progress, and playback counters. A `FAULTED` state means recover with `clear`."""
+        """The ring depth, progress, and playback counters; recover a `FAULTED` state with
+        `clear`."""
         out = _native.MediusClipStatus()
         check(_native.lib.medius_clip_query_status(self._handle, ctypes.byref(out)))
         return clip_status_from_c(out)
 
     def query_config(self) -> ClipSettings:
-        """The clip configuration: autolock, loop, retain, finalized, and both kinds of trigger."""
+        """The clip configuration: autolock, loop, retain, finalized, and both trigger kinds."""
         out = _native.MediusClipSettings()
         check(_native.lib.medius_clip_query_config(self._handle, ctypes.byref(out)))
         return clip_settings_from_c(out)

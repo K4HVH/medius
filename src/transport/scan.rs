@@ -1,4 +1,4 @@
-//! Serial port discovery: enumerate USB serial ports and filter to the box by USB VID/PID.
+//! Serial port discovery: USB serial ports filtered to the box by VID/PID.
 
 use crate::types::PortInfo;
 
@@ -22,7 +22,7 @@ pub(crate) fn find_ports() -> Vec<PortInfo> {
         .collect()
 }
 
-/// Discover medius boxes: USB serial ports filtered to the WCH vendor id and CH343 product id.
+/// Medius boxes: USB serial ports with the WCH vendor id and CH343 product id.
 pub fn find_medius() -> Vec<PortInfo> {
     find_ports()
         .into_iter()

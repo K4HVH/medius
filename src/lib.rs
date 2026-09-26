@@ -30,8 +30,6 @@ pub use device::raw::DEFAULT_TRANSFER_TIMEOUT;
 pub use error::{Error, Result};
 pub use link::{DEFAULT_KEEPALIVE_CADENCE, DEFAULT_QUERY_TIMEOUT};
 pub use protocol::MAX_PAYLOAD;
-/// The control-protocol version this build speaks. A box reporting anything else is refused at the
-/// handshake; exposing it lets a caller say so in its own words before connecting.
 pub use protocol::PROTO_VER;
 pub use protocol::opcode::{
     CATCH_MAX_ENTRIES, CLIP_PKT_MATCH_POOL, CLIP_PKT_TRIG_MAX, LOCK_SCALE_BLOCK, LOCK_SCALE_MAX,

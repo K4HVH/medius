@@ -22,7 +22,7 @@ impl core::fmt::Display for FrameError {
 
 impl core::error::Error for FrameError {}
 
-/// A fully decoded frame.
+/// Decoded frame.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DecodedFrame {
     pub ty: FrameType,
@@ -90,7 +90,7 @@ impl Default for FrameDecoder {
 }
 
 impl FrameDecoder {
-    /// Create a fresh decoder in the idle (scanning-for-SOF) state.
+    /// Decoder in the idle (scanning-for-SOF) state.
     pub fn new() -> Self {
         FrameDecoder {
             state: State::Sof,
@@ -103,7 +103,7 @@ impl FrameDecoder {
         }
     }
 
-    /// Number of frames dropped because their CRC failed.
+    /// Frames dropped for a failed CRC.
     pub fn crc_error_count(&self) -> u64 {
         self.crc_error_count
     }

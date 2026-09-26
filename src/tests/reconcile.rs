@@ -162,8 +162,8 @@ fn a_both_write_replaces_the_single_directions_before_it() {
     d.apply_lock((X.0, X.1, LOCK_DIR_NEG), 40);
     d.apply_lock((X.0, X.1, LOCK_DIR_AGAINST), 30);
     d.apply_lock((X.0, X.1, LOCK_DIR_BOTH), 50);
-    // Both is the whole row: the fixed pair takes the scale and the relative pair goes back to
-    // passing, so one command rebuilds it.
+    // Both is the whole row (fixed pair at the scale, relative pair passing), so one command
+    // rebuilds it.
     assert_eq!(d.held_locks(), vec![((X.0, X.1, LOCK_DIR_BOTH), 50)]);
 }
 
@@ -195,8 +195,8 @@ fn a_full_unlock_clears_every_slot() {
 #[test]
 fn a_one_bit_class_holds_what_the_box_will_hold() {
     let mut d = DesiredState::default();
-    // 150% on a button is an unlock on the box: it truncates to a pass. Held as 150 the keepalive
-    // would stay open for a lock that does not exist.
+    // 150% on a button truncates to a pass (an unlock); held as 150 it would keep the keepalive open
+    // for no lock.
     d.apply_lock((LOCK_CLS_BTN, 0, LOCK_DIR_POS), 150);
     assert!(d.is_idle());
     d.apply_lock((LOCK_CLS_BTN, 0, LOCK_DIR_POS), 50);
@@ -215,9 +215,8 @@ fn a_button_blanket_widens_to_the_declared_count_when_caps_arrives() {
     d.apply_lock((LOCK_CLS_BTN, LOCK_ID_ALL, LOCK_DIR_BOTH), LOCK_SCALE_BLOCK);
     // Before any CAPS read the blanket expands onto the five named buttons.
     assert_eq!(d.held_locks().len(), 5);
-    // The blanket is held unexpanded, so once CAPS reports a wider device the SAME blanket re-expands
-    // onto every declared button: a reconnect that re-read CAPS re-asserts the wide buttons instead of
-    // the frozen five. Materialising at apply time (the old behaviour) could not do this.
+    // The blanket is held unexpanded, so once CAPS reports a wider device it re-expands onto every
+    // declared button, and a reconnect re-asserts the wide buttons, not a frozen five.
     d.note_declared_buttons(8);
     let ids: Vec<u16> = d.held_locks().iter().map(|&((_, id, _), _)| id).collect();
     assert_eq!(ids, (0..8).collect::<Vec<u16>>());
@@ -230,8 +229,8 @@ fn a_button_blanket_widens_to_the_declared_count_when_caps_arrives() {
 
 #[test]
 fn a_button_blanket_re_expands_when_the_declared_count_changes() {
-    // A device swapped in during a reconnect blip re-reads CAPS, and the held blanket then re-asserts
-    // onto the new count, wider or narrower, because it was never materialised at the old one.
+    // A device swapped in during a blip re-reads CAPS, and the unexpanded blanket re-asserts onto
+    // the new count, wider or narrower.
     let mut d = DesiredState::default();
     d.note_declared_buttons(8);
     d.apply_lock((LOCK_CLS_BTN, LOCK_ID_ALL, LOCK_DIR_BOTH), LOCK_SCALE_BLOCK);
@@ -244,8 +243,8 @@ fn a_button_blanket_re_expands_when_the_declared_count_changes() {
 
 #[test]
 fn an_undone_button_release_restores_the_blanket() {
-    // The single-button write that bursts the blanket rolls back cleanly when its frame never went out,
-    // leaving the blanket as it was rather than the materialised rows the burst created.
+    // A single-button write that bursts the blanket rolls back to the blanket if its frame never went
+    // out, not to the rows the burst created.
     let mut d = DesiredState::default();
     d.note_declared_buttons(8);
     d.apply_lock((LOCK_CLS_BTN, LOCK_ID_ALL, LOCK_DIR_BOTH), LOCK_SCALE_BLOCK);
@@ -258,8 +257,8 @@ fn an_undone_button_release_restores_the_blanket() {
 
 #[test]
 fn a_button_blanket_expands_onto_the_declared_count() {
-    // Once CAPS reports a wide button count, the blanket expands onto every declared button, so a
-    // reconnect re-asserts a lock on a button past the five named ones.
+    // With a wide count from CAPS, the blanket covers every declared button, so a reconnect
+    // re-asserts a lock past the five named ones.
     let mut d = DesiredState::default();
     d.note_declared_buttons(16);
     d.apply_lock((LOCK_CLS_BTN, LOCK_ID_ALL, LOCK_DIR_BOTH), LOCK_SCALE_BLOCK);
@@ -283,8 +282,7 @@ fn a_button_blanket_caps_at_the_box_ceiling() {
 
 #[test]
 fn a_key_blanket_is_its_own_row() {
-    // The box holds a key blanket as its own flag rather than expanding it over 256 usages, so it
-    // stays one row here and reapplies as one command.
+    // The box holds a key blanket as a flag, not 256 usages, so it is one row and one command here.
     let mut d = DesiredState::default();
     d.apply_lock((LOCK_CLS_KEY, LOCK_ID_ALL, LOCK_DIR_POS), LOCK_SCALE_BLOCK);
     assert_eq!(
@@ -293,9 +291,8 @@ fn a_key_blanket_is_its_own_row() {
     );
 }
 
-// The box keeps granular media locks in a fixed 8-slot array filled first-free-slot-first
-// (input_core.c media_set, INPUT_MEDIA_MAX = 8), so what a replay has to reproduce is the order they
-// were taken in, not their ids.
+// The box fills granular media locks into 8 slots first-free-first (input_core.c media_set,
+// INPUT_MEDIA_MAX = 8), so a replay reproduces the take order, not id order.
 use crate::protocol::opcode::LOCK_CLS_MEDIA;
 
 fn media_ids(d: &DesiredState) -> Vec<u16> {
@@ -309,14 +306,14 @@ fn media_ids(d: &DesiredState) -> Vec<u16> {
 #[test]
 fn media_locks_replay_in_the_order_they_were_taken() {
     let mut d = DesiredState::default();
-    // Nine usages in an order id-sorting would not produce: MUTE, VOL_UP, VOL_DOWN come back in that
-    // order only if the take order is what is remembered.
+    // Nine usages out of id order: MUTE, VOL_UP, VOL_DOWN return in that order only if the take
+    // order is kept.
     let taken = [0x223u16, 0x30, 0xB5, 0xE9, 0xB6, 0xCD, 0xE2, 0xB7, 0xEA];
     for id in taken {
         d.apply_lock((LOCK_CLS_MEDIA, id, LOCK_DIR_BOTH), LOCK_SCALE_BLOCK);
     }
-    // Past the box's eight slots the ninth taken is what falls off, here and on the box alike; by id
-    // the ninth would be 0x223 and the box would still be dropping 0xEA.
+    // The ninth taken falls off here as on the box; by id it would be 0x223 while the box drops
+    // 0xEA.
     assert_eq!(media_ids(&d), taken);
 }
 
@@ -373,8 +370,7 @@ fn an_undone_apply_leaves_the_state_exactly_as_it_was() {
     d.restore_lock(undo);
     assert_eq!((d.held_locks(), d.is_idle()), before);
 
-    // Including the case that took a fresh row: undoing it must leave nothing behind, blanket
-    // expansion and media order alike.
+    // Undoing a fresh row leaves nothing behind, blanket expansion and media order alike.
     let undo = d.apply_lock((LOCK_CLS_BTN, LOCK_ID_ALL, LOCK_DIR_BOTH), LOCK_SCALE_BLOCK);
     d.restore_lock(undo);
     let undo = d.apply_lock((LOCK_CLS_MEDIA, 0x30, LOCK_DIR_BOTH), LOCK_SCALE_BLOCK);
@@ -389,8 +385,8 @@ fn an_undone_apply_leaves_the_state_exactly_as_it_was() {
 
 #[test]
 fn a_row_of_another_class_never_disturbs_the_media_order() {
-    // The classes share an id space: media usage 3 and button 3 are different rows, and releasing
-    // one must not move the other in the replay.
+    // Media usage 3 and button 3 are different rows; releasing one must not move the other in the
+    // replay.
     let mut d = DesiredState::default();
     d.apply_lock((LOCK_CLS_MEDIA, 3, LOCK_DIR_BOTH), LOCK_SCALE_BLOCK);
     d.apply_lock((LOCK_CLS_MEDIA, 0xEA, LOCK_DIR_BOTH), LOCK_SCALE_BLOCK);
@@ -546,8 +542,8 @@ fn reset_clears_transforms_too() {
     assert!(d.is_idle());
 }
 
-// What the box holds of a clip is not re-asserted, but a second of silence clears it, so any of it keeps
-// the keepalive running.
+// A clip is not re-asserted, but a second of silence clears it, so any part of it keeps the
+// keepalive running.
 #[test]
 fn a_loaded_clip_a_setting_or_a_trigger_is_not_idle() {
     let mut d = DesiredState::default();
@@ -660,8 +656,8 @@ fn a_reset_forgets_the_clip() {
     assert!(d.is_idle());
 }
 
-// After a reconnect the box's own answer replaces what was recorded: a blip shorter than the silence
-// window leaves the clip standing, a longer one clears it.
+// After a reconnect the box's reply replaces the record: a blip shorter than the silence window
+// leaves the clip, a longer one clears it.
 #[test]
 fn a_reconnect_adopts_what_the_box_still_holds_of_a_clip() {
     let empty = ClipStatus::default();
@@ -848,8 +844,8 @@ fn a_reconnect_adopts_what_the_box_still_holds_of_a_clip() {
     assert!(d.is_idle());
 }
 
-// A reconnect that finds the box no longer holding an appended clip reports it lost; one that finds
-// it still loaded, or had nothing appended, does not.
+// A reconnect finding an appended clip gone reports it lost; one finding it loaded, or with nothing
+// appended, does not.
 #[test]
 fn a_reconnect_that_finds_the_clip_gone_reports_it_lost() {
     let gone = ClipStatus::default();
@@ -883,9 +879,9 @@ fn a_reconnect_that_finds_the_clip_gone_reports_it_lost() {
     assert!(!d.clip_lost());
 }
 
-// Only a ring the crate loaded and the box then reports empty is lost: a reading taken across an
-// append says nothing, a ring the box had already emptied (a stopped streaming clip) loses nothing,
-// and a release that left the ring standing keeps the clip.
+// Lost only when the crate loaded the ring and the box then reports it empty: a reading across an
+// append says nothing, a ring the box had emptied (a stopped streaming clip) loses nothing, and a
+// release leaving the ring keeps the clip.
 #[test]
 fn a_clip_is_lost_only_on_the_box_s_word_that_its_ring_went() {
     let gone = ClipStatus::default();

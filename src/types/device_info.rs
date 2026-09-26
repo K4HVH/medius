@@ -4,7 +4,7 @@ use core::fmt;
 
 use crate::protocol::opcode::{DI_HAS_BOS, DI_HAS_SERIAL};
 
-/// The cloned device's primary kind, from its Boot-interface `bInterfaceProtocol`.
+/// Cloned device's primary kind, from its Boot-interface `bInterfaceProtocol`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum DeviceKind {
     /// No Boot interface, or nothing cloned yet.
@@ -34,7 +34,7 @@ impl fmt::Display for DeviceKind {
     }
 }
 
-/// The cloned device's USB identity, read from its descriptors.
+/// Cloned device's USB identity, from its descriptors.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
 pub struct DeviceInfo {
     /// `idVendor`.
@@ -49,14 +49,14 @@ pub struct DeviceInfo {
     pub has_serial: bool,
     /// The clone serves a BOS descriptor (`bcdUSB >= 0x0201`).
     pub has_bos: bool,
-    /// The cloned device's primary kind (Boot-interface protocol).
+    /// Primary kind (Boot-interface protocol).
     pub kind: DeviceKind,
-    /// The cloned device's `iProduct` string (empty if it serves none).
+    /// `iProduct` string (empty if it serves none).
     pub product: String,
 }
 
 impl DeviceInfo {
-    /// Decode a `RESP(DEVICE_INFO)` payload (§4.3).
+    /// Decodes a `RESP(DEVICE_INFO)` payload (§4.3).
     pub(crate) fn from_payload(p: &[u8]) -> Option<Self> {
         if p.len() < 11 {
             return None;
