@@ -145,8 +145,8 @@ fn rate_unlearned_period_is_none() {
 
 #[test]
 fn decode_stats_exact_bytes_with_saturation() {
-    // Same vector as the firmware packer test. The three drop counters are full width: 0xDEADBEEF
-    // would have saturated had they been narrowed. The last two bytes are the session counter.
+    // The firmware packer test's vector. 0xDEADBEEF proves the three drop counters are full width;
+    // the last two bytes are the session counter.
     let p = [
         5u8, 0x04, 0x03, 0x02, 0x01, 0xFF, 0xFF, 0x0A, 0x00, 0xFF, 0x02, 0xFF, 0xFF, 0x07, 0x00,
         0x09, 0x00, 0xEF, 0xBE, 0xAD, 0xDE, 0x04, 0x03, 0x02, 0x01, 0x0D, 0x0C, 0x0B, 0x0A, 0xEF,

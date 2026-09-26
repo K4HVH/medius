@@ -20,8 +20,8 @@ impl Device {
         self.move_axis(Motion::Wheel(delta), MoveTiming::Ride, PendingMotion::Keep)
     }
 
-    /// `MOVE` (cursor) that bypasses movement riding: leaves on the next mouse report the box sends,
-    /// native or its own, even while riding is on, and leaves motion already held for a ride held.
+    /// `MOVE` (cursor) bypassing movement riding: leaves on the next mouse report the box sends,
+    /// native or its own, and motion already held for a ride stays held.
     pub fn move_rel_now(&self, dx: i16, dy: i16) -> Result<()> {
         self.move_axis(
             Motion::Cursor { dx, dy },
@@ -30,7 +30,7 @@ impl Device {
         )
     }
 
-    /// `MOVE` (wheel) that bypasses movement riding.
+    /// `MOVE` (wheel) bypassing movement riding.
     pub fn wheel_now(&self, delta: i16) -> Result<()> {
         self.move_axis(Motion::Wheel(delta), MoveTiming::Now, PendingMotion::Keep)
     }
@@ -40,12 +40,12 @@ impl Device {
         self.move_axis(Motion::Pan(delta), MoveTiming::Ride, PendingMotion::Keep)
     }
 
-    /// `MOVE` (AC Pan) that bypasses movement riding.
+    /// `MOVE` (AC Pan) bypassing movement riding.
     pub fn pan_now(&self, delta: i16) -> Result<()> {
         self.move_axis(Motion::Pan(delta), MoveTiming::Now, PendingMotion::Keep)
     }
 
-    /// `MOVE` (zero delta, `FLUSH`): emit the motion held for a ride now, ignoring the ride window.
+    /// `MOVE` (zero delta, `FLUSH`): emit motion held for a ride now, ignoring the ride window.
     pub fn flush_motion(&self) -> Result<()> {
         self.move_axis(
             Motion::Cursor { dx: 0, dy: 0 },
@@ -54,7 +54,7 @@ impl Device {
         )
     }
 
-    /// `MOVE` (zero delta, `DISCARD`): drop the motion held for a ride. Motion sent with
+    /// `MOVE` (zero delta, `DISCARD`): drop motion held for a ride. Motion sent with
     /// [`move_rel_now`](Self::move_rel_now) is untouched.
     pub fn discard_motion(&self) -> Result<()> {
         self.move_axis(
@@ -64,7 +64,7 @@ impl Device {
         )
     }
 
-    /// `MOVE`: drive a relative axis, choosing when this delta reaches the game PC and what happens to
+    /// `MOVE`: drive a relative axis, choosing when the delta reaches the game PC and what happens to
     /// motion already held for a ride.
     pub fn move_axis(
         &self,

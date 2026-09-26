@@ -62,8 +62,8 @@ fn resp_patches_all_flags() {
 
 #[test]
 fn resp_patches_high_bytes_decode() {
-    // Hand-computed: [14][flags 0][n 1] then Report/cfg 1/index 5 at offset 0x0102 (258), len 0x0100
-    // (256). A u8 read of offset or len yields a different value; a transpose swaps 258 and 256.
+    // Hand-computed: [14][flags 0][n 1] then Report/cfg 1/index 5 at offset 0x0102 (258), len
+    // 0x0100 (256). A u8 read of either changes it; a transpose swaps 258 and 256.
     let p = [14, 0x00, 1, 0x02, 0x01, 0x05, 0x02, 0x01, 0x00, 0x01];
     let Some(Resp::Patches(s)) = parse_resp(&p) else {
         panic!("not a RESP(PATCHES)");
@@ -197,8 +197,8 @@ mod mock_roundtrip {
 
     #[test]
     fn large_offset_and_long_patch_survive_the_roundtrip() {
-        // set_patch has no size gate; a 300-byte patch at offset >= 0x0100 must round-trip through the
-        // store and the entry readback intact (a u8 offset would read 258 back as 2).
+        // No size gate: a 300-byte patch at offset >= 0x0100 round-trips through the store and the
+        // entry readback (a u8 offset reads 258 as 2).
         let device = Device::with_mock(MockBox::new());
         device
             .set_patch(&Patch::in_interface(1, 2, 258, vec![0xAB; 300]))
@@ -212,9 +212,8 @@ mod mock_roundtrip {
         assert_eq!(read.bytes, vec![0xAB; 300]);
     }
 
-    // pending is the stored set against the one the clone serves, and applied is that one being
-    // non-empty: an edit, or emptying the set, after an apply leaves the clone as it was until the
-    // next apply.
+    // pending compares the stored set with the served one; applied is the served one being
+    // non-empty. An edit or emptying after an apply leaves the clone as it was until the next apply.
     #[test]
     fn pending_is_the_stored_set_against_the_one_served() {
         let device = Device::with_mock(MockBox::new().with_imperfect(true));
@@ -247,8 +246,8 @@ mod mock_roundtrip {
         assert_eq!(flags(), (false, false));
         assert!(!device.query_health().unwrap().patch_on);
 
-        // With the opt-in off the clone is served bare, and a stored set waits. The toggle presents
-        // the clone on the box's next loop tick, not inside the command.
+        // With the opt-in off the clone is served bare and a stored set waits. The toggle presents
+        // the clone on the box's next loop tick, after the command.
         let settle = |want: (bool, bool), what: &str| {
             let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
             while flags() != want {
@@ -278,8 +277,8 @@ mod mock_roundtrip {
         assert_eq!(device.counters().restarts, 0, "a clear is no restart");
     }
 
-    // full is the last store refused for room, by count or by pool, and any change the box takes
-    // resets it. It does not describe how many patches are stored.
+    // full means the last store was refused for room (count or pool); any accepted change resets
+    // it. It is not a count of stored patches.
     #[test]
     fn table_full_is_the_last_store_refused_for_room() {
         let device = Device::with_mock(MockBox::new());
@@ -325,8 +324,8 @@ mod mock_roundtrip {
         assert!(!full(), "a removal is a change");
     }
 
-    // The bytes a key already holds change nothing: the patch keeps its place in the set, and a
-    // refusal for room stays reported.
+    // Re-storing a key's own bytes changes nothing: the patch keeps its place and a refusal for
+    // room stays reported.
     #[test]
     fn re_storing_the_bytes_held_changes_nothing() {
         let device = Device::with_mock(MockBox::new());

@@ -14,12 +14,12 @@ use crate::ctypes::*;
 use crate::device::MediusDevice;
 use crate::error::{MediusStatus, clear_error, fail, guard, guard_status, record};
 
-/// A scriptable fake box. Opaque; create with `medius_mock_new`, free with `medius_mock_free`.
+/// An opaque scriptable fake box; create with `medius_mock_new`, free with `medius_mock_free`.
 pub struct MediusMockBox {
     pub(crate) inner: MockBox,
 }
 
-/// Create a fresh mock that records commands and auto-answers queries with defaults.
+/// A fresh mock that records commands and replies to queries with defaults.
 #[unsafe(no_mangle)]
 pub extern "C" fn medius_mock_new() -> *mut MediusMockBox {
     guard(std::ptr::null_mut(), || {
@@ -29,7 +29,7 @@ pub extern "C" fn medius_mock_new() -> *mut MediusMockBox {
     })
 }
 
-/// Clone a mock handle: another handle sharing the same recorded state (like `MockBox::clone`).
+/// Clone a mock handle sharing the same recorded state (like `MockBox::clone`).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_mock_clone(mock: *const MediusMockBox) -> *mut MediusMockBox {
     guard(std::ptr::null_mut(), || {
@@ -61,7 +61,7 @@ fn with_mock(mock: *mut MediusMockBox, f: impl FnOnce(&MockBox)) {
     });
 }
 
-/// Set the version the mock answers to a VERSION query.
+/// Set the mock's VERSION reply.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_mock_set_version(mock: *mut MediusMockBox, value: MediusVersion) {
     with_mock(mock, |m| {
@@ -69,7 +69,7 @@ pub unsafe extern "C" fn medius_mock_set_version(mock: *mut MediusMockBox, value
     });
 }
 
-/// Set the health flags the mock answers to a HEALTH query.
+/// Set the mock's HEALTH reply.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_mock_set_health(mock: *mut MediusMockBox, value: MediusHealth) {
     with_mock(mock, |m| {
@@ -77,8 +77,8 @@ pub unsafe extern "C" fn medius_mock_set_health(mock: *mut MediusMockBox, value:
     });
 }
 
-/// Set the device identity the mock answers to a DEVICE_INFO query. `value.kind` takes a
-/// `MEDIUS_DEVICE_KIND_*` constant; any other value is ignored, as these setters have no status.
+/// Set the mock's DEVICE_INFO reply. `value.kind` takes a `MEDIUS_DEVICE_KIND_*` constant; any
+/// other value is ignored.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_mock_set_device_info(
     mock: *mut MediusMockBox,
@@ -91,7 +91,7 @@ pub unsafe extern "C" fn medius_mock_set_device_info(
     });
 }
 
-/// Set the whole capabilities (mouse + keyboard) the mock answers to a CAPS query.
+/// Set the mock's whole CAPS reply (mouse and keyboard).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_mock_set_caps(mock: *mut MediusMockBox, value: MediusCaps) {
     with_mock(mock, |m| {
@@ -118,7 +118,7 @@ pub unsafe extern "C" fn medius_mock_set_kbd_caps(mock: *mut MediusMockBox, valu
     });
 }
 
-/// Set the rate the mock answers to a RATE query.
+/// Set the mock's RATE reply.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_mock_set_rate(mock: *mut MediusMockBox, value: MediusRate) {
     with_mock(mock, |m| {
@@ -126,7 +126,7 @@ pub unsafe extern "C" fn medius_mock_set_rate(mock: *mut MediusMockBox, value: M
     });
 }
 
-/// Set the stats the mock answers to a STATS query.
+/// Set the mock's STATS reply.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_mock_set_stats(mock: *mut MediusMockBox, value: MediusStats) {
     with_mock(mock, |m| {
@@ -134,7 +134,7 @@ pub unsafe extern "C" fn medius_mock_set_stats(mock: *mut MediusMockBox, value: 
     });
 }
 
-/// Set the lock bitmask the mock answers to a LOCKS query.
+/// Set the lock bitmask of the mock's LOCKS reply.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_mock_set_locks(mock: *mut MediusMockBox, value: MediusLocks) {
     with_mock(mock, |m| {
@@ -142,7 +142,7 @@ pub unsafe extern "C" fn medius_mock_set_locks(mock: *mut MediusMockBox, value: 
     });
 }
 
-/// Set the catch state the mock answers to a CATCH query.
+/// Set the mock's CATCH reply.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_mock_set_catch_state(
     mock: *mut MediusMockBox,
@@ -153,9 +153,8 @@ pub unsafe extern "C" fn medius_mock_set_catch_state(
     });
 }
 
-/// Set the imperfect-clone status the mock answers to an OPTION(IMPERFECT) query. With the opt-in
-/// off the mock drops its consuming clip packet triggers, as the box does when OPTION(IMPERFECT) goes
-/// off.
+/// Set the mock's OPTION(IMPERFECT) reply. With the opt-in off the mock drops its consuming clip
+/// packet triggers, as the box does.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_mock_set_imperfect_status(
     mock: *mut MediusMockBox,
@@ -166,8 +165,8 @@ pub unsafe extern "C" fn medius_mock_set_imperfect_status(
     });
 }
 
-/// Set the canned `(status, IN data)` the mock answers a `TRANSFER` with while the opt-in is on; with
-/// it off the mock answers `REFUSED` regardless. A non-OK status carries no data, as the box does.
+/// Set the canned `(status, IN data)` reply to a `TRANSFER` while the opt-in is on; with it off the
+/// mock replies `REFUSED`. A non-OK status carries no data, as on the box.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_mock_set_transfer_reply(
     mock: *mut MediusMockBox,
@@ -185,7 +184,7 @@ pub unsafe extern "C" fn medius_mock_set_transfer_reply(
     });
 }
 
-/// Set the movement-riding window the mock answers to a query; `enabled == false` means off.
+/// Set the mock's movement-riding window reply; `enabled == false` means off.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_mock_set_movement_riding(
     mock: *mut MediusMockBox,
@@ -198,8 +197,8 @@ pub unsafe extern "C" fn medius_mock_set_movement_riding(
     });
 }
 
-/// Set the bearing the mock answers to an OPTION(BEARING) query; `window_ms` 0 = off. `mode` takes a
-/// `MEDIUS_BEARING_MODE_*` constant; any other value is ignored, as the box ignores it.
+/// Set the mock's OPTION(BEARING) reply; `window_ms` 0 = off. `mode` takes a
+/// `MEDIUS_BEARING_MODE_*` constant; any other value is ignored, as on the box.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_mock_set_bearing(
     mock: *mut MediusMockBox,
@@ -217,9 +216,9 @@ pub unsafe extern "C" fn medius_mock_set_bearing(
     });
 }
 
-/// Set the emit-rate pacing mode and the forced wire rate the mock answers to an OPTION(EMIT) query;
-/// `hz` matters only for `Fixed`, `force_hz` 0 means unforced. `mode` takes a `MEDIUS_EMIT_MODE_*`
-/// constant; any other value leaves the pacing mode alone.
+/// Set the pacing mode and forced wire rate of the mock's OPTION(EMIT) reply; `hz` matters only for
+/// `Fixed`, `force_hz` 0 means unforced. `mode` takes a `MEDIUS_EMIT_MODE_*` constant; any other
+/// value leaves the pacing mode alone.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_mock_set_emit_pace(
     mock: *mut MediusMockBox,
@@ -235,10 +234,10 @@ pub unsafe extern "C" fn medius_mock_set_emit_pace(
     });
 }
 
-/// Set what the mock answers to an OPTION(RENDER) query: the texture, whether native motion
-/// goes through it, and whether a profile has armed. `mode` takes a `MEDIUS_RENDER_MODE_*` constant;
-/// any other value leaves the texture alone. `ready` is what gates rendering on a real box, so a mock
-/// left unarmed is the state every box passes through after a power cut.
+/// Set the mock's OPTION(RENDER) reply: texture, whether native motion goes through it, and whether
+/// a profile is armed. `mode` takes a `MEDIUS_RENDER_MODE_*` constant; any other value leaves the
+/// texture alone. `ready` gates rendering on a real box; an unarmed mock is every box's state after
+/// a power cut.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_mock_set_render(
     mock: *mut MediusMockBox,
@@ -254,9 +253,9 @@ pub unsafe extern "C" fn medius_mock_set_render(
     });
 }
 
-/// Set the command period the mock has learned, in microseconds. A real box learns it off `MOVE`
-/// arrivals and releases nothing across an interval until it has, so a mock left at 0 answers a span
-/// of 0 whatever percent is set, which is the state every box starts in.
+/// Set the mock's learned command period, in microseconds. A real box learns it from `MOVE`
+/// arrivals and spreads nothing until then, so a mock left at 0 replies with a span of 0 whatever
+/// the percent, as every box starts.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_mock_set_spread_learned(mock: *mut MediusMockBox, period_us: u32) {
     with_mock(mock, |m| m.set_spread_learned(period_us));
@@ -270,7 +269,7 @@ pub unsafe extern "C" fn medius_mock_set_advertised_hz(mock: *mut MediusMockBox,
     });
 }
 
-/// Set the [`ClipStatus`](medius::ClipStatus) the mock answers to `medius_clip_query_status`.
+/// Set the mock's [`ClipStatus`](medius::ClipStatus) reply to `medius_clip_query_status`.
 /// `value.state` takes a `MEDIUS_CLIP_STATE_*` constant; any other value is ignored.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_mock_set_clip_status(
@@ -284,15 +283,15 @@ pub unsafe extern "C" fn medius_mock_set_clip_status(
     });
 }
 
-/// Set the [`ClipSettings`](medius::ClipSettings) the mock answers to `medius_clip_query_config`.
-/// `value.packet_triggers[0..packet_n]` are bound in order, as `medius_clip_bind_packet` binds them,
-/// under the opt-in the mock holds when they are scripted. The mock holds the ones the box would
-/// take, each with its scripted `hits`, and leaves out the rest as the box's own answer would: a
-/// direction the class never carries, a match bit outside the mask, a run with no condition,
-/// `consume` on `CONTROL` or with the opt-in off, and entries past the match pool. A trigger with a
-/// byte no constant names is skipped. Script the opt-in with `medius_mock_set_imperfect_status`
-/// before a consuming trigger. The triggers held are the set `medius_clip_bind_packet` adds to and
-/// `medius_mock_clip_packet` runs a packet through.
+/// Set the mock's [`ClipSettings`](medius::ClipSettings) reply to `medius_clip_query_config`.
+/// `value.packet_triggers[0..packet_n]` are bound in order, as `medius_clip_bind_packet` binds
+/// them, under the opt-in the mock holds at scripting time. The mock keeps those the box would,
+/// each with its scripted `hits`, and drops the rest as the box's reply would: a direction the
+/// class never carries, a match bit outside the mask, a run with no condition, `consume` on
+/// `CONTROL` or with the opt-in off, and entries past the match pool. A trigger with an unnamed
+/// byte is skipped. Script the opt-in with `medius_mock_set_imperfect_status` before a consuming
+/// trigger. `medius_clip_bind_packet` adds to the held set and `medius_mock_clip_packet` runs
+/// packets through it.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_mock_set_clip_settings(
     mock: *mut MediusMockBox,
@@ -304,16 +303,16 @@ pub unsafe extern "C" fn medius_mock_set_clip_settings(
 }
 
 /// Run one packet through the mock's packet triggers, as the box does for a packet crossing `class`
-/// at `id` in `direction` whose first bytes are `head[0..head_len]`. The most specific trigger the
-/// head matches counts it in its `hits`. Returns whether that trigger drives its action on this
-/// packet, with the `MEDIUS_CLIP_ACTION_*` value in `*out_action`; false when no trigger matches,
-/// and when that trigger is `once_per_run` and the packet continues a run. `*out_consumed` is
-/// whether that trigger consumes the packet, whatever the return. A null out is skipped.
+/// at `id` in `direction` with first bytes `head[0..head_len]`. The most specific matching trigger
+/// counts it in `hits`. Returns whether that trigger drives its action on this packet, with the
+/// `MEDIUS_CLIP_ACTION_*` value in `*out_action`; false when no trigger matches, or when a
+/// `once_per_run` trigger's run continues. `*out_consumed` is whether that trigger consumes the
+/// packet, whatever the return. A null out is skipped.
 ///
-/// A packet travels `POSITIVE` (IN) or `NEGATIVE` (OUT) across a surface that carries that flow: IN
-/// for `MEDIUS_CATCH_CLASS_HID_IN` and `_EMIT`, OUT for `_HID_OUT`, either for the vendor classes and
-/// `_CONTROL`. Any other `class` and `direction`, a byte no constant names among them, is no packet:
-/// it returns false with `*out_consumed` false, counts in no `hits` and leaves every run as it was.
+/// A packet travels `POSITIVE` (IN) or `NEGATIVE` (OUT) across a surface carrying that flow: IN for
+/// `MEDIUS_CATCH_CLASS_HID_IN` and `_EMIT`, OUT for `_HID_OUT`, either for the vendor classes and
+/// `_CONTROL`. Any other `class` and `direction`, unnamed bytes included, is no packet: it returns
+/// false with `*out_consumed` false, counts in no `hits` and leaves every run unchanged.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_mock_clip_packet(
     mock: *mut MediusMockBox,
@@ -355,31 +354,31 @@ pub unsafe extern "C" fn medius_mock_clip_packet(
     })
 }
 
-/// Simulate a device-chip restart: the mock drops its session state, keeps what it stores, sends its
-/// hello now and again on the next frame it receives, and has its clone back 100 ms later.
+/// Simulate a device-chip restart: the mock drops its session state, keeps its stored state, sends
+/// its hello now and on the next frame it receives, and has its clone back 100 ms later.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_mock_restart(mock: *mut MediusMockBox) {
     with_mock(mock, |m| m.restart());
 }
 
-/// Simulate the inter-chip link dropping and coming back: the mock releases the session a host set
-/// (counted in `MediusStats::session`) and the clone stays up.
+/// Simulate an inter-chip link drop and recovery: the mock releases host-set session state (counted
+/// in `MediusStats::session`); the clone stays up.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_mock_link_lost(mock: *mut MediusMockBox) {
     with_mock(mock, |m| m.link_lost());
 }
 
-/// Simulate the real device detaching: the mock releases the session a host set at once. With
+/// Simulate the real device detaching: the mock releases host-set session state at once. With
 /// `back_within_grace` the same device re-attaches inside the 250 ms grace and the clone stays up;
-/// otherwise the clone is torn down when the grace ends, which counts again only after a command
-/// arrived in it, and stays down until `medius_mock_attach`.
+/// otherwise the clone is torn down when the grace ends (counted again only if a command arrived
+/// during it) and stays down until `medius_mock_attach`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_mock_detach(mock: *mut MediusMockBox, back_within_grace: bool) {
     with_mock(mock, |m| m.detach(back_within_grace));
 }
 
-/// Simulate the device attaching again: inside a detach's grace the clone stays as it is; after the
-/// teardown a fresh clone starts, which has nothing to release.
+/// Simulate the device attaching again: inside a detach's grace the clone stays as it is; after
+/// teardown a fresh clone starts with nothing to release.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_mock_attach(mock: *mut MediusMockBox) {
     with_mock(mock, |m| m.attach());
@@ -410,8 +409,8 @@ pub unsafe extern "C" fn medius_mock_push_raw(
 }
 
 /// Push a LOG line as if the box emitted it (surfaces on the device's log stream). `level` takes a
-/// `MEDIUS_LOG_LEVEL_*` constant; any other value reads as `INFO`, which is what the wire decoder
-/// does with a level byte it does not know.
+/// `MEDIUS_LOG_LEVEL_*` constant; any other value reads as `INFO`, as the wire decoder reads an
+/// unknown level byte.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_mock_push_log(
     mock: *mut MediusMockBox,
@@ -465,7 +464,7 @@ pub unsafe extern "C" fn medius_mock_push_usages(
 }
 
 /// Push a TRAFFIC_EVENT as if the box emitted it (surfaces as a `Traffic` catch event).
-/// `true_len` above `len` is how a snaplen-truncated capture looks.
+/// `true_len` above `len` makes a snaplen-truncated capture.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_mock_push_traffic(
     mock: *mut MediusMockBox,
@@ -503,7 +502,7 @@ pub unsafe extern "C" fn medius_mock_push_traffic(
     });
 }
 
-/// The number of commands the host has sent to the mock so far.
+/// Commands the host has sent the mock so far.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_mock_recorded(mock: *mut MediusMockBox) -> usize {
     guard(0, || {

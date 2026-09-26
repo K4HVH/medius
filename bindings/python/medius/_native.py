@@ -8,8 +8,8 @@ import sys
 from ctypes.util import find_library
 from pathlib import Path
 
-# MEDIUS_ABI_VERSION of the header these ctypes mirrors were written from; the tests hold it to the
-# header. Import refuses a library whose medius_abi_version() reports any other number.
+# The header's MEDIUS_ABI_VERSION these mirrors follow; the tests hold it to the header, and import
+# refuses a library whose medius_abi_version() reports another number.
 ABI_VERSION = 9
 
 MEDIUS_MAX_USAGES = 256
@@ -30,12 +30,12 @@ MEDIUS_MAX_REWRITE_MATCH = 16
 MEDIUS_MAX_PKT_MATCH = 16
 MEDIUS_MAX_DEV_PAYLOAD = 512
 
-# The CATCH wildcards are sentinel values, not a separate flag byte.
+# CATCH wildcard sentinels.
 MEDIUS_CATCH_CLASS_ANY = 0xFF
 MEDIUS_CATCH_ID_ANY = 0xFFFF
 MEDIUS_CLOCK_AGE_NONE = 0xFFFFFFFF
-# MediusClockEstimate.rate_ppb when the box has fitted no drift rate. Different from a fitted 0, which
-# says the two crystals are matched.
+# MediusClockEstimate.rate_ppb when the box has fitted no drift rate; a fitted 0 means the crystals
+# match.
 MEDIUS_CLOCK_RATE_NONE = -0x80000000
 
 u8 = ctypes.c_uint8
@@ -273,8 +273,8 @@ class MediusImperfectStatus(ctypes.Structure):
     _fields_ = [("allowed", u8), ("over_capacity", u8), ("clone_imperfect", u8)]
 
 
-# The advanced control layer (§3.14): control transfers, rewrite rules and descriptor patches. Each mirror
-# is checked field-for-field against medius.h by test_ctypes_structs_match_the_c_header.
+# Advanced control layer (§3.14): control transfers, rewrite rules, descriptor patches.
+# test_ctypes_structs_match_the_c_header checks each mirror field-for-field against medius.h.
 class MediusSetup(ctypes.Structure):
     _fields_ = [
         ("request_type", u8),
@@ -511,8 +511,8 @@ def _candidate_names():
 
 
 def _load_library():
-    # MEDIUS_LIB wins so dev/test runs can point at target/debug; then the
-    # bundled binary next to this file; then the system loader.
+    # MEDIUS_LIB first, so dev/test runs can point at target/debug; then the
+    # bundled binary beside this file; then the system loader.
     override = os.environ.get("MEDIUS_LIB")
     if override:
         return ctypes.CDLL(override)
@@ -538,17 +538,17 @@ def _load_library():
 
 
 def _check_abi(library):
-    # The structs above are a hand-written copy of medius.h. A library built from another header lays
-    # them out differently, and a call through a changed struct misreads it or overruns its buffer.
+    # The structs above hand-copy medius.h. A library built from another header lays them out
+    # differently, so a call through a changed struct misreads it or overruns its buffer.
     fn = library.medius_abi_version
     fn.restype = u32
     fn.argtypes = []
     got = int(fn())
     if got != ABI_VERSION:
         raise ImportError(
-            f"{library._name} speaks medius C ABI {got}, and this medius package is built for ABI "
-            f"{ABI_VERSION}; install the medius package that matches the library, or point "
-            "MEDIUS_LIB at a library built from the same release"
+            f"{library._name} is medius C ABI {got}, this package is built for ABI {ABI_VERSION}; "
+            "install the matching medius package, or point MEDIUS_LIB at a library from the same "
+            "release"
         )
 
 

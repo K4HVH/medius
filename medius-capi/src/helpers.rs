@@ -1,13 +1,12 @@
-//! Pure, device-free helpers: parameter constructors and inspectors mirroring the `medius` value-type methods.
+//! Device-free parameter constructors and inspectors mirroring `medius` value-type methods.
 
 use crate::ctypes::*;
 use crate::error::guard;
 
 const SETUP_LEN: u16 = 8;
 
-/// Build an [`MediusUsage`] addressing a mouse button. `button` takes a `MEDIUS_BUTTON_*` constant;
-/// a byte no constant names is carried through and refused by the call that takes the usage, since a
-/// constructor has no status to return.
+/// A [`MediusUsage`] for a mouse button. `button` takes a `MEDIUS_BUTTON_*` constant; an unnamed
+/// byte is carried through and refused by the call that takes the usage.
 #[unsafe(no_mangle)]
 pub extern "C" fn medius_usage_button(button: u8) -> MediusUsage {
     MediusUsage {
@@ -16,7 +15,7 @@ pub extern "C" fn medius_usage_button(button: u8) -> MediusUsage {
     }
 }
 
-/// Build an [`MediusUsage`] addressing a keyboard key.
+/// A [`MediusUsage`] for a keyboard key.
 #[unsafe(no_mangle)]
 pub extern "C" fn medius_usage_key(key: MediusKey) -> MediusUsage {
     MediusUsage {
@@ -25,7 +24,7 @@ pub extern "C" fn medius_usage_key(key: MediusKey) -> MediusUsage {
     }
 }
 
-/// Build an [`MediusUsage`] addressing a media key.
+/// A [`MediusUsage`] for a media key.
 #[unsafe(no_mangle)]
 pub extern "C" fn medius_usage_media(media: MediusMediaKey) -> MediusUsage {
     MediusUsage {
@@ -34,7 +33,7 @@ pub extern "C" fn medius_usage_media(media: MediusMediaKey) -> MediusUsage {
     }
 }
 
-/// Build a cursor-motion [`MediusMotion`].
+/// A cursor-motion [`MediusMotion`].
 #[unsafe(no_mangle)]
 pub extern "C" fn medius_motion_cursor(dx: i16, dy: i16) -> MediusMotion {
     MediusMotion {
@@ -46,7 +45,7 @@ pub extern "C" fn medius_motion_cursor(dx: i16, dy: i16) -> MediusMotion {
     }
 }
 
-/// Build a wheel [`MediusMotion`].
+/// A wheel [`MediusMotion`].
 #[unsafe(no_mangle)]
 pub extern "C" fn medius_motion_wheel(delta: i16) -> MediusMotion {
     MediusMotion {
@@ -58,7 +57,7 @@ pub extern "C" fn medius_motion_wheel(delta: i16) -> MediusMotion {
     }
 }
 
-/// Build an AC Pan (horizontal-scroll) [`MediusMotion`].
+/// An AC Pan (horizontal-scroll) [`MediusMotion`].
 #[unsafe(no_mangle)]
 pub extern "C" fn medius_motion_pan(delta: i16) -> MediusMotion {
     MediusMotion {
@@ -70,9 +69,8 @@ pub extern "C" fn medius_motion_pan(delta: i16) -> MediusMotion {
     }
 }
 
-/// Build a [`MediusLockTarget`] addressing an axis: `kind` takes `MEDIUS_LOCK_TARGET_KIND_X`, `_Y`,
-/// `_WHEEL` or `_PAN`. Any other byte is carried through and refused by the call that takes the
-/// target, since a constructor has no status to return.
+/// A [`MediusLockTarget`] for an axis: `kind` takes `MEDIUS_LOCK_TARGET_KIND_X`, `_Y`, `_WHEEL` or
+/// `_PAN`; any other byte is carried through and refused by the call that takes the target.
 #[unsafe(no_mangle)]
 pub extern "C" fn medius_lock_target_axis(kind: u8) -> MediusLockTarget {
     MediusLockTarget {
@@ -81,7 +79,7 @@ pub extern "C" fn medius_lock_target_axis(kind: u8) -> MediusLockTarget {
     }
 }
 
-/// Build a [`MediusLockTarget`] addressing a momentary usage (button, key, or media).
+/// A [`MediusLockTarget`] for a momentary usage (button, key, or media).
 #[unsafe(no_mangle)]
 pub extern "C" fn medius_lock_target_usage(usage: MediusUsage) -> MediusLockTarget {
     MediusLockTarget {
@@ -90,8 +88,8 @@ pub extern "C" fn medius_lock_target_usage(usage: MediusUsage) -> MediusLockTarg
     }
 }
 
-// A blanket covers any usage of its class; a specific entry matches its exact target. For an axis
-// target only the kind is significant (the usage field is an unused sentinel).
+// A blanket covers any usage of its class, a specific entry its exact target. An axis target
+// matches on kind alone; its usage field is an unused sentinel.
 fn lock_entry_covers(e: &MediusLockEntry, target: MediusLockTarget) -> bool {
     let usage_kind = MediusLockTargetKind::Usage as u8;
     let is_usage = target.kind == usage_kind;
@@ -102,11 +100,12 @@ fn lock_entry_covers(e: &MediusLockEntry, target: MediusLockTarget) -> bool {
     }
 }
 
-/// The scale in effect on `target`/`dir`: percent of the physical value kept, so
-/// `MEDIUS_LOCK_SCALE_PASS` when nothing weighs it. `Both` reports the least that survives across every
-/// direction, ranked by magnitude so a block outranks a reversal of any size.
-/// Mirrors `medius::Locks::scale_of`. `dir` takes a `MEDIUS_DIRECTION_*` constant; any other value
-/// names no entry and reads as `MEDIUS_LOCK_SCALE_PASS`.
+/// The scale on `target`/`dir`: of the covering entries, the one of smallest magnitude (a negative
+/// one on a tie), or `MEDIUS_LOCK_SCALE_PASS` when none covers; `Both` spans every direction. A block
+/// outranks a reversal of any size, and a pass outranks a reversal past -100. A delta meets the
+/// product of its fixed and relative scales, which this does not compute. Mirrors
+/// `medius::Locks::scale_of`. `dir` takes a `MEDIUS_DIRECTION_*` constant; any other value reads as
+/// `MEDIUS_LOCK_SCALE_PASS`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_locks_scale_of(
     locks: *const MediusLocks,
@@ -114,7 +113,7 @@ pub unsafe extern "C" fn medius_locks_scale_of(
     dir: u8,
 ) -> i16 {
     guard(MEDIUS_LOCK_SCALE_PASS, || {
-        if locks.is_null() {
+        if locks.is_null() || medius::Direction::from_u8(dir).is_none() {
             return MEDIUS_LOCK_SCALE_PASS;
         }
         let locks = unsafe { &*locks };
@@ -127,17 +126,17 @@ pub unsafe extern "C" fn medius_locks_scale_of(
                     && (dir == both || e.direction == both || e.direction == dir)
             })
             .map(|e| e.scale)
-            // By magnitude, not by value: a signed minimum ranks -50 below 0 and would report a
-            // reversal over a block, when the block is what the delta actually meets.
+            // By magnitude: a signed minimum ranks -50 below 0 and would report a reversal over the
+            // block the delta meets.
             .min_by_key(|s| (s.unsigned_abs(), *s))
             .unwrap_or(MEDIUS_LOCK_SCALE_PASS)
     })
 }
 
-/// Whether `target`/`dir` is blocked outright in `locks`. A direction merely weighed is not locked.
-/// `Both` asks about the two fixed signs, the pair it has always named; ask for a relative direction
-/// by name. Mirrors `medius::Locks::is_locked`. `dir` takes a `MEDIUS_DIRECTION_*` constant; any
-/// other value names no entry and reads as unlocked.
+/// Whether `target`/`dir` is blocked outright in `locks`; a weighed direction is not locked. `Both`
+/// asks about the two fixed signs; ask for a relative direction by name. Mirrors
+/// `medius::Locks::is_locked`. `dir` takes a `MEDIUS_DIRECTION_*` constant; any other value reads
+/// as unlocked.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_locks_is_locked(
     locks: *const MediusLocks,
@@ -157,7 +156,7 @@ pub unsafe extern "C" fn medius_locks_is_locked(
     })
 }
 
-/// The native report rate in Hz written to `out_hz`, false when there is no continuous cadence. Delegates to `medius::Rate::native_hz`.
+/// The native report rate in Hz, written to `out_hz`; false without a continuous cadence. Delegates to `medius::Rate::native_hz`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_rate_native_hz(rate: MediusRate, out_hz: *mut f32) -> bool {
     guard(false, || {
@@ -190,8 +189,7 @@ pub unsafe extern "C" fn medius_usage_event_is_held(
     })
 }
 
-// The momentary classes carry the same numbering as their catch classes; `None` for a byte no
-// `MEDIUS_CLASS_*` constant names.
+// Momentary classes share their catch class numbers; `None` for a byte no `MEDIUS_CLASS_*` names.
 fn input_catch_class(class: u8) -> Option<MediusCatchClass> {
     match class {
         MEDIUS_CATCH_CLASS_BTN | MEDIUS_CATCH_CLASS_KEY | MEDIUS_CATCH_CLASS_MEDIA => Some(class),
@@ -199,8 +197,8 @@ fn input_catch_class(class: u8) -> Option<MediusCatchClass> {
     }
 }
 
-// A filter addressing nothing: the wildcard class carrying a real id, which subscribing refuses
-// with MEDIUS_STATUS_ERR_INVALID_ARG.
+// Addresses nothing: the wildcard class with a real id, which subscribing refuses with
+// MEDIUS_STATUS_ERR_INVALID_ARG.
 fn unaddressable() -> MediusCatchFilter {
     MediusCatchFilter {
         class: MEDIUS_CATCH_CLASS_ANY,
@@ -210,8 +208,8 @@ fn unaddressable() -> MediusCatchFilter {
     }
 }
 
-/// One momentary usage: a button, a key, or a media usage. The same thing `medius_device_lock` takes.
-/// A `usage.kind` no `MEDIUS_CLASS_*` constant names yields a filter subscribing refuses.
+/// One momentary usage (button, key, or media), as `medius_device_lock` takes. An unnamed
+/// `usage.kind` yields a filter subscribing refuses.
 #[unsafe(no_mangle)]
 pub extern "C" fn medius_catch_filter_watch(usage: MediusUsage) -> MediusCatchFilter {
     match input_catch_class(usage.kind) {
@@ -246,8 +244,8 @@ pub extern "C" fn medius_catch_filter_watch_axes() -> MediusCatchFilter {
     blanket(MEDIUS_CATCH_CLASS_AXIS)
 }
 
-/// Write the four input-class filters to `out[0..4]`: buttons, keys, media and axes. This is the
-/// whole of what `medius_device_input_events` can report.
+/// Write the four input-class filters to `out[0..4]`: buttons, keys, media and axes, everything
+/// `medius_device_input_events` can report.
 ///
 /// # Safety
 /// `out` must point to space for four `MediusCatchFilter`.
@@ -267,8 +265,8 @@ pub unsafe extern "C" fn medius_catch_filter_all_input(out: *mut MediusCatchFilt
     })
 }
 
-/// One traffic address: an endpoint, an interface, or a control endpoint number. `class` must be one
-/// of the traffic classes (`MEDIUS_CATCH_CLASS_HID_IN` upwards).
+/// One traffic address: an endpoint, an interface, or a control endpoint number. `class` must be a
+/// traffic class (`MEDIUS_CATCH_CLASS_HID_IN` upwards).
 #[unsafe(no_mangle)]
 pub extern "C" fn medius_catch_filter_traffic(
     class: MediusCatchClass,
@@ -283,10 +281,10 @@ pub extern "C" fn medius_catch_filter_traffic_class(class: MediusCatchClass) -> 
     blanket(class)
 }
 
-/// Every class, every id, both directions, whole packets. One table entry, not an expansion.
+/// Every class, every id, both directions, whole packets, as one table entry.
 ///
-/// This includes `MEDIUS_CATCH_CLASS_VENDOR_BULK`, which can saturate the control link by itself.
-/// Pair it with `medius_catch_filter_with_capture` unless you mean to trace bulk in full.
+/// Includes `MEDIUS_CATCH_CLASS_VENDOR_BULK`, which alone can saturate the control link; pair it
+/// with `medius_catch_filter_with_capture` unless tracing bulk in full.
 #[unsafe(no_mangle)]
 pub extern "C" fn medius_catch_filter_everything() -> MediusCatchFilter {
     MediusCatchFilter {
@@ -316,8 +314,8 @@ fn blanket(class: MediusCatchClass) -> MediusCatchFilter {
 }
 
 /// `f` restricted to one direction, sign or edge. `direction` takes a `MEDIUS_DIRECTION_*` constant;
-/// a byte no constant names is carried through and refused at subscribe time with
-/// `MEDIUS_STATUS_ERR_INVALID_ARG`, since a filter has no status to return here.
+/// an unnamed byte is carried through and refused at subscribe time with
+/// `MEDIUS_STATUS_ERR_INVALID_ARG`.
 #[unsafe(no_mangle)]
 pub extern "C" fn medius_catch_filter_with_direction(
     f: MediusCatchFilter,
@@ -391,8 +389,8 @@ fn is_control_shaped(e: &MediusTrafficEvent) -> bool {
     )
 }
 
-/// Whether the capture cut this packet short. Without checking, a truncated capture and a genuinely
-/// short packet are indistinguishable. Mirrors `medius::TrafficEvent::truncated`.
+/// Whether the capture cut this packet short; `len` alone cannot tell it from a short packet.
+/// Mirrors `medius::TrafficEvent::truncated`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_traffic_event_truncated(event: *const MediusTrafficEvent) -> bool {
     guard(false, || {
@@ -405,7 +403,7 @@ pub unsafe extern "C" fn medius_traffic_event_truncated(event: *const MediusTraf
 }
 
 /// The 8-byte setup packet of a CONTROL or CLIP_TRANSFER event, or NULL for another class or a
-/// capture cut shorter than the setup stage. Points into `event`. Mirrors
+/// capture shorter than the setup stage. Points into `event`. Mirrors
 /// `medius::TrafficEvent::setup`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_traffic_event_setup(event: *const MediusTrafficEvent) -> *const u8 {
@@ -435,7 +433,7 @@ pub unsafe extern "C" fn medius_traffic_event_data(
         }
         let e = unsafe { &*event };
         let n = (e.len as usize).min(MEDIUS_MAX_TRAFFIC_BYTES);
-        // A control event whose own setup packet was cut short has no data stage at all.
+        // A control event with a truncated setup packet has no data stage.
         let (skip, n) = if !is_control_shaped(e) {
             (0usize, n)
         } else if e.len >= SETUP_LEN {
@@ -479,8 +477,8 @@ pub unsafe extern "C" fn medius_traffic_event_control_status(
 }
 
 /// How the transfer ended, written to `*out` as a `MEDIUS_TRANSFER_STATUS_*` value; false for any
-/// class but CLIP_TRANSFER. `MEDIUS_TRANSFER_STATUS_NAK` when no answer came, and a byte no constant
-/// names is carried through. A null `out` is skipped and the return still answers. Mirrors
+/// class but CLIP_TRANSFER. `MEDIUS_TRANSFER_STATUS_NAK` when no reply came; an unnamed byte is
+/// carried through. A null `out` is skipped and the return value still holds. Mirrors
 /// `medius::TrafficEvent::transfer_status`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_traffic_event_transfer_status(
@@ -517,8 +515,8 @@ pub unsafe extern "C" fn medius_traffic_event_bus_event(
         if e.class != MEDIUS_CATCH_CLASS_BUS {
             return false;
         }
-        // Only the captured bytes count: past `len` the array still holds whatever the caller left
-        // there, and a stale byte would name the wrong configuration or interface.
+        // Only captured bytes count: past `len` the array holds stale caller bytes that would name
+        // the wrong configuration or interface.
         let payload = &e.bytes[..(e.len as usize).min(MEDIUS_MAX_TRAFFIC_BYTES)];
         let a = payload.first().copied().unwrap_or(0);
         let b = payload.get(1).copied().unwrap_or(0);
@@ -584,7 +582,7 @@ pub unsafe extern "C" fn medius_traffic_event_rule_acted(event: *const MediusTra
     })
 }
 
-/// Whether this event carries end-of-transfer, for a VEND_BULK event. Mirrors
+/// Whether this VEND_BULK event carries end-of-transfer. Mirrors
 /// `medius::TrafficEvent::bulk_end_of_transfer`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_traffic_event_bulk_end_of_transfer(
@@ -599,9 +597,8 @@ pub unsafe extern "C" fn medius_traffic_event_bulk_end_of_transfer(
     })
 }
 
-/// Whether this event is a zero-length packet, for a VEND_BULK event. A ZLP terminates a transfer
-/// whose length is an exact multiple of the packet size, so it carries no bytes and still matters.
-/// Mirrors `medius::TrafficEvent::bulk_zlp`.
+/// Whether this VEND_BULK event is a zero-length packet, which ends a transfer whose length is an
+/// exact multiple of the packet size. Mirrors `medius::TrafficEvent::bulk_zlp`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_traffic_event_bulk_zlp(event: *const MediusTrafficEvent) -> bool {
     guard(false, || {
@@ -613,7 +610,7 @@ pub unsafe extern "C" fn medius_traffic_event_bulk_zlp(event: *const MediusTraff
     })
 }
 
-/// Whether the clip is currently holding `usage` down. Mirrors `medius::ClipStatus::is_held`.
+/// Whether the clip holds `usage` down. Mirrors `medius::ClipStatus::is_held`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_clip_status_is_held(
     status: *const MediusClipStatus,

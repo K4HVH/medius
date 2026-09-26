@@ -1,8 +1,8 @@
-//! Buffered clip playback (§3.11 / §4.15): the per-frame entry stream a host preloads into the device-side ring, the trigger/config surface, and the ring/playback status.
+//! Buffered clip playback (§3.11 / §4.15): the per-frame entries a host preloads into the box's
+//! ring, triggers and config, and ring/playback status.
 //!
-//! The box runs a clip verb on its own when a trigger fires, with no host round trip. The trigger set
-//! holds two kinds: a [`ClipTrigger`] fires on a button, key or media edge, and a [`ClipPacketTrigger`]
-//! fires on a packet crossing one of the box's traffic surfaces.
+//! A firing trigger runs its clip verb on the box, with no host round trip. A [`ClipTrigger`] fires
+//! on a button, key or media edge; a [`ClipPacketTrigger`] on a packet crossing a traffic surface.
 
 use crate::protocol::opcode::{
     CATCH_ID_ANY, CLIP_CFG_F_FINALIZED, CLIP_CFG_F_LOOP, CLIP_CFG_F_RETAIN, CLIP_CFG_F_RIDE,
@@ -13,16 +13,16 @@ use crate::protocol::opcode::{
 use crate::types::lock::blanket_from_scope;
 use crate::types::{Action, Blanket, CatchClass, Class, Direction, Setup, TrafficClass, Usage};
 
-/// Which edge of a trigger usage fires its [`ClipTrigger`]. The wire encoding matches [`Direction`]
-/// (`Both`=0, `Press`=1, `Release`=2).
+/// Edge of a trigger usage that fires its [`ClipTrigger`]. Encoded as [`Direction`] (`Both`=0,
+/// `Press`=1, `Release`=2).
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Edge {
     /// Either edge.
     Both = LOCK_DIR_BOTH,
-    /// The press edge (0 → 1).
+    /// Press edge (0 → 1).
     Press = LOCK_DIR_POS,
-    /// The release edge (1 → 0).
+    /// Release edge (1 → 0).
     Release = LOCK_DIR_NEG,
 }
 
@@ -50,8 +50,8 @@ impl From<Edge> for Direction {
     }
 }
 
-/// The engine action a [`ClipTrigger`] or a [`ClipPacketTrigger`] drives (and a host
-/// [`ClipHandle`](crate::ClipHandle) verb).
+/// Engine action a [`ClipTrigger`] or [`ClipPacketTrigger`] drives; also a
+/// [`ClipHandle`](crate::ClipHandle) verb.
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ClipAction {
@@ -86,23 +86,22 @@ impl ClipAction {
     }
 }
 
-/// One input trigger: the `edge` of a physical `on` usage drives `action`, optionally consuming the
-/// input so it never reaches the game. Input triggers are a managed set keyed by `(on, edge)`, like a
-/// lock. The trigger set's other kind is the [`ClipPacketTrigger`].
+/// Input trigger: the `edge` of a physical `on` usage drives `action`, optionally consuming the input
+/// so it never reaches the game. A managed set keyed by `(on, edge)`, like a lock.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ClipTrigger {
-    /// The physical usage that fires this trigger (a button, key, or media usage).
+    /// Physical button, key or media usage that fires it.
     pub on: Usage,
-    /// Which edge fires it.
+    /// Edge that fires it.
     pub edge: Edge,
-    /// The engine action it drives.
+    /// Engine action the trigger drives.
     pub action: ClipAction,
     /// Suppress the trigger input from the game while held.
     pub consume: bool,
 }
 
 impl ClipTrigger {
-    /// A pass-through binding: `on`'s `edge` drives `action`, and the input still reaches the game.
+    /// Binding where `on`'s `edge` drives `action` and the input still reaches the game.
     pub fn new(on: impl Into<Usage>, edge: Edge, action: ClipAction) -> ClipTrigger {
         ClipTrigger {
             on: on.into(),
@@ -112,42 +111,41 @@ impl ClipTrigger {
         }
     }
 
-    /// Consume the trigger input: suppress it from the game while the trigger usage is held.
+    /// Suppress the trigger input from the game while it is held.
     pub fn consume(mut self) -> ClipTrigger {
         self.consume = true;
         self
     }
 }
 
-/// One packet trigger: a packet on a traffic surface whose head matches under a mask drives `action`
-/// on the box's next tick. The trigger set's other kind is the input [`ClipTrigger`].
+/// Packet trigger: a packet on a traffic surface whose head matches under a mask drives `action` on
+/// the box's next tick.
 ///
-/// The address is the one a traffic [`CatchFilter`](crate::CatchFilter) and a
-/// [`RewriteRule`](crate::RewriteRule) use: a `class`, an `id` within it ([`ANY_ID`](Self::ANY_ID) for
+/// Addressed like a traffic [`CatchFilter`](crate::CatchFilter) or
+/// [`RewriteRule`](crate::RewriteRule): a `class`, an `id` within it ([`ANY_ID`](Self::ANY_ID) for
 /// every id) and a `direction` ([`Both`](Direction::Both) for either flow). A packet matches when
 /// `head[i] & mask[i] == match_bytes[i]` for every match byte; an empty match takes every packet on
 /// the address. For [`Control`](TrafficClass::Control) the head is the 8 setup bytes, then the first 8
-/// bytes of OUT data. An [`Emit`](TrafficClass::Emit) trigger sees the clip's own frames as well as
+/// bytes of OUT data. An [`Emit`](TrafficClass::Emit) trigger sees the clip's own frames besides
 /// native and injected ones, and none of the clip's raw reports.
 ///
-/// A trigger no packet can match is refused, by [`bind_packet`](crate::ClipHandle::bind_packet) and by
-/// the box: a match bit outside its mask, since a packet byte is masked before it is compared, and a
-/// direction the class never carries. [`HidIn`](TrafficClass::HidIn) and [`Emit`](TrafficClass::Emit)
-/// flow [`IN`](Direction::IN) and [`HidOut`](TrafficClass::HidOut) flows [`OUT`](Direction::OUT);
-/// every class takes [`Both`](Direction::Both).
+/// [`bind_packet`](crate::ClipHandle::bind_packet) and the box refuse a trigger no packet can match:
+/// a match bit outside its mask (a packet byte is masked before the compare), or a direction the
+/// class never carries. [`HidIn`](TrafficClass::HidIn) and [`Emit`](TrafficClass::Emit) flow
+/// [`IN`](Direction::IN), [`HidOut`](TrafficClass::HidOut) flows [`OUT`](Direction::OUT); every class
+/// takes [`Both`](Direction::Both).
 ///
-/// The box reads a packet for its triggers as the packet arrived, ahead of the rewrite table, and the
-/// two are independent: one packet can fire a trigger and have a
-/// [`RewriteRule`](crate::RewriteRule) act on it. Of the triggers a packet matches, only the most
-/// specific acts on it: an exact `id` ranks above [`ANY_ID`](Self::ANY_ID), more masked bits above
-/// fewer, [`IN`](Direction::IN) or [`OUT`](Direction::OUT) above [`Both`](Direction::Both), then
-/// the trigger bound earlier.
+/// The box matches triggers against the packet as it arrived, ahead of the rewrite table, and
+/// independently of it: one packet can fire a trigger and have a [`RewriteRule`](crate::RewriteRule)
+/// act on it. Of the triggers a packet matches, only the most specific acts: an exact `id` ranks above
+/// [`ANY_ID`](Self::ANY_ID), more masked bits above fewer, [`IN`](Direction::IN) or
+/// [`OUT`](Direction::OUT) above [`Both`](Direction::Both), then the earlier bind.
 ///
-/// Packet triggers are a managed set keyed by `(class, id, direction, match_bytes, mask)`: binding a
-/// key the box holds overwrites it. The box holds [`CLIP_PKT_TRIG_MAX`](crate::CLIP_PKT_TRIG_MAX) of
-/// them, with [`CLIP_PKT_MATCH_POOL`](crate::CLIP_PKT_MATCH_POOL) match bytes between them. They are
-/// clip config, cleared with the rest of it on control-PC silence, [`reset`](crate::Device::reset), a
-/// detach, a link loss and a re-clone.
+/// A managed set keyed by `(class, id, direction, match_bytes, mask)`: binding a held key overwrites
+/// it. The box holds [`CLIP_PKT_TRIG_MAX`](crate::CLIP_PKT_TRIG_MAX) of them, sharing
+/// [`CLIP_PKT_MATCH_POOL`](crate::CLIP_PKT_MATCH_POOL) match bytes. They are clip config, cleared with
+/// the rest of it on control-PC silence, [`reset`](crate::Device::reset), a detach, a link loss and a
+/// re-clone.
 ///
 /// ```no_run
 /// # use medius::{ClipAction, ClipPacketTrigger, Device, Direction, Result, TrafficClass};
@@ -162,45 +160,44 @@ impl ClipTrigger {
 ///     .matching([0x07, 0x00], [0xFF, 0x20])
 ///     .once_per_run(1);
 /// clip.bind_packet(&held)?;
-/// // A run has no priming: on a device that repeats its state every poll, `let_go` bound with the
-/// // button up meets its condition at once and drives Stop on the next report. Bind it while the
-/// // button is held to skip that Stop, or accept it: with no clip playing it stops nothing.
+/// // A run has no priming: where the device repeats its state every poll, `let_go` bound with the
+/// // button up drives Stop on the next report. Bind it with the button held to skip that Stop, or
+/// // accept it: with no clip playing it stops nothing.
 /// clip.bind_packet(&let_go)?;
 /// # Ok(()) }
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ClipPacketTrigger {
-    /// The traffic surface the packet crosses: any class but [`Bus`](TrafficClass::Bus) and
+    /// Traffic surface the packet crosses: any class but [`Bus`](TrafficClass::Bus) and
     /// [`ClipTransfer`](TrafficClass::ClipTransfer).
     pub class: TrafficClass,
-    /// The address within the class: the interface number for [`HidIn`](TrafficClass::HidIn), the
-    /// endpoint number for the rest, or [`ANY_ID`](Self::ANY_ID).
+    /// Interface number for [`HidIn`](TrafficClass::HidIn), endpoint number for the rest, or
+    /// [`ANY_ID`](Self::ANY_ID).
     pub id: u16,
-    /// The flow the packet travels in: [`Both`](Direction::Both), or one of [`IN`](Direction::IN)
-    /// and [`OUT`](Direction::OUT) that the class carries.
+    /// Packet flow: [`Both`](Direction::Both), or whichever of [`IN`](Direction::IN) and
+    /// [`OUT`](Direction::OUT) the class carries.
     pub direction: Direction,
-    /// The engine action it drives.
+    /// Engine action the trigger drives.
     pub action: ClipAction,
-    /// The head bytes compared under [`mask`](Self::mask), every set bit inside it; empty matches
-    /// every packet.
+    /// Head bytes compared under [`mask`](Self::mask), every set bit inside it; empty matches every
+    /// packet.
     pub match_bytes: Vec<u8>,
-    /// The mask over [`match_bytes`](Self::match_bytes); same length.
+    /// Mask over [`match_bytes`](Self::match_bytes); same length.
     pub mask: Vec<u8>,
     /// Drop every packet the trigger matches as the top-ranked trigger, before the rewrite table
     /// sees it.
     pub consume: bool,
-    /// Drive the action on the first packet of a run of matching ones, where a plain trigger drives it
-    /// on each.
+    /// Drive the action on the first packet of a matching run instead of on each.
     pub once_per_run: bool,
-    /// How many leading match bytes select the run's stream within the address.
+    /// Leading match bytes that select the run's stream within the address.
     pub selector_len: u8,
 }
 
 impl ClipPacketTrigger {
-    /// The `id` that addresses every interface or endpoint of the class.
+    /// `id` addressing every interface or endpoint of the class.
     pub const ANY_ID: u16 = CATCH_ID_ANY;
 
-    /// A trigger on every packet of the address, which passes untouched. Narrow it with
+    /// Trigger on every packet of the address; packets pass untouched. Narrow it with
     /// [`matching`](Self::matching).
     pub fn new(
         class: TrafficClass,
@@ -221,63 +218,58 @@ impl ClipPacketTrigger {
         }
     }
 
-    /// Narrow the trigger to packets whose head compares equal to `match_bytes` under `mask`. Both are
-    /// one length, at most [`PKT_MATCH_MAX`](crate::PKT_MATCH_MAX) bytes, and every set bit of
-    /// `match_bytes` is set in `mask`; a longer packet still matches on its head. The box receives
-    /// both as given, and they are the trigger's key.
+    /// Narrow to packets whose head equals `match_bytes` under `mask`. Both are one length, at most
+    /// [`PKT_MATCH_MAX`](crate::PKT_MATCH_MAX) bytes, and every set bit of `match_bytes` is set in
+    /// `mask`; a longer packet matches on its head. Both go to the box as given and form the
+    /// trigger's key.
     pub fn matching(mut self, match_bytes: impl Into<Vec<u8>>, mask: impl Into<Vec<u8>>) -> Self {
         self.match_bytes = match_bytes.into();
         self.mask = mask.into();
         self
     }
 
-    /// Consume the packet: every packet the trigger matches as the top-ranked trigger is dropped,
-    /// whether or not the action runs on it. [`Control`](TrafficClass::Control) takes none.
+    /// Drop every packet the trigger matches as the top-ranked trigger, whether or not the action
+    /// runs on it. [`Control`](TrafficClass::Control) takes none.
     ///
-    /// A consumed [`HidIn`](TrafficClass::HidIn) report is dropped whole, the motion and buttons in it
-    /// with it; a release edge in that report reaches the PC with the next one. A catch subscription
-    /// still sees a consumed `HidIn` packet and a consumed OUT packet, and sees no consumed vendor IN
-    /// packet and no consumed [`Emit`](TrafficClass::Emit) packet.
+    /// A consumed [`HidIn`](TrafficClass::HidIn) report is dropped whole, motion and buttons
+    /// included; a release edge in it reaches the PC with the next report. A catch subscription still
+    /// sees consumed `HidIn` and OUT packets, but not consumed vendor IN or
+    /// [`Emit`](TrafficClass::Emit) packets.
     ///
     /// Dropping traffic alters the wire, so the box holds a consuming trigger only under
     /// [`allow_imperfect_clones(true)`](crate::Device::allow_imperfect_clones). With the opt-in off
-    /// the box refuses the bind, which [`bind_packet`](crate::ClipHandle::bind_packet) cannot see; its
-    /// docs say how to confirm a bind. Turning the opt-in off removes every consuming trigger the box
-    /// holds.
+    /// the box refuses the bind, unseen by [`bind_packet`](crate::ClipHandle::bind_packet) (its docs
+    /// say how to confirm one). Turning the opt-in off removes every consuming trigger the box holds.
     pub fn consume(mut self) -> Self {
         self.consume = true;
         self
     }
 
-    /// Drive the action on the first packet of a run of matching ones, so a device that repeats a held
-    /// state every poll fires once per hold. The release is a second trigger matching the released
-    /// bytes.
+    /// Drive the action on the first packet of a matching run, so a device repeating a held state
+    /// every poll fires once per hold. The release is a second trigger matching the released bytes.
     ///
     /// A run is over one stream, so the trigger names a report class (any but
     /// [`Control`](TrafficClass::Control)), a concrete `id`, and [`IN`](Direction::IN) or
     /// [`OUT`](Direction::OUT). The first `selector_len` match bytes select the stream within that
     /// address (a report ID) and the rest are the condition, so `selector_len` is below the match
     /// length and the mask past it has at least one bit set: a condition every packet of the stream
-    /// meets is a run that never ends. A packet that fails the selector leaves the run as it was.
+    /// meets is a run that never ends. A packet failing the selector leaves the run unchanged.
     ///
-    /// A run has no priming. A trigger whose condition already holds when it is bound drives its
-    /// action on the next packet of its stream, so a release trigger bound with the button up fires
-    /// at once on a device that repeats its state every poll. Bind the press trigger first and the
-    /// release trigger while the button is held, or accept the one action. An identical re-bind keeps
-    /// the run; an overwrite, a bus reset and a configuration change start it again.
+    /// A run has no priming: a trigger whose condition holds when bound drives its action on the
+    /// next packet of its stream, so a release trigger bound with the button up fires at once on a
+    /// device that repeats its state every poll. Bind the press trigger first and the release trigger
+    /// while the button is held, or accept the one action. An identical re-bind keeps the run; an
+    /// overwrite, a bus reset and a configuration change restart it.
     pub fn once_per_run(mut self, selector_len: u8) -> Self {
         self.once_per_run = true;
         self.selector_len = selector_len;
         self
     }
 
-    // A surface packets cross, which is every class a packet trigger may name.
     pub(crate) fn is_surface(class: TrafficClass) -> bool {
         !matches!(class, TrafficClass::Bus | TrafficClass::ClipTransfer)
     }
 
-    // Whether a packet on `class` can travel in `direction`. A packet flows IN or OUT, and a HID
-    // report surface and the emit wire carry one of the two.
     pub(crate) fn class_carries(class: TrafficClass, direction: Direction) -> bool {
         match class {
             TrafficClass::HidIn | TrafficClass::Emit => direction == Direction::IN,
@@ -299,21 +291,21 @@ impl ClipPacketTrigger {
     }
 }
 
-/// One packet trigger the box holds, read back from `RESP(CLIP)`.
+/// Packet trigger the box holds, read back from `RESP(CLIP)`.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ClipPacketTriggerEntry {
-    /// The trigger, in the shape [`bind_packet`](crate::ClipHandle::bind_packet) takes, so a read
-    /// entry replays as a bind.
+    /// The trigger in [`bind_packet`](crate::ClipHandle::bind_packet)'s shape, so it replays as a
+    /// bind.
     pub trigger: ClipPacketTrigger,
-    /// How many packets the trigger has matched as the top-ranked trigger since it was bound or
-    /// overwritten (saturating). A [`once_per_run`](ClipPacketTrigger::once_per_run) trigger counts
-    /// every packet of a run and drives its action on the first.
+    /// Packets matched as the top-ranked trigger since the bind or overwrite (saturating). A
+    /// [`once_per_run`](ClipPacketTrigger::once_per_run) trigger counts every packet of a run and
+    /// drives its action on the first.
     pub hits: u16,
 }
 
 impl ClipPacketTriggerEntry {
-    // One whole `RESP(CLIP)` entry: `[class][id u16][dir][action][flags][slen][mlen][hits u16][match][mask]`.
-    // `None` for a class, direction or action this crate has no name for.
+    // `[class][id u16][dir][action][flags][slen][mlen][hits u16][match][mask]`; `None` for a class,
+    // direction or action this crate has no name for.
     fn from_wire(e: &[u8]) -> Option<ClipPacketTriggerEntry> {
         let class = TrafficClass::try_from(CatchClass::from_u8(e[0])?).ok()?;
         let direction = Direction::from_u8(e[3]).filter(|d| !d.is_relative())?;
@@ -340,7 +332,7 @@ impl ClipPacketTriggerEntry {
     }
 }
 
-/// The device-side clip lifecycle state ([`ClipStatus::state`]).
+/// Clip lifecycle state on the box ([`ClipStatus::state`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum ClipState {
     /// No clip playing (empty, or a loaded clip parked at its start).
@@ -348,9 +340,10 @@ pub enum ClipState {
     Idle,
     /// Draining the ring, one entry per native frame.
     Playing,
-    /// Halted mid-clip; the cursor and any held usages are retained ([`resume`](crate::ClipHandle::resume) to continue).
+    /// Halted mid-clip, keeping the cursor and held usages; [`resume`](crate::ClipHandle::resume)
+    /// continues.
     Paused,
-    /// An append was dropped or the ring overflowed; recover with [`clear`](crate::ClipHandle::clear).
+    /// An append was dropped or the ring overflowed; [`clear`](crate::ClipHandle::clear) recovers.
     Faulted,
 }
 
@@ -366,14 +359,14 @@ impl ClipState {
     }
 }
 
-/// A snapshot of the device-side clip ring and playback counters (§4.15): the runtime view of `RESP(CLIP)`.
+/// Clip ring and playback counters (§4.15): the runtime view of `RESP(CLIP)`.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
 pub struct ClipStatus {
-    /// The lifecycle state.
+    /// Lifecycle state.
     pub state: ClipState,
-    /// Free bytes in the ring, the headroom for the next [`append`](crate::ClipHandle::append).
+    /// Free ring bytes, the headroom for the next [`append`](crate::ClipHandle::append).
     pub free: u32,
-    /// The retained clip size in bytes (streaming: the buffered-but-undrained bytes).
+    /// Retained clip size in bytes (streaming: buffered, undrained bytes).
     pub total: u32,
     /// Bytes played from the clip start (retained progress; ~0 while streaming).
     pub played: u32,
@@ -387,19 +380,18 @@ pub struct ClipStatus {
     pub seq_gaps: u16,
     /// Clip transfers the device completed.
     pub xfers: u16,
-    /// Clip transfers that ended any other way: a refusal, no answer, no room in the box's queue, or
+    /// Clip transfers that ended otherwise: refused, unanswered, no room in the box's queue, or
     /// dropped behind one the device did not answer.
     pub xfer_errs: u16,
-    /// Raw reports and transfers the box discarded because the imperfect-clone opt-in was off.
+    /// Raw reports and transfers discarded with the imperfect-clone opt-in off.
     pub gated: u16,
-    /// The usages the clip is currently holding down: buttons, keys, and media in one list.
+    /// Buttons, keys and media the clip holds down, in one list.
     pub held: Vec<Usage>,
 }
 
-// The offset of the config tail in a `RESP(CLIP)` payload, when the payload is exactly the shape its
-// own counts describe: the scalar prefix, `held_n` held usages, `[autolock][flags][n_trig]`, `n_trig`
-// input trigger tuples, `[n_pkt]`, and `n_pkt` packet trigger entries, each as long as its own `mlen`
-// says. A payload of any other length is not a `RESP(CLIP)` this crate can read.
+// Config tail offset, when the payload is exactly the shape its counts describe: scalar prefix,
+// `held_n` usages, `[autolock][flags][n_trig]`, `n_trig` input tuples, `[n_pkt]`, and `n_pkt` packet
+// entries each as long as its `mlen` says. Any other length is unreadable.
 fn clip_config_offset(p: &[u8]) -> Option<usize> {
     if p.len() < RESP_CLIP_HDR {
         return None;
@@ -426,13 +418,12 @@ fn clip_config_offset(p: &[u8]) -> Option<usize> {
 }
 
 impl ClipStatus {
-    /// Whether the clip is currently holding `usage` (a button, key, or media usage) down.
+    /// Whether the clip holds `usage` (a button, key or media usage) down.
     pub fn is_held(&self, usage: impl Into<Usage>) -> bool {
         let u = usage.into();
         self.held.contains(&u)
     }
 
-    /// Decode the runtime view of a `RESP(CLIP)` payload (§4.15).
     pub(crate) fn from_payload(p: &[u8]) -> Option<ClipStatus> {
         clip_config_offset(p)?;
         let held = Usage::decode_list(&p[RESP_CLIP_HDR - 1..])?;
@@ -453,31 +444,29 @@ impl ClipStatus {
     }
 }
 
-/// The clip configuration read back from `RESP(CLIP)` (§4.15): the autolock scope, the loop/retain
-/// scalar settings, and both kinds of trigger. The config view of the same frame [`ClipStatus`] reads.
+/// Clip config read back from `RESP(CLIP)` (§4.15): autolock scope, loop/retain settings and both
+/// trigger kinds. The config view of the frame [`ClipStatus`] reads.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
 pub struct ClipSettings {
-    /// The autolock groups the clip locks while playing ([`set_autolock`](crate::ClipHandle::set_autolock)).
+    /// Groups the clip locks while playing ([`set_autolock`](crate::ClipHandle::set_autolock)).
     pub autolock: Vec<Blanket>,
     /// Whether playback loops at the clip end (retained mode only).
     pub loop_: bool,
-    /// Whether the clip is retained/replayable (`false` = streaming, the default).
+    /// Whether the clip is retained and replayable (`false` = streaming, the default).
     pub retain: bool,
-    /// Whether a retained clip has been finalized (its end fixed).
+    /// Whether a retained clip is finalized (its end fixed).
     pub finalized: bool,
-    /// Whether the clip's motion waits to ride a native report (`false` = the box's own clock, the default).
+    /// Whether clip motion waits to ride a native report (`false` = the box's own clock, the
+    /// default).
     pub ride: bool,
-    /// The input triggers.
+    /// Input triggers.
     pub triggers: Vec<ClipTrigger>,
-    /// The packet triggers, in the order the box holds them, each with its hit count.
+    /// Packet triggers in the box's order, each with its hit count.
     pub packet_triggers: Vec<ClipPacketTriggerEntry>,
 }
 
 impl ClipSettings {
-    // Decode the config view of a `RESP(CLIP)` payload: skip the runtime prefix + held list, then read
-    // `[autolock][flags][n_trig]`, the input trigger tuples, `[n_pkt]` and the packet trigger entries.
-    // A wildcard binding (no concrete class) is skipped, and so is a packet trigger this crate has no
-    // names for.
+    // Skips a wildcard binding (no concrete class) and a packet trigger this crate has no names for.
     pub(crate) fn from_payload(p: &[u8]) -> Option<ClipSettings> {
         let mut off = clip_config_offset(p)?;
         let autolock = blanket_from_scope(p[off]);
@@ -525,7 +514,7 @@ impl ClipSettings {
 pub const CLIP_EDGES_MAX: usize = 8;
 /// Max raw reports on one [`ClipFrame`], matching the firmware's `CLIP_RAW_MAX`.
 pub const CLIP_RAW_MAX: usize = 8;
-/// The most bytes one [`ClipFrame`] may encode to: one `CLIP_APPEND` payload.
+/// Max encoded bytes of one [`ClipFrame`]: one `CLIP_APPEND` payload.
 pub const CLIP_ENTRY_MAX: usize = MAX_PAYLOAD;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -542,13 +531,13 @@ pub(crate) struct TransferItem {
     pub(crate) out: Vec<u8>,
 }
 
-/// One frame of a clip: everything the box does on one tick (§3.11).
+/// Clip frame: everything the box does on one tick (§3.11).
 ///
-/// A frame carries any mix of cursor motion, wheel, pan, up to [`CLIP_EDGES_MAX`] edges, up to
-/// [`CLIP_RAW_MAX`] raw reports and any number of control transfers, as long as it encodes to at most
-/// [`CLIP_ENTRY_MAX`] bytes. [`append`](crate::ClipHandle::append) checks that.
+/// Any mix of cursor motion, wheel, pan, up to [`CLIP_EDGES_MAX`] edges, up to [`CLIP_RAW_MAX`] raw
+/// reports and any number of control transfers, encoding to at most [`CLIP_ENTRY_MAX`] bytes;
+/// [`append`](crate::ClipHandle::append) checks that.
 ///
-/// The raw reports and transfers need the imperfect-clone opt-in when the frame plays, not when it is
+/// Raw reports and transfers need the imperfect-clone opt-in when the frame plays, not when it is
 /// appended. With it off the box discards them and counts each in [`ClipStatus::gated`].
 ///
 /// ```no_run
@@ -578,12 +567,12 @@ pub struct ClipFrame {
 }
 
 impl ClipFrame {
-    /// A frame that carries nothing yet.
+    /// Empty frame.
     pub fn new() -> ClipFrame {
         ClipFrame::default()
     }
 
-    /// Cursor motion, as a relative delta.
+    /// Relative cursor motion.
     pub fn move_by(mut self, dx: i16, dy: i16) -> ClipFrame {
         self.dx = dx;
         self.dy = dy;
@@ -602,7 +591,7 @@ impl ClipFrame {
         self
     }
 
-    /// An edge on a button, key or media usage.
+    /// Edge on a button, key or media usage.
     pub fn edge(mut self, usage: impl Into<Usage>, action: Action) -> ClipFrame {
         self.edges.push((usage.into(), action));
         self
@@ -623,8 +612,8 @@ impl ClipFrame {
         self.edge(usage, Action::ForceRelease)
     }
 
-    /// A raw report, as [`Device::raw`](crate::Device::raw) sends one: `bytes` verbatim on endpoint
-    /// number `ep`, [`Direction::IN`] toward the game PC or [`Direction::OUT`] to the real device.
+    /// Raw report, as [`Device::raw`](crate::Device::raw) sends one: `bytes` verbatim on endpoint
+    /// `ep`, [`Direction::IN`] to the game PC or [`Direction::OUT`] to the real device.
     pub fn raw(mut self, ep: u8, direction: Direction, bytes: impl Into<Vec<u8>>) -> ClipFrame {
         self.raw.push(RawItem {
             ep,
@@ -634,9 +623,9 @@ impl ClipFrame {
         self
     }
 
-    /// A control transfer against the real device, as [`Device::transfer`](crate::Device::transfer)
-    /// runs one. `out` is exactly `setup.length` bytes for an OUT request and empty for an IN one. The
-    /// answer comes back as a [`TrafficClass::ClipTransfer`](crate::TrafficClass::ClipTransfer) event.
+    /// Control transfer to the real device, as [`Device::transfer`](crate::Device::transfer) runs
+    /// one. `out` is exactly `setup.length` bytes for an OUT request, empty for an IN one. The reply
+    /// arrives as a [`TrafficClass::ClipTransfer`](crate::TrafficClass::ClipTransfer) event.
     pub fn transfer(mut self, ep: u8, setup: Setup, out: impl Into<Vec<u8>>) -> ClipFrame {
         self.transfers.push(TransferItem {
             ep,
@@ -646,7 +635,7 @@ impl ClipFrame {
         self
     }
 
-    /// The bytes this frame takes in the ring, at most [`CLIP_ENTRY_MAX`] for a frame
+    /// Ring bytes this frame takes; at most [`CLIP_ENTRY_MAX`] for a frame
     /// [`append`](crate::ClipHandle::append) accepts.
     pub fn byte_len(&self) -> usize {
         let motion = (self.wheel != 0) as usize * 2 + (self.pan != 0) as usize * 2;
@@ -671,20 +660,20 @@ pub(crate) enum ClipEntry {
     Frame(ClipFrame),
 }
 
-/// Builds a buffered-clip entry stream (§3.11) for [`ClipHandle::append`](crate::ClipHandle::append).
-/// Every method appends one entry: a gap run, or one [`ClipFrame`].
+/// Clip entry stream (§3.11) for [`ClipHandle::append`](crate::ClipHandle::append). Each method
+/// appends one entry: a gap run or one [`ClipFrame`].
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct ClipBuilder {
     pub(crate) entries: Vec<ClipEntry>,
 }
 
 impl ClipBuilder {
-    /// A new empty builder.
+    /// Empty builder.
     pub fn new() -> ClipBuilder {
         ClipBuilder::default()
     }
 
-    /// A gap run: emit nothing for `frames` native frames (the endpoint NAKs like an idle mouse).
+    /// Gap run: emit nothing for `frames` native frames (the endpoint NAKs like an idle mouse).
     pub fn gap(&mut self, frames: u16) -> &mut Self {
         if frames != 0 {
             self.entries.push(ClipEntry::Gap(frames));
@@ -692,58 +681,58 @@ impl ClipBuilder {
         self
     }
 
-    /// One frame carrying whatever `frame` holds.
+    /// Appends `frame`.
     pub fn frame(&mut self, frame: ClipFrame) -> &mut Self {
         self.entries.push(ClipEntry::Frame(frame));
         self
     }
 
-    /// A cursor-motion frame.
+    /// Cursor-motion frame.
     pub fn move_by(&mut self, dx: i16, dy: i16) -> &mut Self {
         self.frame(ClipFrame::new().move_by(dx, dy))
     }
 
-    /// A wheel frame.
+    /// Wheel frame.
     pub fn wheel(&mut self, dz: i16) -> &mut Self {
         self.frame(ClipFrame::new().wheel(dz))
     }
 
-    /// A pan (horizontal scroll) frame.
+    /// Pan (horizontal scroll) frame.
     pub fn pan(&mut self, dpan: i16) -> &mut Self {
         self.frame(ClipFrame::new().pan(dpan))
     }
 
-    /// A frame carrying one edge (any input class).
+    /// Frame with one edge (any input class).
     pub fn edge(&mut self, input: impl Into<Usage>, action: Action) -> &mut Self {
         self.frame(ClipFrame::new().edge(input, action))
     }
 
-    /// A frame that presses a usage (a button, key, or media usage), like [`Device::press`](crate::Device::press).
+    /// Frame pressing a button, key or media usage, like [`Device::press`](crate::Device::press).
     pub fn press(&mut self, usage: impl Into<Usage>) -> &mut Self {
         self.edge(usage, Action::Press)
     }
 
-    /// A frame that soft-releases a usage (clears the injected press; a physical hold is left intact).
+    /// Frame soft-releasing a usage (clears the injected press; a physical hold stays).
     pub fn release(&mut self, usage: impl Into<Usage>) -> &mut Self {
         self.edge(usage, Action::SoftRelease)
     }
 
-    /// A frame that force-releases a usage (masks a physical hold too).
+    /// Frame force-releasing a usage (masks a physical hold too).
     pub fn force_release(&mut self, usage: impl Into<Usage>) -> &mut Self {
         self.edge(usage, Action::ForceRelease)
     }
 
-    /// A frame carrying one raw report (see [`ClipFrame::raw`]).
+    /// Frame with one raw report (see [`ClipFrame::raw`]).
     pub fn raw(&mut self, ep: u8, direction: Direction, bytes: impl Into<Vec<u8>>) -> &mut Self {
         self.frame(ClipFrame::new().raw(ep, direction, bytes))
     }
 
-    /// A frame carrying one control transfer (see [`ClipFrame::transfer`]).
+    /// Frame with one control transfer (see [`ClipFrame::transfer`]).
     pub fn transfer(&mut self, ep: u8, setup: Setup, out: impl Into<Vec<u8>>) -> &mut Self {
         self.frame(ClipFrame::new().transfer(ep, setup, out))
     }
 
-    /// The number of entries.
+    /// Number of entries.
     pub fn len(&self) -> usize {
         self.entries.len()
     }
@@ -753,7 +742,7 @@ impl ClipBuilder {
         self.entries.is_empty()
     }
 
-    /// The bytes the entries take in the ring: what to hold against [`ClipStatus::free`] before an
+    /// Ring bytes the entries take, to check against [`ClipStatus::free`] before an
     /// [`append`](crate::ClipHandle::append).
     pub fn byte_len(&self) -> usize {
         self.entries

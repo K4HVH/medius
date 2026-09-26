@@ -580,8 +580,8 @@ fn empty_append_sends_nothing() {
     );
 }
 
-// A streaming host paces its appends against `ClipStatus::free`, so the length it holds against it has
-// to be the length the ring takes.
+// A streaming host paces appends against `ClipStatus::free`, so the length it checks must be the
+// length the ring takes.
 #[test]
 fn byte_len_is_the_length_the_stream_encodes_to() {
     let get = Setup::new(0x80, 6, 0x0100, 0, 18);
@@ -620,8 +620,8 @@ fn byte_len_is_the_length_the_stream_encodes_to() {
     assert_eq!(ClipBuilder::new().byte_len(), 0);
 }
 
-// A reply whose length is not the one its own counts describe is some other layout, and reading the
-// counters out of it would hand back another field's bytes.
+// A reply whose length disagrees with its counts is another layout; reading counters from it returns
+// other fields' bytes.
 #[test]
 fn a_clip_reply_of_another_shape_is_refused() {
     let mut good = vec![0u8; 31];
@@ -858,8 +858,7 @@ mod packet_trigger {
         refused(&reply(&[wide]), "a match past the box's compare length");
     }
 
-    // An entry naming a class, direction or verb this crate has no name for is left out, and the ones
-    // around it still read.
+    // An entry with an unnamed class, direction or verb is left out; its neighbours still read.
     #[test]
     fn an_entry_the_crate_has_no_names_for_is_skipped() {
         let with = |at: usize, v: u8| {
@@ -1214,8 +1213,7 @@ mod packet_trigger {
             assert_eq!(read, vec![plain]);
         }
 
-        // How many packet triggers the mock answers with, read off the wire: the decode leaves out
-        // an entry it has no names for.
+        // Packet trigger count read off the wire, since the decode omits entries it cannot name.
         fn held_on_the_wire(device: &Device, mock: &MockBox) -> u8 {
             device.clip().query_config().unwrap();
             mock.replied_frames().pop().unwrap().payload[34]
@@ -1318,8 +1316,7 @@ mod packet_trigger {
             assert_eq!(held_on_the_wire(&device, &mock), 2);
         }
 
-        // A packet travels IN or OUT across a surface that carries that flow. Anything else is no
-        // packet, whatever trigger would have taken it.
+        // A packet travels IN or OUT on a surface carrying that flow; anything else is no packet.
         #[test]
         fn the_mock_runs_only_a_packet_that_can_exist() {
             let mock = MockBox::new().with_imperfect(true);
@@ -1432,8 +1429,8 @@ mod packet_trigger {
             let read = triggers(&device);
             assert_eq!(read.len(), 1, "{read:?}");
             assert_eq!(read[0].trigger, kept);
-            // The count on the wire too: the decode leaves out an entry it has no names for, so a
-            // stored relative direction would not show in `read`.
+            // The wire count too: the decode omits an entry it cannot name, so a stored relative
+            // direction would not show in `read`.
             let reply = mock.replied_frames().pop().unwrap().payload;
             assert_eq!((reply[34], reply.len()), (1, 35 + 10 + 4));
         }
@@ -1450,8 +1447,8 @@ mod packet_trigger {
             clip.bind_packet(&watching).unwrap();
             let read: Vec<_> = triggers(&device).into_iter().map(|e| e.trigger).collect();
             assert_eq!(read, vec![watching.clone()], "refused with the opt-in off");
-            // An overwrite that adds consume is refused too, and the trigger it named stays with its
-            // own action and flags: the read-back differs from what was bound.
+            // An overwrite adding consume is refused too; the trigger keeps its action and flags, so
+            // the read-back differs from what was bound.
             let rebound = ClipPacketTrigger {
                 action: ClipAction::Stop,
                 ..watching.clone().consume()
@@ -1470,8 +1467,8 @@ mod packet_trigger {
             assert_eq!(read, vec![watching]);
         }
 
-        // The crate stops holding what the box drops when the opt-in goes off, and puts it back when
-        // the frame never went out.
+        // The crate drops what the box drops when the opt-in goes off, and restores it if the frame
+        // never went out.
         #[test]
         fn the_opt_in_going_off_leaves_only_the_watching_triggers_held() {
             use crate::transport::Disconnected;
@@ -1500,8 +1497,7 @@ mod packet_trigger {
             device.allow_imperfect_clones(false).unwrap();
             assert!(idle());
 
-            // An opt-out that never reached the box leaves the consuming trigger held, as the box
-            // still holds it.
+            // An opt-out that never reached the box leaves the consuming trigger held, as on the box.
             device.allow_imperfect_clones(true).unwrap();
             clip.bind_packet(&consuming).unwrap();
             device.link.transport_slot().swap(Arc::new(Disconnected));
@@ -1607,8 +1603,7 @@ mod packet_trigger {
             assert_eq!(read(&mock), vec![held()]);
         }
 
-        // A removal names a key. The box reads nothing else of the frame, so a removal whose verb,
-        // flags and selector are not zero still removes.
+        // A removal reads only the key, so nonzero verb, flags and selector still remove.
         #[test]
         fn a_removal_reads_only_the_key() {
             let mock = MockBox::new();
@@ -1619,8 +1614,7 @@ mod packet_trigger {
             assert!(triggers(&device).is_empty());
         }
 
-        // An overwrite that changes the selector alone is an overwrite: the count and the run start
-        // again.
+        // Changing only the selector is an overwrite: the count and run restart.
         #[test]
         fn an_overwrite_of_the_selector_alone_restarts_the_count_and_the_run() {
             let mock = MockBox::new();
@@ -1669,8 +1663,8 @@ mod packet_trigger {
             );
         }
 
-        // Removing a trigger keeps the order of the rest, which is both the read-back order and the
-        // tie-break between equally specific triggers.
+        // Removing a trigger keeps the others' order, which is the read-back order and the tie-break
+        // between equally specific triggers.
         #[test]
         fn a_removal_keeps_the_order_of_the_rest() {
             let mock = MockBox::new();
@@ -1917,8 +1911,7 @@ mod packet_trigger {
             }
         }
 
-        // consume takes every packet the trigger matches as the top-ranked trigger, whether or not
-        // the verb runs on it.
+        // consume drops every packet the trigger matches as top-ranked, whether or not the verb runs.
         #[test]
         fn a_consuming_trigger_takes_every_packet_it_is_top_ranked_for() {
             let mock = MockBox::new().with_imperfect(true);

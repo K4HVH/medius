@@ -39,8 +39,8 @@ fn lock_payload_bytes() {
 
 #[test]
 fn a_reversing_scale_is_two_signed_bytes_on_the_wire() {
-    // The sign is the whole point of the field being an i16: a u8 write, or a decode that forgets the
-    // high byte, turns -100 into 156 and the axis amplifies instead of reversing.
+    // The field is an i16 for the sign: a u8 write, or a decode dropping the high byte, turns -100
+    // into 156, amplifying instead of reversing.
     assert_eq!(
         lock_payload(LOCK_CLS_AXIS, 0, LOCK_DIR_BOTH, -100),
         [3, 0, 0, 0, 0x9C, 0xFF]
@@ -313,8 +313,8 @@ fn locks_unknown_entry_is_skipped() {
 #[test]
 fn locks_truncated_payload_is_none() {
     assert!(parse_resp(&[6]).is_none());
-    // A six-byte entry cut short must not decode as a shorter one, and the cut that matters is the
-    // scale's high byte: dropping it is what a five-byte reader would do.
+    // A truncated six-byte entry must not decode; the cut that matters drops the scale's high byte,
+    // as a five-byte reader would.
     assert!(Locks::from_payload(&[6, 1, 3, 0, 0, LOCK_DIR_POS]).is_none());
     assert!(Locks::from_payload(&[6, 1, 3, 0, 0, LOCK_DIR_POS, 0]).is_none());
 }
@@ -475,15 +475,15 @@ fn vector_mode_reports_the_scale_the_box_applies_to_the_aim() {
     let l = dev.query_locks().unwrap();
     assert_eq!(l.scale_of(Axis::X, Direction::With), 130);
     assert_eq!(l.scale_of(Axis::Y, Direction::With), 60);
-    // In vector mode one relative scale governs both axes, the lower of the two, so the readback
-    // names 60 on both axes rather than each axis's stored byte.
+    // In vector mode one relative scale, the lower, governs both axes, so the readback reports 60 on
+    // both.
     dev.set_bearing(Some(Duration::from_millis(20)), BearingMode::Vector)
         .unwrap();
     let l = dev.query_locks().unwrap();
     assert_eq!(l.scale_of(Axis::X, Direction::With), 60);
     assert_eq!(l.scale_of(Axis::Y, Direction::With), 60);
-    // The absolute pair is stored and reported per axis in either mode. Which of its two slots a
-    // delta lands in is a renderer question the box answers on the emitted value, not here.
+    // The absolute pair is per axis in either mode; which slot a delta lands in, the box decides on
+    // the emitted value.
     dev.scale(Axis::X, Direction::Positive, 25).unwrap();
     assert_eq!(
         dev.query_locks()
@@ -625,8 +625,8 @@ fn the_signed_scale_is_bounded_and_axis_only() {
 #[cfg(feature = "mock")]
 #[test]
 fn the_box_writes_nothing_at_all_for_a_reversal_on_a_one_bit_class() {
-    // The crate refuses one before the wire, so drive the modelled table directly: if the box merely
-    // truncated a negative to a block, a host that lost its guard would see a lock the box refused.
+    // The crate refuses one before the wire, so drive the modelled table directly: were a negative
+    // truncated to a block, a host without the guard would see a lock the box refused.
     use crate::mock::LockTable;
     use crate::protocol::opcode::{LOCK_CLS_BTN, LOCK_CLS_KEY, LOCK_CLS_MEDIA};
     use crate::types::BearingMode;
@@ -644,8 +644,8 @@ fn the_box_writes_nothing_at_all_for_a_reversal_on_a_one_bit_class() {
 
 #[test]
 fn scale_of_both_ranks_a_block_above_a_reversal() {
-    // A signed minimum would call -50 the lowest and report a reversal over a block, when the block is
-    // what a delta actually meets. Both is the least that SURVIVES, which is a magnitude.
+    // A signed minimum ranks -50 lowest and reports a reversal over the block a delta meets; Both is
+    // the least that survives, a magnitude.
     let l = Locks::from_payload(&[
         6,
         2,
@@ -699,8 +699,8 @@ fn a_reset_clears_the_lock_table() {
     assert_eq!(dev.query_locks().unwrap().entries().len(), 0);
 }
 
-// The flag byte itself, against the firmware's CTRL_RST_F_NVS. A wrong value is worse than a no-op:
-// the box refuses a RESET carrying an undefined bit whole, so the release would be lost too.
+// The flag against the firmware's CTRL_RST_F_NVS. A wrong value loses the release too: the box
+// refuses a RESET with an undefined bit whole.
 #[cfg(feature = "mock")]
 #[test]
 fn a_factory_reset_carries_the_nvs_bit_and_a_plain_reset_carries_nothing() {
@@ -776,8 +776,8 @@ fn the_reply_truncates_granular_keys_and_never_the_bounded_classes() {
         e.scope,
         LockScope::Target(LockTarget::Usage(u)) if u.class == Class::Key
     )));
-    // 83 key edges is usages 0x04..=0x2C on both edges (82) then 0x2D's press edge alone, so the cut
-    // lands mid-usage and everything past it is gone.
+    // 83 key edges: usages 0x04..=0x2C on both edges (82), then 0x2D's press alone, so the cut
+    // lands mid-usage.
     assert_eq!(
         *l.entries().last().unwrap(),
         crate::types::LockEntry {
@@ -793,8 +793,8 @@ fn the_reply_truncates_granular_keys_and_never_the_bounded_classes() {
 
 #[test]
 fn a_lock_that_never_reached_the_wire_is_not_held() {
-    // A send failure means the box was never told, so the desired state must not claim the lock:
-    // one held here keeps `is_idle` false and the keepalive open for a lock nothing is applying.
+    // After a failed send the box was never told, so desired state must not hold the lock, or
+    // `is_idle` stays false and the keepalive open for a lock nothing applies.
     use crate::transport::Disconnected;
     let dev = crate::Device::from_transport(std::sync::Arc::new(Disconnected));
     assert!(dev.lock(Axis::X, Direction::Both).is_err());
@@ -802,8 +802,8 @@ fn a_lock_that_never_reached_the_wire_is_not_held() {
     assert!(dev.link.desired().lock().held_locks().is_empty());
 }
 
-// The box's granular media locks live in a fixed slot array, not a set: INPUT_MEDIA_MAX
-// (= CTRL_CONS_EVENT_MAX = 8) slots, and `media_set` takes the first free one.
+// The box keeps granular media locks in INPUT_MEDIA_MAX (= CTRL_CONS_EVENT_MAX = 8) slots, and
+// `media_set` takes the first free one.
 #[cfg(feature = "mock")]
 fn media_ids(l: &Locks) -> Vec<u16> {
     l.entries()
@@ -818,8 +818,8 @@ fn media_ids(l: &Locks) -> Vec<u16> {
 #[cfg(feature = "mock")]
 #[test]
 fn the_ninth_granular_media_lock_is_dropped() {
-    // media_set walks the eight slots for a free one and returns without taking anything when every
-    // slot is full, so the ninth distinct usage never reaches the table and never reads back.
+    // media_set takes nothing when all eight slots are full, so a ninth usage never reaches the table
+    // or the readback.
     use crate::types::MediaKey;
     let dev = crate::Device::with_mock(crate::MockBox::new());
     let taken = [0xEAu16, 0xE9, 0x30, 0xB5, 0xB6, 0xCD, 0xE2, 0xB7];
@@ -836,8 +836,8 @@ fn the_ninth_granular_media_lock_is_dropped() {
 #[cfg(feature = "mock")]
 #[test]
 fn a_released_media_slot_is_refilled_before_the_end() {
-    // Unlocking clears the slot the usage sat in and the next lock takes the first free one, so a
-    // replacement lands where the released usage was, ahead of the ones that outlived it.
+    // Unlocking frees the usage's slot and the next lock takes the first free one, so a replacement
+    // lands where the released usage was, ahead of later ones.
     use crate::types::MediaKey;
     let dev = crate::Device::with_mock(crate::MockBox::new());
     for id in [0xEAu16, 0xE9, 0x30] {
@@ -854,8 +854,8 @@ fn a_released_media_slot_is_refilled_before_the_end() {
 #[cfg(feature = "mock")]
 #[test]
 fn a_locks_reply_past_the_entry_cap_still_answers() {
-    // Locks::from_entries and MockBox::set_locks are both public and unbounded, but the box appends
-    // at most CTRL_RESP_LOCKS_MAXN entries and always replies (ctrl_locks_append).
+    // Locks::from_entries and MockBox::set_locks are unbounded, but the box appends at most
+    // CTRL_RESP_LOCKS_MAXN entries and always replies (ctrl_locks_append).
     use crate::types::{LockEntry, MediaKey};
     let mock = crate::MockBox::new();
     let entries: Vec<LockEntry> = (0..256u16)
@@ -878,8 +878,8 @@ fn a_locks_reply_past_the_entry_cap_still_answers() {
 #[cfg(feature = "mock")]
 #[test]
 fn a_reapply_rebuilds_the_media_slots_in_the_order_the_box_had_them() {
-    // The reply enumerates media in slot order, so a replay that refills the slots in a different
-    // order reports the same locks as a different `Locks`.
+    // The reply lists media in slot order, so a replay refilling slots in another order reports the
+    // same locks as a different `Locks`.
     use crate::protocol::FrameType;
     use crate::types::MediaKey;
     let dev = crate::Device::with_mock(crate::MockBox::new());
@@ -889,8 +889,8 @@ fn a_reapply_rebuilds_the_media_slots_in_the_order_the_box_had_them() {
     let before = dev.query_locks().unwrap();
     assert_eq!(media_ids(&before), vec![0xEA, 0xE9, 0x30, 0xB5]);
 
-    // RESET clears the box's table the way the firmware's silence window does, without touching what
-    // the host holds; `reapply` is then what a reconnect runs.
+    // RESET clears the box's table as the silence window does, leaving the host's copy; `reapply` is
+    // what a reconnect runs.
     dev.link.send(FrameType::Reset, &[0]).unwrap();
     assert!(dev.query_locks().unwrap().entries().is_empty());
     dev.reapply().unwrap();

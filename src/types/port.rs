@@ -1,9 +1,9 @@
 //! Discovered serial-port descriptor.
 
-/// Information about one discovered serial port.
+/// Discovered serial port.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PortInfo {
-    /// The OS path used to open the port (`/dev/ttyACM0` on Linux, `COM3` on Windows).
+    /// OS path that opens the port (`/dev/ttyACM0` on Linux, `COM3` on Windows).
     pub path: String,
     /// USB vendor id.
     pub vid: u16,

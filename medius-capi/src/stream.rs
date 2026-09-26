@@ -12,12 +12,12 @@ pub struct MediusEventStream {
     pub(crate) inner: medius::EventStream,
 }
 
-/// A device LOG stream. Opaque; create with `medius_device_logs`, release with `medius_log_stream_free`.
+/// An opaque LOG stream; create with `medius_device_logs`, free with `medius_log_stream_free`.
 pub struct MediusLogStream {
     pub(crate) inner: medius::LogStream,
 }
 
-/// Subscribe to the catch stream for `filters[0..n]` (build them with the `medius_catch_filter_*` helpers); writes the handle to `*out`.
+/// Subscribe to the catch stream for `filters[0..n]` (built with the `medius_catch_filter_*` helpers), writing the handle to `*out`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_device_catch_events(
     dev: *mut MediusDevice,
@@ -33,8 +33,8 @@ pub unsafe extern "C" fn medius_device_catch_events(
             return fail(MediusStatus::ErrInvalidArg, "empty filter list");
         }
         let slice = unsafe { std::slice::from_raw_parts(filters, n) };
-        // Reject the whole call rather than dropping the offender: a subscription silently narrower
-        // than the caller asked for looks like the box producing no events.
+        // Refuse the whole call: dropping the offender would narrow the subscription with no
+        // signal, which reads as the box producing no events.
         let mut parsed = Vec::with_capacity(n);
         for f in slice {
             match catch_filter_from_c(*f) {
@@ -165,8 +165,8 @@ fn fail_bool(message: &str) -> bool {
     false
 }
 
-// The caller's clock and ours share no origin, so the arrival is fed in on OUR scale and the answer
-// shifted back onto theirs.
+// The caller's clock and ours share no origin: feed the arrival in on our scale and shift the
+// result back onto theirs.
 unsafe fn timeline_observe(
     t: *mut MediusTimeline,
     ts_us: u32,
@@ -208,7 +208,7 @@ pub struct MediusInputStream {
 ///
 /// Every filter must name an input class and cover both edges; build them with
 /// `medius_catch_filter_watch*` or `medius_catch_filter_all_input`. A traffic class, the everything
-/// filter, or a filter narrowed to one edge is refused rather than silently yielding nothing.
+/// filter, or a one-edge filter is refused.
 ///
 /// # Safety
 /// `filters` must point to `n` readable `MediusCatchFilter`; `dev` and `out` must be non-null.
@@ -352,9 +352,9 @@ pub unsafe extern "C" fn medius_input_stream_dropped(stream: *mut MediusInputStr
     })
 }
 
-/// Write the usages of `class` this stream currently holds to `out[0..cap]` and return how many there
-/// are. A return above `cap` means the buffer was too small and only `cap` were written. `class`
-/// takes a `MEDIUS_CLASS_*` constant; any other value holds nothing and reads as 0.
+/// Write the usages of `class` this stream holds to `out[0..cap]`, returning how many there are;
+/// above `cap`, only `cap` were written. `class` takes a `MEDIUS_CLASS_*` constant; any other value
+/// reads as 0.
 ///
 /// # Safety
 /// `out` must point to space for `cap` `MediusUsage`.
@@ -384,9 +384,9 @@ pub unsafe extern "C" fn medius_input_stream_held(
 
 /// A host-side clock mapping; create with `medius_timeline_new`, free with `medius_timeline_free`.
 ///
-/// A catch stamp is microseconds on a chip that booted before this process did: it wraps every ~71.6
-/// minutes and has no relation to any clock here. Feed every event in as it arrives, in order,
-/// passing your own monotonic `now_ns`.
+/// A catch stamp is microseconds on a chip that booted before this process: it wraps every ~71.6
+/// minutes and is unrelated to any clock here. Feed every event in as it arrives, in order, with
+/// your monotonic `now_ns`.
 pub struct MediusTimeline {
     inner: medius::Timeline,
     origin: std::time::Instant,
@@ -418,8 +418,8 @@ pub unsafe extern "C" fn medius_timeline_free(t: *mut MediusTimeline) {
 
 /// Place `ev` on the caller's clock, writing the result to `*out`; returns false on a null argument.
 ///
-/// `now_ns` is the caller's own monotonic reading at the moment the event arrived, in nanoseconds
-/// from any fixed origin. `MediusStamped::host_ns` comes back on that same scale.
+/// `now_ns` is the caller's monotonic reading when the event arrived, in nanoseconds from any fixed
+/// origin; `MediusStamped::host_ns` comes back on that scale.
 ///
 /// # Safety
 /// `t`, `ev` and `out` must be non-null and valid.
@@ -434,18 +434,16 @@ pub unsafe extern "C" fn medius_timeline_observe(
         if t.is_null() || ev.is_null() || out.is_null() {
             return false;
         }
-        // `clock` is read as the byte it is: the field is typed `MediusClockDomain` for a caller
-        // reading it, and materialising one out of memory a caller filled would be undefined before
-        // the check below could run.
+        // Read `clock` as a byte: materialising a `MediusClockDomain` from caller-filled memory is
+        // undefined before the check below runs.
         let ts_us = unsafe { (*ev).ts_us };
         let clock = unsafe { *(&raw const (*ev).clock).cast::<u8>() };
         unsafe { timeline_observe(t, ts_us, clock, now_ns, out) }
     })
 }
 
-/// Place a decoded input event on the caller's clock; the input-stream counterpart of
-/// `medius_timeline_observe`. Both share one timeline, so a caller reading both streams gets one
-/// comparable ordering.
+/// Place a decoded input event on the caller's clock: `medius_timeline_observe` for input streams.
+/// Both share one timeline, so events from both streams order together.
 ///
 /// # Safety
 /// `t`, `ev` and `out` must be non-null and valid.
@@ -500,8 +498,8 @@ pub unsafe extern "C" fn medius_timeline_samples(t: *mut MediusTimeline, domain:
 
 /// Whether the box is still delivering to this stream.
 ///
-/// `medius_event_stream_recv_timeout` and `_try_recv` both return `false` for "nothing yet" and for
-/// "nothing ever again". This separates them: one means wait longer, the other means stop.
+/// `medius_event_stream_recv_timeout` and `_try_recv` return `false` both for "nothing yet" and for
+/// "nothing ever again"; this tells them apart.
 ///
 /// # Safety
 /// `stream` must be non-null and valid, or null.

@@ -25,7 +25,7 @@ use crate::link::Link;
 use crate::transport::Transport;
 use crate::types::CountersSnapshot;
 
-/// The host control handle for one medius box.
+/// Control handle for one medius box.
 #[derive(Clone, Debug)]
 pub struct Device {
     pub(crate) link: Link,
@@ -48,7 +48,7 @@ impl Device {
         }
     }
 
-    /// A snapshot of the always-on counters.
+    /// Snapshot of the always-on counters.
     pub fn counters(&self) -> CountersSnapshot {
         self.link.counters()
     }

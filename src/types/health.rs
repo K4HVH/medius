@@ -5,10 +5,10 @@ use crate::protocol::opcode::{
     H_RATE_CONFIDENT, H_REWRITE_ON, H_TRANSFORM_ON,
 };
 
-/// The decoded `RESP(HEALTH)` flags word.
+/// Decoded `RESP(HEALTH)` flags word.
 ///
-/// `HEALTH` is a `u16` LE from `CTRL_PROTO_VER 7` (§4.2): bits 0-7 are the original byte and the
-/// v3.4.0 advanced control layer opened the high byte. [`from_flags`](Self::from_flags) and
+/// A `u16` LE from `CTRL_PROTO_VER 7` (§4.2): bits 0-7 are the original byte; the v3.4.0 advanced
+/// control layer opened the high byte. [`from_flags`](Self::from_flags) and
 /// [`to_flags`](Self::to_flags) carry the whole word.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Health {
@@ -16,11 +16,11 @@ pub struct Health {
     pub link_up: bool,
     /// A real mouse is attached on the host chip.
     pub mouse_attached: bool,
-    /// The clone has been configured by the game PC.
+    /// The game PC has configured the clone.
     pub clone_configured: bool,
-    /// Injection is currently active.
+    /// Injection is active.
     pub injection_active: bool,
-    /// The native-rate estimator window is full, so the [`Rate`](crate::Rate) value is trustworthy.
+    /// Native-rate estimator window is full, so [`Rate`](crate::Rate) is trustworthy.
     pub rate_confident: bool,
     /// At least one lock is active.
     pub lock_on: bool,
@@ -30,15 +30,15 @@ pub struct Health {
     pub kbd_attached: bool,
     /// The rewrite-rule table (§3.14) is non-empty (v3.4.0).
     pub rewrite_on: bool,
-    /// The clone is serving a patched descriptor set (§3.14) (v3.4.0).
+    /// The clone serves a patched descriptor set (§3.14) (v3.4.0).
     pub patch_on: bool,
     /// A field transform is active (reserved; the transforms feature owns this bit) (v3.4.0).
     pub transform_on: bool,
 }
 
 impl Health {
-    /// Decode a `RESP(HEALTH)` flags word (§4.2). A box that reports only the low byte (an eight-bit
-    /// caller passing a `u8` that widens here) still decodes bits 0-7; the high byte reads clear.
+    /// Decodes a `RESP(HEALTH)` flags word (§4.2). A low byte alone (a `u8` widened here) still
+    /// decodes bits 0-7; the high byte reads clear.
     pub fn from_flags(flags: u16) -> Self {
         let lo = flags as u8;
         Health {
@@ -56,7 +56,7 @@ impl Health {
         }
     }
 
-    /// Re-encode this health view back to its flags word.
+    /// Encodes the flags word.
     pub fn to_flags(self) -> u16 {
         let mut flags = 0u16;
         if self.link_up {

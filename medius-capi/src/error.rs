@@ -6,7 +6,7 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 
 use medius::Error;
 
-/// The result of a fallible `medius_*` call. `MEDIUS_OK` is zero; everything else is a failure.
+/// Result of a fallible `medius_*` call: `MEDIUS_OK` is 0, anything else a failure.
 #[repr(i32)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MediusStatus {
@@ -36,18 +36,17 @@ pub enum MediusStatus {
     ErrHalfEdgeInputFilter = 17,
     /// An exact id equal to the blanket sentinel, which would address the whole class.
     ErrReservedId = 18,
-    /// `MEDIUS_DIRECTION_WITH` / `_AGAINST` on something with no bearing to measure them against.
+    /// `MEDIUS_DIRECTION_WITH` / `_AGAINST` on a target with no bearing.
     ErrRelativeDirection = 19,
     /// A lock scale outside `MEDIUS_LOCK_SCALE_MIN ..= MEDIUS_LOCK_SCALE_MAX`.
     ErrLockScaleRange = 20,
-    /// A negative (reversing) lock scale on a button, key or media usage, which carries one bit and has
-    /// nothing to reverse.
+    /// A negative (reversing) lock scale on a button, key or media usage, which carries one bit.
     ErrLockScaleUsage = 21,
     /// `medius_device_set_rewrite` or `medius_device_apply_patch` with the imperfect-clone opt-in off.
     ErrImperfectRequired = 22,
     /// A rewrite rule whose `match` and `mask` are different lengths.
     ErrRewriteMaskLength = 23,
-    /// A rewrite action that is not valid for its class (a report-only or control-only action misused).
+    /// A rewrite action invalid for its class (a report-only or control-only action misused).
     ErrRewriteActionClass = 24,
     /// A rewrite payload larger than the head the box holds for its class.
     ErrRewritePayloadTooLarge = 25,
@@ -63,8 +62,8 @@ pub enum MediusStatus {
     ErrClipFrameCount = 30,
     /// A clip frame that encodes to more than `MEDIUS_CLIP_ENTRY_MAX` bytes.
     ErrClipFrameTooLong = 31,
-    /// A clip transfer whose data is not what its setup packet announces: `length` bytes for an OUT
-    /// request, none for an IN one.
+    /// A clip transfer whose data disagrees with its setup packet: `length` bytes for OUT, none for
+    /// IN.
     ErrClipTransferData = 32,
     /// A clip packet trigger the box would refuse; `medius_last_error_message` says why.
     ErrClipPacketTrigger = 33,
@@ -196,7 +195,7 @@ pub unsafe extern "C" fn medius_last_error_message(buf: *mut c_char, cap: usize)
     })
 }
 
-/// The `BadProtoVer` version byte from the last error, or 0 if the last error carried none.
+/// The last error's `BadProtoVer` version byte, or 0 if it carried none.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_last_error_proto_ver() -> u8 {
     guard(0, || LAST_ERROR.with(|e| e.borrow().proto_ver))

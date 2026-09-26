@@ -1,36 +1,36 @@
-//! Emit-rate pacing override: what paces injected motion, and the rate in effect (§4.14).
+//! Emit pacing: what paces injected motion, and the rate in effect (§4.14).
 
 /// What paces injected motion (`OPTION(EMIT)`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum EmitPace {
-    /// Pace to the mouse's learnt native report rate (the default).
+    /// Pace to the learnt native report rate (the default).
     #[default]
     Learned,
     /// Pace to the cloned mouse's `bInterval` poll rate.
     Interval,
-    /// A fixed rate in Hz. The 1 ms frame clock snaps it to `1000/n` Hz and caps it at 1 kHz.
+    /// Fixed rate in Hz, snapped by the 1 ms frame clock to `1000/n` Hz and capped at 1 kHz.
     Fixed(u16),
 }
 
-/// The configured [`EmitPace`] plus the emit-rate ceiling and the wire rate actually in effect (§4.14).
+/// Configured [`EmitPace`], emit-rate ceiling, and wire rate in effect (§4.14).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct EmitPaceStatus {
-    /// The selected mode (for [`EmitPace::Fixed`], the rate the host requested).
+    /// Selected mode (for [`EmitPace::Fixed`], the requested rate).
     pub mode: EmitPace,
-    /// The ceiling currently in effect (Hz); 0 = learnt/adaptive, or no device yet in
-    /// [`EmitPace::Interval`]. Reads 1000 once the renderer has a profile, since a rendered stream
-    /// paces itself (see [`set_render`](crate::Device::set_render)).
+    /// Ceiling in effect (Hz); 0 = learnt/adaptive, or no device yet in [`EmitPace::Interval`].
+    /// Reads 1000 once the renderer has a profile, since a rendered stream paces itself (see
+    /// [`set_render`](crate::Device::set_render)).
     pub resolved_hz: u16,
-    /// The forced wire rate the host asked for (Hz); `None` leaves the native interval.
+    /// Requested forced wire rate (Hz); `None` keeps the native interval.
     pub force_hz: Option<u16>,
-    /// What the clone's input endpoints advertise now (Hz), forced or native; 0 = no clone.
+    /// Rate the clone's input endpoints advertise now (Hz), forced or native; 0 = no clone.
     pub advertised_hz: u16,
-    /// Whether a forced interval is written into the descriptor being served.
+    /// Whether the served descriptor carries a forced interval.
     pub force_active: bool,
 }
 
 impl EmitPaceStatus {
-    /// Decode a `RESP(OPTIONS, EMIT)` payload (§4.14).
+    /// Decodes a `RESP(OPTIONS, EMIT)` payload (§4.14).
     pub(crate) fn from_payload(p: &[u8]) -> Option<EmitPaceStatus> {
         if p.len() < 12 {
             return None;

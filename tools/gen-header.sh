@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Regenerate the committed C header from medius-capi. Run after changing the C ABI.
-# CI runs this and checks `git diff --exit-code` to catch drift.
+# Regenerates the committed C header from medius-capi; run after a C ABI change.
+# CI runs it and fails on drift (`git diff --exit-code`).
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

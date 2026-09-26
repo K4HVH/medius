@@ -1,6 +1,5 @@
-//! `RESP(FIRMWARE)` decoding (§4.16) and the chunk sequencing behind a staged image. Byte vectors are
-//! read off the firmware's `ota_proto.h` and `control-protocol.md` §4.16, not written to match this
-//! decoder: a wire decoder checked against its own author's expectations is a false green.
+//! `RESP(FIRMWARE)` decoding (§4.16) and staged-image chunk sequencing. Byte vectors come from the
+//! firmware's `ota_proto.h` and `control-protocol.md` §4.16, not from this decoder's expectations.
 
 use crate::device::update::{ChunkPlan, begin_body};
 use crate::protocol::opcode::{OTA_CHUNK, OTA_OP_DATA, Q_FIRMWARE};
@@ -198,8 +197,8 @@ fn a_zero_credit_falls_back_to_the_default() {
 
 #[test]
 fn update_status_names_every_value_the_box_can_answer() {
-    // Derived from name() rather than hand-listed. The hand-written version was bypassed by the
-    // very status it existed to guard, because adding one meant remembering a test in another file.
+    // Derived from name(): a hand-written list missed the very status it guarded, since adding one
+    // meant remembering a test in another file.
     let named: Vec<u8> = (0u8..=0xFF)
         .filter(|&v| UpdateStatus(v).name() != "unknown")
         .collect();
@@ -341,8 +340,7 @@ mod correlation {
     use super::*;
     use crate::protocol::FrameType;
 
-    // A DATA acknowledgement answers a whole window, so the box gives it a rolling SEQ of its own
-    // rather than echoing the command's.
+    // A DATA acknowledgement answers a window, so it carries its own rolling SEQ.
     #[test]
     fn data_acks_carry_a_rolling_seq_not_the_command_seq() {
         let mock = crate::MockBox::new();
@@ -369,8 +367,8 @@ mod correlation {
             "need several windows, got {} acks",
             acks.len()
         );
-        // Rolling: starts at 0 and steps by one per acknowledgement, which is nothing like the
-        // command SEQs (one per chunk, sixteen per window).
+        // Starts at 0 and steps by one per acknowledgement, unlike the command SEQs (one per chunk,
+        // sixteen per window).
         let expected: Vec<u8> = (0..acks.len() as u8).collect();
         assert_eq!(acks, expected, "acks should roll 0,1,2..., got {acks:?}");
         assert_ne!(
@@ -379,8 +377,8 @@ mod correlation {
         );
     }
 
-    // An oversized chunk is a malformed frame, not an image that does not fit. No client sends one,
-    // so the box's answer is asserted against the mock's state machine directly.
+    // An oversized chunk is a malformed frame, not an oversized image. No client sends one, so the
+    // mock's state machine is asserted directly.
     #[test]
     fn an_oversized_chunk_is_bad_state_not_too_big() {
         let mut u = crate::mock::MockUpdate::default();
@@ -428,8 +426,7 @@ mod stale_replies {
         dev.stage_firmware(UpdateTarget::Device, &img, &mut |p| seen.push(p.sent))
             .expect("the stale acknowledgement must not be mistaken for this transfer's");
         assert_eq!(seen.last().copied(), Some(img.len()));
-        // Monotonic and never ahead of the image: a window-ahead loop reports an offset the box has
-        // not written yet.
+        // Monotonic, never ahead of the image: a window-ahead loop reports an unwritten offset.
         assert!(
             seen.windows(2).all(|w| w[0] < w[1]),
             "not monotonic: {seen:?}"
