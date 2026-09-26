@@ -2,9 +2,9 @@
 
 Python bindings for [medius](https://github.com/K4HVH/medius), custom firmware and a control library for MAKCU mouse-passthrough boxes.
 
-A MAKCU box sits inline between a mouse and a PC: the real mouse passes through to the PC while your program injects movement, buttons, scroll, and keystrokes over USB-serial. This package drives the box from Python. It's a `ctypes` wrapper over the medius C ABI with no runtime dependencies, and the wheel bundles the native library, so `pip install` needs no Rust toolchain.
+A MAKCU box sits between a mouse and a PC: the mouse passes through while your program injects movement, buttons, scroll and keystrokes over USB-serial. This package is a `ctypes` wrapper over the medius C ABI with no runtime dependencies; the wheel bundles the native library, so `pip install` needs no Rust toolchain.
 
-Full documentation is at [medius.k4tech.net](https://medius.k4tech.net).
+Documentation: [medius.k4tech.net](https://medius.k4tech.net).
 
 ## Install
 
@@ -24,11 +24,11 @@ with medius.Device.find() as dev:
     dev.move_rel(100, -50)                          # relative move
     dev.press(medius.Usage.button(medius.Button.LEFT))  # force a usage down
     with dev.input_events(medius.CatchFilter.all_input()) as events:
-        for event in events:                        # the user's real input, live
+        for event in events:                        # physical input, live
             ...
 ```
 
-Calls are synchronous and each sends one firmware frame; failures raise `MediusError`. The API covers mouse, keyboard, and media control, plus catching physical input. See [medius.k4tech.net](https://medius.k4tech.net) for the full reference.
+Calls are synchronous, one firmware frame each; failures raise `MediusError`. The API covers mouse, keyboard and media control, and catching physical input.
 
 ## License
 

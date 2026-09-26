@@ -75,8 +75,8 @@ fn the_clip_probe_takes_the_first_reply_for_its_selector() {
     assert_eq!(got.0.total, 40);
 }
 
-// What the probe reads is what the reconnect adopts, and a packet trigger the box still holds is
-// enough on its own to keep the keepalive running.
+// The reconnect adopts what the probe reads; a packet trigger the box holds keeps the keepalive
+// running by itself.
 #[test]
 fn the_clip_probe_reads_a_packet_trigger_the_reconnect_adopts() {
     let mut reply = clip_reply(0);
@@ -102,8 +102,8 @@ fn the_clip_probe_reads_a_packet_trigger_the_reconnect_adopts() {
     assert!(idle());
 }
 
-// A box that answers in a shape this crate cannot read answers the same way to every re-send, so the
-// probe ends on the first one and the reconnect does not wait the deadline out.
+// A box replying in an unreadable shape does so to every re-send, so the probe ends on the first
+// and the reconnect skips the deadline.
 #[test]
 fn a_clip_reply_the_crate_cannot_read_ends_the_probe_at_once() {
     let mut older = vec![0u8; 25];
@@ -118,8 +118,8 @@ fn a_clip_reply_the_crate_cannot_read_ends_the_probe_at_once() {
     );
 }
 
-// What the keepalive holds of a clip is recorded once the frame is out, so a call that failed on a
-// dropped link leaves nothing behind to keep alive.
+// Clip state is recorded once the frame is out, so a call that failed on a dropped link leaves
+// nothing for the keepalive.
 #[test]
 fn a_clip_call_that_never_went_out_records_nothing() {
     let mock = Arc::new(MockTransport::new());
@@ -184,8 +184,8 @@ fn version_reply(proto: u8, mac: [u8; 6]) -> Vec<u8> {
     p
 }
 
-// The same box answering after a reflash. Every other query gets a reply the probe cannot read, which
-// ends that probe at once.
+// The same box after a reflash: every other query gets an unreadable reply, ending that probe at
+// once.
 fn reflashed(proto: u8, mac: [u8; 6]) -> Arc<dyn crate::transport::Transport> {
     Arc::new(MockTransport::with_responder(
         move |ty, seq, payload| match (ty, payload.first()) {
@@ -209,8 +209,8 @@ fn a_rescan_refuses_the_box_back_on_another_protocol() {
         .link
         .set_identity(crate::link::reconnect::BoxIdentity { serial: None, mac });
 
-    // v3.4.0 firmware answers protocol 7, and a later one 9. Neither is taken back.
-    for proto in [7, crate::PROTO_VER + 1] {
+    // v3.4.1 firmware answers protocol 8, and a later one 10. Neither is taken back.
+    for proto in [8, crate::PROTO_VER + 1] {
         let port = reflashed(proto, mac);
         let err = device
             .link

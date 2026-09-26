@@ -1,16 +1,21 @@
+use std::collections::BTreeMap;
 use std::collections::btree_map::Entry;
-use std::collections::{BTreeMap, BTreeSet};
 
+use crate::device::clip::{bind_packet_payload, bind_payload};
 use crate::link::catch::FilterSet;
+use crate::protocol::FrameType;
+use crate::protocol::command::clip_set_payload;
 use crate::protocol::opcode::{
     BTN_COUNT, CLIP_SET_AUTOLOCK, CLIP_SET_LOOP, CLIP_SET_RETAIN, CLIP_SET_RIDE, LOCK_CLS_AXIS,
     LOCK_CLS_BTN, LOCK_CLS_MEDIA, LOCK_DIR_AGAINST, LOCK_DIR_BOTH, LOCK_DIR_NEG, LOCK_DIR_POS,
     LOCK_DIR_WITH, LOCK_ID_ALL, LOCK_SCALE_BLOCK, LOCK_SCALE_PASS, MAX_BUTTONS,
 };
 use crate::types::lock::blanket_scope;
-use crate::types::{Action, Class, ClipPacketTrigger, ClipSettings, ClipState, ClipStatus, Usage};
+use crate::types::{
+    Action, Class, ClipPacketTrigger, ClipSettings, ClipState, ClipStatus, ClipTrigger, Usage,
+};
 
-/// A lock the host wants held, keyed by its wire fields so a reapply is exact and idempotent.
+/// A lock the host holds, keyed by its wire fields so a reapply is exact and idempotent.
 pub(crate) type LockKey = (u8, u16, u8);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -41,10 +46,7 @@ impl Override {
 
 const SLOT_DIRS: [u8; 4] = [LOCK_DIR_POS, LOCK_DIR_NEG, LOCK_DIR_WITH, LOCK_DIR_AGAINST];
 
-// One row of the box's lock table: the scale each of the four slots holds. Tracking the row rather
-// than the direction byte that was sent is what makes a release exact: Both writes the absolute
-// pair and passes the relative one, so a later single-direction unlock has to clear one slot out of a
-// group write, which a key per direction cannot express.
+// One row of the box's lock table: the scale each of the four slots holds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct Slots([i16; 4]);
 
@@ -84,15 +86,15 @@ impl Slots {
     }
 }
 
-/// What [`DesiredState::apply_lock`] overwrote, enough to put it back when the frame never went out.
+/// What [`DesiredState::apply_lock`] overwrote, to restore when the frame never went out.
 #[derive(Debug)]
 pub(crate) struct LockUndo {
     rows: Vec<((u8, u16), Option<Slots>)>,
     media_order: Vec<u16>,
 }
 
-/// A rewrite rule the host wants held, in its wire fields, so a reconnect re-sends it byte-for-byte.
-/// Rules are session state on the same lifecycle as locks and catches (§3.14).
+/// A held rewrite rule in wire fields, so a reconnect re-sends it byte for byte. Session state, on
+/// the lifecycle of locks and catches (§3.14).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct StoredRewrite {
     pub(crate) class: u8,
@@ -105,8 +107,8 @@ pub(crate) struct StoredRewrite {
     pub(crate) payload: Vec<u8>,
 }
 
-/// The `(class, id, direction, match, mask)` key the box files a rule under; two rules that differ in
-/// any of these are separate entries.
+/// The box's `(class, id, direction, match, mask)` rule key; rules differing in any field are
+/// separate entries.
 pub(crate) type RewriteWireKey = (u8, u16, u8, Vec<u8>, Vec<u8>);
 
 impl StoredRewrite {
@@ -121,16 +123,16 @@ impl StoredRewrite {
     }
 }
 
-/// What [`DesiredState::apply_rewrite`]/[`remove_rewrite`](DesiredState::remove_rewrite) changed, enough
-/// to put it back when the frame never went out.
+/// What [`DesiredState::apply_rewrite`]/[`remove_rewrite`](DesiredState::remove_rewrite) changed, to
+/// restore when the frame never went out.
 #[derive(Debug)]
 pub(crate) struct RewriteUndo {
     key: RewriteWireKey,
-    prior: Option<StoredRewrite>,
+    prior: Option<(usize, StoredRewrite)>,
 }
 
-/// A field transform the host wants held, in its wire fields, so a reconnect re-sends it byte-for-byte.
-/// Transforms are session state on the same lifecycle as locks and rewrites (§3.15).
+/// A held field transform in wire fields, so a reconnect re-sends it byte for byte. Session state, on
+/// the lifecycle of locks and rewrites (§3.15).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct StoredTransform {
     pub(crate) op: u8,
@@ -140,8 +142,8 @@ pub(crate) struct StoredTransform {
     pub(crate) did: u16,
 }
 
-/// The `(sclass, sid, dclass, did)` key the box files a transform under; two entries that differ in any
-/// of these are separate rows, and setting one whose key exists overwrites its op.
+/// The box's `(sclass, sid, dclass, did)` transform key; entries differing in any field are separate
+/// rows, and setting an existing key overwrites its op.
 pub(crate) type TransformWireKey = (u8, u16, u8, u16);
 
 impl StoredTransform {
@@ -151,54 +153,63 @@ impl StoredTransform {
 }
 
 /// What [`DesiredState::apply_transform`]/[`remove_transform`](DesiredState::remove_transform) changed,
-/// enough to put it back when the frame never went out.
+/// to restore when the frame never went out.
 #[derive(Debug)]
 pub(crate) struct TransformUndo {
     key: TransformWireKey,
     prior: Option<(usize, StoredTransform)>,
 }
 
-/// PC-owned injection + subscription state, re-asserted after a reconnect so held usages and open catches survive a control-link blip.
+/// PC-owned injection and subscription state, re-asserted after a reconnect so held usages and open
+/// catches survive a control-link blip.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub(crate) struct DesiredState {
     overrides: BTreeMap<(u8, u16), Override>, // never sits at None in the map
-    // One entry per box lock-table row. A row every slot passes is not held at all and is dropped, so
-    // `locks` stays exactly the set a reconnect has to re-send.
+    // One entry per box lock-table row; a row whose every slot passes is dropped, so this is exactly
+    // what a reconnect re-sends.
     locks: BTreeMap<(u8, u16), Slots>,
-    // Granular media rows in the order they were taken. The box keeps its media locks in a fixed
-    // 8-slot array filled first-free-slot-first, so a replay in id order refills those slots in a
-    // different order and, past the eight it holds, drops a different usage than the box was
-    // dropping. The blanket is its own flag on the box, not a slot, so it stays out.
+    // Granular media rows in the order they were taken.
     media_order: Vec<u16>,
     catch: FilterSet,
-    // The rewrite-rule table the box should be holding, keyed by wire key so a re-set is exact and
-    // idempotent. Re-asserted on reconnect and by the keepalive, exactly like `catch`.
-    rewrites: BTreeMap<RewriteWireKey, StoredRewrite>,
-    // The field-transform table the box should be holding, keyed by (sclass, sid, dclass, did) so a
-    // Session state re-asserted on reconnect and by the keepalive. A VEC, not a map: the box applies
-    // transforms in installation order and two that write the same field do not commute, so replaying
-    // them in key order would rebuild a different pipeline than the one the host built.
+    // In the box's order, which breaks ties between equally specific rules by the earlier entry.
+    rewrites: Vec<StoredRewrite>,
+    // In installation order, the order the box applies them in.
     transforms: Vec<StoredTransform>,
-    // The clone's declared button count, cached from `RESP(CAPS)`: the handshake reads it, and a
-    // reconnect re-reads it. A button blanket is held UNEXPANDED and expanded onto this many rows at
-    // reassert time, so a wide-button lock set before the caller's own `caps()` still re-asserts every
-    // declared button across a reconnect, and a device swapped in during the blip re-asserts onto its
-    // count. `None` before any CAPS read: the blanket then expands onto the five named buttons. A
-    // device fact, not PC-owned injection state, so `clear()`/`is_idle()` leave it alone.
+    // Cached from `RESP(CAPS)`; the handshake reads it, a reconnect re-reads it.
     declared_buttons: Option<u8>,
     clip: ClipHeld,
 }
 
-// What the box holds of a clip: a loaded ring, settings off their defaults, and both kinds of trigger.
-// A second of control silence clears all of it, so while any of it stands the keepalive keeps the link
-// from going quiet. The ring's content is the caller's to reload, so a reconnect replays none of it
-// and reads back what the box still holds.
+// A loaded ring, settings off their defaults, and both trigger kinds.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 struct ClipHeld {
+    // Appended since the last clear.
     loaded: bool,
+    // Whether the ring held the clip when last known: set by an append, cleared by a clear or a
+    // reading of an empty idle ring. A release loses a clip only while it is set.
+    ring: bool,
+    // Moved by every append and clear, so a reading taken across one is not trusted.
+    ring_gen: u64,
+    // The box dropped the loaded clip; the next append or clear resets it.
+    lost: bool,
     settings: [u8; 4], // by CLIP_SET id; every default is 0
-    triggers: BTreeSet<(u8, u16, u8)>,
-    packet_triggers: BTreeMap<ClipPacketKey, bool>, // whether each consumes
+    triggers: BTreeMap<ClipTriggerKey, ClipTrigger>,
+    // In the box's order, which breaks ties between equally specific triggers by the earlier one.
+    packet_triggers: Vec<ClipPacketTrigger>,
+}
+
+// A ring with bytes in it, or an engine that is not idle (a streaming clip that ran dry stays
+// playing), is a loaded clip.
+fn ring_holds(status: &ClipStatus) -> bool {
+    status.total != 0 || status.state != ClipState::Idle
+}
+
+// The (class, id, edge) key the box holds an input trigger under.
+pub(crate) type ClipTriggerKey = (u8, u16, u8);
+
+pub(crate) fn clip_trigger_key(t: &ClipTrigger) -> ClipTriggerKey {
+    let (class, id) = t.on.class_id();
+    (class, id, t.edge.as_u8())
 }
 
 // The (class, id, dir, match, mask) key the box holds a packet trigger under.
@@ -215,8 +226,38 @@ pub(crate) fn clip_packet_key(t: &ClipPacketTrigger) -> ClipPacketKey {
 }
 
 impl DesiredState {
+    // An append or a clear: either way the caller has dealt with a lost clip.
     pub(crate) fn clip_loaded(&mut self, loaded: bool) {
         self.clip.loaded = loaded;
+        self.clip.ring = loaded;
+        self.clip.ring_gen += 1;
+        self.clip.lost = false;
+    }
+
+    pub(crate) fn clip_ring_gen(&self) -> u64 {
+        self.clip.ring_gen
+    }
+
+    pub(crate) fn clip_ring_held(&self) -> bool {
+        self.clip.ring
+    }
+
+    // A ring reading taken when `ring_gen` read `seen`. With `released`, the box released the session
+    // first, so a ring it held is lost.
+    pub(crate) fn clip_note_ring(&mut self, seen: u64, status: &ClipStatus, released: bool) {
+        if seen != self.clip.ring_gen {
+            return;
+        }
+        let holds = ring_holds(status);
+        if released && self.clip.ring && !holds {
+            self.clip.lost = true;
+            self.clip.loaded = false;
+        }
+        self.clip.ring = holds;
+    }
+
+    pub(crate) fn clip_lost(&self) -> bool {
+        self.clip.lost
     }
 
     pub(crate) fn clip_setting(&mut self, id: u8, value: u8) {
@@ -225,36 +266,67 @@ impl DesiredState {
         }
     }
 
-    pub(crate) fn clip_trigger(&mut self, key: (u8, u16, u8), present: bool) {
-        if present {
-            self.clip.triggers.insert(key);
-        } else {
-            self.clip.triggers.remove(&key);
-        }
+    pub(crate) fn clip_bind(&mut self, trigger: ClipTrigger) {
+        self.clip
+            .triggers
+            .insert(clip_trigger_key(&trigger), trigger);
     }
 
-    pub(crate) fn clip_packet_bind(&mut self, key: ClipPacketKey, consume: bool) {
-        self.clip.packet_triggers.insert(key, consume);
+    pub(crate) fn clip_unbind(&mut self, key: &ClipTriggerKey) {
+        self.clip.triggers.remove(key);
+    }
+
+    // An overwrite keeps its place, as clip_ptrig_set keeps it.
+    pub(crate) fn clip_packet_bind(&mut self, trigger: &ClipPacketTrigger) {
+        let key = clip_packet_key(trigger);
+        match self
+            .clip
+            .packet_triggers
+            .iter_mut()
+            .find(|t| clip_packet_key(t) == key)
+        {
+            Some(held) => *held = trigger.clone(),
+            None => self.clip.packet_triggers.push(trigger.clone()),
+        }
     }
 
     pub(crate) fn clip_packet_unbind(&mut self, key: &ClipPacketKey) {
-        self.clip.packet_triggers.remove(key);
+        self.clip
+            .packet_triggers
+            .retain(|t| clip_packet_key(t) != *key);
     }
 
-    // The opt-in went off, and the box removed every consuming packet trigger with it. Returns what
-    // was dropped, for a caller whose frame never went out to put back.
-    pub(crate) fn clip_packet_drop_consuming(&mut self) -> Vec<ClipPacketKey> {
-        let dropped: Vec<ClipPacketKey> = self
+    // The opt-in went off, removing every consuming packet trigger. Returns what was dropped, for a
+    // caller whose frame never went out to restore.
+    pub(crate) fn clip_packet_drop_consuming(&mut self) -> Vec<ClipPacketTrigger> {
+        let dropped: Vec<ClipPacketTrigger> = self
             .clip
             .packet_triggers
             .iter()
-            .filter(|&(_, &consume)| consume)
-            .map(|(k, _)| k.clone())
+            .filter(|t| t.consume)
+            .cloned()
             .collect();
-        for k in &dropped {
-            self.clip.packet_triggers.remove(k);
-        }
+        self.clip.packet_triggers.retain(|t| !t.consume);
         dropped
+    }
+
+    // Frames that rebuild the held clip settings and triggers on a box holding none.
+    pub(crate) fn clip_config_frames(&self) -> Vec<(FrameType, Vec<u8>)> {
+        let settings = (0u8..)
+            .zip(self.clip.settings)
+            .filter(|&(_, v)| v != 0)
+            .map(|(id, v)| (FrameType::ClipSet, clip_set_payload(id, v).to_vec()));
+        let triggers = self
+            .clip
+            .triggers
+            .values()
+            .map(|t| (FrameType::ClipTrigger, bind_payload(t).to_vec()));
+        let packets = self
+            .clip
+            .packet_triggers
+            .iter()
+            .map(|t| (FrameType::ClipTrigger, bind_packet_payload(t)));
+        settings.chain(triggers).chain(packets).collect()
     }
 
     pub(crate) fn clip_triggers_clear(&mut self) {
@@ -262,34 +334,34 @@ impl DesiredState {
         self.clip.packet_triggers.clear();
     }
 
-    // Take the box's own answer for what it holds, read back after a reconnect. A ring with bytes in
-    // it, or an engine that is not idle (a streaming clip that ran dry stays playing), is a loaded clip.
+    // Adopts what the box reports it holds, read back after a reconnect.
     pub(crate) fn clip_adopt(&mut self, status: &ClipStatus, settings: &ClipSettings) {
         let mut scalars = [0u8; 4];
         scalars[CLIP_SET_AUTOLOCK as usize] = blanket_scope(&settings.autolock);
         scalars[CLIP_SET_LOOP as usize] = settings.loop_ as u8;
         scalars[CLIP_SET_RETAIN as usize] = settings.retain as u8;
         scalars[CLIP_SET_RIDE as usize] = settings.ride as u8;
+        let loaded = ring_holds(status);
         self.clip = ClipHeld {
-            loaded: status.total != 0 || status.state != ClipState::Idle,
+            loaded,
+            ring: loaded,
+            ring_gen: self.clip.ring_gen + 1,
+            lost: self.clip.lost || (self.clip.ring && !loaded),
             settings: scalars,
             triggers: settings
                 .triggers
                 .iter()
-                .map(|t| {
-                    let (class, id) = t.on.class_id();
-                    (class, id, t.edge.as_u8())
-                })
+                .map(|t| (clip_trigger_key(t), *t))
                 .collect(),
             packet_triggers: settings
                 .packet_triggers
                 .iter()
-                .map(|e| (clip_packet_key(&e.trigger), e.trigger.consume))
+                .map(|e| e.trigger.clone())
                 .collect(),
         };
     }
 
-    /// Record a momentary-usage override (any class) for reconnect-replay.
+    /// Records a momentary-usage override (any class) for replay.
     pub(crate) fn apply(&mut self, usage: Usage, action: Action) {
         let key = usage.class_id();
         match Override::applied(action) {
@@ -302,14 +374,11 @@ impl DesiredState {
         }
     }
 
-    // Track a scale (any class) so a reconnect re-asserts it, as the box's own table would hold it.
-    //
-    // A momentary usage carries one bit, so the box stores the block or pass it amounts to and the
-    // number sent is truncated to that; recording the raw byte would leave a scale above a full pass
-    // held here as a lock the box released. A button blanket is held as one unexpanded row and
-    // expanded at reassert time onto the declared count (see `held_locks`); a single button touched
-    // while it is held materialises it first, so releasing one button afterwards is not undone by the
-    // replay.
+    // Tracks a scale as the box's table holds it. A momentary usage carries one bit, so the box
+    // stores the block or pass it amounts to; recording the raw number would hold a scale above a full
+    // pass here as a lock the box released. A button blanket is one unexpanded row, expanded at
+    // reassert onto the declared count (see `held_locks`); touching one button while it is held
+    // materialises it first, so the replay does not undo a later single-button release.
     pub(crate) fn apply_lock(&mut self, key: LockKey, scale: i16) -> LockUndo {
         let (class, id, dir) = key;
         let scale = if class == LOCK_CLS_AXIS {
@@ -324,9 +393,8 @@ impl DesiredState {
             media_order: self.media_order.clone(),
         };
         if class == LOCK_CLS_BTN && id == LOCK_ID_ALL {
-            // The blanket subsumes every individual button row, the way a box-side re-expansion of
-            // `LOCK[BTN][ID_ALL]` rewrites each one, and is then held unexpanded so a reconnect widens
-            // it onto the count CAPS reports then.
+            // The blanket subsumes every button row, as the box's re-expansion of `LOCK[BTN][ID_ALL]`
+            // rewrites each, and stays unexpanded so a reconnect widens it to the count CAPS reports.
             self.clear_button_rows(&mut undo);
             self.write_lock_row(class, id, dir, scale, &mut undo);
         } else if class == LOCK_CLS_BTN && self.locks.contains_key(&(LOCK_CLS_BTN, LOCK_ID_ALL)) {
@@ -338,7 +406,7 @@ impl DesiredState {
         undo
     }
 
-    // Write one lock-table row, dropping it when every slot passes and tracking the media slot order.
+    // Drops a row whose every slot passes; tracks the media slot order.
     fn write_lock_row(&mut self, class: u8, id: u16, dir: u8, scale: i16, undo: &mut LockUndo) {
         let key = (class, id);
         undo.rows.push((key, self.locks.get(&key).copied()));
@@ -354,8 +422,8 @@ impl DesiredState {
         }
     }
 
-    // Drop every individual button row: a fresh button blanket covers them all, exactly as the box
-    // rewrites each button row when it re-expands `LOCK[BTN][ID_ALL]`.
+    // A fresh button blanket covers every button row, as the box rewrites each when it re-expands
+    // `LOCK[BTN][ID_ALL]`.
     fn clear_button_rows(&mut self, undo: &mut LockUndo) {
         let ids: Vec<u16> = self
             .locks
@@ -370,8 +438,8 @@ impl DesiredState {
         }
     }
 
-    // Materialise the held button blanket onto the declared buttons, then drop the blanket row, so a
-    // single button written next (a release, most often) leaves the rest of the group held.
+    // Expands the held button blanket onto the declared buttons and drops the blanket row, so a
+    // single button written next (usually a release) leaves the rest of the group held.
     fn burst_button_blanket(&mut self, undo: &mut LockUndo) {
         let key = (LOCK_CLS_BTN, LOCK_ID_ALL);
         let Some(blanket) = self.locks.get(&key).copied() else {
@@ -388,23 +456,21 @@ impl DesiredState {
         self.locks.remove(&key);
     }
 
-    /// Cache the clone's declared button count from a `RESP(CAPS)`, capped at the box's ceiling. A
-    /// button blanket expands onto this many rows at reassert time, so a reconnect re-asserts a lock
-    /// on a button past the five named ones.
+    /// Caches the declared button count from `RESP(CAPS)`, capped at the box's ceiling. A button
+    /// blanket expands onto this many rows at reassert, so a reconnect re-asserts a lock on a button
+    /// past the five named ones.
     pub(crate) fn note_declared_buttons(&mut self, n_buttons: u8) {
         self.declared_buttons = Some(n_buttons.min(MAX_BUTTONS));
     }
 
-    // How many button rows a button blanket expands onto: the declared count once CAPS is read, else
-    // the five named buttons. The box holds no button-blanket flag, so the host does the expansion, at
-    // reassert time off the current count. Always within the box's ceiling.
+    // Declared count once CAPS is read, else the five named buttons.
     fn button_count(&self) -> u16 {
         self.declared_buttons.unwrap_or(BTN_COUNT) as u16
     }
 
-    /// Put back what an `apply_lock` wrote, for a frame that never reached the transport. Undone
-    /// newest-change-first, so a step that touched a row more than once (a blanket burst then the
-    /// single-button write over it) rewinds to exactly the row it started from.
+    /// Restores what an `apply_lock` wrote, for a frame that never reached the transport. Undone
+    /// newest first, so a step touching a row more than once (a blanket burst, then a single-button
+    /// write over it) rewinds to the exact starting row.
     pub(crate) fn restore_lock(&mut self, undo: LockUndo) {
         for (key, row) in undo.rows.into_iter().rev() {
             match row {
@@ -415,55 +481,78 @@ impl DesiredState {
         self.media_order = undo.media_order;
     }
 
-    /// Record a rewrite rule (add or overwrite) for reconnect-replay, returning the prior state so the
-    /// device layer can roll it back if the frame never went out (the [`apply_lock`] pattern).
+    /// Records a rewrite rule (add or overwrite) for replay, returning the prior state for rollback
+    /// if the frame never went out (as [`apply_lock`]). An overwrite that changes the rule moves it to
+    /// the end, as the box re-adds it; the same rule again keeps its place.
     pub(crate) fn apply_rewrite(&mut self, rule: StoredRewrite) -> RewriteUndo {
         let key = rule.key();
-        let prior = self.rewrites.insert(key.clone(), rule);
+        let at = self.rewrites.iter().position(|r| r.key() == key);
+        if let Some(i) = at
+            && self.rewrites[i] == rule
+        {
+            return RewriteUndo {
+                key,
+                prior: Some((i, rule)),
+            };
+        }
+        let prior = at.map(|i| (i, self.rewrites.remove(i)));
+        self.rewrites.push(rule);
         RewriteUndo { key, prior }
     }
 
-    /// Record a rewrite-rule removal, returning the prior state for the same rollback path.
+    /// Records a rewrite-rule removal, returning the prior state for rollback.
     pub(crate) fn remove_rewrite(&mut self, key: RewriteWireKey) -> RewriteUndo {
-        let prior = self.rewrites.remove(&key);
+        let prior = self
+            .rewrites
+            .iter()
+            .position(|r| r.key() == key)
+            .map(|i| (i, self.rewrites.remove(i)));
         RewriteUndo { key, prior }
     }
 
-    /// Put back what an `apply_rewrite`/`remove_rewrite` changed, for a frame that never went out.
+    /// Restores what an `apply_rewrite`/`remove_rewrite` changed, for a frame that never went out:
+    /// the rule returns to its place, or leaves if it had none.
     pub(crate) fn restore_rewrite(&mut self, undo: RewriteUndo) {
-        match undo.prior {
-            Some(rule) => {
-                self.rewrites.insert(undo.key, rule);
-            }
-            None => {
-                self.rewrites.remove(&undo.key);
-            }
+        self.rewrites.retain(|r| r.key() != undo.key);
+        if let Some((i, rule)) = undo.prior {
+            let at = i.min(self.rewrites.len());
+            self.rewrites.insert(at, rule);
         }
     }
 
-    /// Drop every held rewrite rule (the whole-table clear).
+    /// Drops every held rewrite rule (the whole-table clear).
     pub(crate) fn clear_rewrites(&mut self) {
         self.rewrites.clear();
     }
 
-    /// Every held rewrite rule, for the reconnect and keepalive re-assertion.
+    /// Every held rewrite rule, for reconnect and keepalive re-asserts.
     pub(crate) fn held_rewrites(&self) -> Vec<StoredRewrite> {
-        self.rewrites.values().cloned().collect()
+        self.rewrites.clone()
     }
 
-    /// Whether this key is already held, so a set is an overwrite rather than an insert.
+    /// Whether this key is held, making a set an overwrite.
     pub(crate) fn holds_rewrite(&self, key: &RewriteWireKey) -> bool {
-        self.rewrites.contains_key(key)
+        self.rewrites.iter().any(|r| r.key() == *key)
     }
 
-    /// How many rules are held, against the box's ceiling.
+    /// Held rule count, against the box's ceiling.
     pub(crate) fn rewrite_count(&self) -> usize {
         self.rewrites.len()
     }
 
-    /// Record a field transform (add or overwrite) for reconnect-replay, returning the prior state so
-    /// the device layer can roll it back if the frame never went out (the [`apply_rewrite`] pattern).
-    /// An overwrite keeps the entry's position, which is what the box does.
+    /// Pool bytes the held rules take, less the rule under `key`: what the box counts before costing
+    /// an add or overwrite of that key.
+    pub(crate) fn rewrite_pool_used_except(&self, key: &RewriteWireKey) -> usize {
+        self.rewrites
+            .iter()
+            .filter(|r| r.key() != *key)
+            .map(|r| r.payload.len())
+            .sum()
+    }
+
+    /// Records a field transform (add or overwrite) for replay, returning the prior state for
+    /// rollback if the frame never went out (as [`apply_rewrite`]). An overwrite keeps the entry's
+    /// position, as the box does.
     pub(crate) fn apply_transform(&mut self, entry: StoredTransform) -> TransformUndo {
         let key = entry.key();
         match self.transforms.iter().position(|e| e.key() == key) {
@@ -481,7 +570,7 @@ impl DesiredState {
         }
     }
 
-    /// Record a transform removal, returning the prior state for the same rollback path.
+    /// Records a transform removal, returning the prior state for rollback.
     pub(crate) fn remove_transform(&mut self, key: TransformWireKey) -> TransformUndo {
         match self.transforms.iter().position(|e| e.key() == key) {
             Some(i) => TransformUndo {
@@ -492,8 +581,8 @@ impl DesiredState {
         }
     }
 
-    /// Put back what an `apply_transform`/`remove_transform` changed, for a frame that never went out.
-    /// The entry returns to the position it held, or leaves if there was none.
+    /// Restores what an `apply_transform`/`remove_transform` changed, for a frame that never went
+    /// out: the entry returns to its position, or leaves if it had none.
     pub(crate) fn restore_transform(&mut self, undo: TransformUndo) {
         match undo.prior {
             Some((i, entry)) => {
@@ -508,42 +597,41 @@ impl DesiredState {
         }
     }
 
-    /// Drop every held transform (the whole-table clear).
+    /// Drops every held transform (the whole-table clear).
     pub(crate) fn clear_transforms(&mut self) {
         self.transforms.clear();
     }
 
-    /// Whether this key is already held, so a set is an overwrite rather than an insert.
+    /// Whether this key is held, making a set an overwrite.
     pub(crate) fn holds_transform(&self, key: TransformWireKey) -> bool {
         self.transforms.iter().any(|e| e.key() == key)
     }
 
-    /// How many transforms are held, against the box's ceiling.
+    /// Held transform count, against the box's ceiling.
     pub(crate) fn transform_count(&self) -> usize {
         self.transforms.len()
     }
 
-    /// Every held transform, in installation order, for the reconnect and keepalive re-assertion.
+    /// Every held transform in installation order, for reconnect and keepalive re-asserts.
     pub(crate) fn held_transforms(&self) -> Vec<StoredTransform> {
         self.transforms.clone()
     }
 
     pub(crate) fn clear(&mut self) {
-        // Catch teardown is handled by Link::catch_disconnect_all (drops the EventStream senders); catch
-        // otherwise clears firmware-side on the same lifecycle as injection.
+        // Link::catch_disconnect_all tears catch down (drops the EventStream senders); the firmware
+        // otherwise clears it with injection.
         self.overrides.clear();
         self.locks.clear();
         self.media_order.clear();
-        // `RESET` clears the box's rewrite table too (§3.14), so drop the local copy or the keepalive
-        // would re-assert rules the reset was meant to remove. Patches are not session state and stay.
+        // `RESET` clears the box's rewrite table too (§3.14); keeping the copy would have the keepalive
+        // re-assert the removed rules. Patches are configuration and stay.
         self.rewrites.clear();
-        // `RESET` clears the box's transform table too (§3.15, the injection-adjacent lifecycle), so
-        // drop the local copy for the same reason.
+        // Likewise the transform table (§3.15).
         self.transforms.clear();
         self.clip = ClipHeld::default();
     }
 
-    /// The catch subscription table the box should be holding (re-asserted on reconnect).
+    /// Catch table the box should hold (re-asserted on reconnect).
     pub(crate) fn set_catch(&mut self, filters: FilterSet) {
         self.catch = filters;
     }
@@ -552,8 +640,8 @@ impl DesiredState {
         self.catch.clone()
     }
 
-    /// Idle = nothing for the keepalive to hold alive; a catch subscription, a rewrite rule or a
-    /// transform counts.
+    /// Idle = nothing for the keepalive to keep; a catch subscription, rewrite rule or transform
+    /// counts.
     pub(crate) fn is_idle(&self) -> bool {
         self.catch.is_empty()
             && self.overrides.is_empty()
@@ -566,7 +654,7 @@ impl DesiredState {
             && self.clip.packet_triggers.is_empty()
     }
 
-    /// Every held momentary override, as `(Usage, Action)`, for the reconnect reapply.
+    /// Every held momentary override as `(Usage, Action)`, for the reconnect reapply.
     pub(crate) fn held(&self) -> impl Iterator<Item = (Usage, Action)> + '_ {
         self.overrides.iter().filter_map(|(&(cls, id), ov)| {
             let action = ov.as_action()?;
@@ -575,10 +663,7 @@ impl DesiredState {
         })
     }
 
-    // The `(key, scale)` commands that rebuild every held row, for the reconnect reapply. The button
-    // blanket is expanded here onto the count CAPS last reported, not at apply time, so a reconnect
-    // that re-read CAPS re-asserts every declared button. Media rows come out in the order they were
-    // taken, so the replay fills the box's slot array the way the live box filled it.
+    // `(key, scale)` commands rebuilding every held row, for the reconnect reapply.
     pub(crate) fn held_locks(&self) -> Vec<(LockKey, i16)> {
         let button_count = self.button_count();
         let mut rows: Vec<(&(u8, u16), &Slots)> = self.locks.iter().collect();
@@ -601,8 +686,8 @@ impl DesiredState {
             .collect()
     }
 
-    // Which slot a media row took; the media blanket holds none and goes last, and every other class
-    // ranks alike and stays ordered by id.
+    // A media row's slot; the media blanket holds none and goes last; other classes rank alike, by
+    // id.
     fn media_rank(&self, class: u8, id: u16) -> usize {
         if class != LOCK_CLS_MEDIA {
             return 0;

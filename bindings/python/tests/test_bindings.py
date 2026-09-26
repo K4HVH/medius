@@ -124,10 +124,9 @@ def test_mock_feature_present():
 
 
 def test_meta_functions():
-    # These are a hand-written mirror of the C structs, so a bumped ABI means they are stale until
-    # someone re-reads the header. Pin it rather than accept anything newer.
-    assert medius.abi_version() == 8
-    assert medius._native.ABI_VERSION == 8
+    # The ctypes structs hand-mirror the C header, so a bumped ABI leaves them stale: pin it.
+    assert medius.abi_version() == 9
+    assert medius._native.ABI_VERSION == 9
     assert medius.version_string()
     assert medius.default_query_timeout_ms() > 0
     assert medius.default_keepalive_cadence_ms() > 0
@@ -543,8 +542,8 @@ def test_an_unnamed_direction_byte_never_reaches_a_subscription():
 
 
 def test_set_bearing_requires_the_mode():
-    # Both fields ride one frame and the box persists them together, so a Python-only default would
-    # revert a box configured for VECTOR on any window change.
+    # Both fields share one frame and persist together, so a Python-only default would revert a
+    # VECTOR box on any window change.
     with MockBox() as mock, Device.with_mock(mock) as d:
         with pytest.raises(TypeError):
             d.set_bearing(50)
@@ -622,6 +621,10 @@ def test_stats_roundtrip():
         wakeups=900,
         reset_count=3,
         config_count=4,
+        link_rx_drops=0xDEADBEEF,
+        host_rx_drops=0,
+        relay_drops=0x0A0B0C0D,
+        session=0xBEEF,
     )
     with MockBox() as mock:
         mock.set_stats(stats)
@@ -661,8 +664,8 @@ def test_catch_state_roundtrip():
 
 
 def test_catch_state_clock_age_none_is_not_a_zero_age():
-    # An offset that was never measured also reads as zero, so the sentinel has to survive the
-    # round trip: applying an unmeasured offset would silently shift every cross-domain stamp.
+    # An unmeasured offset also reads as zero, so the sentinel must survive the round trip: applying
+    # it would shift every cross-domain stamp.
     never = _query_catch(CatchState(clock=ClockEstimate(offset_us=500, age_ms=None)))
     fresh = _query_catch(CatchState(clock=ClockEstimate(offset_us=500, age_ms=0)))
     assert never.clock.age_ms is None
@@ -777,16 +780,14 @@ def test_render_roundtrip():
         d.set_emit_pace(EmitPace.learned())
         assert d.query_emit_pace().resolved_hz == 0
 
-    # Armed, a rendered stream on a learnt pace self-paces every millisecond. This is the half that
-    # discriminates: without it the reply reads the same whether the renderer is emitting or the box
-    # is still on the fill.
+    # Armed, a rendered stream on a learnt pace self-paces every millisecond.
     with MockBox() as mock, Device.with_mock(mock) as d:
         mock.set_render(RenderMode.STOCK, True, True)
         assert d.query_render() == RenderStatus(RenderMode.STOCK, True, True)
         d.set_emit_pace(EmitPace.learned())
         assert d.query_emit_pace().resolved_hz == 1000
-        # full has no default: OPTION(RENDER) persists both fields, so an omitted one would silently
-        # rewrite a setting the caller never named.
+        # full has no default: OPTION(RENDER) persists both fields, so omitting it would rewrite a
+        # setting the caller never named.
         with pytest.raises(TypeError):
             d.set_render(RenderMode.STOCK)
 
@@ -814,8 +815,8 @@ def test_rate_force_roundtrip():
 
 
 def test_rate_force_needs_the_imperfect_opt_in():
-    # The box leaves a force inert without the opt-in, so a mock that applied it regardless would green
-    # -light host code that disagrees with every real box.
+    # The box leaves a force inert without the opt-in; a mock applying it anyway would pass host
+    # code every real box disagrees with.
     with MockBox() as mock:
         mock.set_advertised_hz(125)
         with Device.with_mock(mock) as d:
@@ -944,7 +945,7 @@ def test_traffic_event_control_accessors():
         catch_class=CatchClass.CONTROL,
         id=0,
         direction=Direction.POSITIVE,
-        flags=0xFD,
+        flags=0x81,  # a STALL a rule caused
         true_len=8,
         bytes=setup,
     )
@@ -954,13 +955,17 @@ def test_traffic_event_control_accessors():
     assert ev.traffic.setup() == setup
     assert ev.traffic.data() == b""  # a STALL answers with no data stage
     assert ev.traffic.control_status() == ControlStatus.STALLED
+    assert ev.traffic.rule_acted() is True
     assert ev.traffic.bus_event() is None
 
     answered = TrafficEvent(
         CatchClass.CONTROL, 0, Direction.POSITIVE, 0x00, 10, setup + b"\x12\x01"
     )
     assert answered.control_status() == ControlStatus.OK
+    assert answered.rule_acted() is False
     assert answered.data() == b"\x12\x01"
+    naked = TrafficEvent(CatchClass.CONTROL, 0, Direction.POSITIVE, 0x02, 8, setup)
+    assert naked.control_status() == ControlStatus.NAKED
 
 
 def test_clip_transfer_event_accessors():
@@ -987,6 +992,8 @@ def test_clip_transfer_event_accessors():
 
     stalled = TrafficEvent(CatchClass.CLIP_TRANSFER, 0, Direction.IN, 0xFD, 8, setup)
     assert stalled.transfer_status() == TransferStatus.STALL
+    # 0xFD has bit 7 set, and a transfer status is no rule bit.
+    assert stalled.rule_acted() is False
     assert stalled.data() == b""
     unanswered = TrafficEvent(CatchClass.CLIP_TRANSFER, 0, Direction.IN, 0xFE, 8, setup)
     assert unanswered.transfer_status() == TransferStatus.NAK
@@ -1881,7 +1888,7 @@ def test_the_mock_runs_a_packet_through_its_triggers():
             # The id wildcard takes what the exact triggers leave, and an empty head matches it.
             assert mock.clip_packet(TrafficClass.HID_IN, 5, Direction.IN, b"\x07\x20") == (ClipAction.TOGGLE, False)
             assert mock.clip_packet(TrafficClass.HID_IN, 5, Direction.IN, b"") == (ClipAction.TOGGLE, False)
-            # Nothing wins on another class.
+            # Nothing matches on another class.
             assert mock.clip_packet(TrafficClass.HID_OUT, 2, Direction.OUT, b"\x07\x20") == (None, False)
             assert [t.hits for t in clip.query_config().packet_triggers] == [3, 4, 1]
             with pytest.raises(ValueError):
@@ -1970,10 +1977,6 @@ def test_ctypes_structs_match_the_c_header():
     text = header.read_text()
 
     # The C compiler is the authority; parse each struct out of the header and sizeof it for real.
-    # Derived from the header rather than listed here: a hardcoded list silently skips whatever it
-    # does not name, which is how MediusLockEntry went uncovered through a field-meaning change.
-    # cbindgen closes a typedef'd struct with `} Name;` at column 0; an enum closes with a bare `};`
-    # and a nested member is indented, so neither is picked up.
     probe = pathlib.Path(tempfile.mkdtemp()) / "sizes.c"
     present = re.findall(r"^\} (Medius\w+);$", text, re.M)
     for must in (
@@ -2067,7 +2070,7 @@ def test_input_events_decode_snapshots_into_edges():
 
 def test_input_events_refuse_what_they_cannot_decode():
     # Each refusal has its own status across the ABI, so a caller can tell a wrong filter from a
-    # dead link. Folding them into ERR_UNKNOWN would lose exactly that.
+    # dead link.
     with MockBox() as mock, Device.with_mock(mock) as d:
         with pytest.raises(medius.NotAnInputFilterError):
             d.input_events(CatchFilter.traffic_class(TrafficClass.VENDOR_BULK))
@@ -2077,10 +2080,9 @@ def test_input_events_refuse_what_they_cannot_decode():
             d.input_events(CatchFilter.watch(Usage.key(Key.A)).on_press())
         with pytest.raises(medius.CaptureNotApplicableError):
             d.catch_events(CatchFilter.watch_class(Class.KEY).with_capture(8))
-        # 0xFFFF is the every-id sentinel, and a MediusCatchFilter carries nothing that could tell an
-        # exact id apart from the blanket, so across this ABI a media usage of 0xFFFF IS the class
-        # blanket. The native API refuses it outright; here it is a documented wire limitation, and
-        # what matters is that it is the blanket rather than something narrower.
+        # 0xFFFF is the every-id sentinel and a MediusCatchFilter cannot tell an exact id from the
+        # blanket, so across this ABI a media usage of 0xFFFF IS the class blanket. The native API
+        # refuses it; here it must be the blanket, not something narrower.
         assert CatchFilter.watch(Usage.media(0xFFFF)).id is None
         assert CatchFilter.watch(Usage.media(0xFFFF)) == CatchFilter.watch_class(Class.MEDIA)
         with d.input_events(CatchFilter.all_input()) as s:
@@ -2088,8 +2090,7 @@ def test_input_events_refuse_what_they_cannot_decode():
 
 
 def test_the_filter_constructors_address_inputs_like_lock_does():
-    # The whole point of the input constructors: a key enum goes straight in, as it does for lock.
-    # Requiring Usage.key(Key.A) here would put back the id arithmetic the rework removed.
+    # A key enum goes straight into the input constructors, as it does for lock.
     assert CatchFilter.watch(Key.A) == CatchFilter.watch(Usage.key(Key.A))
     assert CatchFilter.watch(Button.LEFT) == CatchFilter.watch(Usage.button(Button.LEFT))
     assert CatchFilter.watch(MediaKey.VOLUME_UP) == CatchFilter.watch(
@@ -2122,13 +2123,12 @@ def test_the_filter_constructors_address_inputs_like_lock_does():
 
 def test_an_unknown_control_status_does_not_raise():
     # The C ABI reports a status this build does not know as OTHER, and the byte itself stays on
-    # `flags`. Without the member, decoding one raised ValueError: the exact failure the distinct
-    # variant was added to prevent, reintroduced one binding down.
+    # `flags`.
     unknown = TrafficEvent(
         catch_class=CatchClass.CONTROL,
         id=0,
         direction=Direction.IN,
-        flags=0x42,
+        flags=0x03,
         true_len=8,
         bytes=bytes(8),
     )
@@ -2136,7 +2136,7 @@ def test_an_unknown_control_status_does_not_raise():
         with d.catch_events(CatchFilter.traffic_class(TrafficClass.CONTROL)) as s:
             ev = _push_and_recv(mock, s, unknown)
     assert ev.traffic.control_status() == ControlStatus.OTHER
-    assert ev.traffic.flags == 0x42
+    assert ev.traffic.flags == 0x03
 
 
 def test_timeline_unwraps_the_rollover_and_maps_onto_the_callers_clock():
@@ -2159,9 +2159,8 @@ def test_timeline_unwraps_the_rollover_and_maps_onto_the_callers_clock():
 
 
 def test_every_enum_parameter_is_checked_before_it_reaches_the_boundary():
-    # Each of these used to hand the C ABI a byte it materialised as a `#[repr(u8)]` enum before any
-    # check could run: SIGSEGV where the value fell outside the jump table, and the wrong command on
-    # the wire where it did not. There is no status to read back from a crashed interpreter.
+    # Each of these must refuse a stray byte before the C ABI would materialise it as a
+    # `#[repr(u8)]` enum: SIGSEGV outside the jump table, the wrong command on the wire inside it.
     with MockBox() as mock, Device.with_mock(mock) as d:
         with pytest.raises(ValueError):
             d.led(LedTarget.DEVICE, 77, 5)
@@ -2582,7 +2581,7 @@ def test_buttons_past_five_address_by_id():
 
 
 def test_transform_verbs_reach_the_wire_ungated():
-    # A transform is faithful, so it needs no imperfect-clone opt-in (unlike the rewrite/patch layer).
+    # A transform is faithful, so it needs no imperfect-clone opt-in.
     with MockBox() as mock, Device.with_mock(mock) as d:
         d.transform_swap(Axis.X, Axis.Y)
         d.transform_remap(Axis.X, Axis.WHEEL)
@@ -2616,8 +2615,8 @@ def test_a_transform_survives_the_query_roundtrip():
 
 
 def test_the_op_bytes_are_the_ones_the_wire_uses():
-    # A disagreement here is a wrong transform on the wire, not a type error, because `op` crosses
-    # the ABI as a plain byte. Weighing is the lock's, so there is no scale op and no invert.
+    # `op` crosses the ABI as a plain byte, so a disagreement here is a wrong transform on the wire,
+    # not a type error.
     assert (int(TransformOp.REMAP), int(TransformOp.SWAP)) == (0, 1)
     assert not hasattr(TransformOp, "SCALE")
     assert not hasattr(TransformOp, "INVERT")
@@ -2675,8 +2674,8 @@ def test_a_negative_lock_scale_reverses_and_is_refused_where_it_cannot():
         assert locks.scale_of(x, Direction.NEGATIVE) == -100
         # A reversal is not a block: everything still arrives, the other way round.
         assert not locks.is_locked(x, Direction.BOTH)
-        # One bit has nothing to reverse, and a magnitude past the bound is refused rather than
-        # applied at the bound with the readback echoing what was sent. Neither reaches the wire.
+        # A one-bit usage cannot reverse, and a magnitude past the bound is refused, not clamped.
+        # Neither reaches the wire.
         before = mock.recorded()
         with pytest.raises(medius.LockScaleUsageError):
             d.scale(LockTarget.button(Button.LEFT), Direction.POSITIVE, -100)
@@ -2695,3 +2694,85 @@ def test_input_event_carries_pan():
     assert ev is not None
     assert ev.kind == InputKind.MOTION
     assert (ev.dx, ev.dy, ev.dz, ev.pan) == (3, -4, 0, 5)
+
+
+def _await_restarts(d, n):
+    deadline = time.monotonic() + 3
+    while d.counters().restarts < n:
+        assert time.monotonic() < deadline, f"restarts stayed at {d.counters().restarts}"
+        time.sleep(0.005)
+
+
+def test_a_mock_restart_is_recovered_and_the_clip_reports_its_loss():
+    with MockBox() as mock, mock.open() as d:
+        clip = d.clip()
+        d.press(Usage.button(Button.SIDE1))
+        clip.set_retain(True)
+        clip.append(ClipBuilder().move(1, 0))
+        assert clip.lost() is False
+        mock.clear_recorded()
+        mock.restart()
+        _await_restarts(d, 1)
+        assert clip.lost() is True
+        # The held press and the retain setting went back to the restarted box.
+        assert _clip_frames(d, mock, FrameType.INJECT) == [bytes([0, 3, 0, 1])]
+        assert _clip_frames(d, mock, FrameType.CLIP_SET) == [bytes([2, 1])]
+        clip.append(ClipBuilder().move(1, 0))
+        assert clip.lost() is False
+        clip.close()
+
+
+def test_a_rewrite_past_the_payload_pool_raises_its_own_exception():
+    from medius import RewritePoolFullError
+
+    with MockBox() as mock, Device.with_mock(mock) as d:
+        mock.set_imperfect_status(_allowed())
+
+        def answer(i, n):
+            payload = b"\x5a" * n
+            return RewriteRule(RewriteClass.CONTROL, i, Direction.BOTH, RewriteAction.ANSWER, payload=payload)
+
+        for i in range(4):
+            d.set_rewrite(answer(i, 501))
+        with pytest.raises(RewritePoolFullError):
+            d.set_rewrite(answer(4, 45))
+        d.set_rewrite(answer(4, 44))
+        assert len(d.query_rewrite().entries) == 5
+
+
+def test_a_clone_presented_again_gets_back_what_the_library_held():
+    x = LockTarget.x()
+    with MockBox() as mock:
+        mock.set_imperfect_status(_allowed())
+        with mock.open() as d:
+            d.set_patch(Patch(PatchSection.DEVICE, 0, 0, 12, b"\x00\x01"))
+            d.scale(x, Direction.BOTH, 40)
+            mock.clear_recorded()
+            d.apply_patch()  # presents the clone again, which drops the scale on the box
+            deadline = time.monotonic() + 3
+            while not _clip_frames(d, mock, FrameType.LOCK):
+                assert time.monotonic() < deadline, "the scale never went back"
+                time.sleep(0.005)
+            assert d.query_patches().applied is True
+            assert d.query_locks().scale_of(x, Direction.POSITIVE) == 40
+            assert d.counters().restarts == 0
+
+
+def test_a_release_the_box_counts_is_recovered():
+    x = LockTarget.x()
+    with MockBox() as mock:
+        with mock.open() as d:
+            d.scale(x, Direction.BOTH, 40)
+            mock.link_lost()
+            assert d.query_stats().session == 1
+            deadline = time.monotonic() + 3
+            while d.query_locks().scale_of(x, Direction.POSITIVE) != 40:
+                assert time.monotonic() < deadline, "the scale never went back"
+                time.sleep(0.01)
+            mock.detach(back_within_grace=False)
+            mock.attach()
+            deadline = time.monotonic() + 3
+            while d.query_locks().scale_of(x, Direction.POSITIVE) != 40:
+                assert time.monotonic() < deadline, "the scale never went back after a replug"
+                time.sleep(0.01)
+            assert d.counters().restarts == 0

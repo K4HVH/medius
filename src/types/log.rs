@@ -2,7 +2,7 @@
 
 use crate::protocol::opcode::{LOG_DEBUG, LOG_ERROR, LOG_INFO, LOG_VERBOSE, LOG_WARN};
 
-/// A device `LOG` frame severity level (§4.7).
+/// `LOG` frame severity (§4.7).
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum LogLevel {
@@ -14,7 +14,7 @@ pub enum LogLevel {
 }
 
 impl LogLevel {
-    /// The wire `level` byte for this level.
+    /// Wire `level` byte.
     pub fn as_u8(self) -> u8 {
         match self {
             LogLevel::Error => LOG_ERROR,
@@ -25,7 +25,7 @@ impl LogLevel {
         }
     }
 
-    /// Map a wire `level` byte to a [`LogLevel`]; unknown levels fall back to `Info`.
+    /// Decodes a wire `level` byte; unknown levels fall back to `Info`.
     pub fn from_u8(v: u8) -> Self {
         match v {
             LOG_ERROR => LogLevel::Error,
@@ -38,7 +38,7 @@ impl LogLevel {
     }
 }
 
-/// A decoded `LOG` frame (§4.7): a severity level and its UTF-8 text.
+/// Decoded `LOG` frame (§4.7): severity and UTF-8 text.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct LogLine {
     pub level: LogLevel,

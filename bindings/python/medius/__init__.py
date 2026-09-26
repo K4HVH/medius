@@ -88,6 +88,7 @@ from ._errors import (
     RewriteMaskLengthError,
     RewriteMatchTooLongError,
     RewritePayloadTooLargeError,
+    RewritePoolFullError,
     TransformOpFieldsError,
     RewriteTableFullError,
     TransformTableFullError,
@@ -157,7 +158,7 @@ HAS_MOCK = _native.HAS_MOCK
 
 
 def find_ports(cap: int = 16) -> List[PortInfo]:
-    """Enumerate the medius serial ports currently present."""
+    """List the connected medius serial ports."""
     import ctypes
 
     from ._types import port_from_c
@@ -293,6 +294,7 @@ __all__ = [
     "RewriteMaskLengthError",
     "RewriteActionClassError",
     "RewritePayloadTooLargeError",
+    "RewritePoolFullError",
     "TransformOpFieldsError",
     "RewriteTableFullError",
     "TransformTableFullError",

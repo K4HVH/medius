@@ -6,14 +6,14 @@ use crate::types::{Direction, Setup, TransferStatus};
 
 #[test]
 fn raw_payload_bytes() {
-    // [ep_num][dir][bytes...]: endpoint 3 IN, then the report. The number and the direction byte
-    // differ, so a transpose of the two shows here.
+    // [ep_num][dir][bytes...]: endpoint 3 IN, then the report; number and direction differ, so a
+    // transpose shows.
     assert_eq!(
         raw_payload(3, Direction::IN, &[0x00, 0x01, 0x00, 0x00]),
         vec![0x03, 0x01, 0x00, 0x01, 0x00, 0x00]
     );
-    // Endpoint 2 OUT, empty body. The ep is masked to its low nibble, so a caller that still packs
-    // the direction into bit 7 lands on the same number.
+    // Endpoint 2 OUT, empty body. The ep is masked to its low nibble, so a direction packed into
+    // bit 7 lands on the same number.
     assert_eq!(raw_payload(0x82, Direction::OUT, &[]), vec![0x02, 0x02]);
 }
 
@@ -89,8 +89,8 @@ mod mock_roundtrip {
     #[test]
     fn raw_rejects_a_direction_that_is_not_a_flow() {
         let device = Device::with_mock(MockBox::new().with_imperfect(true));
-        // Both names two flows at once; the bearing-relative pair has no bearing here. Both are
-        // refused before the wire.
+        // Both names two flows and the bearing-relative pair has no bearing here; both are refused
+        // before the wire.
         assert!(matches!(
             device.raw(1, Direction::Both, &[0x00]),
             Err(Error::RawDirection { .. })
@@ -141,8 +141,8 @@ mod mock_roundtrip {
 
     #[test]
     fn transfer_non_ok_status_carries_no_data() {
-        // The box sets in_len = 0 unless status == 0 (usbdev_transfer). A stall scripted with data must
-        // come back with the data dropped, not passed through: no non-OK transfer ever carries bytes.
+        // The box sets in_len = 0 unless status == 0 (usbdev_transfer), so a stall scripted with data
+        // returns without it.
         let mock = MockBox::new()
             .with_imperfect(true)
             .with_transfer_reply(0xFD, &[0x12, 0x01, 0x00, 0x02]);

@@ -1,9 +1,9 @@
 //! Mouse capabilities: the mouse half of the unified `RESP(CAPS)` (§4.4).
 
-/// Semantic capability summary of the emulated mouse, parsed from its HID report descriptor.
+/// Cloned mouse's capabilities, parsed from its HID report descriptor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct MouseCaps {
-    /// Number of buttons the mouse report carries.
+    /// Buttons the mouse report carries.
     pub n_buttons: u8,
     /// Relative X axis present.
     pub has_x: bool,

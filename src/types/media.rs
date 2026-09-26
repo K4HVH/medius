@@ -1,16 +1,16 @@
 //! Media-key command vocabulary: a media key by 16-bit Consumer usage, and the media catch snapshot.
 
-/// A media key, addressed by 16-bit HID Consumer Usage (§3.11, v2.0.0).
+/// Media key by 16-bit HID Consumer usage (§3.11, v2.0.0).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct MediaKey(pub u16);
 
 impl MediaKey {
-    /// A media key from a raw 16-bit Consumer usage.
+    /// Media key from a raw 16-bit Consumer usage.
     pub const fn new(usage: u16) -> MediaKey {
         MediaKey(usage)
     }
 
-    /// The Consumer usage value.
+    /// Consumer usage value.
     pub const fn usage(self) -> u16 {
         self.0
     }

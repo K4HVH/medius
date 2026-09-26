@@ -1,6 +1,6 @@
 //! `LED` control vocabulary (§3.7).
 
-/// Which status LED a `LED` command targets; discriminants are the wire `target` byte.
+/// Status LED a `LED` command targets; discriminants are the wire `target` byte.
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum LedTarget {
@@ -10,12 +10,12 @@ pub enum LedTarget {
 }
 
 impl LedTarget {
-    /// The wire `target` byte.
+    /// Wire `target` byte.
     pub fn as_u8(self) -> u8 {
         self as u8
     }
 
-    /// Map a wire `target` byte to a [`LedTarget`], or `None` if unknown.
+    /// Decodes a wire `target` byte; `None` if unknown.
     pub fn from_u8(v: u8) -> Option<Self> {
         Some(match v {
             0 => LedTarget::Device,
@@ -26,7 +26,7 @@ impl LedTarget {
     }
 }
 
-/// What a `LED` command drives the LED to; `Auto` restores the box's status display.
+/// LED state a `LED` command sets; `Auto` restores the box's status display.
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum LedMode {
@@ -37,12 +37,12 @@ pub enum LedMode {
 }
 
 impl LedMode {
-    /// The wire `mode` byte.
+    /// Wire `mode` byte.
     pub fn as_u8(self) -> u8 {
         self as u8
     }
 
-    /// Map a wire `mode` byte to a [`LedMode`], or `None` if unknown.
+    /// Decodes a wire `mode` byte; `None` if unknown.
     pub fn from_u8(v: u8) -> Option<Self> {
         Some(match v {
             0 => LedMode::Auto,

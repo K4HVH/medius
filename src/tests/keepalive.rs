@@ -40,8 +40,8 @@ fn keepalive_fires_while_a_button_is_held() {
     drop(device);
 }
 
-// A second of control silence clears the clip and its triggers on the box. A retained clip armed on a
-// trigger is exactly the case where the host says nothing more: it waits for the button.
+// A second of control silence clears the clip and triggers on the box, and a retained clip armed on
+// a trigger is where the host goes quiet, waiting for the button.
 #[test]
 fn keepalive_fires_while_a_clip_waits_on_a_trigger() {
     let mock = MockBox::new();

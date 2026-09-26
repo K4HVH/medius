@@ -14,7 +14,7 @@ use crate::types::{
 use super::Device;
 
 impl Device {
-    /// Query the box version.
+    /// Box version.
     pub fn query_version(&self) -> Result<Version> {
         let payload = self.link.query(Q_VERSION)?;
         match parse_resp(&payload) {
@@ -23,7 +23,7 @@ impl Device {
         }
     }
 
-    /// Query the box health flags.
+    /// Box health flags.
     pub fn query_health(&self) -> Result<Health> {
         let payload = self.link.query(Q_HEALTH)?;
         match parse_resp(&payload) {
@@ -32,7 +32,7 @@ impl Device {
         }
     }
 
-    /// Query the cloned device's USB identity (§4.3).
+    /// Cloned device's USB identity (§4.3).
     pub fn device_info(&self) -> Result<DeviceInfo> {
         let payload = self.link.query(Q_DEVICE_INFO)?;
         match parse_resp(&payload) {
@@ -41,10 +41,10 @@ impl Device {
         }
     }
 
-    /// Query the cloned device's semantic capabilities (§4.4).
+    /// Cloned device's capabilities (§4.4).
     ///
-    /// The declared button count is cached so a later button blanket lock expands onto every declared
-    /// button and a reconnect re-asserts a lock on a button past the five named ones.
+    /// Caches the declared button count, so a later button blanket lock covers every declared button
+    /// and a reconnect re-asserts a lock on a button past the five named ones.
     pub fn caps(&self) -> Result<Caps> {
         let payload = self.link.query(Q_CAPS)?;
         match parse_resp(&payload) {
@@ -59,7 +59,7 @@ impl Device {
         }
     }
 
-    /// Query the live native report rate and clone poll period (§4.5).
+    /// Live native report rate and clone poll period (§4.5).
     pub fn query_rate(&self) -> Result<Rate> {
         let payload = self.link.query(Q_RATE)?;
         match parse_resp(&payload) {
@@ -68,7 +68,7 @@ impl Device {
         }
     }
 
-    /// Query the box's delivery/telemetry counters (§4.6).
+    /// Delivery and telemetry counters (§4.6).
     pub fn query_stats(&self) -> Result<Stats> {
         let payload = self.link.query(Q_STATS)?;
         match parse_resp(&payload) {
@@ -77,7 +77,7 @@ impl Device {
         }
     }
 
-    /// Query the active lock bitmask (§4.8).
+    /// Active locks (§4.8).
     pub fn query_locks(&self) -> Result<Locks> {
         let payload = self.link.query(Q_LOCKS)?;
         match parse_resp(&payload) {
@@ -86,7 +86,7 @@ impl Device {
         }
     }
 
-    /// Query the active catch subscription mask and box-side dropped-event count (§4.9).
+    /// Live catch table, box-side drop counts and inter-chip clock (§4.9).
     pub fn query_catch(&self) -> Result<CatchState> {
         let payload = self.link.query(Q_CATCH)?;
         match parse_resp(&payload) {
@@ -95,7 +95,7 @@ impl Device {
         }
     }
 
-    /// Query the imperfect-clone opt-in and over-capacity status (§4.14).
+    /// Imperfect-clone opt-in and over-capacity status (§4.14).
     pub fn query_imperfect(&self) -> Result<ImperfectStatus> {
         let payload = self.link.query_option(OPT_IMPERFECT)?;
         match parse_resp(&payload) {
@@ -104,7 +104,7 @@ impl Device {
         }
     }
 
-    /// Query the movement-riding window (§4.14); `None` = off.
+    /// Movement-riding window (§4.14); `None` = off.
     pub fn query_movement_riding(&self) -> Result<Option<Duration>> {
         let payload = self.link.query_option(OPT_MOVE_RIDE)?;
         match parse_resp(&payload) {
@@ -113,7 +113,7 @@ impl Device {
         }
     }
 
-    /// Query the emit-rate pacing mode and the rate in effect (§4.14).
+    /// Emit pacing mode and the rate in effect (§4.14).
     pub fn query_emit_pace(&self) -> Result<EmitPaceStatus> {
         let payload = self.link.query_option(OPT_EMIT)?;
         match parse_resp(&payload) {
@@ -122,7 +122,7 @@ impl Device {
         }
     }
 
-    /// Query the bearing (§4.14): the window `Direction::With`/`Against` are held over, and how it is read.
+    /// Bearing (§4.14): the window `Direction::With`/`Against` are held over, and how it is read.
     pub fn query_bearing(&self) -> Result<Bearing> {
         let payload = self.link.query_option(OPT_BEARING)?;
         match parse_resp(&payload) {
@@ -131,8 +131,8 @@ impl Device {
         }
     }
 
-    /// Query what motion is rendered with, whether native motion goes through it, and whether a
-    /// profile has armed (§4.14).
+    /// Render texture, whether native motion goes through it, and whether a profile has armed
+    /// (§4.14).
     pub fn query_render(&self) -> Result<RenderStatus> {
         let payload = self.link.query_option(OPT_RENDER)?;
         match parse_resp(&payload) {
@@ -141,7 +141,7 @@ impl Device {
         }
     }
 
-    /// Query how far an injected delta is spread, and the interval the box is releasing across (§4.14).
+    /// Spread percent and the interval the box releases across (§4.14).
     pub fn query_spread(&self) -> Result<SpreadStatus> {
         let payload = self.link.query_option(OPT_SPREAD)?;
         match parse_resp(&payload) {

@@ -114,14 +114,13 @@ class MockBox:
         _native.lib.medius_mock_set_catch_state(self._handle, catch_state_to_c(state))
 
     def set_imperfect_status(self, status: ImperfectStatus):
-        """Set the `ImperfectStatus` the mock answers to `Device.query_imperfect`. With the opt-in
-        off the mock drops its consuming clip packet triggers, as the box does when the opt-in goes
-        off."""
+        """Set the mock's `Device.query_imperfect` reply. With the opt-in off the mock drops its
+        consuming clip packet triggers, as the box does."""
         _native.lib.medius_mock_set_imperfect_status(self._handle, imperfect_to_c(status))
 
     def set_transfer_reply(self, status, data: bytes = b""):
-        """Set the canned (status, IN data) the mock answers a TRANSFER with while the opt-in is on;
-        with it off it answers REFUSED. `status` is a `TransferStatus` or a raw wire byte."""
+        """Set the canned (status, IN data) reply to a TRANSFER while the opt-in is on; with it off
+        the mock replies REFUSED. `status` is a `TransferStatus` or a raw wire byte."""
         raw = _as_bytes(data, "data")
         buf = (_native.u8 * len(raw)).from_buffer_copy(raw)
         _native.lib.medius_mock_set_transfer_reply(
@@ -139,7 +138,7 @@ class MockBox:
         )
 
     def set_bearing(self, bearing: Bearing):
-        """Set the `Bearing` the mock answers to `Device.query_bearing`."""
+        """Set the mock's `Device.query_bearing` reply."""
         _native.lib.medius_mock_set_bearing(
             self._handle,
             _window_ms(bearing.window_ms),
@@ -153,49 +152,48 @@ class MockBox:
         )
 
     def set_spread_learned(self, period_us: int):
-        """The command period the mock has learned, in microseconds. A real box learns it off MOVE
-        arrivals, so a mock left at 0 answers a span of 0 whatever percent is set."""
+        """The mock's learned command period, in microseconds. A real box learns it from MOVE
+        arrivals, so a mock left at 0 replies with a span of 0 whatever the percent."""
         _native.lib.medius_mock_set_spread_learned(self._handle, int(period_us))
 
     def set_render(self, mode: RenderMode, full: bool, ready: bool):
-        """What the mock answers to `Device.query_render`. `ready` is whether a profile has armed,
-        which is what gates rendering on a real box: a mock left unarmed is the state every box passes
-        through after a power cut."""
+        """The mock's `Device.query_render` reply. `ready` is whether a profile is armed, which
+        gates rendering on a real box; an unarmed mock is every box's state after a power cut."""
         _native.lib.medius_mock_set_render(
             self._handle, int(_enum(mode, RenderMode, "mode")), bool(full), bool(ready)
         )
 
     def set_clip_status(self, status: ClipStatus):
-        """Set the `ClipStatus` the mock answers to `ClipHandle.query_status`."""
+        """Set the mock's `ClipHandle.query_status` reply."""
         _native.lib.medius_mock_set_clip_status(self._handle, clip_status_to_c(status))
 
     def set_clip_settings(self, settings: "ClipSettings"):
-        """Set the `ClipSettings` the mock answers to `ClipHandle.query_config`.
+        """Set the mock's `ClipHandle.query_config` reply.
 
         Its packet triggers are bound in order, as `ClipHandle.bind_packet` binds them, under the
-        opt-in the mock holds when they are scripted. The mock holds the ones the box would take, each
-        with its scripted ``hits``, and leaves out the rest as the box's own answer would: a direction
-        the class never carries, a match bit outside the mask, a run with no condition, ``consume`` on
-        ``CONTROL`` or with the opt-in off, and entries past the match pool. Script the opt-in with
-        `set_imperfect_status` before a consuming trigger. The triggers held are the set
-        `ClipHandle.bind_packet` adds to and `clip_packet` runs a packet through."""
+        opt-in the mock holds at scripting time. The mock keeps those the box would, each with its
+        scripted ``hits``, and drops the rest as the box's reply would: a direction the class never
+        carries, a match bit outside the mask, a run with no condition, ``consume`` on ``CONTROL``
+        or with the opt-in off, and entries past the match pool. Script the opt-in with
+        `set_imperfect_status` before a consuming trigger. `ClipHandle.bind_packet` adds to the held
+        set and `clip_packet` runs packets through it."""
         _native.lib.medius_mock_set_clip_settings(self._handle, clip_settings_to_c(settings))
 
     def clip_packet(
         self, traffic_class: TrafficClass, id: int, direction: Direction, head: bytes
     ) -> Tuple[Optional[ClipAction], bool]:
         """Run one packet through the packet triggers, as the box does for a packet crossing
-        `traffic_class` at `id` in `direction` whose first bytes are `head`. The most specific trigger
-        `head` matches wins it and counts it in its ``hits``.
+        `traffic_class` at `id` in `direction` with first bytes `head`. The most specific matching
+        trigger counts it in ``hits``.
 
-        Returns the action the winner drives on this packet, and whether the winner consumes the
-        packet. The action is `None` when no trigger wins, and when the winner is ``once_per_run`` and
-        the packet continues a run.
+        Returns the action that trigger drives on this packet, and whether it consumes the packet.
+        The action is `None` when no trigger matches, or when a ``once_per_run`` trigger's run
+        continues.
 
-        A packet travels ``IN`` or ``OUT`` across a surface that carries that flow: ``IN`` for
+        A packet travels ``IN`` or ``OUT`` across a surface carrying that flow: ``IN`` for
         ``HID_IN`` and ``EMIT``, ``OUT`` for ``HID_OUT``, either for the vendor classes and
-        ``CONTROL``. Any other `traffic_class` and `direction` is no packet: it returns
-        ``(None, False)``, counts in no ``hits`` and leaves every run as it was."""
+        ``CONTROL``. Any other `traffic_class` and `direction` is no packet: it returns ``(None,
+        False)``, counts in no ``hits`` and leaves every run unchanged."""
         raw = _as_bytes(head, "head")
         buf = (_native.u8 * len(raw)).from_buffer_copy(raw)
         action, consumed = _native.u8(), _native.c_bool()
@@ -211,8 +209,31 @@ class MockBox:
         )
         return (ClipAction(action.value) if fired else None, bool(consumed.value))
 
+    def restart(self):
+        """Simulate a device-chip restart: the mock drops its session state, keeps its stored state,
+        sends its hello now and on the next frame it receives, and has its clone back 100 ms
+        later."""
+        _native.lib.medius_mock_restart(self._handle)
+
+    def link_lost(self):
+        """Simulate an inter-chip link drop and recovery: the mock releases host-set session state
+        (counted in `Stats.session`); the clone stays up."""
+        _native.lib.medius_mock_link_lost(self._handle)
+
+    def detach(self, back_within_grace: bool = False):
+        """Simulate the real device detaching: the mock releases host-set session state. With
+        `back_within_grace` the same device re-attaches inside the 250 ms grace and the clone stays
+        up; otherwise the clone is torn down when the grace ends (counted again only if a command
+        arrived during it) and stays down until `attach`."""
+        _native.lib.medius_mock_detach(self._handle, bool(back_within_grace))
+
+    def attach(self):
+        """Simulate the device attaching again: inside a detach's grace the clone stays as it is; after
+        teardown a fresh clone starts with nothing to release."""
+        _native.lib.medius_mock_attach(self._handle)
+
     def silent(self):
-        """Make the mock stop answering queries (one-way, for timeout tests)."""
+        """Make the mock stop replying to queries (one-way, for timeout tests)."""
         _native.lib.medius_mock_silent(self._handle)
 
     def push_raw(self, data: bytes):
@@ -233,7 +254,7 @@ class MockBox:
         _native.lib.medius_mock_push_usages(self._handle, seq, ts_us, ctypes.byref(c))
 
     def push_traffic(self, seq: int, ts_us: int, clock: ClockDomain, event: TrafficEvent):
-        """Push a TRAFFIC_EVENT; a `true_len` above the byte count is how a cut capture looks."""
+        """Push a TRAFFIC_EVENT; a `true_len` above the byte count makes a cut capture."""
         clock = _enum(clock, ClockDomain, "clock")
         c = traffic_event_to_c(event)
         _native.lib.medius_mock_push_traffic(self._handle, seq, ts_us, int(clock), ctypes.byref(c))

@@ -1,9 +1,9 @@
-//! The crate-wide structured error type.
+//! Crate-wide error type.
 
 use crate::protocol::FrameError;
 use crate::types::CatchClass;
 
-/// The crate-wide error type.
+/// Crate-wide error type.
 #[derive(thiserror::Error, Debug)]
 #[non_exhaustive]
 pub enum Error {
@@ -19,7 +19,7 @@ pub enum Error {
     #[error("unsupported protocol version {got} (expected {expected})", expected = crate::protocol::PROTO_VER)]
     BadProtoVer { got: u8 },
 
-    #[error("query timed out waiting for a response")]
+    #[error("query timed out")]
     QueryTimeout,
 
     #[error("device disconnected")]
@@ -29,49 +29,56 @@ pub enum Error {
     FrameTooLong,
 
     #[error(
-        "a lock scale is a percent of the physical value bounded by {min} to {max}: 0 blocks, 100 \
-         passes untouched, above that amplifies, and a negative one reverses what it keeps. {scale} \
-         is outside it"
+        "lock scale {scale} is outside {min} to {max} (percent of the physical value kept: 0 blocks, \
+         100 passes, above amplifies, negative reverses)"
     )]
     LockScaleRange { scale: i16, min: i16, max: i16 },
 
     #[error(
-        "a lock scale of {scale} reverses what it keeps, and class {class} carries one bit, which has \
-         nothing to reverse; use 0 to block it or 100 to pass it"
+        "lock scale {scale} reverses, but class {class} carries one bit with nothing to reverse; use \
+         0 to block or 100 to pass"
     )]
     LockScaleUsage { scale: i16, class: u8 },
 
-    #[error("the box holds at most {limit} catch entries and this subscription needs {needed}")]
+    #[error("subscription needs {needed} catch entries; the box holds {limit}")]
     CatchTableFull { needed: usize, limit: usize },
 
     #[error("a catch subscription needs at least one filter")]
     EmptySubscription,
 
     #[error(
-        "the advanced control layer (§3.14) is gated on the imperfect-clone opt-in, which the box reports \
-         off; call allow_imperfect_clones(true) first"
+        "advanced control (§3.14) needs the imperfect-clone opt-in, which the box reports off; call \
+         allow_imperfect_clones(true) first"
     )]
     ImperfectRequired,
 
-    #[error(
-        "a rewrite rule's match and mask must be the same length (match {match_len}, mask {mask_len})"
-    )]
+    #[error("rewrite match and mask differ in length (match {match_len}, mask {mask_len})")]
     RewriteMaskLength { match_len: usize, mask_len: usize },
 
-    #[error("a rewrite rule compares at most {limit} match bytes, and this one has {len}")]
+    #[error("rewrite match has {len} bytes; at most {limit} are compared")]
     RewriteMatchTooLong { len: usize, limit: usize },
 
-    #[error("the box holds {limit} rewrite rules and they are all in use; remove one first")]
+    #[error("all {limit} rewrite rules are in use; remove one first")]
     RewriteTableFull { limit: usize },
 
-    #[error("{action:?} is not a valid action for a {class:?} rewrite rule")]
+    #[error(
+        "rewrite payload of {len} bytes exceeds the {free} bytes left in the {limit}-byte pool; \
+         remove a rule or shorten a payload first"
+    )]
+    RewritePoolFull {
+        len: usize,
+        free: usize,
+        limit: usize,
+    },
+
+    #[error("{action:?} is not valid on a {class:?} rewrite rule")]
     RewriteActionClass {
         action: crate::types::RewriteAction,
         class: crate::types::RewriteClass,
     },
 
     #[error(
-        "a {action:?} rewrite payload of {len} bytes at offset {offset} exceeds the {cap}-byte head \
+        "{action:?} rewrite payload of {len} bytes at offset {offset} exceeds the {cap}-byte head \
          the box holds for a {class:?} rule"
     )]
     RewritePayloadTooLarge {
@@ -83,9 +90,9 @@ pub enum Error {
     },
 
     #[error(
-        "a {op:?} transform cannot address {src:?} → {dst:?}: a swap is two axes, a remap is \
-         axis→axis, button→button, button→key or button→media, and neither takes one field as both \
-         ends. To weigh a field in place, use scale"
+        "{op:?} transform cannot address {src:?} → {dst:?}: swap takes two axes; remap takes \
+         axis→axis, button→button, button→key or button→media; neither takes one field as both \
+         ends. To weigh a field, use scale"
     )]
     TransformOpFields {
         op: crate::types::TransformOp,
@@ -94,13 +101,13 @@ pub enum Error {
     },
 
     #[error(
-        "{limit} transforms are already held for this device; remove one first. This counts what the \
-         host holds, which can include an entry the box refused for naming a field the clone does not \
-         declare: query_transforms reports what the box actually has"
+        "{limit} transforms already held for this device; remove one first. The count is host-side \
+         and can include an entry the box refused for naming a field the clone does not declare; \
+         query_transforms reports what the box has"
     )]
     TransformTableFull { limit: usize },
 
-    #[error("{class:?} arrives decoded and carries no packet, so a capture on it does nothing")]
+    #[error("{class:?} arrives decoded with no packet, so a capture on it does nothing")]
     CaptureNotApplicable { class: CatchClass },
 
     #[error("{class:?} is traffic and cannot be decoded to an input edge; use catch_events")]
@@ -121,12 +128,12 @@ pub enum Error {
     },
 
     #[error(
-        "a raw injection puts bytes on one cloned endpoint flow, so it needs Direction::IN or \
-         Direction::OUT; {direction:?} names neither"
+        "raw injection needs one endpoint flow, Direction::IN or Direction::OUT; {direction:?} is \
+         neither"
     )]
     RawDirection { direction: crate::types::Direction },
 
-    #[error("a clip frame carries at most {limit} {what} and this one has {count}")]
+    #[error("clip frame has {count} {what}, over the limit of {limit}")]
     ClipFrameCount {
         what: &'static str,
         count: usize,
@@ -134,15 +141,14 @@ pub enum Error {
     },
 
     #[error(
-        "a clip frame encodes to {len} bytes and one append carries at most {max}; split it across \
-         frames",
+        "clip frame encodes to {len} bytes, over the {max} one append carries; split it across frames",
         max = crate::types::CLIP_ENTRY_MAX
     )]
     ClipFrameTooLong { len: usize },
 
     #[error(
-        "a clip transfer carries exactly the bytes its setup packet announces: wLength for an OUT \
-         request, none for an IN one. This one needs {want} and has {got}"
+        "clip transfer needs {want} data bytes and has {got}: wLength for an OUT request, none for \
+         an IN one"
     )]
     ClipTransferData { want: usize, got: usize },
 
@@ -150,20 +156,20 @@ pub enum Error {
     ClipPacketTrigger { reason: &'static str },
 
     #[error(
-        "id 0x{id:04X} is the blanket sentinel on the wire, so an exact {class:?} subscription to it \
-         would address the whole class instead"
+        "id 0x{id:04X} is the wire's blanket sentinel; an exact {class:?} subscription to it would \
+         address the whole class"
     )]
     ReservedId { class: CatchClass, id: u16 },
 
     #[error(
-        "an input subscription must cover both edges: without the release edge a fresh press cannot \
-         be told from a chord, and without the opposite sign an axis never returns to rest. Drop the \
-         direction and match on Input::Press or the sign of the delta"
+        "input subscription must cover both edges: without the release a fresh press looks like a \
+         chord, and without the opposite sign an axis never returns to rest. Drop the direction and \
+         match on Input::Press or the delta's sign"
     )]
     HalfEdgeInputFilter,
 
-    /// The box refused a firmware update op (§4.16). `arg` is that status's argument: the slot size
-    /// for `TOO_BIG`, the chunk it expected for `SEQ_GAP`, an `esp_err_t` for a write or image failure.
+    /// Firmware update op refused (§4.16). `arg`: the slot size for `TOO_BIG`, the expected chunk for
+    /// `SEQ_GAP`, an `esp_err_t` for a write or image failure.
     #[error("{} failed: {}", crate::types::update_doing(*op), crate::types::update_reason(*op, *status, *arg))]
     Update {
         op: u8,
@@ -172,7 +178,7 @@ pub enum Error {
     },
 }
 
-/// The crate-wide [`Result`](core::result::Result) alias.
+/// Crate-wide [`Result`](core::result::Result) alias.
 pub type Result<T> = core::result::Result<T, Error>;
 
 impl From<FrameError> for Error {

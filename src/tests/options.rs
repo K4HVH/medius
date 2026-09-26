@@ -264,8 +264,7 @@ fn decode_render_through_parse_resp() {
 fn mock_emit_pace_matches_firmware_snap() {
     use crate::{Device, EmitPace, EmitPaceStatus, MockBox, RenderMode};
     // The mock models firmware pacing: Fixed(400) snaps to 1000/3 = 333 Hz on the 1 ms frame clock
-    // (not raw 400) and Fixed(2000) clamps to 1 kHz; a naive echo would diverge from hardware.
-    // An untouched mock models a fresh box, which boots rendering De-spiked.
+    // and Fixed(2000) clamps to 1 kHz, as hardware does.
     let mock = MockBox::new().with_emit_pace(EmitPace::Fixed(400));
     let device = Device::with_mock(mock.clone());
     assert_eq!(
@@ -289,9 +288,7 @@ fn mock_emit_pace_matches_firmware_snap() {
             force_active: false,
         }
     );
-    // The texture is its own command now, but it still governs the resolved rate. The box gates that
-    // on a profile having ARMED, not on the mode being set: a box told to render but still waiting for
-    // one runs the paced fill and reports the learnt cap.
+    // The texture is its own command now, but it still governs the resolved rate.
     device.set_render(RenderMode::Stock, false).unwrap();
     device.set_emit_pace(EmitPace::Learned, None).unwrap();
     assert_eq!(device.query_emit_pace().unwrap().resolved_hz, 0);
@@ -320,9 +317,7 @@ fn mock_emit_pace_matches_firmware_snap() {
         }
     );
 
-    // Armed, a rendered stream on a learnt pace self-paces every millisecond and says so. This is the
-    // half that discriminates: without it the reply reads the same whether the renderer is emitting
-    // or the box is still on the fill.
+    // Armed, a rendered stream on a learnt pace self-paces every millisecond and says so.
     let armed = Device::with_mock(MockBox::new().with_render_ready(true));
     armed.set_render(RenderMode::Stock, false).unwrap();
     armed.set_emit_pace(EmitPace::Learned, None).unwrap();
@@ -358,8 +353,7 @@ fn render_round_trips_over_the_command_path() {
             assert_eq!((s.mode, s.full), (mode, full));
         }
     }
-    // A box that has learned a profile says so, which is what separates one set to a mode from one
-    // rendering with it.
+    // A box reports a learned profile, separating a box set to a mode from one rendering with it.
     let armed = Device::with_mock(MockBox::new().with_render_ready(true));
     assert!(armed.query_render().unwrap().ready);
 }
@@ -374,8 +368,8 @@ fn an_unknown_render_value_discards_the_whole_command() {
     let device = Device::with_mock(mock.clone());
     device.set_render(RenderMode::Stock, true).unwrap();
     let before = device.query_render().unwrap();
-    // Straight down the command path, past the typed API: the box refuses a mode past the last and a
-    // `full` past 1 rather than coercing either, so the standing setting must survive both.
+    // Past the typed API: the box refuses a mode past the last and a `full` past 1 without coercing
+    // either, so the standing setting survives both.
     for bad in [[OPT_RENDER, 4, 0], [OPT_RENDER, 2, 2]] {
         device.link.send(FrameType::Option, &bad).unwrap();
         assert_eq!(device.query_render().unwrap(), before);
@@ -424,8 +418,8 @@ fn mock_rate_force_matches_firmware_snap() {
 #[test]
 fn mock_leaves_a_force_inert_without_the_opt_in() {
     use crate::{Device, EmitPace, MockBox};
-    // The box gates a force on the imperfect opt-in, so a mock that reported it active regardless would
-    // green-light host code that disagrees with every real box.
+    // The box gates a force on the imperfect opt-in; a mock reporting it active regardless would pass
+    // host code every real box disagrees with.
     let mock = MockBox::new().with_advertised_hz(125);
     let device = Device::with_mock(mock.clone());
     device.set_emit_pace(EmitPace::Learned, Some(1000)).unwrap();
@@ -507,8 +501,8 @@ fn set_name_sends_option_frame_and_clear_is_empty() {
 #[test]
 fn set_name_sends_the_value_raw_for_the_box_to_sanitize() {
     use crate::{Device, MockBox};
-    // set_name does no host-side validation: it sends the string as-is and the box sanitises, so a
-    // control byte rides through on the wire (the box drops it) rather than raising a host error.
+    // set_name sends the string as is and the box sanitises, so a control byte goes out on the wire
+    // (the box drops it) with no host error.
     let mock = MockBox::new();
     let device = Device::with_mock(mock.clone());
     device.set_name("A\tB").unwrap();

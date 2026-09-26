@@ -559,7 +559,7 @@ fn the_render_option_reads_back_what_was_set_through_the_boundary() {
     );
     assert_eq!(st.mode, MediusRenderMode::Unsmoothed);
     assert_eq!(st.full, 1);
-    // `ready` is the box's own state, not something the host sets, so it comes from the mock.
+    // `ready` is box state the host does not set, so it comes from the mock.
     unsafe { medius_mock_set_render(mock, MediusRenderMode::Stock as u8, false, true) };
     assert_eq!(
         unsafe { medius_device_query_render(dev, &mut st) },
@@ -587,15 +587,15 @@ fn the_spread_option_reads_back_what_was_set_through_the_boundary() {
     );
     assert_eq!(st.percent, 100);
     assert_eq!(st.span_us, 0);
-    // The period is the box's own state, not something the host sets.
+    // The period is box state the host does not set.
     unsafe { medius_mock_set_spread_learned(mock, 8000) };
     assert_eq!(
         unsafe { medius_device_query_spread(dev, &mut st) },
         MediusStatus::Ok
     );
     assert_eq!(st.span_us, 8000);
-    // A percent past 100 overlaps rather than being clamped, and both fields survive the trip. Past
-    // a byte too: 250 would round-trip through a u8 boundary and prove nothing about the width.
+    // A percent past 100 overlaps, unclamped, and both fields survive the trip. Past 255 too: 250
+    // fits a u8 and proves nothing about the width.
     assert_eq!(
         unsafe { medius_device_set_spread(dev, 1000) },
         MediusStatus::Ok
@@ -741,10 +741,8 @@ fn a_relative_direction_with_no_bearing_to_read_has_its_own_status() {
 
 #[test]
 fn an_unnamed_direction_byte_in_a_caller_built_lock_entry_is_dropped() {
-    // `MediusLockEntry.direction` is a `uint8_t` the caller fills in through `medius_mock_set_locks`,
-    // and Python has always handed it a raw byte. The setter has no status to return, so the entry is
-    // dropped rather than read as whichever direction the byte resembles: a lock the host believes
-    // in and the box never took is the failure this prevents.
+    // `MediusLockEntry.direction` is a `uint8_t` the caller fills in through
+    // `medius_mock_set_locks`, and Python passes it a raw byte.
     const BAD: u8 = 40;
     let mock = medius_mock_new();
     let x = medius_lock_target_axis(MediusLockTargetKind::X as u8);
@@ -787,10 +785,8 @@ fn an_unnamed_direction_byte_in_a_caller_built_lock_entry_is_dropped() {
 
 #[test]
 fn an_unnamed_direction_byte_in_a_catch_filter_is_refused() {
-    // `MediusCatchFilter.direction` is a `uint8_t` the caller fills in, and Python has always handed
-    // it a raw byte. A filter helper has no status to return, so the byte rides the struct and the
-    // subscription refuses it, rather than the box being handed whichever direction its low bits
-    // resemble, or a stream that never yields.
+    // `MediusCatchFilter.direction` is a `uint8_t` the caller fills in, and Python passes it a raw
+    // byte.
     const BAD: u8 = 40;
     let mock = medius_mock_new();
     let mut dev: *mut MediusDevice = ptr::null_mut();
@@ -863,8 +859,7 @@ fn a_byte_no_constant_names_is_refused_at_every_entry_point() {
         ("unlock_all what", unsafe {
             medius_device_unlock_all(dev, BAD, both)
         }),
-        // Two named values is one ABI bit while the parameter is an enum, which folded every stray
-        // byte onto Vector. As a byte it is refused like any other.
+        // A stray byte is refused, not folded onto Vector.
         ("set_bearing mode", unsafe {
             medius_device_set_bearing(dev, 20, BAD)
         }),
@@ -929,6 +924,7 @@ fn counters_are_readable() {
         frames_rx: 0,
         crc_drops: 0,
         reconnects: 0,
+        restarts: 0,
     };
     assert_eq!(
         unsafe { medius_device_counters(dev, &mut counters) },
@@ -1343,8 +1339,7 @@ fn input_events_report_each_refusal_with_its_own_status() {
 #[test]
 fn every_new_entry_point_survives_a_null_and_respects_the_caller_s_buffer() {
     // A dropped null check is an abort inside the caller's process, and an off-by-one in the one
-    // entry point that writes an unbounded-length result into a caller buffer is a heap smash. Both
-    // mutations passed the whole suite before this test existed.
+    // entry point that writes an unbounded-length result into a caller buffer is a heap smash.
     let mock = medius_mock_new();
     let mut dev: *mut MediusDevice = ptr::null_mut();
     assert_eq!(
@@ -1556,8 +1551,8 @@ fn no_clock_estimate_is_distinguishable_from_a_zero_age_one() {
         unsafe { medius_device_query_catch(dev, &mut got) },
         MediusStatus::Ok
     );
-    // Zeroing the struct would have produced age_ms == 0, which means a fresh estimate of exactly
-    // zero offset. The sentinel has to survive so a caller does not apply an unmeasured offset.
+    // age_ms == 0 means a fresh estimate of zero offset; the sentinel must survive so a caller does
+    // not apply an unmeasured offset.
     assert_eq!(got.clock.age_ms, MEDIUS_CLOCK_AGE_NONE);
 
     set.clock.age_ms = 0;
@@ -1899,10 +1894,7 @@ fn spec_trigger() -> MediusClipPacketTrigger {
 }
 
 // Eight triggers that differ in every field, each as the crate holds it and as the C struct carries
-// it, written out field by field so neither side is derived from the other. Row 0 consumes only, row
-// 1 is once per run only, rows 2 and 6 are both, and row 7 fills the match array. Each is a trigger a
-// packet can match: a direction its class carries, every match bit under its mask, and a masked bit
-// past a once-per-run selector. The vendor classes take IN, OUT and both.
+// it, written out field by field so neither side is derived from the other.
 fn packet_rows() -> Vec<(medius::ClipPacketTriggerEntry, MediusClipPacketTrigger)> {
     use medius::{ClipAction, ClipPacketTrigger, Direction, TrafficClass};
     let (inbound, outbound, both) = (
@@ -2296,8 +2288,8 @@ fn a_read_back_past_the_arrays_is_clamped_to_them() {
     }
 }
 
-// The bytes `query` writes into a buffer prefilled with `fill`, read without a typed copy of `T`, which
-// would leave its padding undefined again.
+// The bytes `query` writes into a buffer prefilled with `fill`, read without a typed copy of `T`,
+// which would leave its padding undefined.
 unsafe fn out_bytes<T>(fill: u8, query: impl FnOnce(*mut T) -> MediusStatus) -> Vec<u8> {
     let mut out = std::mem::MaybeUninit::<T>::uninit();
     unsafe { ptr::write_bytes(out.as_mut_ptr(), fill, 1) };
@@ -3200,7 +3192,7 @@ fn the_mock_runs_a_packet_through_its_triggers() {
         run(hid_in, 5, inbound, &[0x07, 0x20]),
         (true, toggle, false)
     );
-    // Nothing wins on another class, and the outs say so.
+    // Nothing matches on another class, and the outs say so.
     assert_eq!(
         run(
             MEDIUS_CATCH_CLASS_HID_OUT,
@@ -4503,7 +4495,7 @@ fn transfer_roundtrips_the_devices_answer() {
 
 #[test]
 fn a_refused_transfer_carries_no_data() {
-    // With the opt-in off the box answers REFUSED and no data, whatever a caller passes.
+    // With the opt-in off the box replies REFUSED with no data, whatever a caller passes.
     let mock = medius_mock_new();
     let mut dev: *mut MediusDevice = ptr::null_mut();
     assert_eq!(
@@ -5160,6 +5152,129 @@ fn mouse_caps_pan_crosses_the_boundary() {
     assert_eq!(tf.entries[0].op, MediusTransformOp::Remap as u8);
     assert_eq!(tf.entries[0].dest.kind, MediusLockTargetKind::Pan as u8);
     unsafe {
+        medius_device_free(dev);
+        medius_mock_free(mock);
+    }
+}
+
+#[test]
+fn a_rewrite_past_the_payload_pool_has_its_own_status() {
+    assert_eq!(MediusStatus::ErrRewritePoolFull as i32, 35);
+    assert_eq!(MEDIUS_REWRITE_PAYLOAD_POOL, 2048);
+    let mock = medius_mock_new();
+    unsafe { medius_mock_set_imperfect_status(mock, allowed_status()) };
+    let mut dev: *mut MediusDevice = ptr::null_mut();
+    assert_eq!(
+        unsafe { medius_device_with_mock(mock, &mut dev) },
+        MediusStatus::Ok
+    );
+    let answer = |id: u16, len: usize| {
+        c_rewrite(
+            MediusRewriteClass::Control as u8,
+            id,
+            MediusDirection::Both as u8,
+            MediusRewriteAction::Answer as u8,
+            0,
+            &[],
+            &[],
+            &vec![0x5A; len],
+        )
+    };
+    for id in 0..4 {
+        assert_eq!(
+            unsafe { medius_device_set_rewrite(dev, &answer(id, 512 - 11)) },
+            MediusStatus::Ok
+        );
+    }
+    assert_eq!(
+        unsafe { medius_device_set_rewrite(dev, &answer(4, 45)) },
+        MediusStatus::ErrRewritePoolFull
+    );
+    assert_eq!(
+        unsafe { medius_device_set_rewrite(dev, &answer(4, 44)) },
+        MediusStatus::Ok
+    );
+    unsafe {
+        medius_device_free(dev);
+        medius_mock_free(mock);
+    }
+}
+
+#[test]
+fn a_mock_restart_is_recovered_and_the_clip_reports_its_loss() {
+    let mock = medius_mock_new();
+    let mut dev: *mut MediusDevice = ptr::null_mut();
+    assert_eq!(
+        unsafe { medius_device_open_mock(mock, &mut dev) },
+        MediusStatus::Ok
+    );
+    let clip = unsafe { clip_of(dev) };
+    let builder = medius_clip_builder_new();
+    unsafe {
+        assert_eq!(medius_clip_builder_move(builder, 1, 0), MediusStatus::Ok);
+        assert_eq!(medius_clip_append(clip, builder), MediusStatus::Ok);
+        assert!(!medius_clip_lost(clip));
+        medius_mock_restart(mock);
+    }
+    let mut counters: MediusCountersSnapshot = unsafe { std::mem::zeroed() };
+    let deadline = std::time::Instant::now() + Duration::from_secs(3);
+    while counters.restarts == 0 {
+        assert!(std::time::Instant::now() < deadline, "no recovery");
+        std::thread::sleep(Duration::from_millis(5));
+        assert_eq!(
+            unsafe { medius_device_counters(dev, &mut counters) },
+            MediusStatus::Ok
+        );
+    }
+    unsafe {
+        assert!(medius_clip_lost(clip));
+        assert_eq!(medius_clip_append(clip, builder), MediusStatus::Ok);
+        assert!(!medius_clip_lost(clip));
+        assert!(!medius_clip_lost(ptr::null()));
+        medius_mock_restart(ptr::null_mut());
+        medius_clip_builder_free(builder);
+        medius_clip_free(clip);
+        medius_device_free(dev);
+        medius_mock_free(mock);
+    }
+}
+
+#[test]
+fn the_session_counter_reads_through_and_the_mock_moves_it() {
+    let mock = medius_mock_new();
+    let mut dev: *mut MediusDevice = ptr::null_mut();
+    assert_eq!(
+        unsafe { medius_device_with_mock(mock, &mut dev) },
+        MediusStatus::Ok
+    );
+    let session = || {
+        let mut s: MediusStats = unsafe { std::mem::zeroed() };
+        assert_eq!(
+            unsafe { medius_device_query_stats(dev, &mut s) },
+            MediusStatus::Ok
+        );
+        s.session
+    };
+    assert_eq!(session(), 0);
+    assert_eq!(
+        unsafe { medius_device_move_rel(dev, 1, 0) },
+        MediusStatus::Ok
+    );
+    unsafe { medius_mock_link_lost(mock) };
+    assert_eq!(session(), 1);
+    assert_eq!(
+        unsafe { medius_device_move_rel(dev, 1, 0) },
+        MediusStatus::Ok
+    );
+    unsafe {
+        medius_mock_detach(mock, false);
+        medius_mock_attach(mock);
+    }
+    assert_eq!(session(), 2);
+    unsafe {
+        medius_mock_link_lost(ptr::null_mut());
+        medius_mock_detach(ptr::null_mut(), true);
+        medius_mock_attach(ptr::null_mut());
         medius_device_free(dev);
         medius_mock_free(mock);
     }

@@ -27,15 +27,15 @@ pub enum Resp {
     Imperfect(ImperfectStatus),
     /// `RESP(OPTIONS, MOVE_RIDE)`: the movement-riding window (`None` = off).
     MovementRiding(Option<Duration>),
-    /// `RESP(OPTIONS, EMIT)`: the emit-rate pacing mode and the rate in effect.
+    /// `RESP(OPTIONS, EMIT)`: emit pacing mode and the rate in effect.
     EmitPace(EmitPaceStatus),
-    /// `RESP(OPTIONS, RENDER)`: what motion is rendered with, and whether a profile has armed.
+    /// `RESP(OPTIONS, RENDER)`: render texture, and whether a profile has armed.
     Render(RenderStatus),
-    /// `RESP(OPTIONS, SPREAD)`: how far an injected delta is spread, and the interval in effect.
+    /// `RESP(OPTIONS, SPREAD)`: spread percent and the interval in effect.
     Spread(SpreadStatus),
-    /// `RESP(OPTIONS, BEARING)`: the bearing window and how it is read.
+    /// `RESP(OPTIONS, BEARING)`: bearing window and how it is read.
     Bearing(Bearing),
-    /// `RESP(CLIP)`: the device-side clip ring and playback status.
+    /// `RESP(CLIP)`: clip ring and playback status.
     Clip(ClipStatus),
     /// `RESP(FIRMWARE)`: both chips' versions and slot state (§4.16).
     Firmware(FirmwareInfo),
@@ -63,14 +63,13 @@ pub fn parse_resp(payload: &[u8]) -> Option<Resp> {
                 fw_minor: payload[3],
                 fw_patch: payload[4],
                 mac,
-                // Variable ASCII name tail after the MAC, LEN-delimited like DEVICE_INFO's product; an
-                // older box with no tail decodes to an empty name (the 11-byte header still parses).
+                // LEN-delimited ASCII name after the MAC; an older box with none decodes to "".
                 name: String::from_utf8_lossy(&payload[11..]).into_owned(),
             }))
         }
         Q_HEALTH => {
-            // `u16` LE since proto 7 (§4.2). The frame `LEN` delimits it; a one-byte payload from an
-            // older box still decodes its low byte with the high byte read clear.
+            // `u16` LE since proto 7 (§4.2), `LEN`-delimited; a one-byte payload decodes with the
+            // high byte clear.
             let flags = match payload.get(1..3) {
                 Some(w) => u16::from_le_bytes([w[0], w[1]]),
                 None => u16::from(*payload.get(1)?),

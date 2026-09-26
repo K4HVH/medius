@@ -1,5 +1,5 @@
-//! `CATCH` (§3.9): the subscription address space, the three event frames, `RESP(CATCH)`, the HEALTH
-//! bit and the EventStream lifecycle. Bytes are pinned to the firmware wire format in ctrl_proto.h.
+//! `CATCH` (§3.9): address space, the three event frames, `RESP(CATCH)`, the HEALTH bit and the
+//! EventStream lifecycle, with bytes pinned to ctrl_proto.h.
 use std::time::Duration;
 
 #[cfg(feature = "mock")]
@@ -53,8 +53,8 @@ fn catch_classes_match_the_wire() {
 
 #[test]
 fn the_two_class_vocabularies_agree() {
-    // Class (INJECT/LOCK) and CatchClass are one vocabulary at one set of byte values. A caller
-    // holding a UsageSnapshot's class has to be able to compare it to the filter that asked for it.
+    // Class (INJECT/LOCK) and CatchClass share byte values, so a UsageSnapshot's class compares to
+    // the filter that asked for it.
     for (c, want) in [
         (Class::Button, CatchClass::Button),
         (Class::Key, CatchClass::Key),
@@ -100,7 +100,7 @@ fn capture_normalises_and_widens() {
         "First(0) is the whole packet"
     );
     assert_eq!(Capture::First(16).bytes(), Some(16));
-    // 0 on the wire means whole, so whole beats every finite length in both orders.
+    // 0 on the wire means whole, so whole is wider than every finite length in both orders.
     assert_eq!(
         Capture::First(16).widest(Capture::First(64)),
         Capture::First(64)
@@ -116,9 +116,9 @@ fn capture_normalises_and_widens() {
 
 #[test]
 fn equality_covers_the_capture_and_addressing_does_not() {
-    // The box dedups its table on (class, id, direction), so two filters differing only in capture
-    // are ONE box entry, but a PartialEq that said they were equal meant assert_eq! passed
-    // on two filters that behave differently. Addressing is same_address(); equality is equality.
+    // Filters differing only in capture are one box entry (it dedups on class, id, direction) but
+    // behave differently, so PartialEq covers capture or assert_eq! passes on both. same_address() is
+    // addressing.
     let a = CatchFilter::traffic(TrafficClass::VendorBulk, 3);
     let b = a.with_capture(Capture::First(16));
     assert_ne!(a, b);
@@ -129,8 +129,7 @@ fn equality_covers_the_capture_and_addressing_does_not() {
 
 #[test]
 fn watching_an_input_is_written_like_locking_it() {
-    // The whole point of the input constructors: `lock(Key::A, ..)` and `watch(Key::A)` name the same
-    // thing the same way, with no id arithmetic at the call site.
+    // `lock(Key::A, ..)` and `watch(Key::A)` name the same thing alike, with no id arithmetic.
     assert_eq!(
         CatchFilter::watch(Key::new(0x04)).wire(),
         (CatchClass::Key.as_u8(), 0x04)
@@ -186,8 +185,8 @@ fn filter_builders_produce_the_right_wire_pair() {
 
 #[test]
 fn a_wildcard_class_carrying_a_real_id_addresses_nothing() {
-    // `id` means something different in every class, so the box refuses this outright and the host
-    // has to as well: reading it as a wildcard instead would subscribe to everything, with no error.
+    // `id` means something different in every class, so the box refuses this and so must the host;
+    // read as a wildcard it would subscribe to everything, with no error.
     assert!(CatchFilter::from_wire(CATCH_CLS_ANY, 5, 0, 0).is_none());
     assert!(CatchFilter::from_wire(CATCH_CLS_ANY, CATCH_ID_ANY, 0, 0).is_some());
     assert!(CatchFilter::from_wire(200, 5, 0, 0).is_none()); // unknown class
@@ -202,8 +201,8 @@ fn a_wildcard_class_carrying_a_real_id_addresses_nothing() {
 
 #[test]
 fn motion_event_decodes_with_its_clock_domain() {
-    // [ts u32][clk u8][dx][dy][dz][dpan]: clk sits between ts and the axes, and dpan is the fourth
-    // axis after the wheel. Hand-laid so a shift in any field's offset turns the asserts below red.
+    // [ts u32][clk u8][dx][dy][dz][dpan]: clk between ts and the axes, dpan after the wheel.
+    // Hand-laid so any field offset shift fails the asserts.
     let p = [
         0x04, 0x03, 0x02, 0x01, 0, 0x2C, 0x01, 0xCE, 0xFF, 0xFF, 0xFF, 0x07, 0x00,
     ];
@@ -249,9 +248,7 @@ fn usage_snapshot_decodes_with_its_clock_domain() {
 
 #[test]
 fn an_empty_snapshot_still_names_the_class_that_went_quiet() {
-    // Releasing the last held usage is the edge a caller is waiting for, and it lists nothing. With
-    // the class read off the first usage there was none to read, so "all buttons released" and "all
-    // media released" were the same twelve bytes and neither could be routed.
+    // Releasing the last held usage is the edge a caller is waiting for, and it lists nothing.
     for (byte, want) in [(0u8, Class::Button), (1, Class::Key), (2, Class::Media)] {
         let p = [7, 0, 0, 0, 0, byte, 2, 0];
         let s = UsageSnapshot::from_payload(&p).unwrap();
@@ -267,9 +264,7 @@ fn an_empty_snapshot_still_names_the_class_that_went_quiet() {
 
 #[test]
 fn a_cut_setup_packet_is_not_reported_as_a_data_stage() {
-    // A control event captured under 8 bytes keeps only part of its setup packet. Falling through to
-    // "the whole buffer is the data" handed a decoder a GET_DESCRIPTOR request labelled as the
-    // descriptor it asked for: bytes that are real, in a field that makes them a lie.
+    // A control event captured under 8 bytes keeps only part of its setup packet.
     let p = [0, 0, 0, 0, 1, 8, 0, 0, 0, 0, 8, 0, 0x80, 0x06, 0x00, 0x01];
     let t = TrafficEvent::from_payload(&p).unwrap();
     assert_eq!(t.class, CatchClass::Control);
@@ -288,23 +283,54 @@ fn a_cut_setup_packet_is_not_reported_as_a_data_stage() {
 }
 
 #[test]
-fn control_status_covers_every_answer_the_device_can_give() {
+fn control_status_covers_every_handshake_the_pc_can_get() {
     let with_flags = |flags: u8| {
         let p = [0, 0, 0, 0, 1, 8, 0, 0, 0, flags, 0, 0];
         TrafficEvent::from_payload(&p).unwrap().control_status()
     };
     assert_eq!(with_flags(0x00), Some(ControlStatus::Ok));
-    assert_eq!(with_flags(0xFD), Some(ControlStatus::Stalled));
-    assert_eq!(with_flags(0xFE), Some(ControlStatus::Naked));
-    // An unknown status stays unknown. A catch-all arm reported it as a timeout, so a future
-    // firmware's new status would read as a device fault that never happened.
-    assert_eq!(with_flags(0x42), Some(ControlStatus::Other(0x42)));
+    assert_eq!(with_flags(0x01), Some(ControlStatus::Stalled));
+    assert_eq!(with_flags(0x02), Some(ControlStatus::Naked));
+    // The handshake is bits 0-1 alone: the rule bit beside it changes nothing.
+    assert_eq!(with_flags(0x81), Some(ControlStatus::Stalled));
+    assert_eq!(with_flags(0x80), Some(ControlStatus::Ok));
+    // An unknown value stays unknown; a catch-all arm reported a newer firmware's value as a
+    // timeout, a device fault that never happened.
+    assert_eq!(with_flags(0x03), Some(ControlStatus::Other(0x03)));
     // A class that is not Control has no control status at all, whatever its flags say.
     let p = [0, 0, 0, 0, 1, 7, 3, 0x00, 1, 0x01, 0, 0];
     assert_eq!(
         TrafficEvent::from_payload(&p).unwrap().control_status(),
         None
     );
+}
+
+// Bit 7 is the rule bit only on the six classes a rule acts at: a clip transfer's flags are a
+// TRANSFER status, whose 0xFD STALL has bit 7 set.
+#[test]
+fn the_rule_bit_is_read_only_where_a_rule_acts() {
+    let event = |class: u8, flags: u8| {
+        let p = [0, 0, 0, 0, 1, class, 0, 0, 1, flags, 0, 0];
+        TrafficEvent::from_payload(&p).unwrap()
+    };
+    for class in [
+        CatchClass::HidIn,
+        CatchClass::HidOut,
+        CatchClass::VendorInterrupt,
+        CatchClass::VendorBulk,
+        CatchClass::Control,
+        CatchClass::Emit,
+    ] {
+        assert!(event(class.as_u8(), 0x80).rule_acted(), "{class:?}");
+        assert!(!event(class.as_u8(), 0x03).rule_acted(), "{class:?}");
+    }
+    let xfer = event(CatchClass::ClipTransfer.as_u8(), 0xFD);
+    assert!(!xfer.rule_acted());
+    assert_eq!(xfer.transfer_status(), Some(TransferStatus::Stall));
+    assert!(!event(CatchClass::Bus.as_u8(), 0x80).rule_acted());
+    // A bulk event keeps its own two bits beside it.
+    let bulk = event(CatchClass::VendorBulk.as_u8(), 0x81);
+    assert!(bulk.rule_acted() && bulk.bulk_end_of_transfer() && !bulk.bulk_zlp());
 }
 
 #[test]
@@ -345,8 +371,7 @@ fn traffic_event_decodes() {
 
 #[test]
 fn truncation_is_visible() {
-    // true_len 64 with 8 bytes delivered: without the flag a cut capture and a genuinely short
-    // packet are indistinguishable, which is the whole reason true_len is on the wire.
+    // true_len 64 with 8 bytes delivered: only true_len tells a cut capture from a short packet.
     let mut p = vec![0, 0, 0, 0, 1, 6, 3, 0x00, 1, 0, 64, 0];
     p.extend_from_slice(&[1, 2, 3, 4, 5, 6, 7, 8]);
     let t = TrafficEvent::from_payload(&p).unwrap();
@@ -367,9 +392,8 @@ fn control_event_splits_setup_from_data() {
     );
     assert_eq!(t.data(), &[0xAA, 0xBB]);
     assert_eq!(t.control_status(), Some(ControlStatus::Ok));
-    // A STALL is what the real device answered, not the box's own refusal.
     let mut stalled = p.clone();
-    stalled[9] = 0xFD;
+    stalled[9] = 0x01;
     assert_eq!(
         TrafficEvent::from_payload(&stalled)
             .unwrap()
@@ -502,9 +526,7 @@ fn catch_state_decodes_header_entries_and_clock() {
 
 #[test]
 fn one_unrecognised_entry_does_not_discard_the_whole_reply() {
-    // A class this build does not know must cost that entry and nothing else. Failing the parse threw
-    // away the other entries, every drop count and the clock estimate, and the caller saw it as a
-    // missing reply rather than a partially-understood one.
+    // A class this build does not know must cost that entry and nothing else.
     let mut p = vec![7u8, 0];
     p.extend_from_slice(&99u32.to_le_bytes());
     p.extend_from_slice(&0i32.to_le_bytes());
@@ -527,8 +549,8 @@ fn one_unrecognised_entry_does_not_discard_the_whole_reply() {
 
 #[test]
 fn a_device_stamp_translates_into_the_host_domain() {
-    // Only the None path was covered, so a sign inversion here would have shipped green. The box
-    // reports host-minus-device, so a device stamp moves FORWARD by a positive offset.
+    // Only the None path was covered, so a sign inversion shipped green. The box reports
+    // host-minus-device, so a positive offset moves a device stamp forward.
     let build = |offset: i32, age: u16| {
         let mut p = vec![7u8, 0];
         p.extend_from_slice(&0u32.to_le_bytes());
@@ -551,9 +573,7 @@ fn a_device_stamp_translates_into_the_host_domain() {
 
 #[test]
 fn an_unfitted_rate_is_distinct_from_a_measured_zero() {
-    // Two different answers over the same wire field. A fitted 0 says the crystals are matched; the
-    // sentinel says nothing has been fitted, which is the state a link too busy for clean exchanges
-    // stays in, exactly when assuming no drift costs the most.
+    // Two different answers over the same wire field.
     let build = |rate: i32| {
         let mut p = vec![7u8, 0];
         p.extend_from_slice(&0u32.to_le_bytes());
@@ -573,8 +593,7 @@ fn an_unfitted_rate_is_distinct_from_a_measured_zero() {
     assert_eq!(flat.clock.drift_us_over(Duration::from_secs(10)), 0);
     assert_ne!(none.clock.rate_ppb, flat.clock.rate_ppb);
 
-    // And a real rate really extrapolates: 20 ppm over 10 s is 200 us, which is far past the 45 us
-    // error bound the same reply advertises.
+    // A real rate extrapolates: 20 ppm over 10 s is 200 us, far past the reply's 45 us error bound.
     let drifting = build(20_000);
     assert_eq!(drifting.clock.drift_us_over(Duration::from_secs(10)), 200);
     assert_eq!(drifting.clock.drift_us_over(Duration::from_secs(0)), 0);
@@ -582,8 +601,7 @@ fn an_unfitted_rate_is_distinct_from_a_measured_zero() {
 
 #[test]
 fn no_clock_estimate_is_distinct_from_a_zero_offset() {
-    // 0xFFFF age is the box saying it has no estimate. Reporting it as "zero milliseconds old" would
-    // make a caller trust an offset that was never measured.
+    // 0xFFFF age means no estimate; read as zero ms old, a caller would trust an unmeasured offset.
     let mut p = vec![7u8, 0];
     p.extend_from_slice(&0u32.to_le_bytes());
     p.extend_from_slice(&0i32.to_le_bytes());
@@ -667,8 +685,8 @@ mod with_mock {
 
     #[test]
     fn a_capture_on_an_input_class_is_refused_not_ignored() {
-        // The firmware's input taps never read the capture: they pass NULL where the traffic tap
-        // passes &snaplen. Accepting one is therefore a public knob wired to nothing.
+        // The firmware's input taps ignore the capture (NULL where the traffic tap passes
+        // &snaplen), so accepting one would be a knob wired to nothing.
         let dev = Device::with_mock(MockBox::new());
         let err = dev
             .catch_events([CatchFilter::watch_class(Class::Key).with_capture(Capture::First(8))])
@@ -685,9 +703,7 @@ mod with_mock {
 
     #[test]
     fn an_exact_id_of_the_blanket_sentinel_is_refused() {
-        // 0xFFFF is the every-id sentinel on the wire. An exact subscription to it becomes the whole
-        // class the moment it is sent: a much wider stream than asked for, with no error to say so.
-        // Only a media usage is 16 bits wide enough to express it.
+        // 0xFFFF is the every-id sentinel on the wire.
         let dev = Device::with_mock(MockBox::new());
         let err = dev
             .catch_events([CatchFilter::watch(Usage::new(Class::Media, 0xFFFF))])
@@ -720,8 +736,8 @@ mod with_mock {
             dev.input_events([CatchFilter::everything()]).unwrap_err(),
             Error::WildcardNotInput
         ));
-        // A press-only subscription never sees the release, so the NEXT press cannot be told from a
-        // chord: the edge decoder would stop reporting a key after its first press.
+        // A press-only subscription never sees the release, so the next press looks like a chord and
+        // the decoder stops reporting the key after its first press.
         assert!(matches!(
             dev.input_events([CatchFilter::watch(Key::new(0x04)).on_press()])
                 .unwrap_err(),
@@ -820,10 +836,7 @@ mod with_mock {
 
     #[test]
     fn the_widest_capture_reaches_the_box() {
-        // The box holds ONE entry per address, so two subscribers naming it with different captures
-        // have to be resolved rather than have one win. Taking either arbitrarily meant a caller
-        // asking for whole packets started receiving cut ones the moment unrelated code in the same
-        // process subscribed with a shorter one. Whole beats every finite length.
+        // One box entry per address, so two subscribers' captures resolve to the wider one.
         let capture_sent_to_box = |a: Capture, b: Capture| {
             let mock = MockBox::new();
             let dev = Device::with_mock(mock.clone());
@@ -845,10 +858,7 @@ mod with_mock {
 
     #[test]
     fn a_narrow_entry_does_not_cut_a_broad_subscribers_packets() {
-        // The box resolves an event to its most SPECIFIC matching entry and captures at THAT entry's
-        // length. Resolving only between identical addresses is therefore not enough: a blanket
-        // subscriber asking for whole packets had them cut to 8 the moment another caller subscribed
-        // to one endpoint with a shorter capture (on that endpoint only), and nothing marked the cut.
+        // The box captures at the length of the most specific matching entry.
         let mock = MockBox::new();
         let dev = Device::with_mock(mock.clone());
         let _broad = dev.catch_events([CatchFilter::everything()]).unwrap();
@@ -870,10 +880,9 @@ mod with_mock {
 
     #[test]
     fn a_more_specific_entry_does_not_widen_a_broader_one() {
-        // The flip side of the fold, and the direction that must NOT happen: an exact endpoint asking
-        // for whole packets does not force the blanket entry, which serves every OTHER endpoint,
-        // to stop capping. Folding by "overlaps at all" instead of "is no more specific" put the
-        // blanket at whole packets and handed the link every byte of every bulk pipe.
+        // The reverse must not happen: an exact endpoint asking for whole packets leaves the blanket
+        // (serving every other endpoint) capped. Folding on any overlap put the blanket at whole
+        // packets and sent every byte of every bulk pipe down the link.
         let mock = MockBox::new();
         let dev = Device::with_mock(mock.clone());
         let _capped = dev
@@ -904,10 +913,7 @@ mod with_mock {
 
     #[test]
     fn direction_ranks_in_the_fold_the_same_way_it_ranks_in_the_box() {
-        // Direction is part of specificity, not merely a filter, so it has to rank in the capture
-        // fold too. A BOTH entry asking for whole packets covers the OUT events that resolve to a
-        // narrower OUT entry, so that entry has to be widened. Otherwise the broad subscriber's OUT
-        // packets come back cut, on that endpoint only.
+        // Direction is part of specificity, so it ranks in the capture fold too.
         let sent = |broad: Capture, narrow: Capture| {
             let mock = MockBox::new();
             let dev = Device::with_mock(mock.clone());
@@ -931,8 +937,8 @@ mod with_mock {
                 && widened.contains(&(Direction::OUT.as_u8(), 0)),
             "got {widened:?}"
         );
-        // The reverse must NOT happen: a narrower OUT entry asking for whole packets does not stop
-        // the BOTH entry, which also serves every IN event, from capping.
+        // The reverse must not happen: a narrower OUT entry asking for whole packets leaves the BOTH
+        // entry (which also serves IN events) capped.
         let kept = sent(Capture::First(8), Capture::Whole);
         assert!(
             kept.contains(&(Direction::Both.as_u8(), 8))
@@ -943,8 +949,8 @@ mod with_mock {
 
     #[test]
     fn a_subscription_past_the_box_s_table_is_refused_not_truncated() {
-        // The box holds 32 entries and drops the rest, reporting it only in a flag nothing was
-        // obliged to read, so the caller got a stream missing whatever did not fit.
+        // The box holds 32 entries and drops the rest, flagged only in `table_full`, so the stream
+        // missed whatever did not fit.
         use crate::protocol::opcode::CATCH_MAX_ENTRIES;
         let mock = MockBox::new();
         let dev = Device::with_mock(mock.clone());
@@ -963,8 +969,7 @@ mod with_mock {
             ),
             "got {err:?}"
         );
-        // And the refusal must not have left the registry holding it: the union is unchanged, so a
-        // later subscribe of something that DOES fit still works.
+        // The refusal leaves the registry and union unchanged, so a later subscribe that fits works.
         drop(_ok);
         let _after = dev
             .catch_events([CatchFilter::traffic_class(TrafficClass::Bus)])
@@ -973,9 +978,7 @@ mod with_mock {
 
     #[test]
     fn an_unchanged_entry_is_not_re_sent() {
-        // catch_sync runs holding catch_lock, and every frame is a blocking serial write. Re-sending
-        // the whole table on any change made dropping one stream cost a write per entry, ahead of
-        // every other subscribe and the keepalive.
+        // catch_sync runs holding catch_lock, and every frame is a blocking serial write.
         let mock = MockBox::new();
         let dev = Device::with_mock(mock.clone());
         let a = dev
@@ -1001,8 +1004,7 @@ mod with_mock {
             .skip(before)
             .map(|f| f.payload.clone())
             .collect();
-        // Exactly one frame: the unsubscribe for what B alone wanted. A's three entries are already
-        // in the box at the right capture and must not be rewritten.
+        // One frame: the unsubscribe for B's own entry. A's three entries stay unwritten.
         assert_eq!(sent.len(), 1, "sent {sent:?}");
         assert_eq!(sent[0][4], 0, "the one frame is an unsubscribe");
         assert_eq!(sent[0][0], CatchClass::VendorInterrupt.as_u8());
@@ -1011,8 +1013,8 @@ mod with_mock {
 
     #[test]
     fn a_changed_capture_still_reaches_the_box() {
-        // The flip side: capture is deliberately not part of a filter's ADDRESS, so the key-set
-        // difference cannot see it move and it has to be compared explicitly.
+        // Capture is not part of a filter's address, so the key-set diff misses a capture change;
+        // it is compared explicitly.
         let mock = MockBox::new();
         let dev = Device::with_mock(mock.clone());
         let a = dev
@@ -1039,8 +1041,8 @@ mod with_mock {
 
     #[test]
     fn duplicate_addresses_in_one_call_take_the_widest() {
-        // The same rule inside a single subscribe. Collecting straight into a set kept whichever
-        // duplicate happened to be listed last, so the two orderings of one pair disagreed.
+        // Same rule within one subscribe: collecting into a set kept the last-listed duplicate, so
+        // the two orderings of one pair disagreed.
         let sent = |filters: [CatchFilter; 2]| {
             let mock = MockBox::new();
             let dev = Device::with_mock(mock.clone());
@@ -1068,15 +1070,14 @@ mod with_mock {
 
     #[test]
     fn an_exact_input_filter_receives_its_class_and_diffs_it() {
-        // The input frames carry content, not an address, so routing them means reading the address
-        // out of the content. Sending the wire's wildcard id instead made every exact-id input
-        // subscription match nothing at all: the box accepted the entry, listed it in RESP(CATCH),
-        // counted no drops, and the stream stayed empty.
+        // Input frames carry content, not an address, so routing reads the address from the
+        // content. Routing on the wire's wildcard id made every exact-id input subscription match
+        // nothing: the box accepted and listed the entry, counted no drops, and the stream stayed
+        // empty.
         //
-        // A snapshot lists what is HELD, so the RELEASE of Left is the snapshot that no longer
-        // mentions Left. Delivering only snapshots that CONTAIN the subscriber's usage therefore
-        // discards precisely the edge it was waiting for, and only when some other subscriber's
-        // usage is still held, so a single-subscriber test cannot see it.
+        // A snapshot lists what is held, so Left's release is the snapshot without Left. Delivering
+        // only snapshots containing the subscriber's usage drops that edge, and only while another
+        // subscriber's usage is held, so a single-subscriber test cannot see it.
         let mock = MockBox::new();
         let dev = Device::with_mock(mock.clone());
         let s = dev
@@ -1095,8 +1096,8 @@ mod with_mock {
         );
         assert!(next("the press").is_held(Button::LEFT));
 
-        // Left released while another subscriber's Side1 is still held. The box lists only Side1 --
-        // and that snapshot IS how this subscriber learns Left came up.
+        // Left released while another subscriber holds Side1: the snapshot listing only Side1 is how
+        // this subscriber learns Left came up.
         mock.push_usages(
             1,
             2_000,
@@ -1106,8 +1107,8 @@ mod with_mock {
         );
         assert!(!next("the release").is_held(Button::LEFT));
 
-        // A different class still is not its business. Asserted after an event that MUST arrive, so
-        // this cannot pass merely by outrunning the reader thread.
+        // Another class still is not delivered. Asserted after an event that must arrive, so it
+        // cannot pass by outrunning the reader thread.
         mock.push_usages(
             2,
             3_000,
@@ -1121,8 +1122,8 @@ mod with_mock {
 
     #[test]
     fn an_input_filter_direction_selects_the_edge() {
-        // The box emits on both edges as soon as any other subscriber holds a wider entry, so without
-        // the edge on the wire a press-only subscription received releases too.
+        // The box emits both edges once another subscriber holds a wider entry, so without the edge
+        // on the wire a press-only subscription received releases too.
         let mock = MockBox::new();
         let dev = Device::with_mock(mock.clone());
         let press = dev
@@ -1212,8 +1213,8 @@ mod with_mock {
 
     #[test]
     fn an_axis_direction_selects_the_sign_of_the_movement() {
-        // An axis has no press or release, so its direction is the sign of the delta, the same
-        // reading an axis LOCK uses. A subscriber asking for wheel-up must not be handed wheel-down.
+        // An axis's direction is the delta's sign, as in an axis LOCK; wheel-up must not deliver
+        // wheel-down.
         let mock = MockBox::new();
         let dev = Device::with_mock(mock.clone());
         let up = dev
@@ -1229,9 +1230,7 @@ mod with_mock {
 
     #[test]
     fn a_release_to_nothing_reaches_the_class_that_released() {
-        // The empty snapshot is the release of the last held usage, and it lists nothing. It has to
-        // reach the subscriber for its own class and nobody else's: it used to go to everyone
-        // subscribed to anything, so a vendor-bulk trace received keyboard events.
+        // The empty snapshot is the release of the last held usage, and it lists nothing.
         let mock = MockBox::new();
         let dev = Device::with_mock(mock.clone());
         let keys = dev
@@ -1251,9 +1250,8 @@ mod with_mock {
 
     #[test]
     fn each_subscriber_gets_only_what_it_asked_for() {
-        // The box holds ONE table (the union of every subscription), so without per-subscriber
-        // matching a caller's stream would change shape whenever unrelated code elsewhere in the
-        // process subscribed to something else.
+        // The box holds one table (the union), so without per-subscriber matching a stream changes
+        // whenever unrelated code in the process subscribes.
         let mock = MockBox::new();
         let dev = Device::with_mock(mock.clone());
         let b = dev.catch_events([bulk(3)]).unwrap();
@@ -1346,8 +1344,8 @@ mod with_mock {
         for i in 0..TOTAL {
             mock.push_motion(i as u8, 0, i as i16, 0, 0, 0);
         }
-        // The reader delivers on its own thread, so wait for the count rather than assuming it has
-        // caught up: asserting immediately makes this pass or fail on scheduling.
+        // The reader delivers on its own thread, so wait for the count; asserting at once depends on
+        // scheduling.
         let want = (TOTAL as usize - KEPT) as u64;
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
         while s.dropped() < want && std::time::Instant::now() < deadline {
@@ -1408,8 +1406,8 @@ mod with_mock {
 
     #[test]
     fn one_report_can_carry_several_edges() {
-        // A swap in a single report: A comes up and B goes down at once. Both edges have to surface,
-        // and the release first, or a consumer counting held usages goes negative.
+        // A swap in one report: A up, B down. Both edges surface, release first, or a consumer
+        // counting held usages goes negative.
         let mock = MockBox::new();
         let dev = Device::with_mock(mock.clone());
         let mut s = dev.input_events(CatchFilter::all_input()).unwrap();
@@ -1427,10 +1425,8 @@ mod with_mock {
 
     #[test]
     fn an_input_stream_gets_only_the_usages_it_asked_for() {
-        // A snapshot is the CLASS's state, and the box sends every held usage of that class as soon
-        // as ANY subscriber in the process widens the table. Routing must stay class-only or the
-        // release edge is lost, so the DECODER has to filter, or a one-key stream reports edges for
-        // every key someone else subscribed to.
+        // A snapshot is the class's state, listing every held usage once any subscriber widens the
+        // table.
         let mock = MockBox::new();
         let dev = Device::with_mock(mock.clone());
         let f = Usage::from(Key::new(0x09));
@@ -1460,10 +1456,8 @@ mod with_mock {
 
     #[test]
     fn a_malformed_snapshot_cannot_wedge_the_held_set() {
-        // Two defences the wire is not obliged to respect. A usage listed twice fired two presses
-        // with no release between them and left `held` a multiset. A usage whose own class byte
-        // disagrees with the frame's was filed under the frame's class, where no snapshot of its real
-        // class could ever release it.
+        // Defences against malformed snapshots: a usage listed twice fired two presses with no
+        // release and left `held` a multiset.
         let mock = MockBox::new();
         let dev = Device::with_mock(mock.clone());
         let mut s = dev.input_events(CatchFilter::all_input()).unwrap();
@@ -1490,9 +1484,7 @@ mod with_mock {
 
     #[test]
     fn a_report_that_moved_nothing_is_not_an_input_event() {
-        // The routing fallback delivers an unaddressable motion report to every axis subscriber. Left
-        // undecoded that becomes a phantom zero-delta event, the exact shape the emission
-        // suppression work was about.
+        // The routing fallback delivers an unaddressable motion report to every axis subscriber.
         let mock = MockBox::new();
         let dev = Device::with_mock(mock.clone());
         let mut s = dev.input_events(CatchFilter::all_input()).unwrap();
@@ -1512,15 +1504,15 @@ mod with_mock {
 
     #[test]
     fn a_snapshot_that_changes_nothing_yields_nothing() {
-        // Two identical snapshots are one state, not two events. The deadline in recv_timeout must
-        // not restart on a report that decoded to no edge at all.
+        // Two identical snapshots are one state. recv_timeout's deadline must not restart on a
+        // report that decoded to no edge.
         let mock = MockBox::new();
         let dev = Device::with_mock(mock.clone());
         let mut s = dev.input_events(CatchFilter::all_input()).unwrap();
         mock.push_usages(0, 1_000, Class::Key, Direction::RELEASE, &[]);
         mock.push_usages(1, 2_000, Class::Media, Direction::RELEASE, &[]);
-        // And the deadline has to SURVIVE those reports rather than restart on each one: recomputing
-        // the full timeout per loop turned a 200 ms budget into 700 ms under a stream of empties.
+        // Recomputing the full timeout per loop turned a 200 ms budget into 700 ms under a stream of
+        // empties.
         let began = std::time::Instant::now();
         assert!(s.recv_timeout(Duration::from_millis(150)).is_none());
         let waited = began.elapsed();
@@ -1589,8 +1581,8 @@ mod timeline {
 
     #[test]
     fn box_microseconds_unwrap_past_the_rollover() {
-        // 32 bits of microseconds is 71.6 minutes. A consumer subtracting two raw stamps across the
-        // wrap gets a number about 4295 seconds wrong, in the negative direction.
+        // 32 bits of microseconds is 71.6 minutes; subtracting raw stamps across the wrap is about
+        // 4295 s wrong, negative.
         let mut t = Timeline::new();
         assert_eq!(
             t.box_us(&motion_at(u32::MAX - 500)),
@@ -1614,9 +1606,7 @@ mod timeline {
 
     #[test]
     fn the_timeline_takes_a_decoded_input_event_too() {
-        // The two features have to compose: a caller on the input_events path must be able to put an
-        // edge on this machine's clock without dropping back to the raw stream. Taking only a
-        // CatchEvent forced exactly that, and cost the caller the edge decoding to buy a timestamp.
+        // An input_events edge goes on this machine's clock without the raw stream.
         use crate::types::{Input, InputEvent, Usage};
         let mut t = Timeline::new();
         let origin = Instant::now();
@@ -1649,12 +1639,11 @@ mod timeline {
 
     #[test]
     fn the_host_mapping_follows_the_fastest_sample() {
-        // The error is one-sided (an event can arrive late but never early), so the mapping tracks
-        // the MINIMUM lag. An average would be dragged by every slow delivery and never recover.
+        // An event arrives late, never early, so the mapping tracks the minimum lag; an average would
+        // drift with every slow delivery.
         let origin = Instant::now();
         let mut t = Timeline::new();
-        // 50 ms of lag on the first sample; nothing better has been seen, so that is the floor and
-        // the event reads as having no excess.
+        // 50 ms lag on the first sample: the floor, so no excess.
         let a = t.observe_at(&motion_at(1_000), origin + Duration::from_millis(50));
         assert_eq!(a.box_us, 1_000);
         assert_eq!(a.excess, Duration::ZERO);
@@ -1672,10 +1661,8 @@ mod timeline {
 
     #[test]
     fn a_small_correction_is_absorbed_and_a_large_one_re_anchors() {
-        // The floor only improves, and an improvement shifts later events earlier. A SMALL shift is
-        // smoothed so the timeline does not visibly run backwards. A LARGE one is the estimate having
-        // been wrong, and holding the wrong answer to stay monotonic wedged the stream for as long as
-        // the error lasted: a 5 s first sample pinned 5000 events to one instant.
+        // The floor only improves, shifting later events earlier; a small shift is smoothed so the
+        // timeline never runs backwards.
         let origin = Instant::now();
         let mut t = Timeline::new();
         // Sub-millisecond correction: absorbed, no regression.
@@ -1683,8 +1670,8 @@ mod timeline {
         let b = t.observe_at(&motion_at(1_100), origin + Duration::from_micros(10_050));
         assert!(b.host >= a.host, "{:?} < {:?}", b.host, a.host);
 
-        // A 40 ms correction re-anchors instead of wedging, and the very next event is already on the
-        // improved mapping rather than clamped to the stale one.
+        // A 40 ms correction re-anchors, and the next event is on the improved mapping, not clamped
+        // to the stale one.
         let mut t = Timeline::new();
         let slow = t.observe_at(&motion_at(1_000), origin + Duration::from_millis(50));
         let fast = t.observe_at(&motion_at(1_100), origin + Duration::from_millis(10));
@@ -1700,8 +1687,6 @@ mod timeline {
     #[test]
     fn the_host_mapping_is_anchored_to_the_arrival_not_to_the_box_stamp() {
         // Deleting the floor entirely (host = box_us alone) left every other timeline test green.
-        // The mapping has to put an event NEAR the moment it arrived, not near the box's own epoch,
-        // or it is not a host clock at all.
         let origin = Instant::now();
         let mut t = Timeline::new();
         // A box that booted an hour before this process: stamps are huge, arrivals are not.
@@ -1717,8 +1702,8 @@ mod timeline {
 
     #[test]
     fn excess_is_measured_in_the_unit_it_says() {
-        // Both the crate and the FFI built `excess` from the wrong Duration constructor at one point;
-        // asserting only ZERO and a one-sided bound let a 1000x unit error through.
+        // The crate and the FFI once built `excess` with the wrong Duration constructor; asserting
+        // only zero and a one-sided bound let a 1000x unit error through.
         let origin = Instant::now();
         let mut t = Timeline::new();
         t.observe_at(&motion_at(1_000), origin + Duration::from_millis(10));
@@ -1729,9 +1714,8 @@ mod timeline {
 
     #[test]
     fn an_out_of_order_event_is_not_a_rollover() {
-        // The box drains its taps through strict-priority queues, and BOTH clock domains span several
-        // of them, so a later-tapped event can arrive first. Treating every backward step as a wrap
-        // turned a 1 us inversion into a permanent 71.6-minute jump that also destroyed the floor.
+        // The box drains taps through strict-priority queues, and both clock domains span several,
+        // so a later-tapped event can arrive first.
         let mut t = Timeline::new();
         assert_eq!(t.box_us(&motion_at(10_000)), 10_000);
         assert_eq!(
@@ -1743,8 +1727,8 @@ mod timeline {
         // A whole second of reordering is still reordering.
         assert_eq!(t.box_us(&motion_at(10_000_000)), 10_000_000);
         assert_eq!(t.box_us(&motion_at(9_000_000)), 9_000_000);
-        // And the real wrap still works. Walk up to it the way a running box does: a single jump
-        // of more than half the range is genuinely ambiguous and is read as reordering.
+        // The real wrap still works, approached as a running box does: one jump over half the range
+        // is ambiguous and reads as reordering.
         let mut t = Timeline::new();
         for step in [
             1_000u32,
@@ -1765,14 +1749,13 @@ mod timeline {
 
     #[test]
     fn each_domain_keeps_its_own_floor() {
-        // Sharing one floor across the two chips made a device-chip stamp land wherever the host
-        // chip's offset happened to put it. The two clocks are unrelated; only per-domain works.
+        // A floor shared across the chips put device-chip stamps wherever the host chip's offset
+        // landed them; the clocks are unrelated, so floors are per domain.
         let origin = Instant::now();
         let mut t = Timeline::new();
         // Host chip: stamps near zero, arriving at 10 ms.
         let h = t.observe_at(&motion_at(1_000), origin + Duration::from_millis(10));
-        // Device chip: stamps an hour ahead, arriving at 11 ms. With a shared floor this lands an
-        // hour away.
+        // Device chip: stamps an hour ahead, arriving at 11 ms; a shared floor lands it an hour off.
         let d = t.observe_at(
             &traffic_at(3_600_001_000),
             origin + Duration::from_millis(11),
@@ -1785,8 +1768,8 @@ mod timeline {
 
     #[test]
     fn a_reset_clears_one_domains_floor_and_leaves_the_other_alone() {
-        // Keeping the old boot's floor put every post-reboot event an epoch away; clearing BOTH
-        // domains threw away a good estimate for a chip that never restarted.
+        // Keeping the old boot's floor put every post-reboot event an epoch away; clearing both
+        // domains discarded a good estimate for the chip that did not restart.
         let origin = Instant::now();
         let mut t = Timeline::new();
         t.observe_at(&motion_at(1_000), origin + Duration::from_millis(500));
@@ -1812,9 +1795,8 @@ mod timeline {
 
     #[test]
     fn the_floor_window_lets_a_stale_estimate_recover() {
-        // An all-time minimum cannot be right: the two crystals drift at up to 20 ppm, so a floor
-        // taken an hour ago is 72 ms wrong and only ever gets worse. The window bounds how old the
-        // floor can be, which means it has to be able to RISE.
+        // Not an all-time minimum: the crystals drift up to 20 ppm, so an hour-old floor is 72 ms
+        // wrong and worsening.
         let origin = Instant::now();
         let mut t = Timeline::new();
         // One unusually fast delivery, then a long run of steady ones 5 ms slower.
@@ -1836,8 +1818,8 @@ mod timeline {
 
     #[test]
     fn a_steady_stream_maps_onto_the_boxs_own_spacing() {
-        // Once the floor is found, host instants are spaced exactly as the box stamped them, whatever
-        // the delivery jitter was. The jitter here never beats the first sample, so the floor holds.
+        // With the floor found, host instants are spaced as the box stamped them, whatever the
+        // jitter; here the jitter never beats the first sample, so the floor holds.
         let origin = Instant::now();
         let mut t = Timeline::new();
         let mut out = Vec::new();

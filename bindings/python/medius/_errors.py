@@ -88,7 +88,7 @@ class ReservedIdError(MediusError):
 
 
 class RelativeDirectionError(MediusError):
-    """`Direction.WITH` / `AGAINST` on something with no bearing to measure them against."""
+    """`Direction.WITH` / `AGAINST` on a target with no bearing."""
 
 
 class LockScaleRangeError(MediusError):
@@ -96,8 +96,7 @@ class LockScaleRangeError(MediusError):
 
 
 class LockScaleUsageError(MediusError):
-    """A negative (reversing) lock scale on a button, key or media usage, which carries one bit and
-    has nothing to reverse."""
+    """A negative (reversing) lock scale on a button, key or media usage, which carries one bit."""
 
 
 class ImperfectRequiredError(MediusError):
@@ -109,7 +108,7 @@ class RewriteMaskLengthError(MediusError):
 
 
 class RewriteActionClassError(MediusError):
-    """A rewrite action that is not valid for its class (a report-only or control-only action misused)."""
+    """A rewrite action invalid for its class (a report-only or control-only action misused)."""
 
 
 class RewritePayloadTooLargeError(MediusError):
@@ -118,6 +117,10 @@ class RewritePayloadTooLargeError(MediusError):
 
 class RewriteTableFullError(MediusError):
     """A rewrite rule added to a table that already holds `REWRITE_MAX_ENTRIES`."""
+
+
+class RewritePoolFullError(MediusError):
+    """A rewrite payload past what the held rules leave of the box's 2048-byte payload pool."""
 
 
 class TransformOpFieldsError(MediusError):
@@ -141,8 +144,8 @@ class ClipFrameTooLongError(MediusError):
 
 
 class ClipTransferDataError(MediusError):
-    """A clip transfer whose data is not what its setup packet announces: `length` bytes for an OUT
-    request, none for an IN one."""
+    """A clip transfer whose data disagrees with its setup packet: `length` bytes for OUT, none for
+    IN."""
 
 
 class ClipPacketTriggerError(MediusError):
@@ -187,6 +190,7 @@ _STATUS_EXC = {
     Status.ERR_CLIP_TRANSFER_DATA: ClipTransferDataError,
     Status.ERR_CLIP_PACKET_TRIGGER: ClipPacketTriggerError,
     Status.ERR_REWRITE_MATCH_TOO_LONG: RewriteMatchTooLongError,
+    Status.ERR_REWRITE_POOL_FULL: RewritePoolFullError,
 }
 
 

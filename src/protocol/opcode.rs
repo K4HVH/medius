@@ -8,14 +8,17 @@ pub const SOF: u8 = 0xA5;
 /// Maximum payload length (§2); a larger `LEN` is rejected as bogus.
 pub const MAX_PAYLOAD: usize = 512;
 
-/// Protocol version in `RESP(VERSION)` (§4.1); the handshake requires this exact value. Bumped to 8
-/// for v3.4.1, which reshapes `RESP(CLIP)` and `CLIP_TRIGGER` and matches an interrupt OUT packet on
-/// a vendor interface as `VendorInterrupt`, which protocol 7 matched as `HidOut`. Protocol 7 is
-/// v3.4.0: the advanced control layer (`RAW`/`TRANSFER`/`REWRITE`/`PATCH`) and the `u16` `HEALTH`
-/// flags. The handshake refuses a v3.4.0 box with [`Error::BadProtoVer`](crate::Error::BadProtoVer);
-/// update its firmware from the dashboard at <https://medius.k4tech.net/dashboard> before opening it
-/// here.
-pub const PROTO_VER: u8 = 8;
+/// Control-protocol version in `RESP(VERSION)` (§4.1). The handshake refuses a box reporting any
+/// other with [`Error::BadProtoVer`](crate::Error::BadProtoVer); update that box from
+/// <https://medius.k4tech.net/dashboard>.
+///
+/// 9 (v3.4.2): `RESP(STATS)` grows from 17 to 31 bytes (a dropped-frame counter per inter-chip link
+/// direction, one for relay back-pressure, and the session counter); a `CONTROL` event's handshake
+/// moves to flags bits 0-1, beside the rule bit (b7). 8 (v3.4.1): reshaped `RESP(CLIP)` and
+/// `CLIP_TRIGGER`; an interrupt OUT packet on a vendor interface matches as `VendorInterrupt` (7
+/// matched it as `HidOut`). 7 (v3.4.0): the advanced control layer (`RAW`/`TRANSFER`/`REWRITE`/
+/// `PATCH`) and `u16` `HEALTH` flags.
+pub const PROTO_VER: u8 = 9;
 
 /// `INJECT` class byte: the momentary-usage field kind.
 pub const INJ_BTN: u8 = 0;
@@ -30,39 +33,49 @@ pub const MV_F_NOW: u8 = 0x01;
 pub const MV_F_FLUSH: u8 = 0x02;
 pub const MV_F_DISCARD: u8 = 0x04;
 
+/// `RESET` flag: also erase the persistent store and reboot to defaults. Without it, `RESET`
+/// releases the session only.
+pub const RST_F_NVS: u8 = 0x01;
+
 pub const Q_VERSION: u8 = 0;
 pub const Q_HEALTH: u8 = 1;
 /// Cloned device identity: vid/pid/bcd + serial/bos flags + primary kind + product (§4.3).
 pub const Q_DEVICE_INFO: u8 = 2;
-/// Unified device capabilities (mouse, keyboard, per-class change_driven) for the whole cloned device (§4.4).
+/// Cloned device capabilities (mouse, keyboard, per-class change_driven) (§4.4).
 pub const Q_CAPS: u8 = 3;
 /// Live native report rate + clone poll period + confidence (§4.5).
 pub const Q_RATE: u8 = 4;
 /// Delivery/telemetry counters (§4.6).
 pub const Q_STATS: u8 = 5;
-/// Active lock bitmask (§4.8, v1.5.0).
+/// Active locks (§4.8, v1.5.0).
 pub const Q_LOCKS: u8 = 6;
-/// Active catch subscription mask + dropped-event count (§4.9, v1.6.0).
+/// Catch table, drop counts and inter-chip clock (§4.9, v1.6.0).
 pub const Q_CATCH: u8 = 7;
 // selector 8 retired (was Q_KBD_CAPS; keyboard caps folded into the unified Q_CAPS = 3).
-/// Persistent box options, read one at a time by id: `QUERY [Q_OPTIONS][id]` → `RESP [Q_OPTIONS][id][value..]` (§4.14).
+/// Persistent box options, read by id: `QUERY [Q_OPTIONS][id]` → `RESP [Q_OPTIONS][id][value..]`
+/// (§4.14).
 pub const Q_OPTIONS: u8 = 9;
 
 /// `OPTION` id: imperfect-clone opt-in. Set value `[allow u8]`; readback adds `over_capacity`/`clone_imperfect`.
 pub const OPT_IMPERFECT: u8 = 0;
 /// `OPTION` id: movement riding. Value `[timeout u16 LE ms]`; 0 = off, N = ride window in ms.
 pub const OPT_MOVE_RIDE: u8 = 1;
-/// `OPTION` id: emit-rate pacing. Value `[mode u8][rate_hz u16 LE][force_hz u16 LE]`; mode 0 learnt / 1 bInterval / 2 fixed.
+/// `OPTION` id: emit pacing. Value `[mode u8][rate_hz u16 LE][force_hz u16 LE]`; mode 0 learnt /
+/// 1 bInterval / 2 fixed.
 pub const OPT_EMIT: u8 = 2;
-/// `OPTION` id: box name. Value `[name ascii]` 1..32 printable ASCII (0 bytes clears to default); set-only, read off `RESP(VERSION)`.
+/// `OPTION` id: box name. Value `[name ascii]`, 1..32 printable ASCII (0 bytes restores the
+/// default); set-only, read back in `RESP(VERSION)`.
 pub const OPT_NAME: u8 = 3;
-/// `OPTION` id: the bearing. Value `[window u16 LE ms][mode u8]`; what `LOCK_DIR_WITH`/`AGAINST` are measured against (§3.12).
+/// `OPTION` id: bearing. Value `[window u16 LE ms][mode u8]`; the reference for
+/// `LOCK_DIR_WITH`/`AGAINST` (§3.12).
 pub const OPT_BEARING: u8 = 4;
-/// `OPTION` id: what the box renders motion with. Value `[mode u8][full u8]`; mode 0 off / 1 stock / 2 de-spiked / 3 unsmoothed.
+/// `OPTION` id: render. Value `[mode u8][full u8]`; mode 0 off / 1 stock / 2 de-spiked /
+/// 3 unsmoothed.
 pub const OPT_RENDER: u8 = 5;
-/// `OPTION` id: how far an injected delta is spread across the host's command interval. Value `[percent u16 LE]`.
+/// `OPTION` id: spread of an injected delta across the host's command interval. Value
+/// `[percent u16 LE]`.
 pub const OPT_SPREAD: u8 = 6;
-/// `OPTION(BEARING)` mode: each axis reads its own sign against its own bearing.
+/// `OPTION(BEARING)` mode: each axis reads its sign against its own bearing.
 pub const BEARING_PER_AXIS: u8 = 0;
 /// `OPTION(BEARING)` mode: the physical delta is projected onto the injected XY vector; motion across it is untouched.
 pub const BEARING_VECTOR: u8 = 1;
@@ -73,11 +86,11 @@ pub const Q_CLIP: u8 = 10;
 pub const Q_FIRMWARE: u8 = 11;
 /// Rewrite-rule table summary: `QUERY [Q_REWRITE]` → `RESP(REWRITE)` (flags + gen + list) (§3.14, §4.17).
 pub const Q_REWRITE: u8 = 12;
-/// One rewrite rule in full, in the `REWRITE` command's own shape: `QUERY [Q_REWRITE_ENTRY][index]` (§4.17).
+/// One rewrite rule in full, in `REWRITE`'s shape: `QUERY [Q_REWRITE_ENTRY][index]` (§4.17).
 pub const Q_REWRITE_ENTRY: u8 = 13;
 /// Descriptor-patch set summary: `QUERY [Q_PATCHES]` → `RESP(PATCHES)` (flags + list) (§3.14, §4.17).
 pub const Q_PATCHES: u8 = 14;
-/// One descriptor patch in full, in the `PATCH` command's own shape: `QUERY [Q_PATCH_ENTRY][index]` (§4.17).
+/// One descriptor patch in full, in `PATCH`'s shape: `QUERY [Q_PATCH_ENTRY][index]` (§4.17).
 pub const Q_PATCH_ENTRY: u8 = 15;
 
 /// `UPDATE` sub-ops (§3.13).
@@ -89,7 +102,7 @@ pub const OTA_OP_ACTIVATE: u8 = 4;
 /// Image bytes per `DATA` frame: the frame's 512 minus op, target and a 2-byte chunk index, rounded
 /// down to a multiple of four so every flash write on the box is aligned.
 pub const OTA_CHUNK: usize = 504;
-/// `DATA` frames the box accepts before it must acknowledge, when it does not say otherwise.
+/// Default `DATA` frames the box accepts before it must acknowledge.
 pub const OTA_CREDIT: usize = 16;
 /// `UPDATE_RESP` payload length: op, target, status, arg.
 pub const UPD_RESP_LEN: usize = 7;
@@ -111,7 +124,7 @@ pub const CLIP_SET_RIDE: u8 = 3;
 pub const CLIP_TRIG_MAX: usize = 8;
 pub const CLIP_TRIG_F_PRESENT: u8 = 0x01;
 pub const CLIP_TRIG_F_CONSUME: u8 = 0x02;
-/// Packet trigger: the verb runs on the first packet of a run of matching ones.
+/// Packet trigger: the verb runs on the first packet of a matching run.
 pub const CLIP_TRIG_F_RUN: u8 = 0x04;
 /// Packet triggers the box holds beside its input bindings (`CLIP_PKT_TRIG_MAX`).
 pub const CLIP_PKT_TRIG_MAX: usize = 8;
@@ -127,7 +140,8 @@ pub const CLIP_CFG_F_LOOP: u8 = 0x01;
 pub const CLIP_CFG_F_RETAIN: u8 = 0x02;
 pub const CLIP_CFG_F_FINALIZED: u8 = 0x04;
 pub const CLIP_CFG_F_RIDE: u8 = 0x08;
-/// Autolock scope bits (`CLIP_SET(AUTOLOCK)` value): which physical-input classes the clip auto-locks (0 = none).
+/// Autolock scope bits (`CLIP_SET(AUTOLOCK)` value): physical-input classes the clip auto-locks
+/// (0 = none).
 pub const CLIP_LOCK_AIM: u8 = 0x01;
 pub const CLIP_LOCK_WHEEL: u8 = 0x02;
 pub const CLIP_LOCK_BUTTONS: u8 = 0x04;
@@ -155,7 +169,7 @@ pub const BTN_SIDE2: u8 = 4;
 /// Count of *named* buttons; ids past it are numeric and drive up to the clone's declared count.
 pub const BTN_COUNT: u8 = 5;
 /// Ceiling on injectable/lockable/catchable buttons: the widest owned devices declare sixteen in one
-/// run, and a device past this caps here. Mirrors `MAX_BUTTONS` in the firmware.
+/// run; a wider device caps here. Mirrors the firmware's `MAX_BUTTONS`.
 pub const MAX_BUTTONS: u8 = 16;
 
 /// Clear our injected press; defer to physical state.
@@ -169,9 +183,9 @@ pub const ACT_FORCEREL: u8 = 2;
 pub const H_LINK_UP: u8 = 0x01;
 /// A real mouse is attached on the host chip.
 pub const H_MOUSE_ATT: u8 = 0x02;
-/// The clone has been configured by the game PC.
+/// The game PC has configured the clone.
 pub const H_CLONE_CFG: u8 = 0x04;
-/// Injection is currently active.
+/// Injection is active.
 pub const H_INJECT_ON: u8 = 0x08;
 /// The native-rate estimator window is full, so the `RATE` value is trustworthy (§4.2, v1.4.0).
 pub const H_RATE_CONFIDENT: u8 = 0x10;
@@ -182,12 +196,10 @@ pub const H_CATCH_ON: u8 = 0x40;
 /// A keyboard is attached on the host chip, cloned and injectable (§4.2, v2.0.0).
 pub const H_KBD_ATT: u8 = 0x80;
 
-// `HEALTH` became a `u16` LE in `CTRL_PROTO_VER 7` (§4.2). Bits 0-7 kept their meaning; the v3.4.0
-// advanced control layer opened the high byte, so these three are `u16`. [`Health`](crate::Health) decodes
-// the whole word.
+// `HEALTH` is a `u16` LE from `CTRL_PROTO_VER 7` (§4.2); these three are in the high byte.
 /// The rewrite-rule table (§3.14) is non-empty (v3.4.0).
 pub const H_REWRITE_ON: u16 = 0x0100;
-/// A descriptor-patch set (§3.14) is applied to the clone (v3.4.0).
+/// The clone serves a patched descriptor set (§3.14) (v3.4.0).
 pub const H_PATCH_ON: u16 = 0x0200;
 /// A field transform is active (reserved; the transforms feature owns this bit) (v3.4.0).
 pub const H_TRANSFORM_ON: u16 = 0x0400;
@@ -221,46 +233,51 @@ pub const CATCH_CLS_ANY: u8 = 0xFF;
 /// `CATCH` id wildcard: every id within the class (§3.9), the same sentinel `LOCK` uses.
 pub const CATCH_ID_ANY: u16 = 0xFFFF;
 
-/// Entries the box's subscription table holds (`CATCH_TAB_MAX`). Past this the box refuses the entry
-/// and says so only in `RESP(CATCH).table_full`, so a caller that never reads that flag would get a
-/// silently incomplete subscription.
+/// Entries the box's subscription table holds (`CATCH_TAB_MAX`). The box refuses more and signals
+/// it only in `RESP(CATCH).table_full`.
 pub const CATCH_MAX_ENTRIES: usize = 32;
 
-/// `TRAFFIC_EVENT.flags` for a `CATCH_CLS_CONTROL` event: what the real device answered.
+/// `TRAFFIC_EVENT.flags` bits 0-1 for a `CATCH_CLS_CONTROL` event: the handshake the game PC received.
 pub const CATCH_CTRL_OK: u8 = 0x00;
-/// The device STALLed the transfer.
-pub const CATCH_CTRL_STALL: u8 = 0xFD;
-/// The device NAKed to timeout, or never answered.
-pub const CATCH_CTRL_NAK: u8 = 0xFE;
+/// The PC got a STALL.
+pub const CATCH_CTRL_STALL: u8 = 0x01;
+/// NAKed until the host gave up (endpoint 0 only).
+pub const CATCH_CTRL_NAK: u8 = 0x02;
+/// The bits of a `CATCH_CLS_CONTROL` event's flags that carry the handshake.
+pub const CATCH_CTRL_MASK: u8 = 0x03;
+/// `TRAFFIC_EVENT.flags` bit 7 on a class the rewrite table acts at: a rule changed, dropped,
+/// answered or refused the packet.
+pub const CATCH_F_RULE: u8 = 0x80;
 
-/// `RESP(CATCH).clk_rate_ppb` sentinel: the box has fitted no drift rate. Distinct from a fitted 0,
-/// which says the two crystals are matched.
+/// `RESP(CATCH).clk_rate_ppb` sentinel: no fitted drift rate. A fitted 0 means matched crystals.
 pub const CLK_RATE_NONE: i32 = i32::MIN;
 
-// `REWRITE` action byte (§3.14): what the winning rule does to a matched packet. A report class can
-// `DROP`; only the control class may `ANSWER`/`STALL`/`NAK` or rewrite the device's reply. Shared
-// wire values with the firmware `rewrite_tab.h` and the dashboard.
-/// The rule matched but leaves the packet untouched (a shadow over a broader rule).
+// `REWRITE` action byte (§3.14): what the top-ranked matching rule does to the packet. A report
+// class can `DROP`; only the control class may `ANSWER`/`STALL`/`NAK` or rewrite the device's
+// reply.
+/// Leaves the matched packet untouched (shadows a broader rule).
 pub const RW_PASS: u8 = 0;
 /// Report class: the packet is not delivered.
 pub const RW_DROP: u8 = 1;
-/// Overwrite `plen` payload bytes at `off`, length preserved.
+/// Overwrite `plen` payload bytes at `off`, length preserved. On the control class, an OUT data
+/// stage only.
 pub const RW_PATCH: u8 = 2;
-/// The packet becomes the payload.
+/// The packet becomes the payload. On the control class, it overwrites the start of an OUT data stage
+/// and `wLength` is kept.
 pub const RW_REPLACE: u8 = 3;
 /// Control: answer from the payload without asking the device.
 pub const RW_ANSWER: u8 = 4;
 /// Control: protocol STALL.
 pub const RW_STALL: u8 = 5;
-/// Control: NAK to a timeout.
+/// Control: NAK on EP0 until the host times out; STALL on a control endpoint above 0.
 pub const RW_NAK: u8 = 6;
 /// Control IN: overwrite the device's reply at `off`.
 pub const RW_REPLY_PATCH: u8 = 7;
 /// Control IN: replace the device's reply with the payload.
 pub const RW_REPLY_REPLACE: u8 = 8;
 
-// `PATCH` section byte (§3.14): which descriptor a patch overwrites. `APPLY`/`CLEAR` are engine verbs
-// carried in the same byte, handled before the store rather than kept as section keys.
+// `PATCH` section byte (§3.14). `APPLY`/`CLEAR` are engine verbs in the same byte, handled before the
+// store, never kept as section keys.
 /// The 18-byte device descriptor (`cfg`/`index` ignored).
 pub const PATCH_SEC_DEVICE: u8 = 0;
 /// A configuration's descriptor (`cfg` = configuration index).
@@ -273,22 +290,26 @@ pub const PATCH_SEC_STRING: u8 = 3;
 pub const PATCH_SEC_BOS: u8 = 4;
 /// `PATCH` engine verb: re-present the clone with the stored set (one replug to the game PC).
 pub const PATCH_APPLY: u8 = 0xFE;
-/// `PATCH` engine verb: drop every patch for this device and re-present unpatched.
+/// `PATCH` engine verb: erase this device's stored set, and re-present a patched clone unpatched.
 pub const PATCH_CLEAR: u8 = 0xFF;
 
-/// Entries the box's rewrite table holds (`REWRITE_TAB_MAX`); past it a rule is refused and `RESP(REWRITE).table_full` says so.
+/// Entries the box's rewrite table holds (`REWRITE_TAB_MAX`); past it a rule is refused, flagged in
+/// `RESP(REWRITE).table_full`.
 pub const REWRITE_MAX_ENTRIES: usize = 32;
-/// Entries the box's descriptor-patch store holds (`PATCH_MAX`); past it a patch is refused and `RESP(PATCHES).table_full` says so.
+/// Payload bytes the rewrite table holds across all rules (`REWRITE_POOL`), match and mask bytes
+/// excluded; a rule that does not fit is refused, flagged in `RESP(REWRITE).table_full`.
+pub const REWRITE_PAYLOAD_POOL: usize = 2048;
+/// Entries the box's descriptor-patch store holds (`PATCH_MAX`); past it a patch is refused, flagged
+/// in `RESP(PATCHES).table_full`.
 pub const PATCH_MAX_ENTRIES: usize = 16;
-/// The most `match`/`mask` bytes the box compares against a packet head (`PKT_MATCH_MAX`), for a
-/// rewrite rule and a clip packet trigger alike.
+/// Max `match`/`mask` bytes the box compares against a packet head (`PKT_MATCH_MAX`), for rewrite
+/// rules and clip packet triggers alike.
 pub const PKT_MATCH_MAX: usize = 16;
-/// The most `match`/`mask` bytes one rewrite rule compares (`REWRITE_MATCH_MAX`).
+/// Max `match`/`mask` bytes one rewrite rule compares (`REWRITE_MATCH_MAX`).
 pub const REWRITE_MATCH_MAX: usize = PKT_MATCH_MAX;
 
-// `TRANSFORM` op byte (§3.15, `CTRL_XF_*`): a field operation on the semantic path. `sclass`/`dclass`
-// reuse the input classes ([`CATCH_CLS_AXIS`]/`_BTN`/`_KEY`/`_MEDIA`). Shared wire values with the
-// firmware `transform_tab.h`.
+// `TRANSFORM` op byte (§3.15, `CTRL_XF_*`): a field operation on the semantic path.
+// `sclass`/`dclass` reuse the input classes ([`CATCH_CLS_AXIS`]/`_BTN`/`_KEY`/`_MEDIA`).
 /// Move a source field into a destination (axis→axis or button→button in one report, or button→key /
 /// button→media across classes).
 pub const TF_REMAP: u8 = 0;
@@ -299,7 +320,8 @@ pub const TF_OP_COUNT: u8 = 2;
 
 /// Field-transform table summary: `QUERY [Q_TRANSFORMS]` → `RESP(TRANSFORMS)` (flags + list) (§3.15).
 pub const Q_TRANSFORMS: u8 = 16;
-/// Entries the box's transform table holds (`CTRL_TRANSFORM_MAXN`); past it an entry is refused and `RESP(TRANSFORMS).table_full` says so.
+/// Entries the box's transform table holds (`CTRL_TRANSFORM_MAXN`); past it an entry is refused,
+/// flagged in `RESP(TRANSFORMS).table_full`.
 pub const TRANSFORM_MAX_ENTRIES: usize = 32;
 /// `RESP(TRANSFORMS).flags` bit 0 (`CTRL_TRANSFORM_F_FULL`): the table is full.
 pub const TF_F_FULL: u8 = 0x01;
@@ -315,24 +337,24 @@ pub const LOCK_ID_ALL: u16 = 0xFFFF;
 pub const LOCK_AXIS_X: u16 = 0;
 pub const LOCK_AXIS_Y: u16 = 1;
 pub const LOCK_AXIS_WHEEL: u16 = 2;
-/// AC Pan (horizontal scroll): a first-class relative axis, peer of the wheel.
+/// AC Pan (horizontal scroll), a relative axis peer to the wheel.
 pub const LOCK_AXIS_PAN: u16 = 3;
 /// `LOCK` direction byte: both / positive-or-press / negative-or-release, then the two measured
-/// against the bearing rather than a fixed sign (§3.12).
+/// against the bearing (§3.12).
 pub const LOCK_DIR_BOTH: u8 = 0;
 pub const LOCK_DIR_POS: u8 = 1;
 pub const LOCK_DIR_NEG: u8 = 2;
 pub const LOCK_DIR_WITH: u8 = 3;
 pub const LOCK_DIR_AGAINST: u8 = 4;
-/// `LOCK` scale (§3.8), an `i16` on the wire: percent of the physical value kept. 0 blocks, 100 passes
-/// it untouched, above 100 amplifies, to a ceiling of 255 (2.55x).
+/// `LOCK` scale (§3.8), an `i16` on the wire: percent of the physical value kept. 0 blocks, 100
+/// passes untouched, above 100 amplifies, up to 255 (2.55x).
 pub const LOCK_SCALE_BLOCK: i16 = 0;
 pub const LOCK_SCALE_PASS: i16 = 100;
 pub const LOCK_SCALE_MAX: i16 = 255;
-/// The most a `LOCK` scale can REVERSE by: a negative scale weighs the physical value and reverses what
-/// it keeps, so `-100` is a plain inversion and `-50` keeps half of it the other way round. The slot is
-/// picked from the sign of the delta before the weigh, so a directional negative is well defined. A
-/// momentary usage carries one bit and has nothing to reverse, so it takes `0 ..= LOCK_SCALE_MAX`.
+/// Most negative `LOCK` scale. A negative scale weighs the physical value and reverses it: `-100`
+/// inverts, `-50` keeps half, reversed. The slot is picked by the delta's sign before the weigh, so a
+/// directional negative is well defined. A momentary usage carries one bit, so it takes
+/// `0 ..= LOCK_SCALE_MAX`.
 pub const LOCK_SCALE_MIN: i16 = -LOCK_SCALE_MAX;
 
 /// `CAPS` kbd_flags: keys are an NKRO bitmap (`n_keys` = 0xFF), else a keycode array (§4.4).
@@ -404,9 +426,10 @@ pub enum FrameType {
     MotionEvent = 0x0C,
     /// `USAGE_EVENT`: one unsolicited held-usage snapshot (class-tagged button/key/media); box→PC.
     UsageEvent = 0x0F,
-    /// `TRAFFIC_EVENT`: one unsolicited byte-oriented catch event (HID / vendor / control / emit / bus); box→PC.
+    /// `TRAFFIC_EVENT`: one unsolicited byte-oriented catch event (HID / vendor / control / emit /
+    /// bus); box→PC.
     TrafficEvent = 0x16,
-    /// `OPTION`: set a persistent box option by id (imperfect-clone, movement riding, emit pacing, box name) (PC→box).
+    /// `OPTION`: set a persistent box option by id (PC→box).
     Option = 0x11,
     /// `CLIP_APPEND`: append buffered-clip entries to the device ring; `SEQ` = append seq (PC→box).
     ClipAppend = 0x12,
@@ -414,18 +437,20 @@ pub enum FrameType {
     ClipCtrl = 0x13,
     /// `CLIP_SET`: a clip scalar setting `[id][value]` (autolock/loop/retain) (PC→box).
     ClipSet = 0x14,
-    /// `CLIP_TRIGGER`: add/remove a clip trigger. An input binding is `[class][id u16][edge][action][flags]`;
-    /// a packet trigger names a traffic class and carries `[slen][mlen][match][mask]` after those six bytes (PC→box).
+    /// `CLIP_TRIGGER`: add/remove a clip trigger (PC→box). An input binding is
+    /// `[class][id u16][edge][action][flags]`; a packet trigger names a traffic class and carries
+    /// `[slen][mlen][match][mask]` after those six bytes.
     ClipTrigger = 0x15,
     /// `UPDATE`: stage and activate firmware on either chip (PC→box) (§3.13).
     Update = 0x17,
-    /// `UPDATE_RESP`: the answer to one `UPDATE` op (box→PC) (§4.16).
+    /// `UPDATE_RESP`: reply to one `UPDATE` op (box→PC) (§4.16).
     UpdateResp = 0x18,
     /// `RAW`: put raw bytes on a cloned endpoint, fire-and-forget (PC→box, §3.14, `OPTION(IMPERFECT)`).
     Raw = 0x19,
-    /// `TRANSFER`: run one control transfer against the real device, answered by `TransferResp` (PC→box, §3.14).
+    /// `TRANSFER`: one control transfer against the real device, replied to by `TransferResp`
+    /// (PC→box, §3.14).
     Transfer = 0x1A,
-    /// `TRANSFER_RESP`: the device's answer to a `TRANSFER`, `SEQ` echoes the request (box→PC, §3.14).
+    /// `TRANSFER_RESP`: the device's reply to a `TRANSFER`; `SEQ` echoes the request (box→PC, §3.14).
     TransferResp = 0x1B,
     /// `REWRITE`: add/overwrite/remove one on-box rewrite rule, fire-and-forget (PC→box, §3.14).
     Rewrite = 0x1C,
@@ -435,7 +460,7 @@ pub enum FrameType {
     Transform = 0x1E,
 }
 
-/// Error returned when a byte does not name a known [`FrameType`].
+/// A byte naming no known [`FrameType`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct UnknownFrameType(pub u8);
 

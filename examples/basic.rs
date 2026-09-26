@@ -1,4 +1,4 @@
-//! Open a real medius box, read its version/health, and exercise the core control surface.
+//! Opens a box, reads its version and health, and exercises the core commands.
 
 use medius::{Button, Device};
 

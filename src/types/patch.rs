@@ -1,9 +1,9 @@
-//! `PATCH` (§3.14) vocabulary: a descriptor patch a host installs, the descriptor section it targets,
-//! and the decoded `RESP(PATCHES)` / `RESP(PATCH_ENTRY)` readbacks.
+//! `PATCH` (§3.14) vocabulary: descriptor patches, their sections, and decoded `RESP(PATCHES)` /
+//! `RESP(PATCH_ENTRY)`.
 //!
-//! A patch overwrites bytes in what the clone presents at enumeration, persisted per device (VID:PID)
-//! in the box's NVS. Unlike a rewrite rule, a patch is configuration, not session state: it survives a
-//! reconnect and clears only on [`clear_patch`](crate::Device::clear_patch) or a stored-set change.
+//! A patch overwrites bytes the clone presents at enumeration, persisted per device (VID:PID) in the
+//! box's NVS. It is configuration: it survives a reconnect and clears on
+//! [`clear_patch`](crate::Device::clear_patch) or [`factory_reset`](crate::Device::factory_reset).
 //! The box stores a patch whatever the opt-in, and applies the set only under
 //! [`allow_imperfect_clones`](crate::Device::allow_imperfect_clones).
 
@@ -11,31 +11,31 @@ use crate::protocol::opcode::{
     PATCH_SEC_BOS, PATCH_SEC_CONFIG, PATCH_SEC_DEVICE, PATCH_SEC_REPORT, PATCH_SEC_STRING,
 };
 
-/// Which descriptor a patch overwrites (§3.14).
+/// Descriptor a patch overwrites (§3.14).
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Default)]
 pub enum PatchSection {
-    /// The 18-byte device descriptor. `cfg`/`index` are ignored.
+    /// 18-byte device descriptor; `cfg`/`index` ignored.
     #[default]
     Device = PATCH_SEC_DEVICE,
-    /// A configuration descriptor; `cfg` is the configuration index, counting from 0.
+    /// Configuration descriptor; `cfg` is the configuration index, from 0.
     Config = PATCH_SEC_CONFIG,
-    /// An interface's report descriptor; `cfg` is the configuration index and `index` the interface number.
+    /// Interface report descriptor; `cfg` is the configuration index, `index` the interface number.
     Report = PATCH_SEC_REPORT,
-    /// A string descriptor; `index` is the string index. A string patch replaces the whole string.
+    /// String descriptor; `index` is the string index (not 0). Replaces the whole string: at most 127
+    /// bytes, one UTF-16 code unit each, `offset` ignored.
     String = PATCH_SEC_STRING,
-    /// The BOS descriptor. `cfg`/`index` are ignored.
+    /// BOS descriptor; `cfg`/`index` ignored.
     Bos = PATCH_SEC_BOS,
 }
 
 impl PatchSection {
-    /// The wire `section` byte.
+    /// Wire `section` byte.
     pub fn as_u8(self) -> u8 {
         self as u8
     }
 
-    /// Map a wire `section` byte to a [`PatchSection`], or `None` for an unknown value (the `APPLY`
-    /// and `CLEAR` engine verbs are not sections and decode to `None`).
+    /// Decodes a wire `section` byte; `None` if unknown, including the `APPLY` and `CLEAR` verbs.
     pub fn from_u8(v: u8) -> Option<PatchSection> {
         Some(match v {
             PATCH_SEC_DEVICE => PatchSection::Device,
@@ -48,12 +48,13 @@ impl PatchSection {
     }
 }
 
-/// A descriptor patch the host installs on the box.
+/// Descriptor patch the host installs on the box.
 ///
-/// A patch is keyed by `(section, cfg, index, offset)`: setting one whose key exists overwrites it,
-/// and a patch with empty [`bytes`](Patch::bytes) removes the patch at that key. A patch never changes
-/// a descriptor's byte count; the box refuses (and logs) a set whose applied descriptors would make
-/// the clone advertise one length and serve another.
+/// Keyed by `(section, cfg, index, offset)`: setting an existing key overwrites it and moves it to the
+/// end of the set (setting the bytes it already holds changes nothing); empty
+/// [`bytes`](Patch::bytes) removes the patch at that key. Every section but
+/// [`String`](PatchSection::String) keeps the descriptor's byte count; a set failing the box's checks
+/// is served unpatched ([`PatchSet::refused`]).
 ///
 /// ```no_run
 /// # use medius::{Device, Result};
@@ -68,23 +69,24 @@ impl PatchSection {
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Patch {
-    /// The descriptor section this patch targets.
+    /// Target section.
     pub section: PatchSection,
-    /// The configuration index for [`Config`](PatchSection::Config)/[`Report`](PatchSection::Report): `0` is
-    /// the first configuration, not `bConfigurationValue`.
+    /// Configuration index for [`Config`](PatchSection::Config)/[`Report`](PatchSection::Report):
+    /// `0` is the first configuration, not `bConfigurationValue`.
     pub cfg: u8,
-    /// The interface or string index, for [`Report`](PatchSection::Report)/[`String`](PatchSection::String).
+    /// Interface or string index, for
+    /// [`Report`](PatchSection::Report)/[`String`](PatchSection::String).
     pub index: u8,
-    /// The byte offset within the descriptor the overwrite starts at.
+    /// Byte offset in the descriptor where the overwrite starts.
     pub offset: u16,
-    /// The overwrite bytes; empty removes the patch at this key.
+    /// Overwrite bytes; empty removes the patch at this key.
     pub bytes: Vec<u8>,
 }
 
 impl Patch {
-    /// A patch over a whole-descriptor section ([`Device`](PatchSection::Device)/[`Bos`](PatchSection::Bos)),
-    /// where `cfg`/`index` are ignored. Use [`in_config`](Self::in_config) / [`in_interface`](Self::in_interface)
-    /// / [`in_string`](Self::in_string) for the sections that take them.
+    /// Patch on a [`Device`](PatchSection::Device) or [`Bos`](PatchSection::Bos) section, which
+    /// ignore `cfg`/`index`. The other sections use [`in_config`](Self::in_config),
+    /// [`in_interface`](Self::in_interface) and [`in_string`](Self::in_string).
     pub fn new(section: PatchSection, offset: u16, bytes: impl Into<Vec<u8>>) -> Patch {
         Patch {
             section,
@@ -95,7 +97,7 @@ impl Patch {
         }
     }
 
-    /// A [`Config`](PatchSection::Config) patch in configuration index `cfg` (`0` is the first).
+    /// [`Config`](PatchSection::Config) patch in configuration index `cfg` (`0` is the first).
     pub fn in_config(cfg: u8, offset: u16, bytes: impl Into<Vec<u8>>) -> Patch {
         Patch {
             section: PatchSection::Config,
@@ -106,7 +108,8 @@ impl Patch {
         }
     }
 
-    /// A [`Report`](PatchSection::Report) patch on `interface` in configuration index `cfg` (`0` is the first).
+    /// [`Report`](PatchSection::Report) patch on `interface` in configuration index `cfg` (`0` is
+    /// the first).
     pub fn in_interface(cfg: u8, interface: u8, offset: u16, bytes: impl Into<Vec<u8>>) -> Patch {
         Patch {
             section: PatchSection::Report,
@@ -117,7 +120,7 @@ impl Patch {
         }
     }
 
-    /// A [`String`](PatchSection::String) patch on string `index` (the whole string is replaced).
+    /// [`String`](PatchSection::String) patch replacing the whole of string `index`.
     pub fn in_string(index: u8, bytes: impl Into<Vec<u8>>) -> Patch {
         Patch {
             section: PatchSection::String,
@@ -128,7 +131,7 @@ impl Patch {
         }
     }
 
-    /// The `(section, cfg, index, offset)` key that identifies this patch in the store.
+    /// The patch's `(section, cfg, index, offset)` store key.
     pub fn key(&self) -> PatchKey {
         PatchKey {
             section: self.section,
@@ -139,55 +142,59 @@ impl Patch {
     }
 }
 
-/// The `(section, cfg, index, offset)` key that identifies one stored patch.
+/// `(section, cfg, index, offset)` key of one stored patch.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct PatchKey {
-    /// The descriptor section.
+    /// Descriptor section.
     pub section: PatchSection,
-    /// The configuration index.
+    /// Configuration index.
     pub cfg: u8,
-    /// The interface or string index.
+    /// Interface or string index.
     pub index: u8,
-    /// The byte offset within the descriptor.
+    /// Byte offset in the descriptor.
     pub offset: u16,
 }
 
-/// One row of the decoded [`PatchSet`] summary (§4.17): a stored patch's key and length, without its
-/// bytes. Read the full patch with [`query_patch_entry`](crate::Device::query_patch_entry).
+/// Row of the decoded [`PatchSet`] summary (§4.17): a stored patch's key and length, without its
+/// bytes. [`query_patch_entry`](crate::Device::query_patch_entry) reads the full patch.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PatchEntry {
-    /// The descriptor section.
+    /// Descriptor section.
     pub section: PatchSection,
-    /// The configuration index.
+    /// Configuration index.
     pub cfg: u8,
-    /// The interface or string index.
+    /// Interface or string index.
     pub index: u8,
-    /// The byte offset within the descriptor.
+    /// Byte offset in the descriptor.
     pub offset: u16,
-    /// How many bytes the patch overwrites.
+    /// Bytes overwritten.
     pub len: u16,
 }
 
-/// The decoded `RESP(PATCHES)` (§4.17): the stored patch set plus its apply state.
+/// Decoded `RESP(PATCHES)` (§4.17): the stored patch set and its apply state.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct PatchSet {
-    /// The stored set is applied to the live clone.
+    /// The clone serves a non-empty patched set: the one it was presented with, which a later store
+    /// leaves alone until the next presentation.
     pub applied: bool,
-    /// A stored change has not been applied yet: an [`apply_patch`](crate::Device::apply_patch) would
-    /// re-present with it.
+    /// The stored set differs from the served one in patches, bytes or order: not applied yet,
+    /// changed or emptied since, refused, or held back with the opt-in off.
     pub pending: bool,
-    /// The last apply was refused (a patched descriptor's advertised length no longer matched what it
-    /// serves); the box logged why.
+    /// The stored set failed a check at the last presentation and is unchanged since, so the device
+    /// is served unpatched: a clone check, or a consistency check the unpatched descriptors pass (a
+    /// descriptor's length or type fields, `bcdUSB` 0x0201+ with no BOS, a HID `wDescriptorLength`,
+    /// an interrupt-IN `wMaxPacketSize` below the report). The box logs which. A set change, a clear,
+    /// a passing presentation or a detach resets it.
     pub refused: bool,
-    /// The store is full: a further patch was, or would be, refused.
+    /// The box refused the last new patch or overwrite for room: 16 entries in use, or the 1024-byte
+    /// pool full. The next set change, or a clear, resets it.
     pub table_full: bool,
     /// One row per stored patch.
     pub entries: Vec<PatchEntry>,
 }
 
 impl PatchSet {
-    /// Decode a `RESP(PATCHES)` payload (§4.17): `[what][flags u8][n u8]` then `n` ×
-    /// `[section u8][cfg u8][index u8][offset u16][len u16]`.
+    /// `[what][flags u8][n u8]` then `n` × `[section u8][cfg u8][index u8][offset u16][len u16]`.
     pub(crate) fn from_payload(p: &[u8]) -> Option<PatchSet> {
         if p.len() < 3 {
             return None;
@@ -198,7 +205,7 @@ impl PatchSet {
         for i in 0..n {
             let o = 3 + 7 * i;
             let row = p.get(o..o + 7)?;
-            // A section a newer box added and this crate has no variant for is skipped; the rest reads.
+            // A section a newer box added is skipped; the rest reads.
             let Some(section) = PatchSection::from_u8(row[0]) else {
                 continue;
             };
@@ -220,8 +227,8 @@ impl PatchSet {
     }
 }
 
-/// Decode a `RESP(PATCH_ENTRY)` payload (§4.17) back into the [`Patch`] that replays it:
-/// `[what][list_index][section][cfg][index][offset u16][bytes]`.
+// `[what][list_index][section][cfg][index][offset u16][bytes]`, decoded into the patch that
+// replays it.
 pub(crate) fn patch_entry_from_payload(p: &[u8]) -> Option<Patch> {
     let hdr = p.get(0..7)?;
     let section = PatchSection::from_u8(hdr[2])?;

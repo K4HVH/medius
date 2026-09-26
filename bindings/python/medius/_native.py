@@ -8,9 +8,9 @@ import sys
 from ctypes.util import find_library
 from pathlib import Path
 
-# MEDIUS_ABI_VERSION of the header these ctypes mirrors were written from; the tests hold it to the
-# header. Import refuses a library whose medius_abi_version() reports any other number.
-ABI_VERSION = 8
+# The header's MEDIUS_ABI_VERSION these mirrors follow; the tests hold it to the header, and import
+# refuses a library whose medius_abi_version() reports another number.
+ABI_VERSION = 9
 
 MEDIUS_MAX_USAGES = 256
 MEDIUS_CLIP_TRIG_MAX = 8
@@ -30,12 +30,12 @@ MEDIUS_MAX_REWRITE_MATCH = 16
 MEDIUS_MAX_PKT_MATCH = 16
 MEDIUS_MAX_DEV_PAYLOAD = 512
 
-# The CATCH wildcards are sentinel values, not a separate flag byte.
+# CATCH wildcard sentinels.
 MEDIUS_CATCH_CLASS_ANY = 0xFF
 MEDIUS_CATCH_ID_ANY = 0xFFFF
 MEDIUS_CLOCK_AGE_NONE = 0xFFFFFFFF
-# MediusClockEstimate.rate_ppb when the box has fitted no drift rate. Different from a fitted 0, which
-# says the two crystals are matched.
+# MediusClockEstimate.rate_ppb when the box has fitted no drift rate; a fitted 0 means the crystals
+# match.
 MEDIUS_CLOCK_RATE_NONE = -0x80000000
 
 u8 = ctypes.c_uint8
@@ -227,6 +227,10 @@ class MediusStats(ctypes.Structure):
         ("wakeups", u16),
         ("reset_count", u16),
         ("config_count", u16),
+        ("link_rx_drops", u32),
+        ("host_rx_drops", u32),
+        ("relay_drops", u32),
+        ("session", u16),
     ]
 
 
@@ -269,8 +273,8 @@ class MediusImperfectStatus(ctypes.Structure):
     _fields_ = [("allowed", u8), ("over_capacity", u8), ("clone_imperfect", u8)]
 
 
-# The advanced control layer (§3.14): control transfers, rewrite rules and descriptor patches. Each mirror
-# is checked field-for-field against medius.h by test_ctypes_structs_match_the_c_header.
+# Advanced control layer (§3.14): control transfers, rewrite rules, descriptor patches.
+# test_ctypes_structs_match_the_c_header checks each mirror field-for-field against medius.h.
 class MediusSetup(ctypes.Structure):
     _fields_ = [
         ("request_type", u8),
@@ -426,7 +430,13 @@ class MediusClipStatus(ctypes.Structure):
 
 
 class MediusCountersSnapshot(ctypes.Structure):
-    _fields_ = [("frames_tx", u64), ("frames_rx", u64), ("crc_drops", u64), ("reconnects", u64)]
+    _fields_ = [
+        ("frames_tx", u64),
+        ("frames_rx", u64),
+        ("crc_drops", u64),
+        ("reconnects", u64),
+        ("restarts", u64),
+    ]
 
 
 class MediusMotionEvent(ctypes.Structure):
@@ -434,9 +444,7 @@ class MediusMotionEvent(ctypes.Structure):
 
 
 class MediusUsageEvent(ctypes.Structure):
-    # Mirrors MediusUsageEvent in medius.h. A missing field here is not a decode bug, it is a buffer
-    # overrun: the library writes sizeof(MediusCatchEvent) bytes into whatever this allocates, so a
-    # struct short by one field lets every catch event write past the end of it.
+    # Mirrors MediusUsageEvent in medius.h.
     _fields_ = [
         ("class_", u8),
         ("direction", u8),
@@ -503,8 +511,8 @@ def _candidate_names():
 
 
 def _load_library():
-    # MEDIUS_LIB wins so dev/test runs can point at target/debug; then the
-    # bundled binary next to this file; then the system loader.
+    # MEDIUS_LIB first, so dev/test runs can point at target/debug; then the
+    # bundled binary beside this file; then the system loader.
     override = os.environ.get("MEDIUS_LIB")
     if override:
         return ctypes.CDLL(override)
@@ -530,17 +538,17 @@ def _load_library():
 
 
 def _check_abi(library):
-    # The structs above are a hand-written copy of medius.h. A library built from another header lays
-    # them out differently, and a call through a changed struct misreads it or overruns its buffer.
+    # The structs above hand-copy medius.h. A library built from another header lays them out
+    # differently, so a call through a changed struct misreads it or overruns its buffer.
     fn = library.medius_abi_version
     fn.restype = u32
     fn.argtypes = []
     got = int(fn())
     if got != ABI_VERSION:
         raise ImportError(
-            f"{library._name} speaks medius C ABI {got}, and this medius package is built for ABI "
-            f"{ABI_VERSION}; install the medius package that matches the library, or point "
-            "MEDIUS_LIB at a library built from the same release"
+            f"{library._name} is medius C ABI {got}, this package is built for ABI {ABI_VERSION}; "
+            "install the matching medius package, or point MEDIUS_LIB at a library from the same "
+            "release"
         )
 
 
@@ -591,6 +599,7 @@ _decl("medius_device_scale", i32, [HANDLE, MediusLockTarget, u8, i16])
 _decl("medius_device_scale_all", i32, [HANDLE, u8, u8, i16])
 _decl("medius_device_led", i32, [HANDLE, u8, u8, u8])
 _decl("medius_device_reset", i32, [HANDLE])
+_decl("medius_device_factory_reset", i32, [HANDLE])
 _decl("medius_device_reapply", i32, [HANDLE])
 _decl("medius_device_reconnect", i32, [HANDLE])
 _decl("medius_device_reboot", i32, [HANDLE, u8])
@@ -710,6 +719,7 @@ _decl(
     c_bool,
     [ctypes.POINTER(MediusTrafficEvent), ctypes.POINTER(u8)],
 )
+_decl("medius_traffic_event_rule_acted", c_bool, [ctypes.POINTER(MediusTrafficEvent)])
 _decl("medius_traffic_event_bulk_end_of_transfer", c_bool, [ctypes.POINTER(MediusTrafficEvent)])
 _decl("medius_traffic_event_bulk_zlp", c_bool, [ctypes.POINTER(MediusTrafficEvent)])
 _decl("medius_clip_status_is_held", c_bool, [ctypes.POINTER(MediusClipStatus), MediusUsage])
@@ -814,6 +824,7 @@ _decl("medius_clip_restart", i32, [HANDLE])
 _decl("medius_clip_toggle", i32, [HANDLE])
 _decl("medius_clip_clear", i32, [HANDLE])
 _decl("medius_clip_finalize", i32, [HANDLE])
+_decl("medius_clip_lost", c_bool, [HANDLE])
 _decl("medius_clip_query_status", i32, [HANDLE, ctypes.POINTER(MediusClipStatus)])
 _decl("medius_clip_query_config", i32, [HANDLE, ctypes.POINTER(MediusClipSettings)])
 
@@ -856,6 +867,10 @@ if HAS_MOCK:
         c_bool,
         [HANDLE, u8, u16, u8, ctypes.POINTER(u8), usize, ctypes.POINTER(u8), ctypes.POINTER(c_bool)],
     )
+    _decl("medius_mock_restart", None, [HANDLE])
+    _decl("medius_mock_link_lost", None, [HANDLE])
+    _decl("medius_mock_detach", None, [HANDLE, c_bool])
+    _decl("medius_mock_attach", None, [HANDLE])
     _decl("medius_mock_silent", None, [HANDLE])
     _decl("medius_mock_push_raw", None, [HANDLE, ctypes.POINTER(u8), usize])
     _decl("medius_mock_push_log", None, [HANDLE, u8, ctypes.c_char_p])

@@ -9,15 +9,15 @@ use crate::types::{CatchEvent, CatchFilter};
 
 use super::Device;
 
-/// A live stream of [`CatchEvent`]s from the box (the `CATCH` feature, §3.9).
+/// Live stream of [`CatchEvent`]s from the box (`CATCH`, §3.9).
 ///
-/// Unsubscribes when the last clone drops. For decoded press and release edges rather than held-usage
-/// snapshots, use [`Device::input_events`].
+/// Unsubscribes when the last clone drops. [`Device::input_events`] decodes held-usage snapshots into
+/// press and release edges.
 #[derive(Clone, Debug)]
 pub struct EventStream {
     rx: flume::Receiver<CatchEvent>,
     dropped: Arc<AtomicU64>,
-    // Reference-counted so a clone keeps the subscription alive.
+    // Shared so a clone keeps the subscription.
     _guard: Arc<CatchGuard>,
 }
 
@@ -47,56 +47,55 @@ impl EventStream {
         }
     }
 
-    /// Block until the next event arrives.
+    /// Block until the next event.
     pub fn recv(&self) -> Result<CatchEvent> {
         self.rx.recv().map_err(|_| Error::Disconnected)
     }
 
-    /// The next buffered event, or `None` if none is queued (never blocks).
+    /// Next buffered event, or `None` if none is queued. Never blocks.
     pub fn try_recv(&self) -> Option<CatchEvent> {
         self.rx.try_recv().ok()
     }
 
-    /// Block up to `timeout` for the next event; `None` on timeout (or a closed channel).
+    /// Block up to `timeout` for the next event; `None` on timeout or a closed channel.
     ///
-    /// A closed stream returns at once rather than waiting, so a poll loop that ignores
-    /// [`Self::is_connected`] spins once the box goes away.
+    /// A closed stream returns at once, so a poll loop that ignores [`Self::is_connected`] spins once
+    /// the box goes away.
     pub fn recv_timeout(&self, timeout: Duration) -> Option<CatchEvent> {
         self.rx.recv_timeout(timeout).ok()
     }
 
-    /// A blocking iterator over the stream, ending when the box disconnects.
+    /// Blocking iterator, ending when the box disconnects.
     pub fn iter(&self) -> impl Iterator<Item = CatchEvent> + '_ {
         self.rx.iter()
     }
 
-    /// Drain every currently-buffered event without blocking.
+    /// Drain buffered events without blocking.
     pub fn try_iter(&self) -> impl Iterator<Item = CatchEvent> + '_ {
         self.rx.try_iter()
     }
 
-    /// Await the next event; runtime-agnostic, runs under any executor.
+    /// Await the next event; runs under any executor.
     #[cfg(feature = "async")]
     pub async fn recv_async(&self) -> Result<CatchEvent> {
         self.rx.recv_async().await.map_err(|_| Error::Disconnected)
     }
 
-    /// The stream as a [`Stream`](futures_core::Stream), for `.next().await` and the combinators.
+    /// As a [`Stream`](futures_core::Stream), for `.next().await` and the combinators.
     #[cfg(feature = "async")]
     pub fn stream(&self) -> impl futures_core::Stream<Item = CatchEvent> + '_ {
         self.rx.stream()
     }
 
-    /// Events this stream dropped because the consumer fell behind (host-side back-pressure).
+    /// Events dropped because the consumer fell behind (host-side back-pressure).
     pub fn dropped(&self) -> u64 {
         self.dropped.load(Ordering::Relaxed)
     }
 
-    /// Whether the box is still delivering to this stream.
+    /// Whether the box still delivers to this stream.
     ///
-    /// [`Self::recv_timeout`] and [`Self::try_recv`] both answer `None` for "nothing yet" and for
-    /// "nothing ever again", which are different situations: one means wait longer, the other means
-    /// stop. This separates them.
+    /// Separates the two meanings of `None` from [`Self::recv_timeout`] and [`Self::try_recv`]:
+    /// "nothing yet" (wait longer) and "nothing ever again" (stop).
     pub fn is_connected(&self) -> bool {
         !self.rx.is_disconnected()
     }
@@ -119,17 +118,14 @@ impl<'a> IntoIterator for &'a EventStream {
     }
 }
 
-/// Check a subscription and collapse it onto one entry per box table slot.
+// Checks a subscription and collapses it to one entry per box table slot.
 pub(crate) fn prepare(filters: impl IntoIterator<Item = CatchFilter>) -> Result<FilterSet> {
     let wanted: Vec<CatchFilter> = filters.into_iter().collect();
-    // An empty subscription is a stream that never yields, which reads as a dead box rather than as
-    // the mistake it is.
+    // An empty subscription never yields, which reads as a dead box.
     if wanted.is_empty() {
         return Err(Error::EmptySubscription);
     }
-    // WITH/AGAINST are resolved against the injection in flight when a report is weighed. A
-    // subscription is addressed long before any of that, so a relative direction here has nothing to
-    // resolve against and the box would drop the entry silently.
+    // WITH/AGAINST resolve against the injection in flight when a report is weighed.
     if let Some(f) = wanted.iter().find(|f| f.direction().is_relative()) {
         return Err(Error::RelativeDirection {
             direction: f.direction(),
@@ -141,9 +137,8 @@ pub(crate) fn prepare(filters: impl IntoIterator<Item = CatchFilter>) -> Result<
             class: f.class().expect("a meaningless capture names a class"),
         });
     }
-    // 0xFFFF is the every-id sentinel, so an exact subscription to it becomes the class blanket the
-    // moment it reaches the wire: a much wider stream than the caller asked for, and silent. Only a
-    // media usage is wide enough to express it.
+    // 0xFFFF is the every-id sentinel: an exact subscription to it reaches the wire as the class
+    // blanket, a much wider stream than asked for, with no error.
     if let Some((class, id)) = wanted.iter().find_map(|f| {
         let (_, id) = f.wire();
         (f.id() == Some(id)).then(|| (f.class(), id))
@@ -158,10 +153,10 @@ pub(crate) fn prepare(filters: impl IntoIterator<Item = CatchFilter>) -> Result<
 }
 
 impl Device {
-    /// Subscribe to the catch stream for the given filters (the `CATCH` feature, §3.9).
+    /// Subscribe to the catch stream for `filters` (`CATCH`, §3.9).
     ///
-    /// Overlapping subscriptions from different callers collapse into the one table the box holds,
-    /// and each consumer still receives only what it asked for.
+    /// Overlapping subscriptions from different callers collapse into the box's one table; each
+    /// consumer still receives only what it asked for.
     ///
     /// ```no_run
     /// # use medius::{Capture, CatchFilter, Device, TrafficClass};

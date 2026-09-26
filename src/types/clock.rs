@@ -1,5 +1,4 @@
-//! Time: which chip stamped an event, the measured offset between the two, and putting a box stamp
-//! on this machine's clock.
+//! Clock domains, the measured inter-chip offset, and mapping box stamps onto this machine's clock.
 
 use core::time::Duration;
 use std::time::Instant;
@@ -7,17 +6,17 @@ use std::time::Instant;
 use crate::protocol::opcode::CLK_RATE_NONE;
 use crate::types::{CatchEvent, InputEvent, MotionEvent, TrafficEvent, UsageSnapshot};
 
-/// Which chip's clock stamped an event.
+/// Chip whose clock stamped an event.
 ///
-/// The two chips boot independently, so a stamp is only meaningful against another from the same
-/// domain. [`Timeline`] puts both on one.
+/// The chips boot independently, so a stamp compares only with stamps from the same domain.
+/// [`Timeline`] puts both on one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum ClockDomain {
-    /// The device-facing chip, stamped in USB interrupt context when the real device's transfer
-    /// completed. Everything the real device produced carries this.
+    /// Device-facing chip, stamped in USB interrupt context when the real device's transfer
+    /// completes. Carried by everything the real device produced.
     HostChip,
-    /// The PC-facing chip, stamped at the tap. Everything the PC produced, and everything the clone
-    /// emitted, carries this: the host chip never saw those bytes.
+    /// PC-facing chip, stamped at the tap. Carried by everything the PC produced and the clone
+    /// emitted; the host chip never sees those bytes.
     DeviceChip,
 }
 
@@ -41,24 +40,22 @@ impl ClockDomain {
     }
 }
 
-/// The measured difference between the two chips' clocks, from `RESP(CATCH)` (§4.9).
+/// Measured offset between the two chips' clocks, from `RESP(CATCH)` (§4.9).
 ///
-/// Measured with a four-timestamp exchange over the inter-chip link, stamped as each frame reaches
-/// the wire rather than when it is queued. Queueing is the largest and most variable delay on that
-/// link, so stamping late removes it from the measurement instead of filtering around it.
+/// Four-timestamp exchange over the inter-chip link, each frame stamped as it reaches the wire.
+/// That keeps queueing, the link's largest and most variable delay, out of the measurement.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ClockEstimate {
-    /// The host chip's clock minus the device chip's, in microseconds.
+    /// Host chip clock minus device chip clock, in microseconds.
     pub offset_us: i32,
-    /// Relative drift between the two crystals in parts per billion, or `None` when the box has not
-    /// fitted one. That is a different answer from a fitted zero, which says the two crystals match:
-    /// on a link busy enough that too few clean exchanges reach the box's filter, no fit is made at
-    /// all, precisely when assuming no drift is least safe.
+    /// Relative drift between the crystals, in parts per billion; `None` when the box has fitted
+    /// none. A fitted zero means the crystals match. A link too busy for enough clean exchanges to
+    /// reach the box's filter gets no fit, exactly when assuming zero drift is least safe.
     pub rate_ppb: Option<i32>,
-    /// Best measured round trip in the window. The offset is good to about half of this.
+    /// Best round trip in the window; the offset is good to about half this.
     pub delay_us: u16,
-    /// Age of the estimate, or `None` if the box has no estimate yet, which is how a caller tells
-    /// that apart from an offset that happens to be zero.
+    /// Estimate age; `None` when the box has no estimate yet, which tells that apart from a zero
+    /// offset.
     pub age: Option<Duration>,
 }
 
@@ -76,8 +73,7 @@ impl ClockEstimate {
                 v => Some(v),
             },
             delay_us: u16::from_le_bytes([p[8], p[9]]),
-            // 0xFFFF is the box saying it has no estimate, which is not the same as an estimate that
-            // happens to be zero microseconds old.
+            // 0xFFFF: no estimate, distinct from a zero-age one.
             age: if age_ms == u16::MAX {
                 None
             } else {
@@ -91,35 +87,33 @@ impl ClockEstimate {
         self.delay_us / 2
     }
 
-    /// Translate a device-chip stamp into the host chip's domain. `None` when there is no estimate.
+    /// Device-chip stamp in the host chip's domain; `None` with no estimate.
     ///
-    /// This applies the offset alone. The box corrects for drift against the moment IT measured the
-    /// offset, which is a reference this side does not have, so over a long-lived stream the two
-    /// crystals pull apart at up to 20 ppm, roughly 20 us per second of estimate age. Re-read
-    /// [`Device::query_catch`](crate::Device::query_catch) when [`Self::age`] has grown large
-    /// relative to [`Self::error_bound_us`], and use [`Self::drift_us_over`] to see how much it costs.
+    /// Applies the offset only. The box corrects drift against the instant it measured the offset,
+    /// which this side lacks, so over a long stream the crystals diverge at up to 20 ppm, about
+    /// 20 us per second of estimate age. Re-read [`Device::query_catch`](crate::Device::query_catch)
+    /// when [`Self::age`] grows large relative to [`Self::error_bound_us`];
+    /// [`Self::drift_us_over`] gives the cost.
     pub fn to_host_domain(&self, device_us: u32) -> Option<i64> {
         self.age?;
         Some(device_us as i64 + self.offset_us as i64)
     }
 
-    /// How far the offset has drifted over `elapsed`, in microseconds. Add this to
-    /// [`Self::error_bound_us`] for the total bound on a stamp translated `elapsed` after the
-    /// estimate was taken.
-    /// 0 when the box has fitted no rate: it is what is known, not a claim that there is no drift.
+    /// Offset drift over `elapsed`, in microseconds; add [`Self::error_bound_us`] for the total bound
+    /// on a stamp translated `elapsed` after the estimate. 0 when the box has fitted no rate, which
+    /// does not mean zero drift.
     pub fn drift_us_over(&self, elapsed: Duration) -> i64 {
         let Some(ppb) = self.rate_ppb else { return 0 };
         (elapsed.as_micros() as i64).saturating_mul(ppb as i64) / 1_000_000_000
     }
 }
 
-/// Anything carrying a box timestamp and the domain that produced it.
+/// Event carrying a box timestamp and the domain that produced it.
 ///
-/// [`Timeline`] takes this rather than one concrete event, so a decoded
-/// [`InputEvent`] can be placed on the host clock exactly like a raw
-/// [`CatchEvent`], so the two features compose.
+/// [`Timeline`] takes this, so it places a decoded [`InputEvent`] on the host clock exactly like a
+/// raw [`CatchEvent`].
 pub trait Timestamped {
-    /// The stamp, in the producing chip's microseconds.
+    /// Stamp, in the producing chip's microseconds.
     fn ts_us(&self) -> u32;
     /// Which chip's clock produced it.
     fn clock(&self) -> ClockDomain;
@@ -170,32 +164,27 @@ impl Timestamped for TrafficEvent {
     }
 }
 
-/// One event placed on this machine's clock.
+/// Event placed on this machine's clock.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Stamped {
-    /// When the event happened, on this machine's monotonic clock.
+    /// Event time on this machine's monotonic clock.
     pub host: Instant,
-    /// The event's own stamp, unwrapped past the 32-bit rollover.
+    /// Box stamp, unwrapped past the 32-bit rollover.
     pub box_us: u64,
-    /// How much later than the measured floor this event reached you. Jitter, not latency: the
-    /// constant part of the delay is unknowable from here and falls out of [`Self::host`].
+    /// Arrival delay beyond the measured floor. Jitter only: the constant part of the delay is
+    /// unknowable here and drops out of [`Self::host`].
     pub excess: Duration,
 }
 
-// Samples per floor block. The floor is the minimum over the current block plus the previous one,
-// so its age is bounded by two blocks, about 8 s at 1 kHz. An all-time minimum cannot be right: the
-// two crystals drift at up to 20 ppm, so a floor from an hour ago is 72 ms wrong and only ever gets
-// worse. Bounding the window lets the floor rise as well as fall.
+// Samples per floor block. The floor is the minimum over this block and the previous one, so it is
+// at most two blocks (~8 s at 1 kHz) old.
 const FLOOR_BLOCK: u32 = 4096;
 
-// A [`Stamped::host`] correction larger than this re-anchors the timeline instead of being absorbed.
-// Small corrections are smoothed so time never visibly runs backwards; a large one is the estimate
-// being wrong, and holding a wrong answer to keep it monotonic wedges the stream for as long as the
-// error lasts.
+// A `Stamped::host` correction past this re-anchors the timeline; smaller ones are absorbed.
 const RESYNC_NS: u64 = 1_000_000;
 
-// Half the 32-bit stamp range. A backward step shorter than this is the box's own priority queues
-// delivering out of tap order, not a rollover.
+// Half the 32-bit range. A shorter backward step is the box's priority queues delivering out of tap
+// order, not a rollover.
 const HALF_RANGE: u32 = 1 << 31;
 
 #[derive(Debug, Default, Clone, Copy)]
@@ -230,11 +219,11 @@ impl DomainState {
     }
 }
 
-/// Puts box stamps on this machine's clock.
+/// Maps box stamps onto this machine's clock.
 ///
-/// A catch stamp is microseconds on a chip that booted before this process did: it wraps every ~71.6
-/// minutes, restarts at zero if that chip reboots, and has no relation to any clock here. Feed every
-/// event in as you receive it.
+/// A catch stamp counts microseconds on a chip that booted before this process: it wraps every
+/// ~71.6 minutes, restarts at zero when that chip reboots, and is unrelated to any clock here. Feed
+/// in every event on receipt.
 ///
 /// ```no_run
 /// # use medius::{CatchFilter, Device, Timeline};
@@ -247,23 +236,21 @@ impl DomainState {
 /// # Ok(()) }
 /// ```
 ///
-/// Each domain is tracked separately, so stamps from both chips land on one comparable timeline
-/// without needing a [`ClockEstimate`]: each domain's floor absorbs its own chip's offset.
+/// Domains are tracked separately and each floor absorbs its chip's offset, so both chips' stamps
+/// share one comparable timeline with no [`ClockEstimate`].
 ///
-/// # What it is good for, and what it is not
+/// # Accuracy
 ///
 /// The mapping keeps a per-domain minimum of (elapsed here minus elapsed on the box) over a bounded
-/// window, rather than an average: an event can be delivered late but never early, so the fastest
-/// recent delivery is the closest thing to the truth.
+/// window: an event arrives late but never early, so the fastest recent delivery is closest to
+/// true.
 ///
-/// That makes it a good answer for events arriving one at a time and a poor one for a burst. When a
-/// slow consumer stalls and then drains a backlog, every event in the backlog arrives at nearly the
-/// same instant, and no filter over arrival times can recover when they were really produced: the
-/// burst maps into the span it was drained in, and reports little [`Stamped::excess`]. Read
-/// [`Stamped::box_us`] when you need the box's own spacing, which is exact.
+/// That suits events arriving one at a time, not bursts. A backlog drained after a consumer stall
+/// arrives at nearly one instant, and no filter over arrival times recovers when it was produced:
+/// the burst maps into the span it drained in and reports little [`Stamped::excess`].
 ///
-/// Ordering across domains is good to the difference in how far the two floors have converged, which
-/// is largest just after a domain's first event. Within one domain, [`Stamped::box_us`] is exact.
+/// Cross-domain ordering is good to the difference in how far the two floors have converged,
+/// largest just after a domain's first event. Within one domain, [`Stamped::box_us`] is exact.
 #[derive(Debug)]
 pub struct Timeline {
     origin: Instant,
@@ -277,7 +264,7 @@ impl Default for Timeline {
 }
 
 impl Timeline {
-    /// A fresh timeline, anchored to now.
+    /// Empty timeline anchored to now.
     pub fn new() -> Timeline {
         Timeline {
             origin: Instant::now(),
@@ -285,8 +272,8 @@ impl Timeline {
         }
     }
 
-    /// Place an event on this machine's clock, taking the arrival as now. Call it as soon as the
-    /// event arrives. [`Stamped::excess`] includes however long you waited.
+    /// Places an event on this machine's clock, arrival taken as now. Call on arrival:
+    /// [`Stamped::excess`] includes any wait.
     pub fn observe(&mut self, event: &impl Timestamped) -> Stamped {
         self.observe_at(event, Instant::now())
     }
@@ -296,7 +283,7 @@ impl Timeline {
         self.observe_stamp(event.ts_us(), event.clock(), now)
     }
 
-    /// [`Self::observe_at`] for a stamp and domain held on their own, rather than inside an event.
+    /// [`Self::observe_at`] for a bare stamp and domain.
     pub fn observe_stamp(&mut self, ts_us: u32, domain: ClockDomain, now: Instant) -> Stamped {
         let box_us = self.box_us_of(ts_us, domain);
         let elapsed_ns = now.saturating_duration_since(self.origin).as_nanos() as i128;
@@ -307,13 +294,10 @@ impl Timeline {
         d.samples += 1;
         let floor = d.push_lag(lag_ns);
 
-        // Non-negative by construction: at the sample that set the floor, box_ns + floor is exactly
-        // that sample's own elapsed, and elapsed since our own origin cannot be negative. The cast is
-        // still saturated: a fabricated epoch would otherwise wrap silently into a small number.
+        // Non-negative: at the floor-setting sample, box_ns + floor equals its elapsed, which is >= 0.
         let raw_host_ns = (box_ns + floor).max(0).min(u64::MAX as i128) as u64;
-        // A small correction is absorbed so the timeline does not visibly run backwards; a large one
-        // means the estimate was wrong, and pinning a wrong answer to stay monotonic would freeze the
-        // stream for as long as the error lasts.
+        // Small corrections are absorbed to stay monotonic; a large one means the estimate was wrong,
+        // and pinning it would freeze the stream for as long as the error lasts.
         let host_ns = if raw_host_ns + RESYNC_NS < d.last_host_ns {
             raw_host_ns
         } else {
@@ -327,20 +311,20 @@ impl Timeline {
         }
     }
 
-    /// The event's stamp unwrapped past the 32-bit rollover, monotonic within its domain.
+    /// Event stamp unwrapped past the 32-bit rollover, monotonic within its domain.
     ///
-    /// The box drains its taps through strict-priority queues, so a later-tapped event can arrive
-    /// first. A backward step shorter than half the 32-bit range is read as that reordering and keeps
-    /// its place on the timeline; only a step longer than half the range is a rollover. Treating
-    /// every backward step as a rollover turned a 1 µs inversion into a permanent 71.6-minute jump.
+    /// The box drains taps through strict-priority queues, so a later-tapped event can arrive first.
+    /// A backward step under half the 32-bit range is that reordering and keeps its place on the
+    /// timeline; only a longer one is a rollover.
     ///
-    /// A reboot restarts the clock at zero, which this cannot tell from a very large jump. Nothing on
-    /// the wire announces a chip reboot, so call [`Self::reset`] for a chip you know restarted.
+    /// A reboot restarts the clock at zero, indistinguishable here from a very large jump. Call
+    /// [`Self::reset`] for a restarted chip; a device-chip restart raises
+    /// [`CountersSnapshot::restarts`](crate::CountersSnapshot::restarts).
     pub fn box_us(&mut self, event: &impl Timestamped) -> u64 {
         self.box_us_of(event.ts_us(), event.clock())
     }
 
-    /// [`Self::box_us`] for a stamp and domain held on their own.
+    /// [`Self::box_us`] for a bare stamp and domain.
     pub fn box_us_of(&mut self, raw: u32, domain: ClockDomain) -> u64 {
         let d = &mut self.domains[domain.index()];
         if !d.seen {
@@ -348,7 +332,6 @@ impl Timeline {
             d.last = raw;
             return d.epoch + raw as u64;
         }
-        // Forward distance from the high-water mark, modulo the 32-bit range.
         if raw.wrapping_sub(d.last) <= HALF_RANGE {
             if raw < d.last {
                 d.epoch += 1u64 << 32;
@@ -356,18 +339,18 @@ impl Timeline {
             d.last = raw;
             d.epoch + raw as u64
         } else {
-            // Out of order: same epoch line, and the high-water mark must not regress. Saturating
-            // because a straggler older than the whole timeline has nowhere to go below zero.
+            // Out of order: same epoch, high-water mark unchanged. Saturates for a straggler older
+            // than the whole timeline.
             (d.epoch + d.last as u64).saturating_sub(d.last.wrapping_sub(raw) as u64)
         }
     }
 
-    /// Forget one domain's rollover count and measured floor, for a chip that rebooted.
+    /// Clears one domain's rollover count and measured floor, for a rebooted chip.
     pub fn reset(&mut self, domain: ClockDomain) {
         self.domains[domain.index()] = DomainState::default();
     }
 
-    /// Events observed for a domain. The floor is a minimum over these: a handful is a loose
+    /// Events observed in a domain. The floor is a minimum over them: a handful gives a loose
     /// estimate, a few hundred a tight one.
     pub fn samples(&self, domain: ClockDomain) -> u64 {
         self.domains[domain.index()].samples

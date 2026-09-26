@@ -13,8 +13,10 @@ use crate::protocol::{FrameDecoder, FrameType, PROTO_VER, Resp, encode, parse_re
 use crate::transport::Transport;
 use crate::types::{ClipSettings, ClipStatus, Version};
 
+use super::correlation::HELLO_SEQ;
 use super::counters::Counters;
 use super::reconcile::DesiredState;
+use super::restart::RestartWatch;
 use super::slot::TransportSlot;
 use super::{Link, write_frame};
 
@@ -23,10 +25,12 @@ const AUTO_RECONNECT_MAX: Duration = Duration::from_secs(2);
 
 const PROBE_DEADLINE: Duration = Duration::from_millis(1200);
 // The box drops PC-owned state on a fresh control-link open and can miss the first query while it
-// settles, so re-send the probe this often within the deadline.
+// settles, so the probe repeats this often within the deadline.
 const PROBE_QUERY_GAP: Duration = Duration::from_millis(300);
+// Any `SEQ` but the hello's, so a probe's `RESP(VERSION)` never reads as one.
+const PROBE_SEQ: u8 = 0x80;
 
-/// The opened box's stable identity: CH343 serial (may be absent) plus the device chip's base MAC.
+/// Stable box identity: CH343 serial (may be absent) and the device chip's base MAC.
 #[derive(Clone, Debug)]
 pub(crate) struct BoxIdentity {
     pub(crate) serial: Option<String>,
@@ -41,63 +45,73 @@ pub(crate) struct ReconnectCtx {
     pub(crate) desired: Arc<Mutex<DesiredState>>,
     pub(crate) reconnect_lock: Arc<Mutex<()>>,
     pub(crate) identity: Arc<Mutex<Option<BoxIdentity>>>,
-    // The lock subscribe and unsubscribe commit under. Held across the read of the desired catch set
-    // AND the sends that replay it, for the same reason the keepalive holds it: an unsubscribe
-    // committing in between leaves this path re-adding the entry it just removed, into a box whose
-    // table no later diff will ever narrow again.
+    // The lock subscribe and unsubscribe commit under.
     pub(crate) catch_lock: Arc<Mutex<()>>,
-    // Both halves of the update reply path. A reply from before the box went away answers a command
-    // the box no longer remembers, and the parked ones survive a transport swap where the bytes
-    // still in the old handle's buffer do not.
+    // Both halves of the update reply path.
     pub(crate) held_updates: Arc<Mutex<Vec<Vec<u8>>>>,
     pub(crate) updates_rx: flume::Receiver<Vec<u8>>,
+    pub(crate) restart: Arc<RestartWatch>,
 }
 
-// Asks the reopened port one `QUERY` and reads the answer off the local handle before it is swapped
-// in, so the read never races the reader thread (which is on the disconnected slot here). The first
-// reply for the selector decides: the box answers the same way to every re-send, so a reply `read`
-// cannot use ends the probe at once, and a later reply never replaces one already taken.
+// Reads the reply off the local handle before it is swapped in, so the read never races the reader
+// thread (on the disconnected slot here).
 pub(crate) fn probe<T>(
     transport: &dyn Transport,
     what: u8,
     read: impl Fn(&[u8]) -> Option<T>,
 ) -> Option<T> {
-    let frame = encode(FrameType::Query, 0, &[what]).ok()?;
+    probe_seeing_hello(transport, what, read).0
+}
+
+// Also says whether the box's hello went past, which after a blip means the chip booted during it.
+fn probe_seeing_hello<T>(
+    transport: &dyn Transport,
+    what: u8,
+    read: impl Fn(&[u8]) -> Option<T>,
+) -> (Option<T>, bool) {
+    let Ok(frame) = encode(FrameType::Query, PROBE_SEQ, &[what]) else {
+        return (None, false);
+    };
     let mut decoder = FrameDecoder::new();
     let start = Instant::now();
     let mut last_query: Option<Instant> = None;
     let mut found: Option<Option<T>> = None;
+    let mut hello = false;
     let mut rx = [0u8; 256];
     while found.is_none() && start.elapsed() < PROBE_DEADLINE {
         if last_query.is_none_or(|t| t.elapsed() >= PROBE_QUERY_GAP) {
             if transport.write_all(&frame).is_err() {
-                return None;
+                return (None, hello);
             }
             last_query = Some(Instant::now());
         }
         match transport.read(&mut rx) {
             Ok(0) => {}
             Ok(n) => decoder.feed(&rx[..n], |f| {
-                if found.is_none() && f.ty == FrameType::Resp && f.payload.first() == Some(&what) {
+                if f.ty != FrameType::Resp {
+                    return;
+                }
+                hello |= f.seq == HELLO_SEQ && f.payload.first() == Some(&Q_VERSION);
+                if found.is_none() && f.payload.first() == Some(&what) {
                     found = Some(read(&f.payload));
                 }
             }),
-            Err(_) => return None,
+            Err(_) => return (None, hello),
         }
     }
-    found.flatten()
+    (found.flatten(), hello)
 }
 
 // A rescan confirms the MAC before adopting a port.
-fn probe_version(transport: &dyn Transport) -> Option<Version> {
-    probe(transport, Q_VERSION, |p| match parse_resp(p) {
+fn probe_version(transport: &dyn Transport) -> (Option<Version>, bool) {
+    probe_seeing_hello(transport, Q_VERSION, |p| match parse_resp(p) {
         Some(Resp::Version(v)) => Some(v),
         _ => None,
     })
 }
 
-// The reopened clone's declared button count. `None` for a box that does not answer or reports no
-// buttons; a wide-button blanket then keeps whatever count the handshake or a prior reconnect cached.
+// `None` for a box that does not reply or reports no buttons; a wide-button blanket then keeps the
+// count the handshake or a prior reconnect cached.
 fn probe_caps(transport: &dyn Transport) -> Option<u8> {
     probe(transport, Q_CAPS, |p| match parse_resp(p) {
         Some(Resp::Caps(c)) => Some(c.mouse.n_buttons),
@@ -106,8 +120,8 @@ fn probe_caps(transport: &dyn Transport) -> Option<u8> {
     .filter(|&n| n > 0)
 }
 
-// What the box holds of a clip after the blip. A drop shorter than the box's silence window leaves the
-// clip, its settings and its triggers standing; a longer one clears them.
+// A drop shorter than the box's silence window leaves the clip, its settings and triggers; a longer
+// one clears them.
 pub(crate) fn probe_clip(transport: &dyn Transport) -> Option<(ClipStatus, ClipSettings)> {
     probe(transport, Q_CLIP, |p| {
         Some((ClipStatus::from_payload(p)?, ClipSettings::from_payload(p)?))
@@ -119,8 +133,8 @@ fn reconnect(ctx: &ReconnectCtx) -> Result<()> {
     let identity = ctx.identity.lock().clone();
     let ports = crate::transport::scan::find_medius();
 
-    // With a known serial, try matching port(s) first; if none match (no serial served, or it
-    // changed), fall back to every port and let the MAC confirm which is ours.
+    // With a known serial, try matching ports first; if none match (no serial, or it changed), try
+    // every port and let the MAC confirm.
     let candidates: Vec<_> = match &identity {
         Some(id) if id.serial.is_some() => {
             let matched: Vec<_> = ports
@@ -148,8 +162,8 @@ fn reconnect(ctx: &ReconnectCtx) -> Result<()> {
     adopt_first(ctx, identity.as_ref(), opened)
 }
 
-// Takes back the first reopened port that is this box on this build's protocol. A box that answers on
-// another protocol is refused with it, as the handshake refuses one.
+// Adopts the first reopened port that is this box on this build's protocol; a box on another
+// protocol is refused with it, as the handshake refuses one.
 #[cfg_attr(not(feature = "tracing"), allow(unused_variables))] // `path` is only read by trace_event!
 fn adopt_first(
     ctx: &ReconnectCtx,
@@ -158,9 +172,9 @@ fn adopt_first(
 ) -> Result<()> {
     let mut refused = None;
     for (path, port) in opened {
-        let version = probe_version(&*port);
-        // With an identity on record, confirm the MAC before committing so a rescan never adopts the
-        // wrong box. Without one (a transport opened bare, e.g. a mock), accept the first that opens.
+        let (version, restarted) = probe_version(&*port);
+        // With an identity on record, the MAC must match; without one (a bare transport, e.g. a
+        // mock), the first port that opens is taken.
         if let Some(id) = identity
             && version.as_ref().is_none_or(|v| v.mac != id.mac)
         {
@@ -184,16 +198,15 @@ fn adopt_first(
             refused = Some(got);
             continue;
         }
-        // Refresh the declared button count off the reopened clone before the replay, so a wide-button
-        // blanket re-asserts onto the count the box reports now and a device swapped in during the blip
-        // re-asserts onto the new device's count.
+        // Button count refreshed before the replay, so a wide-button blanket re-asserts onto the
+        // current count, including a device swapped in during the blip.
         if let Some(n) = probe_caps(&*port) {
             ctx.desired.lock().note_declared_buttons(n);
         }
-        // Held from the read of the box's clip to the end of the replay. A clip call sends and records
-        // under this lock, so it lands whole on one side of the read and its adoption.
+        // Held from the clip read to the end of the replay; a clip call sends and records under it,
+        // so it lands wholly before or after the read and its adoption.
         let _reassert = ctx.catch_lock.lock();
-        let clip = probe_clip(&*port);
+        let clip = if restarted { None } else { probe_clip(&*port) };
         ctx.transport.swap(port);
         ctx.held_updates.lock().clear();
         while ctx.updates_rx.try_recv().is_ok() {}
@@ -205,8 +218,14 @@ fn adopt_first(
             reason = "rescan",
             "reconnected",
         );
-        // A clip is the caller's to reload, so the replay sends none of it. The keepalive holds
-        // whatever of it the box still has.
+        // A chip that booted during the blip has no clone yet: the restart recovery re-sends what
+        // is held, the clip's settings and triggers with it, once it has one.
+        if restarted {
+            ctx.restart.begin();
+            return Ok(());
+        }
+        // The caller reloads a clip, so the replay sends none; the keepalive keeps what the box still
+        // has.
         if let Some((status, settings)) = clip {
             ctx.desired.lock().clip_adopt(&status, &settings);
         }
@@ -224,67 +243,72 @@ fn reapply_held(ctx: &ReconnectCtx) -> Result<()> {
 }
 
 fn reapply_held_locked(ctx: &ReconnectCtx) -> Result<()> {
-    let (held, held_locks, catch, rewrites, transforms) = {
-        let d = ctx.desired.lock();
+    reapply_locked(
+        &ctx.transport,
+        &ctx.write_lock,
+        &ctx.seq,
+        &ctx.counters,
+        &ctx.desired,
+        false,
+    )
+}
+
+// Re-sends everything held, under the caller's `catch_lock`. `with_clip` adds the clip's settings and
+// triggers, for a box that restarted and holds none of them.
+pub(crate) fn reapply_locked(
+    transport: &TransportSlot,
+    write_lock: &Mutex<()>,
+    seq: &AtomicU8,
+    counters: &Counters,
+    desired: &Mutex<DesiredState>,
+    with_clip: bool,
+) -> Result<()> {
+    let (held, held_locks, catch, rewrites, transforms, clip) = {
+        let d = desired.lock();
         (
             d.held().collect::<Vec<_>>(),
             d.held_locks(),
             d.catch(),
             d.held_rewrites(),
             d.held_transforms(),
+            if with_clip {
+                d.clip_config_frames()
+            } else {
+                Vec::new()
+            },
         )
+    };
+    let send = |ty: FrameType, payload: &[u8]| {
+        let seq = seq.fetch_add(1, Ordering::Relaxed);
+        write_frame(transport, write_lock, counters, seq, ty, payload)
     };
     for (usage, action) in held {
         let (class, id) = usage.class_id();
-        let seq = ctx.seq.fetch_add(1, Ordering::Relaxed);
-        write_frame(
-            &ctx.transport,
-            &ctx.write_lock,
-            &ctx.counters,
-            seq,
+        send(
             FrameType::Inject,
             &inject_payload(class, id, action.as_u8()),
         )?;
     }
-    // Re-assert held scales: like injection, the firmware silence-clears every one after the ~1 s
-    // window, so a blip past it would leave physical input passing untouched without this. The scale is
-    // re-sent at the value the host set, not as a blanket block, or a 40% weighing would come back as a
-    // hard lock.
+    // Scales: like injection, the firmware clears them after ~1 s of silence, so a longer blip leaves
+    // physical input untouched without this.
     for ((class, usage, direction), scale) in held_locks {
-        let seq = ctx.seq.fetch_add(1, Ordering::Relaxed);
-        write_frame(
-            &ctx.transport,
-            &ctx.write_lock,
-            &ctx.counters,
-            seq,
+        send(
             FrameType::Lock,
             &lock_payload(class, usage, direction, scale),
         )?;
     }
-    // Re-assert the catch table: a link drop past the firmware's ~1 s silence window makes the box
-    // clear it, so without this the stream stays dead. Idempotent if the drop was short.
+    // Catch table: a drop past the ~1 s silence window clears it, and the stream stays dead without
+    // this. Idempotent after a short drop.
     for f in catch.values() {
-        let seq = ctx.seq.fetch_add(1, Ordering::Relaxed);
         let (class, id) = f.wire();
-        write_frame(
-            &ctx.transport,
-            &ctx.write_lock,
-            &ctx.counters,
-            seq,
+        send(
             FrameType::Catch,
             &catch_payload(class, id, f.direction().as_u8(), 1, f.capture().as_u8()),
         )?;
     }
-    // Re-assert the rewrite table: a drop past the firmware silence window, or a re-clone, clears it
-    // box-side, so without this the rules stay dead. Each goes out as state 1 (add/overwrite), which
-    // is idempotent if the drop was short.
+    // Rewrite table: a drop past the silence window, or a re-clone, clears it on the box.
     for r in rewrites {
-        let seq = ctx.seq.fetch_add(1, Ordering::Relaxed);
-        write_frame(
-            &ctx.transport,
-            &ctx.write_lock,
-            &ctx.counters,
-            seq,
+        send(
             FrameType::Rewrite,
             &rewrite_payload(
                 r.class,
@@ -299,19 +323,16 @@ fn reapply_held_locked(ctx: &ReconnectCtx) -> Result<()> {
             ),
         )?;
     }
-    // Re-assert the transform table for the same reason (§3.15): the box clears it past the silence
-    // window or on a re-clone, and each goes out as state 1 (add/overwrite), idempotent if the drop was
-    // short. A refused entry (its field gone on the swapped-in device) is simply absent from the box.
+    // Transform table, likewise (§3.15): each goes out as state 1 (add/overwrite), idempotent after a
+    // short drop. An entry whose field the swapped-in device lacks is absent from the box.
     for t in transforms {
-        let seq = ctx.seq.fetch_add(1, Ordering::Relaxed);
-        write_frame(
-            &ctx.transport,
-            &ctx.write_lock,
-            &ctx.counters,
-            seq,
+        send(
             FrameType::Transform,
             &transform_payload(t.op, t.sclass, t.sid, t.dclass, t.did, 1),
         )?;
+    }
+    for (ty, payload) in clip {
+        send(ty, &payload)?;
     }
     Ok(())
 }
@@ -340,10 +361,11 @@ impl Link {
             catch_lock: Arc::clone(&self.inner.catch_lock),
             held_updates: Arc::clone(&self.inner.held_updates),
             updates_rx: self.inner.updates_rx.clone(),
+            restart: Arc::clone(&self.inner.restart),
         }
     }
 
-    /// Record the box's stable identity so a later rescan reconnects to this same box.
+    /// Records the box's identity so a later rescan reconnects to the same box.
     pub(crate) fn set_identity(&self, id: BoxIdentity) {
         *self.inner.identity.lock() = Some(id);
     }

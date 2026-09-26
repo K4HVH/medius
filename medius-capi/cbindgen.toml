@@ -19,10 +19,9 @@ parse_deps = false
 
 [export]
 prefix = ""
-# Every enum a caller supplies crosses the boundary as a uint8_t the crate validates, so nothing in
-# the ABI is typed as one any more, but the enums and their constants are still what callers pass,
-# and cbindgen prunes a type nothing references. Dropping one of these from the header compiles clean
-# on the Rust side and breaks every C caller, so each is pinned by name.
+# Callers pass these enums' constants as a validated uint8_t, so no ABI signature names them and
+# cbindgen would prune them. Dropping one compiles clean in Rust and breaks every C caller, so each is
+# pinned by name.
 include = [
     "MediusAction",
     "MediusAxis",

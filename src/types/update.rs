@@ -1,15 +1,16 @@
-//! Firmware update state: which chip, which slot, and how a staged image is answered (§3.13, §4.16).
+//! Firmware update state: target chip, booted slot, and the box's replies to update ops (§3.13,
+//! §4.16).
 
 use core::fmt;
 
 use crate::protocol::opcode::Q_FIRMWARE;
 
-/// Which chip an update addresses.
+/// Chip an update addresses.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum UpdateTarget {
-    /// The PC-facing chip: the clone, the control protocol, injection.
+    /// PC-facing chip: the clone, the control protocol, and the report the game PC reads.
     Device,
-    /// The device-facing chip, reachable only through the inter-chip link.
+    /// Device-facing chip, reachable only over the inter-chip link.
     Host,
 }
 
@@ -39,11 +40,11 @@ impl fmt::Display for UpdateTarget {
     }
 }
 
-/// What the bootloader thinks of the image a chip is running.
+/// Bootloader state of the image a chip runs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ImageState {
     New,
-    /// Booted but not yet confirmed. This is the window a failed image is reverted in.
+    /// Booted, not yet confirmed: the window in which a failed image is reverted.
     PendingVerify,
     Valid,
     Invalid,
@@ -63,8 +64,8 @@ impl ImageState {
         }
     }
 
-    /// True while the chip has not confirmed the image it booted. A chip in this state refuses to
-    /// open another update, because the one it is running might still be reverted.
+    /// True until the chip confirms its booted image. Meanwhile it refuses another update, since
+    /// the running one might still be reverted.
     pub fn is_pending(self) -> bool {
         matches!(self, ImageState::PendingVerify)
     }
@@ -83,7 +84,7 @@ impl fmt::Display for ImageState {
     }
 }
 
-/// One chip's firmware version and which of its two app slots it booted.
+/// One chip's firmware version and booted app slot.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ChipFirmware {
     pub major: u8,
@@ -104,11 +105,11 @@ impl fmt::Display for ChipFirmware {
     }
 }
 
-/// The decoded `RESP(FIRMWARE)` payload (§4.16): the only place the host chip's version appears.
+/// Decoded `RESP(FIRMWARE)` (§4.16): the only source of the host chip's version.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct FirmwareInfo {
     pub device: ChipFirmware,
-    /// `None` when the host chip has not answered over the inter-chip link.
+    /// `None` when the host chip has not replied over the inter-chip link.
     pub host: Option<ChipFirmware>,
     /// Usable bytes in a spare slot; the same on both chips.
     pub slot_size: u32,
@@ -146,13 +147,13 @@ impl FirmwareInfo {
         })
     }
 
-    /// True while either chip is still on probation, which is when an update is refused.
+    /// True while either chip is on probation, when updates are refused.
     pub fn any_pending(&self) -> bool {
         self.device.state.is_pending() || self.host.is_some_and(|h| h.state.is_pending())
     }
 }
 
-/// What the box answered one `UPDATE` op with (§4.16).
+/// Box's reply to one `UPDATE` op (§4.16).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct UpdateStatus(pub u8);
 
@@ -173,8 +174,8 @@ impl UpdateStatus {
     pub const NOTHING_STAGED: UpdateStatus = UpdateStatus(0x19);
     pub const BAD_STATE: UpdateStatus = UpdateStatus(0x1A);
     pub const ON_PROBATION: UpdateStatus = UpdateStatus(0x1B);
-    /// Refused before the slot was touched. Unlike [`UpdateStatus::WRITE_FAILED`], which comes after
-    /// the erase, whatever was already staged survives this and is still bootable.
+    /// Refused before the slot was touched, so anything staged survives and is still bootable
+    /// ([`UpdateStatus::WRITE_FAILED`] comes after the erase).
     pub const UNTOUCHED: UpdateStatus = UpdateStatus(0x1C);
 
     pub fn name(self) -> &'static str {
@@ -207,7 +208,7 @@ impl fmt::Display for UpdateStatus {
     }
 }
 
-/// How far a staged transfer has got, for a progress callback.
+/// Staged transfer progress, for a progress callback.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct UpdateProgress {
     pub target: UpdateTarget,
@@ -228,7 +229,6 @@ use crate::protocol::opcode::{
     OTA_OP_ABORT, OTA_OP_ACTIVATE, OTA_OP_BEGIN, OTA_OP_DATA, OTA_OP_END,
 };
 
-/// What the box was being asked to do. An op number means nothing to the reader.
 pub(crate) fn update_doing(op: u8) -> &'static str {
     match op {
         OTA_OP_BEGIN => "starting the transfer",
@@ -240,7 +240,6 @@ pub(crate) fn update_doing(op: u8) -> &'static str {
     }
 }
 
-/// Why it was refused, and what to do where that is not obvious.
 pub(crate) fn update_reason(op: u8, status: UpdateStatus, arg: u32) -> String {
     match status {
         UpdateStatus::BUSY => "an update is already open on that chip".into(),
