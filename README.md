@@ -361,7 +361,7 @@ Four layers, `protocol → transport → link → device`, each using only the o
 | Layer | What |
 |---|---|
 | `protocol` | wire codec: framed binary (SOF, type, rolling SEQ, length, payload, CRC16), no I/O |
-| `transport` | byte pipe (no `unsafe`) and VID/PID discovery over `serialport`; on Windows, `serial2`'s overlapped COM handle keeps a read and a write in flight at once |
+| `transport` | byte pipe and VID/PID discovery over `serialport`; on Windows, `serial2`'s overlapped COM handle keeps a read and a write in flight at once, and a comm event wakes the reader (the crate's only `unsafe`) |
 | `link` | live connection: reader thread, SEQ-correlated queries, keepalive, reconnect |
 | `device` | typed API; each command is one `link.send(...)` |
 

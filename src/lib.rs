@@ -1,6 +1,7 @@
 //! Host control library for the medius transparent mouse passthrough box.
 
-#![forbid(unsafe_code)]
+#![cfg_attr(not(windows), forbid(unsafe_code))]
+#![cfg_attr(windows, deny(unsafe_code))]
 #![warn(missing_debug_implementations)]
 
 #[macro_use]

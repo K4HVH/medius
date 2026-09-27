@@ -5,9 +5,9 @@
 use std::collections::VecDeque;
 use std::io;
 
-use parking_lot::Mutex;
+use parking_lot::{Condvar, Mutex};
 
-use super::Transport;
+use super::{IDLE_READ_WAIT, Transport};
 use crate::protocol::{FrameDecoder, FrameType, encode};
 
 type Responder = Box<dyn Fn(FrameType, u8, &[u8]) -> Vec<u8> + Send + Sync>;
@@ -21,6 +21,7 @@ struct Inner {
 
 pub(crate) struct MockTransport {
     inner: Mutex<Inner>,
+    readable: Condvar,
 }
 
 impl std::fmt::Debug for MockTransport {
@@ -49,6 +50,7 @@ impl MockTransport {
                 out_decoder: FrameDecoder::new(),
                 responder: None,
             }),
+            readable: Condvar::new(),
         }
     }
 
@@ -63,6 +65,7 @@ impl MockTransport {
 
     pub(crate) fn push_bytes(&self, bytes: &[u8]) {
         self.inner.lock().inbound.extend(bytes.iter().copied());
+        self.readable.notify_all();
     }
 
     pub(crate) fn push_frame(&self, ty: FrameType, seq: u8, payload: &[u8]) {
@@ -87,7 +90,10 @@ impl Transport for MockTransport {
             out_decoder.feed(buf, |frame| {
                 replies.extend(responder(frame.ty, frame.seq, &frame.payload));
             });
-            inner.inbound.extend(replies);
+            if !replies.is_empty() {
+                inner.inbound.extend(replies);
+                self.readable.notify_all();
+            }
         }
         Ok(())
     }
@@ -98,7 +104,7 @@ impl Transport for MockTransport {
         }
         let mut inner = self.inner.lock();
         if inner.inbound.is_empty() {
-            return Ok(0);
+            self.readable.wait_for(&mut inner, IDLE_READ_WAIT);
         }
         let n = buf.len().min(inner.inbound.len());
         for slot in buf.iter_mut().take(n) {

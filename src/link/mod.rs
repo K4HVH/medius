@@ -83,6 +83,7 @@ impl std::fmt::Debug for LinkInner {
 impl Drop for LinkInner {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::SeqCst);
+        self.transport.current().wake_read();
         if let Some(h) = self.reader.take() {
             let _ = h.join();
         }

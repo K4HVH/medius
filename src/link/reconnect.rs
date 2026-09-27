@@ -81,7 +81,7 @@ fn probe_seeing_hello<T>(
     while found.is_none() && start.elapsed() < PROBE_DEADLINE {
         if last_query.is_none_or(|t| t.elapsed() >= PROBE_QUERY_GAP) {
             if transport.write_all(&frame).is_err() {
-                return (None, hello);
+                break;
             }
             last_query = Some(Instant::now());
         }
@@ -96,9 +96,10 @@ fn probe_seeing_hello<T>(
                     found = Some(read(&f.payload));
                 }
             }),
-            Err(_) => return (None, hello),
+            Err(_) => break,
         }
     }
+    transport.release_read();
     (found.flatten(), hello)
 }
 
