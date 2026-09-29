@@ -1398,9 +1398,10 @@ typedef struct MediusStats {
     uint32_t link_rx_drops;
     // The same count for the host chip, relayed over the link.
     uint32_t host_rx_drops;
-    // A relayed packet the box could not carry: a vendor IN packet the PC is not draining, or an OUT
-    // packet the box could not queue or that a bus reset overtook. OUT is otherwise paced by making
-    // the PC wait. No player input is lost.
+    // A relayed packet the box could not carry: a vendor IN packet the PC is not draining, a
+    // zero-length packet on an interrupt IN endpoint it is not reading, or an OUT packet the box could
+    // not queue or that a bus reset overtook. OUT is otherwise paced by making the PC wait. No player
+    // input is lost.
     uint32_t relay_drops;
     // Times the box released host-set session state; 0 at boot. Wraps, so compare for inequality.
     uint16_t session;
@@ -1581,7 +1582,7 @@ typedef struct MediusTrafficEvent {
     // to assign it to one.
     uint8_t direction;
     // Class-specific; read it with `medius_traffic_event_control_status`, `..._rule_acted`,
-    // `..._bus_event`, `..._transfer_status` or the bulk accessors.
+    // `..._bus_event`, `..._transfer_status`, `..._zlp` or `..._bulk_end_of_transfer`.
     uint8_t flags;
     // The packet's length before `capture` truncated it.
     uint16_t true_len;
@@ -2652,9 +2653,9 @@ bool medius_traffic_event_rule_acted(const struct MediusTrafficEvent *event);
 // `medius::TrafficEvent::bulk_end_of_transfer`.
 bool medius_traffic_event_bulk_end_of_transfer(const struct MediusTrafficEvent *event);
 
-// Whether this VEND_BULK event is a zero-length packet, which ends a transfer whose length is an
-// exact multiple of the packet size. Mirrors `medius::TrafficEvent::bulk_zlp`.
-bool medius_traffic_event_bulk_zlp(const struct MediusTrafficEvent *event);
+// Whether this event is a zero-length packet, or on a HID endpoint a HID_IN or EMIT report one
+// ended after its bytes. Mirrors `medius::TrafficEvent::zlp`.
+bool medius_traffic_event_zlp(const struct MediusTrafficEvent *event);
 
 // Whether the clip holds `usage` down. Mirrors `medius::ClipStatus::is_held`.
 bool medius_clip_status_is_held(const struct MediusClipStatus *status, struct MediusUsage usage);

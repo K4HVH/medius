@@ -286,7 +286,8 @@ class Stats:
     `tx_drops` (a report the clone's queue could not hold) and `link_rx_drops`/`host_rx_drops` (an
     input-carrying frame one chip could not take off the inter-chip link) are lost player input and
     should read 0. `relay_drops` is relayed traffic and commands that went no further: a vendor IN
-    packet the PC is not draining, an OUT packet the box could not queue or deliver, a relayed request
+    packet the PC is not draining, a zero-length packet on an interrupt IN endpoint it is not reading,
+    an OUT packet the box could not queue or deliver, a relayed request
     or flagged MOVE it could not queue, and non-input frames either chip's link ring dropped. None of
     it is native input.
     """
@@ -784,10 +785,10 @@ class TrafficEvent:
         c = traffic_event_to_c(self)
         return bool(_native.lib.medius_traffic_event_bulk_end_of_transfer(ctypes.byref(c)))
 
-    def bulk_zlp(self) -> bool:
-        """Whether this VENDOR_BULK event is a zero-length packet, which ends a transfer."""
+    def zlp(self) -> bool:
+        """Whether this event is a zero-length packet, or on a HID endpoint a HID_IN or EMIT report one ended."""
         c = traffic_event_to_c(self)
-        return bool(_native.lib.medius_traffic_event_bulk_zlp(ctypes.byref(c)))
+        return bool(_native.lib.medius_traffic_event_zlp(ctypes.byref(c)))
 
 
 @dataclass

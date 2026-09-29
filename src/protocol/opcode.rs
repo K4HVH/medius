@@ -248,6 +248,10 @@ pub const CATCH_CTRL_MASK: u8 = 0x03;
 /// `TRAFFIC_EVENT.flags` bit 7 on a class the rewrite table acts at: a rule changed, dropped,
 /// answered or refused the packet.
 pub const CATCH_F_RULE: u8 = 0x80;
+/// `TRAFFIC_EVENT.flags` bit 1 on a packet class: a zero-length packet. A `CATCH_CLS_HID_IN` or
+/// `CATCH_CLS_EMIT` event on a HID endpoint carries a report of up to 64 bytes whole, so there it
+/// can also be the one that ended the report after the event's bytes.
+pub const CATCH_F_ZLP: u8 = 0x02;
 
 /// `RESP(CATCH).clk_rate_ppb` sentinel: no fitted drift rate. A fitted 0 means matched crystals.
 pub const CLK_RATE_NONE: i32 = i32::MIN;

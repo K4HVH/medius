@@ -945,7 +945,7 @@ def test_traffic_event_true_len_above_the_capture_is_truncation():
     assert len(ev.traffic.bytes) == 16
     assert ev.traffic.truncated()
     assert ev.traffic.bulk_end_of_transfer()
-    assert ev.traffic.bulk_zlp()
+    assert ev.traffic.zlp()
 
     whole = TrafficEvent(CatchClass.VENDOR_BULK, 3, Direction.POSITIVE, 0, 16, bytes(16))
     assert not whole.truncated()
