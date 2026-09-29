@@ -2667,6 +2667,10 @@ bool medius_caps_has_keyboard(struct MediusCaps caps);
 // Whether the clone is composite (multi-HID-interface). Delegates to `medius::Caps::is_composite`.
 bool medius_caps_is_composite(struct MediusCaps caps);
 
+// Whether a device is cloned, including one with no HID interface (`n_hid` 0). Delegates to
+// `medius::DeviceInfo::is_cloned`.
+bool medius_device_info_is_cloned(struct MediusDeviceInfo info);
+
 // Subscribe to the catch stream for `filters[0..n]` (built with the `medius_catch_filter_*` helpers), writing the handle to `*out`.
 MediusStatus medius_device_catch_events(struct MediusDevice *dev,
                                         const struct MediusCatchFilter *filters,

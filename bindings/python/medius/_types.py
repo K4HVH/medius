@@ -219,6 +219,10 @@ class DeviceInfo:
     kind: DeviceKind
     product: str
 
+    def is_cloned(self) -> bool:
+        """Whether a device is cloned, including one with no HID interface (``n_hid`` 0)."""
+        return bool(_native.lib.medius_device_info_is_cloned(device_info_to_c(self)))
+
 
 @dataclass
 class MouseCaps:

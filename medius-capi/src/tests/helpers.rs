@@ -280,6 +280,18 @@ fn caps_predicates() {
 }
 
 #[test]
+fn device_info_is_cloned_by_its_identity_not_its_hid_interfaces() {
+    let none = MediusDeviceInfo::from(medius::DeviceInfo::default());
+    assert!(!medius_device_info_is_cloned(none));
+    let pad = MediusDeviceInfo::from(medius::DeviceInfo {
+        vid: 0x045E,
+        pid: 0x028E,
+        ..medius::DeviceInfo::default()
+    });
+    assert!(medius_device_info_is_cloned(pad));
+}
+
+#[test]
 fn usage_snapshot_count_caps_at_capacity_without_wrapping() {
     let snap = medius::UsageSnapshot {
         ts_us: 0,
