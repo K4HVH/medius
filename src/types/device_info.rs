@@ -4,8 +4,9 @@ use core::fmt;
 
 use crate::protocol::opcode::{DI_HAS_BOS, DI_HAS_SERIAL};
 
-/// Cloned device's primary kind, from its HID report descriptors, with its Boot declarations deciding
-/// between a mouse and a keyboard (§4.3).
+/// Cloned device's primary kind, from its HID report descriptors and Boot declarations (§4.3). One
+/// carrying both kinds reads keyboard with a full key bitmap (unless it declares Boot for both) or a
+/// Boot keyboard alone, and mouse otherwise.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum DeviceKind {
     /// Neither a mouse nor a keyboard (a vendor-class pad has no HID interface at all), or nothing cloned

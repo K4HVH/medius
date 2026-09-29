@@ -1381,7 +1381,7 @@ typedef struct MediusRate {
 // saturate, so a count keeps rising while loss continues.
 //
 // `tx_drops`, `link_rx_drops` and `host_rx_drops` are lost player input and should read 0.
-// `relay_drops` carries no input and is expected under load.
+// `relay_drops` is relayed traffic and commands that went no further, none of it native input.
 typedef struct MediusStats {
     uint32_t inject_emits;
     // Reports the clone's TX queue could not hold: player input the game PC never saw. Should

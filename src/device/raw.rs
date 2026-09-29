@@ -38,7 +38,9 @@ impl Device {
     /// `bytes` is at most 510 long, else [`Error::FrameTooLong`]. The box drops an interrupt payload
     /// past the endpoint's `wMaxPacketSize`, in either direction. A bulk payload splits at
     /// `wMaxPacketSize` on the wire and ends with a short packet, or a zero-length one on an exact
-    /// multiple.
+    /// multiple. An OUT packet waits its turn behind the device's two-packet hold, as the game PC's
+    /// writes do, and theirs wait behind it; up to 16 wait across all endpoints, and one past that is
+    /// dropped and counted in [`relay_drops`](crate::Stats::relay_drops).
     ///
     /// Admitted by [`allow_imperfect_clones`](Device::allow_imperfect_clones): with the opt-in off the
     /// box drops the frame with no reply, and this still returns `Ok`.

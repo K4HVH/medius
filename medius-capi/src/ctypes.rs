@@ -554,7 +554,7 @@ pub struct MediusRate {
 /// saturate, so a count keeps rising while loss continues.
 ///
 /// `tx_drops`, `link_rx_drops` and `host_rx_drops` are lost player input and should read 0.
-/// `relay_drops` carries no input and is expected under load.
+/// `relay_drops` is relayed traffic and commands that went no further, none of it native input.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MediusStats {
