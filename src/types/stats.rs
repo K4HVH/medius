@@ -34,9 +34,10 @@ pub struct Stats {
     pub link_rx_drops: u32,
     /// Same count for the chip reading the real device, relayed over the link.
     pub host_rx_drops: u32,
-    /// Back-pressure on a relayed stream, either direction: a vendor IN packet the PC is not
-    /// draining, or an OUT packet past the relay's one-per-frame ceiling. Expected under load, and
-    /// counted apart from `tx_drops` because no player input goes missing with it.
+    /// A relayed packet the box could not carry: a vendor IN packet the PC is not draining, or an OUT
+    /// packet the box could not queue or that a bus reset overtook. OUT is otherwise paced by making the
+    /// PC wait, so it stays 0 there. Counted apart from `tx_drops` because no player input goes missing
+    /// with it.
     pub relay_drops: u32,
     /// Times the box released host-set session state (locks, held input, subscriptions, rules,
     /// transforms, the clip, an LED override). Wraps, so compare for inequality; 0 at boot. The crate

@@ -4,7 +4,8 @@ use core::fmt;
 
 use crate::protocol::opcode::{DI_HAS_BOS, DI_HAS_SERIAL};
 
-/// Cloned device's primary kind, from its Boot-interface `bInterfaceProtocol`.
+/// Cloned device's primary kind, from its HID report descriptors, with its Boot declarations deciding
+/// between a mouse and a keyboard (§4.3).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum DeviceKind {
     /// Neither a mouse nor a keyboard (a vendor-class pad has no HID interface at all), or nothing cloned
@@ -50,9 +51,9 @@ pub struct DeviceInfo {
     pub has_serial: bool,
     /// The clone serves a BOS descriptor (`bcdUSB >= 0x0201`).
     pub has_bos: bool,
-    /// Primary kind (Boot-interface protocol).
+    /// Primary kind (§4.3).
     pub kind: DeviceKind,
-    /// `iProduct` string (empty if it serves none).
+    /// `iProduct` string as ASCII, `?` for each other character (empty if it serves none).
     pub product: String,
 }
 

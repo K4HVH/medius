@@ -249,7 +249,14 @@ fn a_clone_with_no_hid_interface_is_up() {
     mock.clear_recorded();
     mock.restart();
     await_restarts(&device, 1);
-    assert_eq!(sent(&mock, FrameType::Lock).len(), 1);
+    // Re-sent once the clone is back, not into the boot before it, where the box drops it.
+    assert_eq!(
+        device
+            .query_locks()
+            .unwrap()
+            .scale_of(Axis::Y, Direction::Negative),
+        0
+    );
 }
 
 // A box power-cycled while the link was down answers the reconnect probe after its hello. Its clone

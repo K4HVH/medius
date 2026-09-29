@@ -598,7 +598,8 @@ typedef uint8_t MediusClipState;
 #endif // __STDC_VERSION__ >= 202311L
 #endif // __cplusplus
 
-// The cloned device's primary kind, from its Boot-interface protocol.
+// The cloned device's primary kind, from its HID report descriptors, with its Boot declarations deciding
+// between a mouse and a keyboard.
 enum MediusDeviceKind
 #if defined(__cplusplus) || __STDC_VERSION__ >= 202311L
   : uint8_t
@@ -1397,9 +1398,9 @@ typedef struct MediusStats {
     uint32_t link_rx_drops;
     // The same count for the host chip, relayed over the link.
     uint32_t host_rx_drops;
-    // Relayed-stream back-pressure, either direction: a vendor IN packet the PC is not draining,
-    // or an OUT packet past the relay's one-per-frame ceiling. Expected under load; no player
-    // input is lost.
+    // A relayed packet the box could not carry: a vendor IN packet the PC is not draining, or an OUT
+    // packet the box could not queue or that a bus reset overtook. OUT is otherwise paced by making
+    // the PC wait. No player input is lost.
     uint32_t relay_drops;
     // Times the box released host-set session state; 0 at boot. Wraps, so compare for inequality.
     uint16_t session;

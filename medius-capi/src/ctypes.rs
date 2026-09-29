@@ -419,7 +419,8 @@ pub struct MediusLockTarget {
     pub usage: MediusUsage,
 }
 
-/// The cloned device's primary kind, from its Boot-interface protocol.
+/// The cloned device's primary kind, from its HID report descriptors, with its Boot declarations deciding
+/// between a mouse and a keyboard.
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MediusDeviceKind {
@@ -572,9 +573,9 @@ pub struct MediusStats {
     pub link_rx_drops: u32,
     /// The same count for the host chip, relayed over the link.
     pub host_rx_drops: u32,
-    /// Relayed-stream back-pressure, either direction: a vendor IN packet the PC is not draining,
-    /// or an OUT packet past the relay's one-per-frame ceiling. Expected under load; no player
-    /// input is lost.
+    /// A relayed packet the box could not carry: a vendor IN packet the PC is not draining, or an OUT
+    /// packet the box could not queue or that a bus reset overtook. OUT is otherwise paced by making
+    /// the PC wait. No player input is lost.
     pub relay_drops: u32,
     /// Times the box released host-set session state; 0 at boot. Wraps, so compare for inequality.
     pub session: u16,
