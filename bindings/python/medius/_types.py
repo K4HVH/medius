@@ -285,9 +285,10 @@ class Stats:
 
     `tx_drops` (a report the clone's queue could not hold) and `link_rx_drops`/`host_rx_drops` (an
     input-carrying frame one chip could not take off the inter-chip link) are lost player input and
-    should read 0. `relay_drops` is a relayed packet the box could not carry, a vendor IN packet the
-    PC is not draining or an OUT packet the box could not queue or that a bus reset overtook (OUT is
-    otherwise paced by making the PC wait); it carries no input.
+    should read 0. `relay_drops` is relayed traffic and commands that went no further: a vendor IN
+    packet the PC is not draining, an OUT packet the box could not queue or deliver, a relayed request
+    or flagged MOVE it could not queue, and non-input frames either chip's link ring dropped. None of
+    it is native input.
     """
 
     inject_emits: int

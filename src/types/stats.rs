@@ -8,8 +8,8 @@
 ///
 /// Act on [`tx_drops`](Self::tx_drops), [`link_rx_drops`](Self::link_rx_drops) and
 /// [`host_rx_drops`](Self::host_rx_drops): each counts the player's input going missing and should
-/// read 0. [`relay_drops`](Self::relay_drops) is back-pressure on a relayed stream, which carries no
-/// input and is expected under load.
+/// read 0. [`relay_drops`](Self::relay_drops) is relayed traffic and commands that went no further, none
+/// of it native input.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Stats {
     /// Pure-injection reports emitted (the no-halving / 1 kHz path).
@@ -34,10 +34,11 @@ pub struct Stats {
     pub link_rx_drops: u32,
     /// Same count for the chip reading the real device, relayed over the link.
     pub host_rx_drops: u32,
-    /// A relayed packet the box could not carry: a vendor IN packet the PC is not draining, or an OUT
-    /// packet the box could not queue or that a bus reset overtook. OUT is otherwise paced by making the
-    /// PC wait, so it stays 0 there. Counted apart from `tx_drops` because no player input goes missing
-    /// with it.
+    /// Relayed traffic and commands that went no further: a vendor IN packet the PC is not draining; an
+    /// OUT packet the box could not queue, that failed three times on the device's bus, or that a bus
+    /// reset or `SET_INTERFACE` overtook; a relayed request or a flagged `MOVE` the box could not queue;
+    /// and any frame other than native input that either chip's link receive ring dropped. Counted apart
+    /// from `tx_drops` because no native input goes missing with it.
     pub relay_drops: u32,
     /// Times the box released host-set session state (locks, held input, subscriptions, rules,
     /// transforms, the clip, an LED override). Wraps, so compare for inequality; 0 at boot. The crate
