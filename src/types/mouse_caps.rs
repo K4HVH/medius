@@ -15,7 +15,8 @@ pub struct MouseCaps {
     pub pan: bool,
     /// The mouse report sits behind a HID report ID.
     pub has_report_id: bool,
-    /// Number of cloned HID interfaces (`> 1` = composite).
+    /// Number of cloned HID interfaces (`> 1` = composite; 0 with nothing cloned, or for a clone with no HID
+    /// interface, which [`DeviceInfo::is_cloned`](crate::DeviceInfo::is_cloned) tells apart).
     pub n_hid: u8,
 }
 

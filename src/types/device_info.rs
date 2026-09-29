@@ -7,7 +7,8 @@ use crate::protocol::opcode::{DI_HAS_BOS, DI_HAS_SERIAL};
 /// Cloned device's primary kind, from its Boot-interface `bInterfaceProtocol`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum DeviceKind {
-    /// No Boot interface, or nothing cloned yet.
+    /// Neither a mouse nor a keyboard (a vendor-class pad has no HID interface at all), or nothing cloned
+    /// yet: [`DeviceInfo::is_cloned`] tells them apart.
     #[default]
     Unknown,
     Keyboard,
@@ -56,6 +57,11 @@ pub struct DeviceInfo {
 }
 
 impl DeviceInfo {
+    /// Whether a device is cloned: with none, the identity reads all-zero (§4.3).
+    pub fn is_cloned(&self) -> bool {
+        self.vid != 0 || self.pid != 0
+    }
+
     /// Decodes a `RESP(DEVICE_INFO)` payload (§4.3).
     pub(crate) fn from_payload(p: &[u8]) -> Option<Self> {
         if p.len() < 11 {

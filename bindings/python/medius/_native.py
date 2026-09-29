@@ -726,6 +726,7 @@ _decl("medius_clip_status_is_held", c_bool, [ctypes.POINTER(MediusClipStatus), M
 _decl("medius_caps_has_mouse", c_bool, [MediusCaps])
 _decl("medius_caps_has_keyboard", c_bool, [MediusCaps])
 _decl("medius_caps_is_composite", c_bool, [MediusCaps])
+_decl("medius_device_info_is_cloned", c_bool, [MediusDeviceInfo])
 
 _decl(
     "medius_device_catch_events",

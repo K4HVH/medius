@@ -643,3 +643,17 @@ pub extern "C" fn medius_caps_has_keyboard(caps: MediusCaps) -> bool {
 pub extern "C" fn medius_caps_is_composite(caps: MediusCaps) -> bool {
     guard(false, || medius::Caps::from(caps).is_composite())
 }
+
+/// Whether a device is cloned, including one with no HID interface (`n_hid` 0). Delegates to
+/// `medius::DeviceInfo::is_cloned`.
+#[unsafe(no_mangle)]
+pub extern "C" fn medius_device_info_is_cloned(info: MediusDeviceInfo) -> bool {
+    guard(false, || {
+        medius::DeviceInfo {
+            vid: info.vid,
+            pid: info.pid,
+            ..medius::DeviceInfo::default()
+        }
+        .is_cloned()
+    })
+}
