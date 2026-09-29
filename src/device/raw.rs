@@ -36,7 +36,9 @@ impl Device {
     /// two device reports.
     ///
     /// `bytes` is at most 510 long, else [`Error::FrameTooLong`]. The box drops an interrupt payload
-    /// past the endpoint's `wMaxPacketSize`, in either direction. A bulk payload splits at
+    /// past the endpoint's `wMaxPacketSize`, in either direction. On a HID IN endpoint, a payload of
+    /// exactly `wMaxPacketSize` ends with a zero-length packet when the endpoint's largest Input report
+    /// is longer, as a native report of that length does. A bulk payload splits at
     /// `wMaxPacketSize` on the wire and ends with a short packet, or a zero-length one on an exact
     /// multiple. An OUT packet waits its turn behind the device's two-packet hold, as the game PC's
     /// writes do, and theirs wait behind it; up to 16 wait across all endpoints, and one past that is

@@ -34,11 +34,12 @@ pub struct Stats {
     pub link_rx_drops: u32,
     /// Same count for the chip reading the real device, relayed over the link.
     pub host_rx_drops: u32,
-    /// Relayed traffic and commands that went no further: a vendor IN packet the PC is not draining; an
-    /// OUT packet the box could not queue, that failed three times on the device's bus, or that a bus
-    /// reset or `SET_INTERFACE` overtook; a relayed request or a flagged `MOVE` the box could not queue;
-    /// and any frame other than native input that either chip's link receive ring dropped. Counted apart
-    /// from `tx_drops` because no native input goes missing with it.
+    /// Relayed traffic and commands that went no further: a vendor IN packet the PC is not draining or a
+    /// zero-length packet on an interrupt IN endpoint it is not reading; an OUT packet the box could not
+    /// queue, that failed three times on the device's bus, or that a bus reset or `SET_INTERFACE`
+    /// overtook; a relayed request or a flagged `MOVE` the box could not queue; and any frame other than
+    /// native input that either chip's link receive ring dropped. Counted apart from `tx_drops` because no
+    /// native input goes missing with it.
     pub relay_drops: u32,
     /// Times the box released host-set session state (locks, held input, subscriptions, rules,
     /// transforms, the clip, an LED override). Wraps, so compare for inequality; 0 at boot. The crate

@@ -573,9 +573,10 @@ pub struct MediusStats {
     pub link_rx_drops: u32,
     /// The same count for the host chip, relayed over the link.
     pub host_rx_drops: u32,
-    /// A relayed packet the box could not carry: a vendor IN packet the PC is not draining, or an OUT
-    /// packet the box could not queue or that a bus reset overtook. OUT is otherwise paced by making
-    /// the PC wait. No player input is lost.
+    /// A relayed packet the box could not carry: a vendor IN packet the PC is not draining, a
+    /// zero-length packet on an interrupt IN endpoint it is not reading, or an OUT packet the box could
+    /// not queue or that a bus reset overtook. OUT is otherwise paced by making the PC wait. No player
+    /// input is lost.
     pub relay_drops: u32,
     /// Times the box released host-set session state; 0 at boot. Wraps, so compare for inequality.
     pub session: u16,
@@ -1225,7 +1226,7 @@ pub struct MediusTrafficEvent {
     /// to assign it to one.
     pub direction: u8,
     /// Class-specific; read it with `medius_traffic_event_control_status`, `..._rule_acted`,
-    /// `..._bus_event`, `..._transfer_status` or the bulk accessors.
+    /// `..._bus_event`, `..._transfer_status`, `..._zlp` or `..._bulk_end_of_transfer`.
     pub flags: u8,
     /// The packet's length before `capture` truncated it.
     pub true_len: u16,
