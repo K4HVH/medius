@@ -573,8 +573,8 @@ pub struct MediusStats {
     pub link_rx_drops: u32,
     /// The same count for the host chip, relayed over the link.
     pub host_rx_drops: u32,
-    /// A relayed packet the box could not carry: a vendor IN packet the PC is not draining, a
-    /// zero-length packet on an interrupt IN endpoint it is not reading, or an OUT packet the box could
+    /// A relayed packet the box could not carry: a vendor IN packet behind a queue full of RAW packets,
+    /// a zero-length packet answering a poll a suspended PC did not make, or an OUT packet the box could
     /// not queue or that a bus reset overtook. OUT is otherwise paced by making the PC wait. No player
     /// input is lost.
     pub relay_drops: u32,

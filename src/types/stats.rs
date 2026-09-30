@@ -34,8 +34,9 @@ pub struct Stats {
     pub link_rx_drops: u32,
     /// Same count for the chip reading the real device, relayed over the link.
     pub host_rx_drops: u32,
-    /// Relayed traffic and commands that went no further: a vendor IN packet the PC is not draining or a
-    /// zero-length packet on an interrupt IN endpoint it is not reading; an OUT packet the box could not
+    /// Relayed traffic and commands that went no further: a vendor IN packet that found its endpoint's queue
+    /// full of the control PC's `RAW` packets, or a device's zero-length packet answering a poll the PC did
+    /// not make (the one poll the box runs ahead of a suspended PC); an OUT packet the box could not
     /// queue, that failed three times on the device's bus, or that a bus reset or `SET_INTERFACE`
     /// overtook; a relayed request or a flagged `MOVE` the box could not queue; and any frame other than
     /// native input that either chip's link receive ring dropped. Counted apart from `tx_drops` because no
