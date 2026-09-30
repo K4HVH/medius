@@ -620,7 +620,11 @@ fn end_of_transfer_is_bulk_only_and_zlp_is_every_packet_class() {
     assert!(!unsafe { medius_traffic_event_bulk_end_of_transfer(&intr) });
     assert!(unsafe { medius_traffic_event_zlp(&intr) });
 
-    for class in [MEDIUS_CATCH_CLASS_HID_IN, MEDIUS_CATCH_CLASS_HID_OUT, MEDIUS_CATCH_CLASS_EMIT] {
+    for class in [
+        MEDIUS_CATCH_CLASS_HID_IN,
+        MEDIUS_CATCH_CLASS_HID_OUT,
+        MEDIUS_CATCH_CLASS_EMIT,
+    ] {
         let mut e = bulk;
         e.class = class;
         assert!(unsafe { medius_traffic_event_zlp(&e) }, "class {class}");
