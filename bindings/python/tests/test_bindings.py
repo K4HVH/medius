@@ -609,6 +609,18 @@ def test_device_info_roundtrip():
     assert got == info
     assert got.kind == DeviceKind.MOUSE
     assert got.product == "Logitech G502"
+    assert got.is_cloned()
+
+
+def test_a_clone_with_no_hid_interface_is_cloned():
+    pad = DeviceInfo(0x045E, 0x028E, 0x0114, 0x0200, True, False, DeviceKind.UNKNOWN, "Controller")
+    with MockBox() as mock:
+        mock.set_device_info(pad)
+        with Device.with_mock(mock) as d:
+            got = d.device_info()
+    assert got.kind == DeviceKind.UNKNOWN
+    assert got.is_cloned()
+    assert not DeviceInfo(0, 0, 0, 0, False, False, DeviceKind.UNKNOWN, "").is_cloned()
 
 
 def test_stats_roundtrip():
@@ -933,7 +945,7 @@ def test_traffic_event_true_len_above_the_capture_is_truncation():
     assert len(ev.traffic.bytes) == 16
     assert ev.traffic.truncated()
     assert ev.traffic.bulk_end_of_transfer()
-    assert ev.traffic.bulk_zlp()
+    assert ev.traffic.zlp()
 
     whole = TrafficEvent(CatchClass.VENDOR_BULK, 3, Direction.POSITIVE, 0, 16, bytes(16))
     assert not whole.truncated()

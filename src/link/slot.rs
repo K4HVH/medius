@@ -33,9 +33,10 @@ impl TransportSlot {
     }
 
     pub(crate) fn swap(&self, transport: Arc<dyn Transport>) {
-        *self.current.lock() = transport;
+        let old = std::mem::replace(&mut *self.current.lock(), transport);
         self.generation.fetch_add(1, Ordering::Release);
         self.accept();
+        old.wake_read();
     }
 
     pub(crate) fn refuse(&self, proto: u8) {

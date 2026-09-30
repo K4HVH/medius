@@ -280,6 +280,18 @@ fn caps_predicates() {
 }
 
 #[test]
+fn device_info_is_cloned_by_its_identity_not_its_hid_interfaces() {
+    let none = MediusDeviceInfo::from(medius::DeviceInfo::default());
+    assert!(!medius_device_info_is_cloned(none));
+    let pad = MediusDeviceInfo::from(medius::DeviceInfo {
+        vid: 0x045E,
+        pid: 0x028E,
+        ..medius::DeviceInfo::default()
+    });
+    assert!(medius_device_info_is_cloned(pad));
+}
+
+#[test]
 fn usage_snapshot_count_caps_at_capacity_without_wrapping() {
     let snap = medius::UsageSnapshot {
         ts_us: 0,
@@ -597,16 +609,31 @@ fn traffic_event_decodes_control_status_and_bus_events() {
 }
 
 #[test]
-fn bulk_flags_only_apply_to_the_bulk_class() {
+fn end_of_transfer_is_bulk_only_and_zlp_is_every_packet_class() {
     let mut bulk = control_event(&[], 0x03);
     bulk.class = MEDIUS_CATCH_CLASS_VENDOR_BULK;
     assert!(unsafe { medius_traffic_event_bulk_end_of_transfer(&bulk) });
-    assert!(unsafe { medius_traffic_event_bulk_zlp(&bulk) });
+    assert!(unsafe { medius_traffic_event_zlp(&bulk) });
 
     let mut intr = bulk;
     intr.class = MEDIUS_CATCH_CLASS_VENDOR_INTERRUPT;
     assert!(!unsafe { medius_traffic_event_bulk_end_of_transfer(&intr) });
-    assert!(!unsafe { medius_traffic_event_bulk_zlp(&intr) });
+    assert!(unsafe { medius_traffic_event_zlp(&intr) });
+
+    for class in [
+        MEDIUS_CATCH_CLASS_HID_IN,
+        MEDIUS_CATCH_CLASS_HID_OUT,
+        MEDIUS_CATCH_CLASS_EMIT,
+    ] {
+        let mut e = bulk;
+        e.class = class;
+        assert!(unsafe { medius_traffic_event_zlp(&e) }, "class {class}");
+        e.flags = 0x01;
+        assert!(!unsafe { medius_traffic_event_zlp(&e) }, "class {class}");
+    }
+    // Bit 1 of a control event is its NAK handshake.
+    let nak = control_event(&[], 0x02);
+    assert!(!unsafe { medius_traffic_event_zlp(&nak) });
 }
 
 #[test]

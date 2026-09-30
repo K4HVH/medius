@@ -419,7 +419,8 @@ pub struct MediusLockTarget {
     pub usage: MediusUsage,
 }
 
-/// The cloned device's primary kind, from its Boot-interface protocol.
+/// The cloned device's primary kind, from its HID report descriptors, with its Boot declarations deciding
+/// between a mouse and a keyboard.
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MediusDeviceKind {
@@ -553,7 +554,7 @@ pub struct MediusRate {
 /// saturate, so a count keeps rising while loss continues.
 ///
 /// `tx_drops`, `link_rx_drops` and `host_rx_drops` are lost player input and should read 0.
-/// `relay_drops` carries no input and is expected under load.
+/// `relay_drops` is relayed traffic and commands that went no further, none of it native input.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MediusStats {
@@ -572,8 +573,9 @@ pub struct MediusStats {
     pub link_rx_drops: u32,
     /// The same count for the host chip, relayed over the link.
     pub host_rx_drops: u32,
-    /// Relayed-stream back-pressure, either direction: a vendor IN packet the PC is not draining,
-    /// or an OUT packet past the relay's one-per-frame ceiling. Expected under load; no player
+    /// A relayed packet the box could not carry: a vendor IN packet behind a queue full of RAW packets,
+    /// a zero-length packet answering a poll a suspended PC did not make, or an OUT packet the box could
+    /// not queue or that a bus reset overtook. OUT is otherwise paced by making the PC wait. No player
     /// input is lost.
     pub relay_drops: u32,
     /// Times the box released host-set session state; 0 at boot. Wraps, so compare for inequality.
@@ -1224,7 +1226,7 @@ pub struct MediusTrafficEvent {
     /// to assign it to one.
     pub direction: u8,
     /// Class-specific; read it with `medius_traffic_event_control_status`, `..._rule_acted`,
-    /// `..._bus_event`, `..._transfer_status` or the bulk accessors.
+    /// `..._bus_event`, `..._transfer_status`, `..._zlp` or `..._bulk_end_of_transfer`.
     pub flags: u8,
     /// The packet's length before `capture` truncated it.
     pub true_len: u16,

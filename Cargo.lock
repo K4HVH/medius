@@ -265,7 +265,7 @@ dependencies = [
 
 [[package]]
 name = "medius"
-version = "3.4.2"
+version = "3.4.3"
 dependencies = [
  "flume",
  "futures",
@@ -277,11 +277,12 @@ dependencies = [
  "sha2",
  "thiserror",
  "tracing",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
 name = "medius-capi"
-version = "3.4.2"
+version = "3.4.3"
 dependencies = [
  "medius",
 ]

@@ -1999,7 +1999,13 @@ impl MockBox {
                             encode(FrameType::Resp, seq, &[1, f[0], f[1]]).expect("resp fits")
                         }
                         Some(2) => {
-                            encode(FrameType::Resp, seq, &device_info_payload(&st.device_info))
+                            // With no clone the identity reads all-zero, as usbdev_clone_info leaves it.
+                            let info = if st.clone_up {
+                                st.device_info.clone()
+                            } else {
+                                DeviceInfo::default()
+                            };
+                            encode(FrameType::Resp, seq, &device_info_payload(&info))
                                 .expect("resp fits")
                         }
                         Some(3) => {

@@ -1,6 +1,7 @@
 //! Measures how long `move_rel` blocks the calling thread, so a host-side write stall shows as a
-//! number. Reports percentiles, every call over the stall threshold, and the share of wall clock
-//! spent in the library.
+//! number, and how long a query takes to come back, to compare against the same box on another host.
+//! Reports percentiles, every call over the stall threshold, and the share of wall clock spent in the
+//! library.
 
 use std::time::{Duration, Instant};
 
@@ -10,6 +11,7 @@ const BURST: usize = 400;
 const PACED_SECS: u64 = 5;
 const PACE: Duration = Duration::from_micros(1000);
 const STALL: Duration = Duration::from_millis(5);
+const QUERIES: usize = 2000;
 
 fn main() -> medius::Result<()> {
     let device = match std::env::args().nth(1) {
@@ -51,6 +53,30 @@ fn main() -> medius::Result<()> {
         (calls, start.elapsed())
     };
     report("paced (1 kHz)", &paced.0, paced.1);
+
+    // Gaps spread over 0-3 ms, so the query lands at every phase of the reader's wait.
+    let mut rtt = Vec::with_capacity(QUERIES);
+    let mut timeouts = 0;
+    for i in 0..QUERIES as u64 {
+        std::thread::sleep(Duration::from_micros(i * 7919 % 3000));
+        let t0 = Instant::now();
+        match device.query_version() {
+            Ok(_) => rtt.push(t0.elapsed()),
+            Err(medius::Error::QueryTimeout) => timeouts += 1,
+            Err(e) => return Err(e),
+        }
+    }
+    rtt.sort_unstable();
+    println!(
+        "\n== query round trip: {} replies, {timeouts} timed out",
+        rtt.len()
+    );
+    println!(
+        "   p50 {:.1?}  p99 {:.1?}  max {:.1?}",
+        pct(&rtt, 50),
+        pct(&rtt, 99),
+        rtt.last().copied().unwrap_or_default(),
+    );
 
     println!("counters: {:?}", device.counters());
     Ok(())

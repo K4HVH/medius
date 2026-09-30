@@ -1,7 +1,7 @@
 //! The three catch event frames (§4.10), decoded.
 
 use crate::protocol::opcode::{
-    CATCH_CTRL_MASK, CATCH_CTRL_NAK, CATCH_CTRL_OK, CATCH_CTRL_STALL, CATCH_F_RULE,
+    CATCH_CTRL_MASK, CATCH_CTRL_NAK, CATCH_CTRL_OK, CATCH_CTRL_STALL, CATCH_F_RULE, CATCH_F_ZLP,
 };
 use crate::types::{Axis, CatchClass, Class, ClockDomain, Direction, TransferStatus, Usage};
 
@@ -160,7 +160,8 @@ pub struct TrafficEvent {
     /// [`Direction::IN`] is device to PC, [`Direction::OUT`] is PC to device.
     pub direction: Direction,
     /// Class-specific; read through [`Self::control_status`], [`Self::rule_acted`],
-    /// [`Self::transfer_status`], [`Self::bus_event`] or the bulk accessors.
+    /// [`Self::transfer_status`], [`Self::bus_event`], [`Self::zlp`] or
+    /// [`Self::bulk_end_of_transfer`].
     pub flags: u8,
     /// Packet length before the subscription's [`Capture`](crate::Capture) truncated it.
     pub true_len: u16,
@@ -286,10 +287,22 @@ impl TrafficEvent {
         self.class == CatchClass::VendorBulk && self.flags & 0x01 != 0
     }
 
-    /// Whether a [`CatchClass::VendorBulk`] event is a zero-length packet, which ends a transfer
-    /// whose length is an exact multiple of the packet size.
-    pub fn bulk_zlp(&self) -> bool {
-        self.class == CatchClass::VendorBulk && self.flags & 0x02 != 0
+    /// Whether the event is a zero-length packet. An event is one packet, except a
+    /// [`CatchClass::HidIn`] or [`CatchClass::Emit`] event on a HID endpoint, which carries a report
+    /// of up to 64 bytes whole however many packets it took: there, with bytes, a zero-length packet
+    /// ended the report after them. With none it is the packet alone, on HID endpoints the device's
+    /// answer to a poll it had nothing for, and on a bulk endpoint the end of a transfer whose length
+    /// is an exact multiple of the packet size.
+    pub fn zlp(&self) -> bool {
+        let packets = matches!(
+            self.class,
+            CatchClass::HidIn
+                | CatchClass::HidOut
+                | CatchClass::VendorInterrupt
+                | CatchClass::VendorBulk
+                | CatchClass::Emit
+        );
+        packets && self.flags & CATCH_F_ZLP != 0
     }
 }
 

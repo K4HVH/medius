@@ -330,19 +330,31 @@ fn the_rule_bit_is_read_only_where_a_rule_acts() {
     assert!(!event(CatchClass::Bus.as_u8(), 0x80).rule_acted());
     // A bulk event keeps its own two bits beside it.
     let bulk = event(CatchClass::VendorBulk.as_u8(), 0x81);
-    assert!(bulk.rule_acted() && bulk.bulk_end_of_transfer() && !bulk.bulk_zlp());
+    assert!(bulk.rule_acted() && bulk.bulk_end_of_transfer() && !bulk.zlp());
 }
 
 #[test]
-fn a_bulk_zero_length_packet_is_flagged_both_ways() {
-    let zlp = |flags: u8| {
-        let p = [0, 0, 0, 0, 1, 7, 3, 0x00, 1, flags, 0, 0];
-        TrafficEvent::from_payload(&p).unwrap().bulk_zlp()
+fn a_zero_length_packet_is_flagged_on_every_packet_class() {
+    let zlp = |class: CatchClass, flags: u8| {
+        let p = [0, 0, 0, 0, 1, class.as_u8(), 3, 0x00, 1, flags, 0, 0];
+        TrafficEvent::from_payload(&p).unwrap().zlp()
     };
-    assert!(!zlp(0x00));
-    assert!(!zlp(0x01)); // END alone is not a ZLP
-    assert!(zlp(0x02));
-    assert!(zlp(0x03)); // END and ZLP together
+    for class in [
+        CatchClass::HidIn,
+        CatchClass::HidOut,
+        CatchClass::VendorInterrupt,
+        CatchClass::VendorBulk,
+        CatchClass::Emit,
+    ] {
+        assert!(!zlp(class, 0x00), "{class:?}");
+        assert!(zlp(class, 0x02), "{class:?}");
+        assert!(zlp(class, 0x82), "{class:?}: beside a rule");
+    }
+    assert!(!zlp(CatchClass::VendorBulk, 0x01)); // END alone is not a ZLP
+    assert!(zlp(CatchClass::VendorBulk, 0x03)); // END and ZLP together
+    // Bit 1 is a control event's NAK handshake and a transfer's status, never a ZLP.
+    assert!(!zlp(CatchClass::Control, 0x02));
+    assert!(!zlp(CatchClass::ClipTransfer, 0x02));
 }
 
 #[test]
@@ -361,7 +373,7 @@ fn traffic_event_decodes() {
     assert_eq!(t.bytes, [0xDE, 0xAD, 0xBE, 0xEF]);
     assert!(!t.truncated());
     assert!(t.bulk_end_of_transfer());
-    assert!(!t.bulk_zlp());
+    assert!(!t.zlp());
     assert!(TrafficEvent::from_payload(&p[..11]).is_none());
     // An unknown class must not decode into a plausible one.
     let mut bad = p;

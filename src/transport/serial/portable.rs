@@ -61,8 +61,17 @@ impl Transport for SerialTransport {
 
     fn read(&self, buf: &mut [u8]) -> io::Result<usize> {
         match self.read.lock().read(buf) {
+            // A tty reads 0 only once hung up; a signal only cuts the wait short.
+            Ok(0) => Err(io::Error::from(io::ErrorKind::BrokenPipe)),
             Ok(n) => Ok(n),
-            Err(e) if e.kind() == io::ErrorKind::TimedOut => Ok(0),
+            Err(e)
+                if matches!(
+                    e.kind(),
+                    io::ErrorKind::TimedOut | io::ErrorKind::Interrupted
+                ) =>
+            {
+                Ok(0)
+            }
             Err(e) => Err(e),
         }
     }

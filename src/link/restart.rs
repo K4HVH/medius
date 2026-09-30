@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 use parking_lot::Mutex;
 
 use crate::protocol::command::query_payload;
-use crate::protocol::opcode::{Q_CAPS, Q_CLIP, Q_STATS};
+use crate::protocol::opcode::{Q_CAPS, Q_CLIP, Q_DEVICE_INFO, Q_STATS};
 use crate::protocol::{FrameType, PROTO_VER, Resp, parse_resp};
 use crate::types::{ClipStatus, Stats};
 
@@ -228,10 +228,16 @@ fn read_stats(ctx: &KeepaliveCtx) -> Option<Stats> {
     }
 }
 
-// Declared button count when a clone is up; `None` when none is, or the box did not reply.
+// Declared button count when a clone is up (0 for one with no HID interface); `None` when none is, or
+// the box did not reply.
 fn clone_up(ctx: &KeepaliveCtx) -> Option<u8> {
     match query(ctx, Q_CAPS).as_deref().and_then(parse_resp) {
         Some(Resp::Caps(c)) if c.mouse.n_hid > 0 => Some(c.mouse.n_buttons),
+        // No HID interface reads as nothing cloned does; the clone's identity tells them apart.
+        Some(Resp::Caps(_)) => match query(ctx, Q_DEVICE_INFO).as_deref().and_then(parse_resp) {
+            Some(Resp::DeviceInfo(d)) if d.is_cloned() => Some(0),
+            _ => None,
+        },
         _ => None,
     }
 }

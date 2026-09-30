@@ -22,7 +22,7 @@ pub enum PatchSection {
     Config = PATCH_SEC_CONFIG,
     /// Interface report descriptor; `cfg` is the configuration index, `index` the interface number.
     Report = PATCH_SEC_REPORT,
-    /// String descriptor; `index` is the string index (not 0). Replaces the whole string: at most 127
+    /// String descriptor; `index` is the string index (not 0). Replaces the whole string: at most 126
     /// bytes, one UTF-16 code unit each, `offset` ignored.
     String = PATCH_SEC_STRING,
     /// BOS descriptor; `cfg`/`index` ignored.

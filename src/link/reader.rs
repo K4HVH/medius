@@ -2,7 +2,6 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::JoinHandle;
-use std::time::Duration;
 
 use parking_lot::Mutex;
 
@@ -17,8 +16,6 @@ use super::logs;
 use super::reconnect::{self, ReconnectCtx};
 use super::restart::RestartWatch;
 use super::slot::TransportSlot;
-
-const READER_IDLE_POLL: Duration = Duration::from_millis(2);
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn spawn_reader(
@@ -71,6 +68,7 @@ fn reader_loop(
 
     loop {
         if stop.load(Ordering::SeqCst) {
+            transport.current().release_read();
             return;
         }
         let generation = transport.generation();
@@ -80,9 +78,7 @@ fn reader_loop(
         }
         let current = transport.current();
         match current.read(&mut buf) {
-            Ok(0) => {
-                std::thread::sleep(READER_IDLE_POLL);
-            }
+            Ok(0) => {}
             Ok(n) => {
                 decoder.feed(&buf[..n], |frame| {
                     route_frame(
