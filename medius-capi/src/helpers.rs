@@ -597,16 +597,24 @@ pub unsafe extern "C" fn medius_traffic_event_bulk_end_of_transfer(
     })
 }
 
-/// Whether this VEND_BULK event is a zero-length packet, which ends a transfer whose length is an
-/// exact multiple of the packet size. Mirrors `medius::TrafficEvent::bulk_zlp`.
+/// Whether this event is a zero-length packet, or on a HID endpoint a HID_IN or EMIT report one
+/// ended after its bytes. Mirrors `medius::TrafficEvent::zlp`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn medius_traffic_event_bulk_zlp(event: *const MediusTrafficEvent) -> bool {
+pub unsafe extern "C" fn medius_traffic_event_zlp(event: *const MediusTrafficEvent) -> bool {
     guard(false, || {
         if event.is_null() {
             return false;
         }
         let e = unsafe { &*event };
-        e.class == MEDIUS_CATCH_CLASS_VENDOR_BULK && e.flags & 0x02 != 0
+        let packets = matches!(
+            e.class,
+            MEDIUS_CATCH_CLASS_HID_IN
+                | MEDIUS_CATCH_CLASS_HID_OUT
+                | MEDIUS_CATCH_CLASS_VENDOR_INTERRUPT
+                | MEDIUS_CATCH_CLASS_VENDOR_BULK
+                | MEDIUS_CATCH_CLASS_EMIT
+        );
+        packets && e.flags & 0x02 != 0
     })
 }
 
@@ -642,4 +650,18 @@ pub extern "C" fn medius_caps_has_keyboard(caps: MediusCaps) -> bool {
 #[unsafe(no_mangle)]
 pub extern "C" fn medius_caps_is_composite(caps: MediusCaps) -> bool {
     guard(false, || medius::Caps::from(caps).is_composite())
+}
+
+/// Whether a device is cloned, including one with no HID interface (`n_hid` 0). Delegates to
+/// `medius::DeviceInfo::is_cloned`.
+#[unsafe(no_mangle)]
+pub extern "C" fn medius_device_info_is_cloned(info: MediusDeviceInfo) -> bool {
+    guard(false, || {
+        medius::DeviceInfo {
+            vid: info.vid,
+            pid: info.pid,
+            ..medius::DeviceInfo::default()
+        }
+        .is_cloned()
+    })
 }

@@ -63,7 +63,7 @@ class Status(IntEnum):
 
 
 class DeviceKind(IntEnum):
-    """The cloned device's primary kind (its Boot-interface protocol)."""
+    """The cloned device's primary kind, from its HID report descriptors (UNKNOWN also with nothing cloned)."""
 
     UNKNOWN = 0
     KEYBOARD = 1

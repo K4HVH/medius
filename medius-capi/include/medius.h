@@ -598,7 +598,8 @@ typedef uint8_t MediusClipState;
 #endif // __STDC_VERSION__ >= 202311L
 #endif // __cplusplus
 
-// The cloned device's primary kind, from its Boot-interface protocol.
+// The cloned device's primary kind, from its HID report descriptors, with its Boot declarations deciding
+// between a mouse and a keyboard.
 enum MediusDeviceKind
 #if defined(__cplusplus) || __STDC_VERSION__ >= 202311L
   : uint8_t
@@ -1380,7 +1381,7 @@ typedef struct MediusRate {
 // saturate, so a count keeps rising while loss continues.
 //
 // `tx_drops`, `link_rx_drops` and `host_rx_drops` are lost player input and should read 0.
-// `relay_drops` carries no input and is expected under load.
+// `relay_drops` is relayed traffic and commands that went no further, none of it native input.
 typedef struct MediusStats {
     uint32_t inject_emits;
     // Reports the clone's TX queue could not hold: player input the game PC never saw. Should
@@ -1397,8 +1398,9 @@ typedef struct MediusStats {
     uint32_t link_rx_drops;
     // The same count for the host chip, relayed over the link.
     uint32_t host_rx_drops;
-    // Relayed-stream back-pressure, either direction: a vendor IN packet the PC is not draining,
-    // or an OUT packet past the relay's one-per-frame ceiling. Expected under load; no player
+    // A relayed packet the box could not carry: a vendor IN packet behind a queue full of RAW packets,
+    // a zero-length packet answering a poll a suspended PC did not make, or an OUT packet the box could
+    // not queue or that a bus reset overtook. OUT is otherwise paced by making the PC wait. No player
     // input is lost.
     uint32_t relay_drops;
     // Times the box released host-set session state; 0 at boot. Wraps, so compare for inequality.
@@ -1580,7 +1582,7 @@ typedef struct MediusTrafficEvent {
     // to assign it to one.
     uint8_t direction;
     // Class-specific; read it with `medius_traffic_event_control_status`, `..._rule_acted`,
-    // `..._bus_event`, `..._transfer_status` or the bulk accessors.
+    // `..._bus_event`, `..._transfer_status`, `..._zlp` or `..._bulk_end_of_transfer`.
     uint8_t flags;
     // The packet's length before `capture` truncated it.
     uint16_t true_len;
@@ -2651,9 +2653,9 @@ bool medius_traffic_event_rule_acted(const struct MediusTrafficEvent *event);
 // `medius::TrafficEvent::bulk_end_of_transfer`.
 bool medius_traffic_event_bulk_end_of_transfer(const struct MediusTrafficEvent *event);
 
-// Whether this VEND_BULK event is a zero-length packet, which ends a transfer whose length is an
-// exact multiple of the packet size. Mirrors `medius::TrafficEvent::bulk_zlp`.
-bool medius_traffic_event_bulk_zlp(const struct MediusTrafficEvent *event);
+// Whether this event is a zero-length packet, or on a HID endpoint a HID_IN or EMIT report one
+// ended after its bytes. Mirrors `medius::TrafficEvent::zlp`.
+bool medius_traffic_event_zlp(const struct MediusTrafficEvent *event);
 
 // Whether the clip holds `usage` down. Mirrors `medius::ClipStatus::is_held`.
 bool medius_clip_status_is_held(const struct MediusClipStatus *status, struct MediusUsage usage);
@@ -2666,6 +2668,10 @@ bool medius_caps_has_keyboard(struct MediusCaps caps);
 
 // Whether the clone is composite (multi-HID-interface). Delegates to `medius::Caps::is_composite`.
 bool medius_caps_is_composite(struct MediusCaps caps);
+
+// Whether a device is cloned, including one with no HID interface (`n_hid` 0). Delegates to
+// `medius::DeviceInfo::is_cloned`.
+bool medius_device_info_is_cloned(struct MediusDeviceInfo info);
 
 // Subscribe to the catch stream for `filters[0..n]` (built with the `medius_catch_filter_*` helpers), writing the handle to `*out`.
 MediusStatus medius_device_catch_events(struct MediusDevice *dev,

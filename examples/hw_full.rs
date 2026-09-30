@@ -324,10 +324,10 @@ mod linux {
                 .as_ref()
                 .map(|c| c.mouse.has_x && c.mouse.has_y && c.mouse.n_buttons > 0)
                 .unwrap_or(false);
-            // vid != 0 once a mouse is cloned; zero is allowed when none is attached.
+            // A clone reads its identity once a mouse is cloned; zero is allowed when none is attached.
             let info_ok = info
                 .as_ref()
-                .map(|i| if attached { i.vid != 0 } else { true })
+                .map(|i| if attached { i.is_cloned() } else { true })
                 .unwrap_or(false);
             // native_hz lands in a sane band once learned; None (not yet learned) is allowed.
             let rate_ok = rate

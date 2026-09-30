@@ -232,6 +232,33 @@ fn a_device_chip_reboot_is_recovered_like_any_restart() {
     );
 }
 
+// A clone with no HID interface (a vendor-class pad) reads `n_hid` 0, as nothing cloned does; its identity
+// says it is up, so held state goes back to it.
+#[test]
+fn a_clone_with_no_hid_interface_is_up() {
+    use crate::{Caps, DeviceInfo};
+    let mock = MockBox::new()
+        .with_caps(Caps::default())
+        .with_device_info(DeviceInfo {
+            vid: 0x045E,
+            pid: 0x028E,
+            ..DeviceInfo::default()
+        });
+    let device = Device::open_mock(mock.clone()).unwrap();
+    device.scale(Axis::Y, Direction::Both, 0).unwrap();
+    mock.clear_recorded();
+    mock.restart();
+    await_restarts(&device, 1);
+    // Re-sent once the clone is back, not into the boot before it, where the box drops it.
+    assert_eq!(
+        device
+            .query_locks()
+            .unwrap()
+            .scale_of(Axis::Y, Direction::Negative),
+        0
+    );
+}
+
 // A box power-cycled while the link was down answers the reconnect probe after its hello. Its clone
 // is not up yet, so held state waits for the recovery.
 #[test]

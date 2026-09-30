@@ -4,7 +4,7 @@ resolver = "3"
 
 [package]
 name = "medius"
-version = "3.4.2"
+version = "3.4.3"
 edition = "2024"
 rust-version = "1.85"
 description = "Host control library for the medius transparent mouse passthrough box"
@@ -33,9 +33,16 @@ sha2 = { version = "0.11.0", default-features = false }
 
 # Windows I/O uses serial2's overlapped COM handle: on serialport's synchronous one the kernel
 # serialises reads against writes, stalling injection behind the reader thread. serialport stays for
-# port discovery, since only it reports USB VID/PID.
+# port discovery, since only it reports USB VID/PID. windows-sys waits on the port's comm events.
 [target.'cfg(windows)'.dependencies]
 serial2 = { version = "0.2", features = ["windows"] }
+windows-sys = { version = "0.61", features = [
+    "Win32_Devices_Communication",
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_System_IO",
+    "Win32_System_Threading",
+] }
 
 [dev-dependencies]
 # Async tests run on futures' executor::block_on; the wrapper is runtime-agnostic.

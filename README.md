@@ -241,7 +241,7 @@ clip.start()?;                          // or a trigger: clip.bind(ClipTrigger::
 let v = device.query_version()?;  // proto_ver + fw_major / fw_minor / fw_patch
 let h = device.query_health()?;   // link_up, mouse_attached, clone_configured, injection_active, rate_confident, lock_on, catch_on, kbd_attached
 
-let info = device.device_info()?;       // cloned device identity: vid:pid, bcd, flags, kind, product
+let info = device.device_info()?;       // cloned device identity: vid:pid, bcd, flags, kind, product; info.is_cloned(), true for a clone with no HID interface too
 let caps = device.caps()?;              // unified caps; caps.is_composite(), caps.mouse.n_buttons, caps.keyboard.nkro, caps.keyboard.has_consumer, caps.keyboard.n_keys
 let rate = device.query_rate()?;        // live native report rate; rate.native_hz()
 let stats = device.query_stats()?;      // delivery counters; stats.tx_drops / stats.tx_wedges / stats.link_rx_drops / stats.relay_drops
@@ -361,7 +361,7 @@ Four layers, `protocol → transport → link → device`, each using only the o
 | Layer | What |
 |---|---|
 | `protocol` | wire codec: framed binary (SOF, type, rolling SEQ, length, payload, CRC16), no I/O |
-| `transport` | byte pipe (no `unsafe`) and VID/PID discovery over `serialport`; on Windows, `serial2`'s overlapped COM handle keeps a read and a write in flight at once |
+| `transport` | byte pipe and VID/PID discovery over `serialport`; on Windows, `serial2`'s overlapped COM handle keeps a read and a write in flight at once, and a comm event wakes the reader (the crate's only `unsafe`) |
 | `link` | live connection: reader thread, SEQ-correlated queries, keepalive, reconnect |
 | `device` | typed API; each command is one `link.send(...)` |
 

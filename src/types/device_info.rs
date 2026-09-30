@@ -4,10 +4,13 @@ use core::fmt;
 
 use crate::protocol::opcode::{DI_HAS_BOS, DI_HAS_SERIAL};
 
-/// Cloned device's primary kind, from its Boot-interface `bInterfaceProtocol`.
+/// Cloned device's primary kind, from its HID report descriptors and Boot declarations (§4.3). One
+/// carrying both kinds reads keyboard with a full key bitmap (unless it declares Boot for both) or a
+/// Boot keyboard alone, and mouse otherwise.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum DeviceKind {
-    /// No Boot interface, or nothing cloned yet.
+    /// Neither a mouse nor a keyboard (a vendor-class pad has no HID interface at all), or nothing cloned
+    /// yet: [`DeviceInfo::is_cloned`] tells them apart.
     #[default]
     Unknown,
     Keyboard,
@@ -49,13 +52,18 @@ pub struct DeviceInfo {
     pub has_serial: bool,
     /// The clone serves a BOS descriptor (`bcdUSB >= 0x0201`).
     pub has_bos: bool,
-    /// Primary kind (Boot-interface protocol).
+    /// Primary kind (§4.3).
     pub kind: DeviceKind,
-    /// `iProduct` string (empty if it serves none).
+    /// `iProduct` string as ASCII, `?` for each other character (empty if it serves none).
     pub product: String,
 }
 
 impl DeviceInfo {
+    /// Whether a device is cloned: with none, the identity reads all-zero (§4.3).
+    pub fn is_cloned(&self) -> bool {
+        self.vid != 0 || self.pid != 0
+    }
+
     /// Decodes a `RESP(DEVICE_INFO)` payload (§4.3).
     pub(crate) fn from_payload(p: &[u8]) -> Option<Self> {
         if p.len() < 11 {
