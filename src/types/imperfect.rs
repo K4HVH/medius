@@ -5,8 +5,8 @@
 pub struct ImperfectStatus {
     /// Opt-in: cloning a device the box cannot clone exactly is allowed.
     pub allowed: bool,
-    /// The attached device has more IN endpoints live at once, or HID interfaces, than the box serves,
-    /// or runs at high speed.
+    /// The attached device has more IN endpoints live at once than the box has transmit FIFOs (four),
+    /// or more than six HID interfaces, or runs at high speed.
     pub over_capacity: bool,
     /// The live clone is inexact: an opted-in device the box can't clone exactly, a forced rate, or
     /// a served descriptor-patch set.
