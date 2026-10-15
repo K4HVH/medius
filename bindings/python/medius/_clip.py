@@ -8,6 +8,7 @@ from typing import Iterable, Optional, Sequence, Tuple, Union
 from . import _native
 from ._enums import Action, Blanket, ClipAction, Direction, Edge
 from ._errors import check
+from ._handle import Handle
 from ._types import (
     ClipPacketTrigger,
     ClipSettings,
@@ -27,83 +28,72 @@ from ._types import (
 )
 
 
-class ClipBuilder:
+class ClipBuilder(Handle):
     """Builds a buffered-clip entry stream; pass it to `ClipHandle.append`, then `clear()` to reuse it."""
 
+    _free = "medius_clip_builder_free"
+    _exclusive = True
+
     def __init__(self):
-        self._ptr = _native.lib.medius_clip_builder_new()
-        if not self._ptr:
+        super().__init__(_native.lib.medius_clip_builder_new())
+        if not self._handle:
             raise MemoryError("clip builder allocation failed")
-
-    def close(self):
-        if getattr(self, "_ptr", None):
-            _native.lib.medius_clip_builder_free(self._ptr)
-            self._ptr = None
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *exc):
-        self.close()
-
-    def __del__(self):
-        self.close()
 
     def clear(self) -> "ClipBuilder":
         """Clear the stream to reuse the builder after an append."""
-        check(_native.lib.medius_clip_builder_clear(self._ptr))
+        check(self._call(_native.lib.medius_clip_builder_clear))
         return self
 
     def byte_len(self) -> int:
         """Ring bytes the entries take, to check against `ClipStatus.free` before an append."""
-        return int(_native.lib.medius_clip_builder_byte_len(self._ptr))
+        return int(self._call(_native.lib.medius_clip_builder_byte_len))
 
     def gap(self, frames: int) -> "ClipBuilder":
         """Emit nothing for `frames` native frames (0 is a no-op)."""
-        check(_native.lib.medius_clip_builder_gap(self._ptr, _u16(frames, "frames")))
+        check(self._call(_native.lib.medius_clip_builder_gap, _u16(frames, "frames")))
         return self
 
     def move(self, dx: int, dy: int) -> "ClipBuilder":
         """A cursor-motion frame."""
-        check(_native.lib.medius_clip_builder_move(self._ptr, _i16(dx, "dx"), _i16(dy, "dy")))
+        check(self._call(_native.lib.medius_clip_builder_move, _i16(dx, "dx"), _i16(dy, "dy")))
         return self
 
     def wheel(self, dz: int) -> "ClipBuilder":
         """A wheel frame."""
-        check(_native.lib.medius_clip_builder_wheel(self._ptr, _i16(dz, "dz")))
+        check(self._call(_native.lib.medius_clip_builder_wheel, _i16(dz, "dz")))
         return self
 
     def pan(self, dpan: int) -> "ClipBuilder":
         """A pan (horizontal scroll) frame."""
-        check(_native.lib.medius_clip_builder_pan(self._ptr, _i16(dpan, "dpan")))
+        check(self._call(_native.lib.medius_clip_builder_pan, _i16(dpan, "dpan")))
         return self
 
     def press(self, usage: Usage) -> "ClipBuilder":
         """A frame pressing a usage (button, key, or media)."""
-        check(_native.lib.medius_clip_builder_press(self._ptr, usage._c))
+        check(self._call(_native.lib.medius_clip_builder_press, usage._c))
         return self
 
     def release(self, usage: Usage) -> "ClipBuilder":
         """A frame soft-releasing a usage, leaving a physical hold."""
-        check(_native.lib.medius_clip_builder_release(self._ptr, usage._c))
+        check(self._call(_native.lib.medius_clip_builder_release, usage._c))
         return self
 
     def force_release(self, usage: Usage) -> "ClipBuilder":
         """A frame force-releasing a usage, masking a physical hold too."""
-        check(_native.lib.medius_clip_builder_force_release(self._ptr, usage._c))
+        check(self._call(_native.lib.medius_clip_builder_force_release, usage._c))
         return self
 
     def edge(self, usage: Usage, action: Action = Action.PRESS) -> "ClipBuilder":
         """A one-edge frame for any `Usage` (button, key, or media) with an explicit `Action`."""
         action = _enum(action, Action, "action")
-        check(_native.lib.medius_clip_builder_edge(self._ptr, usage._c, int(action)))
+        check(self._call(_native.lib.medius_clip_builder_edge, usage._c, int(action)))
         return self
 
     def raw(self, ep: int, direction: Direction, data: bytes) -> "ClipBuilder":
         """A frame carrying one raw report, as `Device.raw` sends one."""
         direction = _enum(direction, Direction, "direction")
         buf, n = _bytes_buf(data, "data")
-        check(_native.lib.medius_clip_builder_raw(self._ptr, _u8(ep, "ep"), int(direction), buf, n))
+        check(self._call(_native.lib.medius_clip_builder_raw, _u8(ep, "ep"), int(direction), buf, n))
         return self
 
     def transfer(self, ep: int, setup: Setup, out: bytes = b"") -> "ClipBuilder":
@@ -111,7 +101,7 @@ class ClipBuilder:
         as a `TrafficClass.CLIP_TRANSFER` event."""
         buf, n = _bytes_buf(out, "out")
         check(
-            _native.lib.medius_clip_builder_transfer(self._ptr, _u8(ep, "ep"), setup_to_c(setup), buf, n)
+            self._call(_native.lib.medius_clip_builder_transfer, _u8(ep, "ep"), setup_to_c(setup), buf, n)
         )
         return self
 
@@ -152,7 +142,7 @@ class ClipBuilder:
                 buf, n = _bytes_buf(out, f"transfers[{i}].out")
                 ep = _u8(ep, f"transfers[{i}].ep")
                 check(lib.medius_clip_frame_transfer(frame, ep, setup_to_c(setup), buf, n))
-            check(lib.medius_clip_builder_frame(self._ptr, frame))
+            check(self._call(lib.medius_clip_builder_frame, frame))
         finally:
             lib.medius_clip_frame_free(frame)
         return self
@@ -197,7 +187,7 @@ class ClipHandle:
         `RelativeDirectionError` for the bearing-relative pair), or a transfer whose data disagrees
         with its setup packet (`ClipTransferDataError`).
         """
-        check(_native.lib.medius_clip_append(self._handle, builder._ptr))
+        check(builder._call(lambda b: _native.lib.medius_clip_append(self._handle, b)))
 
     def set_autolock(self, scope: Optional[Sequence[Blanket]] = None):
         """Auto-lock these input groups while the clip plays (clip-owned, released on stop). Set before the first append."""

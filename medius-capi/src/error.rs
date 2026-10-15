@@ -6,6 +6,8 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 
 use medius::Error;
 
+use crate::ctypes::MediusUpdateError;
+
 /// Result of a fallible `medius_*` call: `MEDIUS_OK` is 0, anything else a failure.
 #[repr(i32)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -77,17 +79,19 @@ pub enum MediusStatus {
 struct LastError {
     message: String,
     proto_ver: u8,
+    update: Option<MediusUpdateError>,
 }
 
 thread_local! {
     static LAST_ERROR: RefCell<LastError> = RefCell::new(LastError::default());
 }
 
-fn store_error(message: String, proto_ver: u8) {
+fn store_error(message: String, proto_ver: u8, update: Option<MediusUpdateError>) {
     LAST_ERROR.with(|e| {
         let mut e = e.borrow_mut();
         e.message = message;
         e.proto_ver = proto_ver;
+        e.update = update;
     });
 }
 
@@ -96,6 +100,7 @@ pub(crate) fn clear_error() {
         let mut e = e.borrow_mut();
         e.message.clear();
         e.proto_ver = 0;
+        e.update = None;
     });
 }
 
@@ -142,12 +147,20 @@ pub(crate) fn record(err: &Error) -> MediusStatus {
         Error::BadProtoVer { got } => *got,
         _ => 0,
     };
-    store_error(err.to_string(), proto_ver);
+    let update = match err {
+        Error::Update { op, status, arg } => Some(MediusUpdateError {
+            op: *op,
+            status: status.0,
+            arg: *arg,
+        }),
+        _ => None,
+    };
+    store_error(err.to_string(), proto_ver, update);
     status_for(err)
 }
 
 pub(crate) fn fail(status: MediusStatus, message: &str) -> MediusStatus {
-    store_error(message.to_string(), 0);
+    store_error(message.to_string(), 0, None);
     status
 }
 
@@ -199,4 +212,21 @@ pub unsafe extern "C" fn medius_last_error_message(buf: *mut c_char, cap: usize)
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_last_error_proto_ver() -> u8 {
     guard(0, || LAST_ERROR.with(|e| e.borrow().proto_ver))
+}
+
+/// why the box refused the last update, false if the last error wasn't an update refusal
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn medius_last_error_update(out: *mut MediusUpdateError) -> bool {
+    guard(false, || {
+        if out.is_null() {
+            return false;
+        }
+        match LAST_ERROR.with(|e| e.borrow().update) {
+            Some(u) => {
+                unsafe { *out = u };
+                true
+            }
+            None => false,
+        }
+    })
 }
