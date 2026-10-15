@@ -2848,3 +2848,31 @@ def test_update_and_confirm_run_through_the_library():
         assert seen and seen[-1] == 2048
         info = d.wait_firmware_confirmed()
         assert not info.any_pending()
+
+
+def test_device_close_on_another_thread_waits_for_a_running_query():
+    import threading
+
+    mock = MockBox()
+    mock.silent()
+    d = Device.with_mock(mock)
+    got = []
+
+    def query():
+        try:
+            d.query_version()
+        except MediusError as e:
+            got.append(e)
+
+    caller = threading.Thread(target=query, daemon=True)
+    caller.start()
+    time.sleep(0.2)
+    start = time.monotonic()
+    d.close()
+    assert time.monotonic() - start < 0.05
+    caller.join(10)
+    assert not caller.is_alive()
+    assert isinstance(got[0], medius.QueryTimeoutError)
+    with pytest.raises(MediusError):
+        d.query_version()
+    mock.close()
