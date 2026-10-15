@@ -434,3 +434,76 @@ mod stale_replies {
         assert!(seen.iter().all(|&s| s <= img.len()));
     }
 }
+
+#[cfg(feature = "mock")]
+mod refused_and_rebooting {
+    use super::*;
+    use crate::protocol::FrameType;
+    use crate::protocol::opcode::{OTA_OP_ABORT, OTA_OP_ACTIVATE};
+
+    fn image() -> Vec<u8> {
+        (0..OTA_CHUNK * 3).map(|i| i as u8).collect()
+    }
+
+    fn aborts(mock: &crate::MockBox) -> Vec<u8> {
+        mock.recorded_frames()
+            .iter()
+            .filter(|f| f.ty == FrameType::Update && f.payload.first() == Some(&OTA_OP_ABORT))
+            .map(|f| f.payload[1])
+            .collect()
+    }
+
+    fn refused(err: crate::Error) {
+        assert!(matches!(
+            err,
+            crate::Error::Update {
+                op: OTA_OP_ACTIVATE,
+                status: UpdateStatus::LINK_DOWN,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn a_refused_activate_aborts_the_staged_image() {
+        let mock = crate::MockBox::new();
+        let dev = crate::Device::with_mock(mock.clone());
+        mock.refuse_next_activate(UpdateStatus::LINK_DOWN);
+        refused(
+            dev.update_firmware(UpdateTarget::Host, &image(), &mut |_| {})
+                .unwrap_err(),
+        );
+        assert_eq!(aborts(&mock), vec![UpdateTarget::Host.as_u8()]);
+        assert!(!dev.firmware_info().expect("info").device_staged);
+    }
+
+    #[cfg(feature = "async")]
+    #[test]
+    fn a_refused_async_activate_aborts_the_staged_image() {
+        let mock = crate::MockBox::new();
+        let dev = crate::Device::with_mock(mock.clone()).into_async();
+        mock.refuse_next_activate(UpdateStatus::LINK_DOWN);
+        refused(
+            futures::executor::block_on(dev.update_firmware(UpdateTarget::Device, image(), |_| {}))
+                .unwrap_err(),
+        );
+        assert_eq!(aborts(&mock), vec![UpdateTarget::Device.as_u8()]);
+    }
+
+    #[test]
+    fn wait_firmware_confirmed_asks_through_the_reboot() {
+        let mock = crate::MockBox::new();
+        let dev = crate::Device::with_mock(mock.clone());
+        mock.reboot_after_activate(1, 2);
+        dev.update_firmware(UpdateTarget::Device, &image(), &mut |_| {})
+            .expect("updated");
+        let before = mock.recorded_frames().len();
+        let info = dev.wait_firmware_confirmed().expect("confirmed");
+        assert!(!info.any_pending());
+        let asked = mock.recorded_frames()[before..]
+            .iter()
+            .filter(|f| f.ty == FrameType::Query && f.payload.first() == Some(&Q_FIRMWARE))
+            .count();
+        assert_eq!(asked, 4);
+    }
+}

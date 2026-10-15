@@ -1216,8 +1216,18 @@ fn catch_events_rejects_an_empty_or_unknown_filter_list() {
     let all = [medius_catch_filter_everything()];
     assert_eq!(
         unsafe { medius_device_catch_events(dev, all.as_ptr(), 0, &mut stream) },
-        MediusStatus::ErrInvalidArg
+        MediusStatus::ErrEmptySubscription
     );
+    assert_eq!(
+        unsafe { medius_device_catch_events(dev, ptr::null(), 0, &mut stream) },
+        MediusStatus::ErrEmptySubscription
+    );
+    let mut input: *mut MediusInputStream = ptr::null_mut();
+    assert_eq!(
+        unsafe { medius_device_input_events(dev, ptr::null(), 0, &mut input) },
+        MediusStatus::ErrEmptySubscription
+    );
+    assert!(input.is_null());
     assert_eq!(
         unsafe { medius_device_catch_events(dev, ptr::null(), 1, &mut stream) },
         MediusStatus::ErrInvalidArg
@@ -5294,6 +5304,86 @@ fn the_session_counter_reads_through_and_the_mock_moves_it() {
         medius_mock_link_lost(ptr::null_mut());
         medius_mock_detach(ptr::null_mut(), true);
         medius_mock_attach(ptr::null_mut());
+        medius_device_free(dev);
+        medius_mock_free(mock);
+    }
+}
+
+#[test]
+fn an_update_refusal_keeps_its_detail_across_the_abi() {
+    let mock = medius_mock_new();
+    let mut dev: *mut MediusDevice = ptr::null_mut();
+    assert_eq!(
+        unsafe { medius_device_with_mock(mock, &mut dev) },
+        MediusStatus::Ok
+    );
+    let mut detail = MediusUpdateError {
+        op: 0xFF,
+        status: 0xFF,
+        arg: 0xFFFF_FFFF,
+    };
+    assert_eq!(
+        unsafe { medius_device_activate_firmware(dev) },
+        MediusStatus::ErrUpdate
+    );
+    assert!(unsafe { medius_last_error_update(&mut detail) });
+    assert_eq!(
+        (detail.op, detail.status),
+        (4, medius::UpdateStatus::NOTHING_STAGED.0)
+    );
+    assert_eq!(
+        unsafe { medius_device_catch_events(dev, ptr::null(), 0, &mut ptr::null_mut()) },
+        MediusStatus::ErrEmptySubscription
+    );
+    assert!(!unsafe { medius_last_error_update(&mut detail) });
+    unsafe {
+        medius_device_free(dev);
+        medius_mock_free(mock);
+    }
+}
+
+#[test]
+fn update_and_confirm_run_whole_through_the_abi() {
+    let mock = medius_mock_new();
+    let mut dev: *mut MediusDevice = ptr::null_mut();
+    assert_eq!(
+        unsafe { medius_device_with_mock(mock, &mut dev) },
+        MediusStatus::Ok
+    );
+    let image: Vec<u8> = (0..2000).map(|i| (i * 31 + 7) as u8).collect();
+    assert_eq!(
+        unsafe {
+            medius_device_update_firmware(
+                dev,
+                0,
+                image.as_ptr(),
+                image.len(),
+                None,
+                ptr::null_mut(),
+            )
+        },
+        MediusStatus::Ok
+    );
+    let mut info: MediusFirmwareInfo = unsafe { std::mem::zeroed() };
+    assert_eq!(
+        unsafe { medius_device_wait_firmware_confirmed(dev, &mut info) },
+        MediusStatus::Ok
+    );
+    assert_eq!(info.device_staged, 0);
+    assert_eq!(
+        unsafe {
+            medius_device_update_firmware(
+                dev,
+                2,
+                image.as_ptr(),
+                image.len(),
+                None,
+                ptr::null_mut(),
+            )
+        },
+        MediusStatus::ErrInvalidArg
+    );
+    unsafe {
         medius_device_free(dev);
         medius_mock_free(mock);
     }

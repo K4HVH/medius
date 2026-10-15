@@ -48,7 +48,11 @@ class FrameTooLongError(MediusError):
 
 
 class UpdateError(MediusError):
-    pass
+    def __init__(self, status, message="", proto_ver=0, op=None, update_status=None, arg=None):
+        super().__init__(status, message, proto_ver)
+        self.op = op
+        self.update_status = update_status
+        self.arg = arg
 
 
 class InvalidArgError(MediusError):
@@ -215,4 +219,8 @@ def check(status):
         return
     message = last_error_message()
     proto = int(_native.lib.medius_last_error_proto_ver())
+    if st == Status.ERR_UPDATE:
+        u = _native.MediusUpdateError()
+        if _native.lib.medius_last_error_update(ctypes.byref(u)):
+            raise UpdateError(st, message, proto, int(u.op), int(u.status), int(u.arg))
     raise _STATUS_EXC.get(st, MediusError)(st, message, proto)
