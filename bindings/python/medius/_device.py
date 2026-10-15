@@ -104,7 +104,7 @@ class Device(Handle):
 
     @classmethod
     def open_by_id(cls, box_id: str) -> "Device":
-        """Open the box whose identity matches `box_id` (device MAC hex or CH343 serial).
+        """Open the box whose identity matches `box_id` (device-chip MAC hex or CH343 serial).
 
         Raises `BadProtoVerError` when that box speaks another control protocol."""
         out = ctypes.c_void_p()
@@ -161,7 +161,7 @@ class Device(Handle):
         check(self._call(_native.lib.medius_device_wheel, _i16(delta, "delta")))
 
     def move_rel_now(self, dx, dy):
-        """A cursor move that bypasses movement riding, sent on the box's next mouse report."""
+        """A cursor move that bypasses movement riding, emitted on the next mouse report."""
         check(self._call(_native.lib.medius_device_move_rel_now, _i16(dx, "dx"), _i16(dy, "dy")))
 
     def wheel_now(self, delta):
@@ -212,9 +212,9 @@ class Device(Handle):
         check(self._call(_native.lib.medius_device_unlock, target._c, int(direction)))
 
     def scale(self, target: LockTarget, direction: Direction, scale: int):
-        """Weigh physical input on a target and direction.
+        """Weigh native input on a target and direction.
 
-        `scale` is the percent of the physical value kept: 0 blocks, 100 passes, above that
+        `scale` is the percent of the native value kept: 0 blocks, 100 passes, above that
         amplifies up to 255 (2.55x). `lock` and `unlock` are its two ends.
 
         A negative percent, down to `LOCK_SCALE_MIN`, weighs and reverses: -100 inverts. The slot
@@ -316,7 +316,7 @@ class Device(Handle):
 
     def set_emit_pace(self, pace: EmitPace, force_hz: Optional[int] = None):
         """Set injected-motion pacing (`hz` matters only for `EmitPace.fixed`) and the rate the
-        clone advertises and the box polls the device at (`force_hz`, None = native)."""
+        clone advertises and the box polls the real device at (`force_hz`, None = native)."""
         mode = _enum(pace.mode, EmitMode, "mode")
         check(
             self._call(
@@ -357,9 +357,9 @@ class Device(Handle):
         it.
 
         Both share one command and persist, so `full` is required: omitting it would rewrite a
-        setting you did not name. Rendering adds a small latency, which reaches native motion when
-        `full` is on. `full` is off by default. Nothing renders until the box has learned the
-        attached device's profile (`RenderStatus.ready`).
+        setting the caller did not name. Rendering adds latency, which `full` puts on native motion
+        too. `full` is off by default. Nothing renders until the box has learned the real device's
+        profile (`RenderStatus.ready`).
 
         Motion asking for exact timing skips the model: `move_rel_now`, `flush_motion` and
         `discard_motion` take the paced path, and with `full` on the rendered stream ignores
@@ -372,7 +372,7 @@ class Device(Handle):
         puts it all on the box's next report, 100 spreads it across one command interval, above 100
         overlaps. A loop at the native report rate keeps each command whole on one report. Until
         the box learns the host's command period from MOVE arrivals (`SpreadStatus.span_us`), each
-        delta goes out whole."""
+        delta is emitted whole."""
         check(self._call(_native.lib.medius_device_set_spread, _u16(percent, "percent")))
 
     def query_version(self) -> Version:
@@ -390,7 +390,7 @@ class Device(Handle):
         """Block until neither chip is still on probation; a chip on probation refuses an update.
 
         Keeps asking while the box reboots after an activate. After 55 s it raises `UpdateError` if
-        a chip is still on probation, or `QueryTimeoutError` if the box has not answered.
+        a chip is still on probation, or `QueryTimeoutError` if the box has not replied.
         """
         out = _native.MediusFirmwareInfo()
         check(self._call(_native.lib.medius_device_wait_firmware_confirmed, ctypes.byref(out)))
@@ -539,12 +539,12 @@ class Device(Handle):
         """`TRANSFER` (§3.14): run one control transfer against the real device and return its
         reply.
 
-        `ep` is 0 for EP0 or a control endpoint the device declares; `out` is the OUT data stage
-        (empty for IN). A non-OK `TransferOutcome.status` is a protocol outcome, returned, not
+        `ep` is 0 for EP0 or a control endpoint the real device declares; `out` is the OUT data
+        stage (empty for IN). A non-OK `TransferOutcome.status` is a protocol outcome, returned, not
         raised; the box replies `REFUSED` while the opt-in is off, and `NAK` while the game PC has
         the clone suspended (the real device is suspended with it). `timeout_ms` is the reply wait,
-        default `default_transfer_timeout_ms()`; the box abandons a transfer after ~800 ms,
-        so a shorter wait gives up before a slow device replies.
+        default `default_transfer_timeout_ms()`; the box abandons a transfer after ~800 ms, so a
+        shorter wait gives up before a slow device replies.
         """
         buf, n = _bytes_buf(out, "out")
         outcome = _native.MediusTransferOutcome()
@@ -613,22 +613,21 @@ class Device(Handle):
 
     def set_patch(self, patch: Patch) -> None:
         """`PATCH` (§3.14): store one descriptor patch; empty `bytes` removes the patch at its key.
-        The box stores it whatever the opt-in; the set reaches the game PC when the clone is next
-        presented under the opt-in: `apply_patch`, the opt-in turning on, or the device
-        attaching."""
+        The box stores it whatever the opt-in; the clone serves the set from its next presentation
+        under the opt-in: `apply_patch`, the opt-in turning on, or the real device attaching."""
         c = patch_to_c(patch)
         check(self._call(_native.lib.medius_device_set_patch, ctypes.byref(c)))
 
     def apply_patch(self) -> None:
         """`PATCH` APPLY (§3.14): re-present the clone with the stored patch set; needs the opt-in.
         The box re-presents only while the stored set differs from the served one: applying an
-        emptied set serves the device unpatched, and a refused set unchanged since is left alone.
-        Re-presenting releases the session like a device replug; the library re-sends its held state
-        once the new clone is up, and `ClipHandle.lost` reports a dropped clip."""
+        emptied set serves the descriptors unpatched, and a refused set unchanged since is left
+        alone. Re-presenting releases the session like a device replug; the library re-sends its
+        held state once the new clone is up, and `ClipHandle.lost` reports a dropped clip."""
         check(self._call(_native.lib.medius_device_apply_patch))
 
     def clear_patch(self) -> None:
-        """`PATCH` CLEAR (§3.14): erase this device's stored set (the last attached one's when
+        """`PATCH` CLEAR (§3.14): erase the real device's stored set (the last attached one's when
         unplugged). A clone serving patches re-presents unpatched, releasing the session and
         re-sending held state as `apply_patch` does."""
         check(self._call(_native.lib.medius_device_clear_patch))
@@ -656,10 +655,11 @@ class Device(Handle):
         """`TRANSFORM` (§3.15): add or overwrite one field transform.
 
         It swaps or remaps a field the clone already declares, so it is faithful and needs no
-        `allow_imperfect_clones`. How much of a field is kept is `scale`'s, which runs first.
-        Entries are keyed by `(source, dest)` and apply in installation order. A combination the op
-        cannot address raises `TransformOpFieldsError`; an entry past the table's capacity raises
-        `TransformTableFullError`. `query_transforms` confirms what the box holds.
+        `allow_imperfect_clones`. To weigh or reverse a field, use `scale`, which runs first and
+        passes the transform what it kept. Entries are keyed by `(source, dest)` and apply in
+        installation order. A combination the op cannot address raises `TransformOpFieldsError`; an
+        entry past the table's capacity raises `TransformTableFullError`. `query_transforms`
+        confirms what the box holds.
         """
         c = transform_to_c(t)
         check(self._call(_native.lib.medius_device_transform, ctypes.byref(c)))
@@ -675,7 +675,7 @@ class Device(Handle):
         check(self._call(_native.lib.medius_device_clear_transforms))
 
     def transform_swap(self, a: Axis, b: Axis) -> None:
-        """Exchange two axes on the wire: a `transform` of `Transform.swap`."""
+        """Exchange two axes: a `transform` of `Transform.swap`."""
         check(
             self._call(
                 _native.lib.medius_device_transform_swap, int(_enum(a, Axis, "a")), int(_enum(b, Axis, "b"))

@@ -479,7 +479,7 @@ fn clip_append_never_splits_an_entry_and_sends_nothing_when_one_is_refused() {
         "two 306-byte raw entries never share a piece"
     );
 
-    // A bad entry at the END of a long clip: nothing at all goes out, not the good pieces before it.
+    // A bad entry at the end of a long clip: nothing is sent, not the good pieces before it.
     let sent = appends().len();
     let mut bad = ClipBuilder::new();
     for _ in 0..200 {
@@ -819,7 +819,7 @@ mod packet_trigger {
     }
 
     // The list is part of the shape: a reply is read only when its length is the one its counts and
-    // each entry's own match length describe.
+    // each entry's match length describe.
     #[test]
     fn a_packet_trigger_list_of_another_shape_is_refused() {
         let refused = |p: &[u8], why: &str| {
@@ -1468,7 +1468,7 @@ mod packet_trigger {
         }
 
         // The crate drops what the box drops when the opt-in goes off, and restores it if the frame
-        // never went out.
+        // was never sent.
         #[test]
         fn the_opt_in_going_off_leaves_only_the_watching_triggers_held() {
             use crate::transport::Disconnected;

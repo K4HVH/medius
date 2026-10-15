@@ -32,7 +32,7 @@ fn catch_payload_bytes() {
 
 #[test]
 fn catch_classes_match_the_wire() {
-    // Classes 0..3 must equal LOCK's and INJECT's, or one vocabulary silently becomes two.
+    // Classes 0..3 must equal LOCK's and INJECT's, or one vocabulary becomes two with no error.
     assert_eq!(CatchClass::Button.as_u8(), 0);
     assert_eq!(CatchClass::Key.as_u8(), 1);
     assert_eq!(CatchClass::Media.as_u8(), 2);
@@ -69,7 +69,7 @@ fn the_two_class_vocabularies_agree() {
         assert!(c.is_traffic() && !c.is_input());
         assert_eq!(TrafficClass::try_from(c), Ok(t));
     }
-    // The input half refuses to become a traffic class, and hands itself back to say which.
+    // The input half refuses to become a traffic class, returning itself as the error.
     assert_eq!(
         TrafficClass::try_from(CatchClass::Key),
         Err(CatchClass::Key)
@@ -445,7 +445,7 @@ fn clip_transfer_event_splits_like_a_control_event_and_carries_a_transfer_status
             Some(want)
         );
     }
-    // A control event's flags are the device's answer to the game PC, not a transfer's status.
+    // A control event's flags are the handshake the game PC received, not a transfer's status.
     let mut ctl = p.clone();
     ctl[5] = 8;
     assert!(
@@ -585,7 +585,7 @@ fn a_device_stamp_translates_into_the_host_domain() {
 
 #[test]
 fn an_unfitted_rate_is_distinct_from_a_measured_zero() {
-    // Two different answers over the same wire field.
+    // Two different values over the same wire field.
     let build = |rate: i32| {
         let mut p = vec![7u8, 0];
         p.extend_from_slice(&0u32.to_le_bytes());
@@ -698,7 +698,7 @@ mod with_mock {
     #[test]
     fn a_capture_on_an_input_class_is_refused_not_ignored() {
         // The firmware's input taps ignore the capture (NULL where the traffic tap passes
-        // &snaplen), so accepting one would be a knob wired to nothing.
+        // &snaplen), so accepting one would be a setting with no effect.
         let dev = Device::with_mock(MockBox::new());
         let err = dev
             .catch_events([CatchFilter::watch_class(Class::Key).with_capture(Capture::First(8))])
@@ -707,7 +707,7 @@ mod with_mock {
             matches!(err, Error::CaptureNotApplicable { class } if class == CatchClass::Key),
             "got {err:?}"
         );
-        // The wildcard covers traffic, so capping it is exactly right and must still be allowed.
+        // The wildcard covers traffic, so capping it is correct and must still be allowed.
         let _ok = dev
             .catch_events([CatchFilter::everything().with_capture(Capture::First(16))])
             .expect("everything() may be capped");
@@ -728,7 +728,7 @@ mod with_mock {
         let _ok = dev
             .catch_events([CatchFilter::watch_class(Class::Media)])
             .expect("a blanket is not an exact id");
-        // And one below the sentinel is a perfectly good usage.
+        // And one below the sentinel is a valid usage.
         let _fine = dev
             .catch_events([CatchFilter::watch(Usage::new(Class::Media, 0xFFFE))])
             .expect("0xFFFE addresses one usage");
@@ -748,8 +748,8 @@ mod with_mock {
             dev.input_events([CatchFilter::everything()]).unwrap_err(),
             Error::WildcardNotInput
         ));
-        // A press-only subscription never sees the release, so the next press looks like a chord and
-        // the decoder stops reporting the key after its first press.
+        // A press-only subscription never receives the release, so the next press looks like a
+        // chord and the decoder stops reporting the key after its first press.
         assert!(matches!(
             dev.input_events([CatchFilter::watch(Key::new(0x04)).on_press()])
                 .unwrap_err(),
@@ -1831,7 +1831,7 @@ mod timeline {
     #[test]
     fn a_steady_stream_maps_onto_the_boxs_own_spacing() {
         // With the floor found, host instants are spaced as the box stamped them, whatever the
-        // jitter; here the jitter never beats the first sample, so the floor holds.
+        // jitter; here no delivery is faster than the first sample, so the floor holds.
         let origin = Instant::now();
         let mut t = Timeline::new();
         let mut out = Vec::new();

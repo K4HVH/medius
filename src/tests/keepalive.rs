@@ -148,7 +148,7 @@ fn keepalive_follows_a_clip_setting_and_a_trigger_binding() {
     clip.unbind(Button::SIDE1, Edge::Press).unwrap();
     assert!(!fires(), "and unbound it is not");
 
-    // A packet trigger waits on the device the way an input trigger waits on a button.
+    // A packet trigger waits on the real device the way an input trigger waits on a button.
     let packet = ClipPacketTrigger::new(TrafficClass::HidIn, 2, Direction::IN, ClipAction::Start)
         .matching([0x07, 0x20], [0xFF, 0x20]);
     clip.bind_packet(&packet).unwrap();

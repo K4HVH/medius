@@ -63,7 +63,7 @@ impl MotionEvent {
 /// Lists everything held in the class, so the release of usage U is the snapshot without U.
 ///
 /// It lists what the box's table matched: the union of every subscription in this process, so a
-/// stream watching one key sees others once unrelated code widens the table.
+/// stream watching one key receives others once unrelated code widens the table.
 /// [`Device::input_events`](crate::Device::input_events) filters to the requested addresses and
 /// yields press and release edges; decode snapshots directly only for the raw held set.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -136,10 +136,10 @@ pub enum BusEvent {
 pub enum ControlStatus {
     /// Transaction completed.
     Ok,
-    /// STALL to the PC: from the device, from a rule refusing the request, or, above endpoint 0,
-    /// for a failed request.
+    /// STALL to the PC: from the real device, from a rule refusing the request, or for a failed
+    /// request above endpoint 0.
     Stalled,
-    /// NAKed until the host gave up, on endpoint 0 only: the device never answered, or a `Nak` rule.
+    /// NAKed until the PC gave up, on endpoint 0 only: no native reply, or a `Nak` rule.
     Naked,
     /// Handshake value unknown to this build, kept distinct so a newer firmware's value does not
     /// read as a device fault.
@@ -289,11 +289,11 @@ impl TrafficEvent {
     }
 
     /// Whether the event is a zero-length packet. An event is one packet, except a
-    /// [`CatchClass::HidIn`] or [`CatchClass::Emit`] event on a HID endpoint, which carries a report
-    /// of up to 64 bytes whole however many packets it took: there, with bytes, a zero-length packet
-    /// ended the report after them. With none it is the packet alone, on HID endpoints the device's
-    /// answer to a poll it had nothing for, and on a bulk endpoint the end of a transfer whose length
-    /// is an exact multiple of the packet size.
+    /// [`CatchClass::HidIn`] or [`CatchClass::Emit`] event on a HID endpoint, which carries a
+    /// report of up to 64 bytes whole however many packets it took: there, with bytes, a
+    /// zero-length packet ended the report after them. With none it is the packet alone: on a HID
+    /// endpoint, the native reply to a poll with nothing to report; on a bulk endpoint, the end of
+    /// a transfer whose length is an exact multiple of the packet size.
     pub fn zlp(&self) -> bool {
         let packets = matches!(
             self.class,

@@ -1,7 +1,7 @@
-//! Render texture, and whether native motion goes through it (§4.14).
+//! Render texture, and whether native motion is rendered (§4.14).
 
 /// Texture the box renders motion with (`OPTION(RENDER)`'s `mode`). [`Off`](RenderMode::Off) is the
-/// paced fill; the others render the device's learned report texture and differ only in the path
+/// paced fill; the others render the learned native report texture and differ only in the path
 /// smoother. Independent of [`EmitPace`](crate::EmitPace), which caps the rendered rate.
 ///
 /// The model is [ABCurves](https://github.com/optima-manent/ABCurves) (MIT).
@@ -37,7 +37,7 @@ impl RenderMode {
     }
 }
 
-/// Configured [`RenderMode`], whether native motion goes through it, and whether a profile has
+/// Configured [`RenderMode`], whether native motion is rendered, and whether a profile has
 /// armed (§4.14).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct RenderStatus {
@@ -45,7 +45,7 @@ pub struct RenderStatus {
     pub mode: RenderMode,
     /// Whether the model renders native motion instead of relaying it.
     pub full: bool,
-    /// Whether the box has learned a profile for the attached device. Nothing renders until then,
+    /// Whether the box has learned a profile for the real device. Nothing renders until then,
     /// so this separates a box set to a mode from one rendering with it.
     pub ready: bool,
 }

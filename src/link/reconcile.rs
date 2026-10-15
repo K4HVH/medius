@@ -86,7 +86,7 @@ impl Slots {
     }
 }
 
-/// What [`DesiredState::apply_lock`] overwrote, to restore when the frame never went out.
+/// What [`DesiredState::apply_lock`] overwrote, to restore when the frame was never sent.
 #[derive(Debug)]
 pub(crate) struct LockUndo {
     rows: Vec<((u8, u16), Option<Slots>)>,
@@ -123,8 +123,8 @@ impl StoredRewrite {
     }
 }
 
-/// What [`DesiredState::apply_rewrite`]/[`remove_rewrite`](DesiredState::remove_rewrite) changed, to
-/// restore when the frame never went out.
+/// What [`DesiredState::apply_rewrite`]/[`remove_rewrite`](DesiredState::remove_rewrite) changed,
+/// to restore when the frame was never sent.
 #[derive(Debug)]
 pub(crate) struct RewriteUndo {
     key: RewriteWireKey,
@@ -152,8 +152,8 @@ impl StoredTransform {
     }
 }
 
-/// What [`DesiredState::apply_transform`]/[`remove_transform`](DesiredState::remove_transform) changed,
-/// to restore when the frame never went out.
+/// What [`DesiredState::apply_transform`]/[`remove_transform`](DesiredState::remove_transform)
+/// changed, to restore when the frame was never sent.
 #[derive(Debug)]
 pub(crate) struct TransformUndo {
     key: TransformWireKey,
@@ -297,7 +297,7 @@ impl DesiredState {
     }
 
     // The opt-in went off, removing every consuming packet trigger. Returns what was dropped, for a
-    // caller whose frame never went out to restore.
+    // caller whose frame was never sent to restore.
     pub(crate) fn clip_packet_drop_consuming(&mut self) -> Vec<ClipPacketTrigger> {
         let dropped: Vec<ClipPacketTrigger> = self
             .clip
@@ -482,8 +482,8 @@ impl DesiredState {
     }
 
     /// Records a rewrite rule (add or overwrite) for replay, returning the prior state for rollback
-    /// if the frame never went out (as [`apply_lock`]). An overwrite that changes the rule moves it to
-    /// the end, as the box re-adds it; the same rule again keeps its place.
+    /// if the frame was never sent (as [`apply_lock`]). An overwrite that changes the rule moves it
+    /// to the end, as the box re-adds it; the same rule again keeps its place.
     pub(crate) fn apply_rewrite(&mut self, rule: StoredRewrite) -> RewriteUndo {
         let key = rule.key();
         let at = self.rewrites.iter().position(|r| r.key() == key);
@@ -510,7 +510,7 @@ impl DesiredState {
         RewriteUndo { key, prior }
     }
 
-    /// Restores what an `apply_rewrite`/`remove_rewrite` changed, for a frame that never went out:
+    /// Restores what an `apply_rewrite`/`remove_rewrite` changed, for a frame never sent:
     /// the rule returns to its place, or leaves if it had none.
     pub(crate) fn restore_rewrite(&mut self, undo: RewriteUndo) {
         self.rewrites.retain(|r| r.key() != undo.key);
@@ -551,7 +551,7 @@ impl DesiredState {
     }
 
     /// Records a field transform (add or overwrite) for replay, returning the prior state for
-    /// rollback if the frame never went out (as [`apply_rewrite`]). An overwrite keeps the entry's
+    /// rollback if the frame was never sent (as [`apply_rewrite`]). An overwrite keeps the entry's
     /// position, as the box does.
     pub(crate) fn apply_transform(&mut self, entry: StoredTransform) -> TransformUndo {
         let key = entry.key();
@@ -581,8 +581,8 @@ impl DesiredState {
         }
     }
 
-    /// Restores what an `apply_transform`/`remove_transform` changed, for a frame that never went
-    /// out: the entry returns to its position, or leaves if it had none.
+    /// Restores what an `apply_transform`/`remove_transform` changed, for a frame never sent: the
+    /// entry returns to its position, or leaves if it had none.
     pub(crate) fn restore_transform(&mut self, undo: TransformUndo) {
         match undo.prior {
             Some((i, entry)) => {

@@ -7,17 +7,16 @@
 /// [`session`](Self::session) wraps for the same reason.
 ///
 /// Act on [`tx_drops`](Self::tx_drops), [`link_rx_drops`](Self::link_rx_drops) and
-/// [`host_rx_drops`](Self::host_rx_drops): each counts the player's input going missing and should
-/// read 0. [`relay_drops`](Self::relay_drops) is relayed traffic and commands that went no further,
-/// none of it native input. A rise across a burst of your own commands can mean some never reached
-/// the box. A lost release can leave a key held, and [`reapply`](crate::Device::reapply) re-sends
-/// only what is held, so send the releases again or call [`reset`](crate::Device::reset).
+/// [`host_rx_drops`](Self::host_rx_drops): each counts lost input and should read 0.
+/// [`relay_drops`](Self::relay_drops) is relayed traffic and commands that went no further, none of
+/// it native input. A rise across a burst of commands can mean some never reached the box. A lost
+/// release can leave a key held, and [`reapply`](crate::Device::reapply) re-sends only what is
+/// held, so send the releases again or call [`reset`](crate::Device::reset).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Stats {
     /// Pure-injection reports emitted (the no-halving / 1 kHz path).
     pub inject_emits: u32,
-    /// Reports the clone's TX queue could not hold: player input the game PC never saw. Should
-    /// stay 0.
+    /// Reports the clone's TX queue could not hold, never emitted to the game PC. Should stay 0.
     pub tx_drops: u16,
     /// Backed-up reports merged instead of queued.
     pub tx_merges: u16,
@@ -31,21 +30,21 @@ pub struct Stats {
     pub reset_count: u16,
     /// `SET_CONFIGURATION` events (re-enumerations).
     pub config_count: u16,
-    /// Input-carrying frames the clone-serving chip could not take off the inter-chip link: each a
-    /// mouse report or injected delta that never reached the wire. Should stay 0.
+    /// Input-carrying frames the device chip could not take off the inter-chip link: each a mouse
+    /// report or injected delta never emitted. Should stay 0.
     pub link_rx_drops: u32,
-    /// Same count for the chip reading the real device, relayed over the link.
+    /// Same count for the host chip, relayed over the link.
     pub host_rx_drops: u32,
     /// Relayed traffic and commands that went no further: a vendor IN packet that found its
-    /// endpoint's queue full of the control PC's `RAW` packets, or a device's zero-length packet
-    /// answering a poll the PC did not make (the one poll the box runs ahead of a suspended PC); an
-    /// OUT packet the box could not queue, that failed three times on the device's bus, or that a
-    /// bus reset or `SET_INTERFACE` overtook; a `RAW` OUT packet with no room to wait; a relayed
-    /// request or a flagged `MOVE` the box could not queue; any frame other than native input that
-    /// either chip's link receive ring dropped; and a frame from the control PC the box's receive
-    /// ring had no room for (one a frame), or an overrun of the control port's UART (one an
-    /// overrun, however many frames it cost). Counted apart from `tx_drops` because no native input
-    /// goes missing with it.
+    /// endpoint's queue full of the control PC's `RAW` packets, or a native zero-length packet
+    /// replying to a poll the PC did not make (the one poll the box runs ahead of a suspended PC);
+    /// an OUT packet the box could not queue, that failed three times on the real device's bus, or
+    /// that a bus reset or `SET_INTERFACE` overtook; a `RAW` OUT packet with no room to wait; a
+    /// relayed request or a flagged `MOVE` the box could not queue; any frame other than native
+    /// input that either chip's link receive ring dropped; and a frame from the control PC the
+    /// box's receive ring had no room for (one a frame), or an overrun of the control port's UART
+    /// (one an overrun, however many frames it cost). Counted apart from `tx_drops` because no
+    /// native input goes missing with it.
     pub relay_drops: u32,
     /// Times the box released host-set session state (locks, held input, subscriptions, rules,
     /// transforms, the clip, an LED override). Wraps, so compare for inequality; 0 at boot. The crate

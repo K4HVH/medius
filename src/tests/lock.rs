@@ -427,7 +427,7 @@ fn ac_pan_is_a_lockable_axis_peer_of_the_wheel() {
         l.scale_of(Axis::Wheel, Direction::Positive),
         LOCK_SCALE_PASS
     );
-    // Both clears the relative pair too, so the Against weighing does not keep applying unseen.
+    // Both clears the relative pair too, so the Against weighing does not stay in place.
     dev.unlock(Axis::Pan, Direction::Both).unwrap();
     let l = dev.query_locks().unwrap();
     assert!(!l.is_locked(Axis::Pan, Direction::Positive));
@@ -482,7 +482,7 @@ fn vector_mode_reports_the_scale_the_box_applies_to_the_aim() {
     let l = dev.query_locks().unwrap();
     assert_eq!(l.scale_of(Axis::X, Direction::With), 60);
     assert_eq!(l.scale_of(Axis::Y, Direction::With), 60);
-    // The absolute pair is per axis in either mode; which slot a delta lands in, the box decides on
+    // The absolute pair is per axis in either mode; the box picks the slot a delta lands in from
     // the emitted value.
     dev.scale(Axis::X, Direction::Positive, 25).unwrap();
     assert_eq!(
@@ -644,8 +644,8 @@ fn the_box_writes_nothing_at_all_for_a_reversal_on_a_one_bit_class() {
 
 #[test]
 fn scale_of_both_ranks_a_block_above_a_reversal() {
-    // A signed minimum ranks -50 lowest and reports a reversal over the block a delta meets; Both is
-    // the least that survives, a magnitude.
+    // A signed minimum ranks -50 lowest and reports a reversal over the block applied to a delta;
+    // Both is the least that survives, a magnitude.
     let l = Locks::from_payload(&[
         6,
         2,

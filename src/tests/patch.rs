@@ -324,8 +324,8 @@ mod mock_roundtrip {
         assert!(!full(), "a removal is a change");
     }
 
-    // Re-storing a key's own bytes changes nothing: the patch keeps its place and a refusal for
-    // room stays reported.
+    // Re-storing the bytes a key already holds changes nothing: the patch keeps its place and a
+    // refusal for room stays reported.
     #[test]
     fn re_storing_the_bytes_held_changes_nothing() {
         let device = Device::with_mock(MockBox::new());

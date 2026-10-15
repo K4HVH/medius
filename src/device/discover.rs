@@ -10,7 +10,7 @@ use crate::types::{DeviceInfo, DeviceKind, PortInfo, Version};
 
 use super::Device;
 
-/// Discovered box: serial port, firmware version, and the device it clones.
+/// Discovered box: serial port, firmware version, and the real device it clones.
 #[derive(Debug, Clone)]
 pub struct BoxInfo {
     /// Control serial port (path, USB ids, serial).
@@ -25,7 +25,7 @@ pub struct BoxInfo {
 }
 
 impl BoxInfo {
-    /// Stable box id: the device MAC as 12 lowercase hex digits.
+    /// Stable box id: the device-chip MAC as 12 lowercase hex digits.
     pub fn id(&self) -> String {
         self.version.mac_hex()
     }
@@ -89,7 +89,7 @@ pub(crate) fn pick_by_id<'a>(boxes: &'a [BoxInfo], id: &str) -> Result<&'a BoxIn
     openable(found)
 }
 
-// A box this build speaks to wins; one on another protocol is picked only when nothing else matches.
+// A box this build speaks to comes first; one on another protocol only when nothing else matches.
 pub(crate) fn pick_where(boxes: &[BoxInfo], pred: impl Fn(&BoxInfo) -> bool) -> Result<&BoxInfo> {
     let found = boxes
         .iter()
@@ -114,8 +114,8 @@ impl Device {
             .collect()
     }
 
-    /// Open the box whose device MAC or CH343 serial matches `id`. [`Error::BadProtoVer`] when it
-    /// speaks another control protocol, [`Error::NotFound`] when no box matches.
+    /// Open the box whose device-chip MAC or CH343 serial matches `id`. [`Error::BadProtoVer`] when
+    /// it speaks another control protocol, [`Error::NotFound`] when no box matches.
     pub fn open_by_id(id: &str) -> Result<Device> {
         Device::open(&pick_by_id(&Device::list(), id)?.port.path)
     }

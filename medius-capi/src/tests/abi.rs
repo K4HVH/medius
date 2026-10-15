@@ -911,7 +911,7 @@ fn a_byte_no_constant_names_is_refused_at_every_entry_point() {
         (bearing.window_ms, bearing.mode),
         (MEDIUS_BEARING_WINDOW_DEFAULT_MS, MediusBearingMode::PerAxis)
     );
-    // The two readers answer with a separate status: an unnamed direction names no entry, so
+    // The two readers return a separate status: an unnamed direction names no entry, so
     // nothing weighs the target and nothing is locked.
     unsafe {
         assert_eq!(medius_device_lock(dev, x, both), MediusStatus::Ok);
@@ -1181,10 +1181,10 @@ fn a_clip_transfer_event_reads_through_the_helpers() {
     stalled.flags = 0x42;
     assert!(unsafe { medius_traffic_event_transfer_status(&stalled, &mut status) });
     assert_eq!(status, 0x42);
-    // The out is optional: a null one is skipped and the answer still comes back.
+    // The out is optional: a null one is skipped and the return value still holds.
     assert!(unsafe { medius_traffic_event_transfer_status(&stalled, ptr::null_mut()) });
 
-    // Any other class answers false and leaves the out alone.
+    // Any other class returns false and leaves the out alone.
     let mut other = t;
     other.class = MEDIUS_CATCH_CLASS_CONTROL;
     status = 0xEE;
@@ -2277,7 +2277,7 @@ fn packet_triggers_the_box_holds_read_back_field_for_field() {
     }
 }
 
-// `clip_settings_to_c` on settings the test builds by hand, for a state the box never answers with.
+// `clip_settings_to_c` on settings the test builds by hand, for a state the box never replies with.
 fn settings_to_c(s: &medius::ClipSettings) -> MediusClipSettings {
     let mut c: MediusClipSettings = unsafe { std::mem::zeroed() };
     unsafe { crate::convert::clip_settings_to_c(s, &mut c) };
@@ -2748,7 +2748,7 @@ fn a_packet_trigger_the_crate_refuses_has_its_own_status_and_sends_nothing() {
     ] {
         assert_eq!(status, MediusStatus::ErrInvalidArg, "{what}");
     }
-    // The removals of the seven sound keys are all that went out.
+    // The removals of the seven sound keys are all that was sent.
     let sent = clip_trigger_payloads(&unsafe { (*mock).inner.recorded_frames() });
     assert_eq!(sent.len(), refused.iter().filter(|r| !r.3).count());
     assert!(sent.iter().all(|p| p[4..7] == [0, 0, 0]), "{sent:?}");
@@ -2951,7 +2951,7 @@ fn a_once_per_run_trigger_with_no_masked_bit_past_its_selector_is_refused() {
         clip_trigger_payloads(&unsafe { (*mock).inner.recorded_frames() }),
         Vec::<Vec<u8>>::new()
     );
-    // The key is sound, so a removal goes out, and so does the same trigger bound on each packet.
+    // The key is sound, so a removal is sent, and so is the same trigger bound on each packet.
     for (what, t) in &refused {
         assert_eq!(
             unsafe { medius_clip_unbind_packet(clip, t) },
@@ -3267,7 +3267,7 @@ fn the_mock_runs_a_packet_through_its_triggers() {
             ptr::null_mut(),
             ptr::null_mut()
         ));
-        // Each out is optional: the packet still runs and the answer still comes back.
+        // Each out is optional: the packet still runs and the return value still holds.
         assert!(medius_mock_clip_packet(
             mock,
             hid_in,
@@ -3313,7 +3313,7 @@ fn a_consuming_packet_trigger_needs_the_imperfect_opt_in_and_goes_when_it_is_tur
         id: 3,
         ..spec_trigger()
     };
-    // The bind goes out either way; the box holds the consuming one only under the opt-in.
+    // The bind is sent either way; the box holds the consuming one only under the opt-in.
     for t in [&consuming, &watching] {
         assert_eq!(
             unsafe { medius_clip_bind_packet(clip, t) },
@@ -3953,8 +3953,8 @@ fn clip_status_query_returns_configured_value() {
 #[test]
 fn every_enum_byte_on_the_boundary_is_refused_rather_than_materialized() {
     // A byte a caller chose, read as a `#[repr(u8)]` enum, is undefined before any check can run:
-    // the value falls outside the match's jump table and the process dies, or lands on a constant it
-    // never named and the wrong command goes out. Each of these takes the byte and refuses it.
+    // the value falls outside the match's jump table and the process dies, or lands on a constant
+    // it never named and the wrong command is sent. Each of these takes the byte and refuses it.
     const BAD: u8 = 200;
     let mock = medius_mock_new();
     let mut dev: *mut MediusDevice = ptr::null_mut();
@@ -4151,7 +4151,7 @@ fn every_enum_byte_on_the_boundary_is_refused_rather_than_materialized() {
     fresh.frame(medius::ClipFrame::new());
     assert_eq!(unsafe { &(*builder).inner }, &fresh);
 
-    // The no-status surfaces answer their fallback rather than acting on the byte.
+    // The no-status surfaces return their fallback rather than acting on the byte.
     assert!(!unsafe { medius_mock_saw(mock, BAD) });
     let timeline = medius_timeline_new();
     unsafe { medius_timeline_reset(timeline, BAD) };

@@ -25,8 +25,8 @@ pub enum RewriteClass {
     /// motion rewrite here survives only on reports the host chip leaves alone; rewrite motion at
     /// `Emit`.
     HidIn = CATCH_CLS_HID_IN,
-    /// Interrupt-OUT report the game PC wrote, relayed to the device; `id` is the endpoint number,
-    /// `direction` [`OUT`](crate::Direction::OUT).
+    /// Interrupt-OUT report the game PC wrote, relayed to the real device; `id` is the endpoint
+    /// number, `direction` [`OUT`](crate::Direction::OUT).
     HidOut = CATCH_CLS_HID_OUT,
     /// Interrupt traffic on a vendor interface; `id` is the endpoint number, `direction`
     /// [`IN`](crate::Direction::IN) or [`OUT`](crate::Direction::OUT).
@@ -37,7 +37,7 @@ pub enum RewriteClass {
     /// Proxied control transfer; `id` is the endpoint number (0 = EP0). On EP0 only class and vendor
     /// requests reach a rule (change descriptors with `PATCH`); above EP0 every request does.
     Control = CATCH_CLS_CONTROL,
-    /// Outgoing wire, after the renderer; `id` is the endpoint number, `direction`
+    /// Emitted bytes, after the renderer; `id` is the endpoint number, `direction`
     /// [`IN`](crate::Direction::IN). Matches injected and rendered frames besides relayed ones.
     Emit = CATCH_CLS_EMIT,
     /// Wire wildcard `0xFF`: ranked below every other rule, `id` not compared, `Pass`, `Patch` and
@@ -65,7 +65,7 @@ impl RewriteClass {
         })
     }
 
-    /// Whether this is the control class, the only one that can answer or rewrite a device reply.
+    /// Whether this is the control class, the only one that can answer or rewrite a native reply.
     pub fn is_control(self) -> bool {
         matches!(self, RewriteClass::Control)
     }
@@ -86,8 +86,8 @@ pub enum RewriteAction {
     /// Leaves the matched packet untouched (shadows a broader rule).
     #[default]
     Pass = RW_PASS,
-    /// Report class: the packet is not delivered. An `Emit` drop mutes the wire; a `HidIn` drop
-    /// removes the device's contribution while injection still emits.
+    /// Report class: the packet is not delivered. An `Emit` drop emits nothing; a `HidIn` drop
+    /// removes the native report while injection still emits.
     Drop = RW_DROP,
     /// Overwrite the payload bytes at `offset`, length preserved. On `Control`, an OUT request's data
     /// stage only.
@@ -95,15 +95,15 @@ pub enum RewriteAction {
     /// The packet becomes the payload. On `Control`, the payload overwrites the start of an OUT
     /// request's data stage and `wLength` is kept.
     Replace = RW_REPLACE,
-    /// Control: answer from the payload without asking the device.
+    /// Control: answer with the payload, without forwarding the request to the real device.
     Answer = RW_ANSWER,
     /// Control: protocol STALL.
     Stall = RW_STALL,
     /// Control: NAK on EP0 until the host times out; STALL on a control endpoint above 0.
     Nak = RW_NAK,
-    /// Control IN: overwrite the device's reply at `offset`.
+    /// Control IN: overwrite the native reply at `offset`.
     ReplyPatch = RW_REPLY_PATCH,
-    /// Control IN: replace the device's reply with the payload.
+    /// Control IN: replace the native reply with the payload.
     ReplyReplace = RW_REPLY_REPLACE,
 }
 
@@ -173,7 +173,7 @@ impl RewriteAction {
 /// # fn main() -> Result<()> {
 /// let device = Device::find()?;
 /// device.allow_imperfect_clones(true)?;
-/// // Mute the clone's wire on interrupt-IN endpoint 1 (Emit is an IN endpoint).
+/// // Drop everything the clone emits on interrupt-IN endpoint 1 (Emit is an IN endpoint).
 /// device.set_rewrite(&RewriteRule::new(RewriteClass::Emit, 1, Direction::IN, RewriteAction::Drop))?;
 /// # Ok(()) }
 /// ```
@@ -199,7 +199,7 @@ pub struct RewriteRule {
 }
 
 impl Default for RewriteClass {
-    /// [`Emit`](RewriteClass::Emit): the outgoing wire, the most common target.
+    /// [`Emit`](RewriteClass::Emit): emitted bytes, the most common target.
     fn default() -> Self {
         RewriteClass::Emit
     }

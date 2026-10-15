@@ -184,7 +184,7 @@ impl RestartWatch {
         w.session.replace(session).is_some_and(|was| was != session)
     }
 
-    // A command went out that may present the clone again.
+    // A command was sent that may present the clone again.
     pub(crate) fn expect_represent(&self) {
         self.state.lock().represent_until = Some(Instant::now() + REPRESENT_WATCH);
     }
@@ -260,7 +260,7 @@ pub(crate) fn read_ring(ctx: &KeepaliveCtx) {
     ctx.desired.lock().clip_note_ring(seen, &status, false);
 }
 
-// On the keepalive thread. Held state goes back only to a clone that is up, since the box drops a
+// On the keepalive thread. Held state is re-sent only to a clone that is up, since the box drops a
 // lock, transform or clip append sent before it exists; a release that left the clone standing (the
 // link, a silence, a short detach) finds it up at once.
 pub(crate) fn step(ctx: &KeepaliveCtx, cause: Cause) -> Outcome {
@@ -272,7 +272,7 @@ pub(crate) fn step(ctx: &KeepaliveCtx, cause: Cause) -> Outcome {
     if buttons > 0 {
         ctx.desired.lock().note_declared_buttons(buttons);
     }
-    // Everything released up to this reading is answered by the re-send below.
+    // Everything released up to this reading is covered by the re-send below.
     let Some(before) = read_stats(ctx).map(|s| s.session) else {
         return Outcome::Wait;
     };
@@ -291,7 +291,7 @@ pub(crate) fn step(ctx: &KeepaliveCtx, cause: Cause) -> Outcome {
         return Outcome::Wait;
     }
     // A release can come in two parts (a detach counts at once and takes the clone down after its
-    // grace), and a re-send between them lands on a departing clone. It stuck, and the ring reading
+    // grace), and a re-send between them lands on a departing clone. It took, and the ring reading
     // describes this release, only if the clone is still up and nothing was released since.
     let up = clone_up(ctx).is_some();
     let ring_seen = ctx.desired.lock().clip_ring_gen();
@@ -318,7 +318,7 @@ fn query(ctx: &KeepaliveCtx, what: u8) -> Option<Vec<u8>> {
     query_sent(ctx, what).flatten()
 }
 
-// The outer `None` is a frame that never went out. The wait yields to a device being dropped.
+// The outer `None` is a frame never sent. The wait yields to a device being dropped.
 fn query_sent(ctx: &KeepaliveCtx, what: u8) -> Option<Option<Vec<u8>>> {
     let (seq, gen_id, rx) = correlation::register(
         &ctx.pending,

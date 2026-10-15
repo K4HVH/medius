@@ -6,7 +6,7 @@ use crate::types::{Motion, MoveTiming, PendingMotion};
 use super::Device;
 
 impl Device {
-    /// `MOVE` (cursor): relative cursor movement; full `i16`, no clamp.
+    /// `MOVE` (cursor): relative cursor motion; full `i16`, no clamp.
     pub fn move_rel(&self, dx: i16, dy: i16) -> Result<()> {
         self.move_axis(
             Motion::Cursor { dx, dy },
@@ -20,8 +20,8 @@ impl Device {
         self.move_axis(Motion::Wheel(delta), MoveTiming::Ride, PendingMotion::Keep)
     }
 
-    /// `MOVE` (cursor) bypassing movement riding: leaves on the next mouse report the box sends,
-    /// native or one the box makes, and motion already held for a ride stays held.
+    /// `MOVE` (cursor) bypassing movement riding: emitted on the next mouse report, native or one
+    /// the box makes; motion already held for a ride stays held.
     pub fn move_rel_now(&self, dx: i16, dy: i16) -> Result<()> {
         self.move_axis(
             Motion::Cursor { dx, dy },
@@ -64,8 +64,8 @@ impl Device {
         )
     }
 
-    /// `MOVE`: drive a relative axis, choosing when the delta reaches the game PC and what happens to
-    /// motion already held for a ride.
+    /// `MOVE`: drive a relative axis, choosing when the delta is emitted and what happens to motion
+    /// already held for a ride.
     pub fn move_axis(
         &self,
         motion: Motion,

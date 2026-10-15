@@ -54,13 +54,13 @@ pub(crate) struct LinkInner {
     events: Arc<Mutex<CatchReg>>,
     catch_gen: Arc<AtomicU64>,
     // Serialises a subscribe/unsubscribe, or a rewrite-table mutation and its send, against
-    // re-asserts, so neither commits out of order and strands the box.
+    // re-asserts, so neither commits out of order and leaves the box holding what the host dropped.
     catch_lock: Arc<Mutex<()>>,
     counters: Arc<Counters>,
     stop: Arc<AtomicBool>,
     reconnect_lock: Arc<Mutex<()>>,
-    // CH343 serial + device MAC, set after the handshake, so a reconnect never adopts a different
-    // box that happens to be present.
+    // CH343 serial + device-chip MAC, set after the handshake, so a reconnect never adopts a
+    // different box that happens to be present.
     identity: Arc<Mutex<Option<BoxIdentity>>>,
     restart: Arc<RestartWatch>,
     query_timeout: Duration,

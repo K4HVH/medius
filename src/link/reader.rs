@@ -137,7 +137,7 @@ fn route_frame(
         FrameType::MotionEvent | FrameType::UsageEvent | FrameType::TrafficEvent => {
             catch::deliver_event(events, frame.ty, &frame.payload)
         }
-        // One acknowledgement answers a window of DATA frames with a rolling SEQ, so the caller
+        // One acknowledgement covers a window of DATA frames with a rolling SEQ, so the caller
         // matches on the op byte.
         FrameType::UpdateResp => {
             restart.note_reply();

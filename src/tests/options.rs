@@ -59,7 +59,7 @@ fn render_mode_round_trips_its_own_wire_byte() {
         assert_eq!(m.to_wire(), w);
         assert_eq!(RenderMode::from_u8(w), Some(m));
     }
-    // A value this crate does not know is refused rather than silently read as Off.
+    // A value this crate does not know is refused rather than read as Off.
     assert_eq!(RenderMode::from_u8(4), None);
     assert_eq!(RenderMode::from_u8(0x80), None);
 }
@@ -145,9 +145,9 @@ fn decode_emit_pace_through_parse_resp() {
     );
     // An 11-byte value is short of the shape and is refused rather than read with a defaulted field.
     assert!(parse_resp(&[9, 2, 2, 0xE8, 0x03, 0xFA, 0x00, 0x7D, 0x00, 0x64, 0x00]).is_none());
-    // An unknown pace is refused rather than silently read as a default.
+    // An unknown pace is refused rather than read as a default.
     assert!(parse_resp(&[9, 2, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0]).is_none());
-    // The bit-packed encodings an older box used are now just unknown paces.
+    // The bit-packed encodings an older box used are unknown paces.
     assert!(parse_resp(&[9, 2, 0x80, 0, 0, 0, 0, 0, 0, 0, 0, 0]).is_none());
     assert!(parse_resp(&[9, 2, 0x82, 0, 0, 0, 0, 0, 0, 0, 0, 0]).is_none());
 }
@@ -213,7 +213,7 @@ fn mock_spread_answers_zero_until_a_period_is_learned() {
     // Above 100 overlaps rather than being clamped.
     device.set_spread(200).unwrap();
     assert_eq!(device.query_spread().unwrap().span_us, 16000);
-    // Off answers no interval even with a period learned.
+    // Off reports no interval even with a period learned.
     device.set_spread(0).unwrap();
     assert_eq!(
         device.query_spread().unwrap(),
@@ -380,13 +380,13 @@ fn an_unknown_render_value_discards_the_whole_command() {
 #[test]
 fn mock_rate_force_matches_firmware_snap() {
     use crate::{Device, MockBox};
-    // A clone that declares 125 Hz, with the opt-in on so a force can actually apply.
+    // A clone that declares 125 Hz, with the opt-in on so a force can apply.
     let mock = MockBox::new()
         .with_advertised_hz(125)
         .with_rate_force(Some(300));
     let device = Device::with_mock(mock.clone());
     device.allow_imperfect_clones(true).unwrap();
-    // 300 Hz resolves to bInterval 2, the interval a host would actually keep for 1000/300.
+    // 300 Hz resolves to bInterval 2, the interval a host keeps for 1000/300.
     let s = device.query_emit_pace().unwrap();
     assert_eq!(s.force_hz, Some(300));
     assert_eq!(s.advertised_hz, 500);
@@ -445,7 +445,7 @@ fn set_movement_riding_rounds_sub_ms_up_to_on() {
     use crate::{Device, MockBox};
     let mock = MockBox::new();
     let device = Device::with_mock(mock.clone());
-    // a non-zero Some window under 1 ms must not silently round down to off
+    // a non-zero Some window under 1 ms must not round down to off
     device
         .set_movement_riding(Some(Duration::from_micros(500)))
         .unwrap();
@@ -501,7 +501,7 @@ fn set_name_sends_option_frame_and_clear_is_empty() {
 #[test]
 fn set_name_sends_the_value_raw_for_the_box_to_sanitize() {
     use crate::{Device, MockBox};
-    // set_name sends the string as is and the box sanitises, so a control byte goes out on the wire
+    // set_name sends the string as is and the box sanitises, so a control byte is sent
     // (the box drops it) with no host error.
     let mock = MockBox::new();
     let device = Device::with_mock(mock.clone());
@@ -543,7 +543,7 @@ fn bearing_decodes_from_a_resp() {
     assert_eq!(off.mode, BearingMode::Vector);
     assert!(!off.is_live());
 
-    // An unknown mode is not silently read as per-axis.
+    // An unknown mode is not read as per-axis.
     assert!(parse_resp(&[9, 4, 20, 0, 7]).is_none());
     assert!(parse_resp(&[9, 4, 20, 0]).is_none());
 }

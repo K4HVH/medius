@@ -216,7 +216,7 @@ pub unsafe extern "C" fn medius_mock_set_bearing(
     });
 }
 
-/// Set the pacing mode and forced wire rate of the mock's OPTION(EMIT) reply; `hz` matters only for
+/// Set the pacing mode and forced poll rate of the mock's OPTION(EMIT) reply; `hz` matters only for
 /// `Fixed`, `force_hz` 0 means unforced. `mode` takes a `MEDIUS_EMIT_MODE_*` constant; any other
 /// value leaves the pacing mode alone.
 #[unsafe(no_mangle)]
@@ -234,7 +234,7 @@ pub unsafe extern "C" fn medius_mock_set_emit_pace(
     });
 }
 
-/// Set the mock's OPTION(RENDER) reply: texture, whether native motion goes through it, and whether
+/// Set the mock's OPTION(RENDER) reply: texture, whether native motion is rendered, and whether
 /// a profile is armed. `mode` takes a `MEDIUS_RENDER_MODE_*` constant; any other value leaves the
 /// texture alone. `ready` gates rendering on a real box; an unarmed mock is every box's state after
 /// a power cut.
@@ -377,8 +377,8 @@ pub unsafe extern "C" fn medius_mock_detach(mock: *mut MediusMockBox, back_withi
     with_mock(mock, |m| m.detach(back_within_grace));
 }
 
-/// Simulate the device attaching again: inside a detach's grace the clone stays as it is; after
-/// teardown a fresh clone starts with nothing to release.
+/// Simulate the real device attaching again: inside a detach's grace the clone stays as it is;
+/// after teardown a fresh clone starts with nothing to release.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_mock_attach(mock: *mut MediusMockBox) {
     with_mock(mock, |m| m.attach());
@@ -412,7 +412,7 @@ pub unsafe extern "C" fn medius_mock_silent(mock: *mut MediusMockBox) {
     });
 }
 
-/// Inject raw bytes into the host's inbound stream, as if the box put them on the wire.
+/// Inject raw bytes into the host's inbound stream, as if the box sent them.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_mock_push_raw(
     mock: *mut MediusMockBox,
@@ -428,7 +428,7 @@ pub unsafe extern "C" fn medius_mock_push_raw(
     });
 }
 
-/// Push a LOG line as if the box emitted it (surfaces on the device's log stream). `level` takes a
+/// Push a LOG line as if the box sent it (surfaces on the LOG stream). `level` takes a
 /// `MEDIUS_LOG_LEVEL_*` constant; any other value reads as `INFO`, as the wire decoder reads an
 /// unknown level byte.
 #[unsafe(no_mangle)]
@@ -446,7 +446,7 @@ pub unsafe extern "C" fn medius_mock_push_log(
     });
 }
 
-/// Push a MOTION_EVENT as if the box emitted it (surfaces as a `Motion` catch event).
+/// Push a MOTION_EVENT as if the box sent it (surfaces as a `Motion` catch event).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_mock_push_motion(
     mock: *mut MediusMockBox,
@@ -459,7 +459,7 @@ pub unsafe extern "C" fn medius_mock_push_motion(
     });
 }
 
-/// Push a USAGE_EVENT as if the box emitted it (surfaces as a `Usages` catch event).
+/// Push a USAGE_EVENT as if the box sent it (surfaces as a `Usages` catch event).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_mock_push_usages(
     mock: *mut MediusMockBox,
@@ -483,7 +483,7 @@ pub unsafe extern "C" fn medius_mock_push_usages(
     });
 }
 
-/// Push a TRAFFIC_EVENT as if the box emitted it (surfaces as a `Traffic` catch event).
+/// Push a TRAFFIC_EVENT as if the box sent it (surfaces as a `Traffic` catch event).
 /// `true_len` above `len` makes a snaplen-truncated capture.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_mock_push_traffic(
@@ -587,7 +587,7 @@ pub unsafe extern "C" fn medius_mock_recorded_frame(
     })
 }
 
-/// Build a `Device` over the mock WITHOUT a handshake (clones the mock's shared state).
+/// Build a `Device` over the mock without a handshake (clones the mock's shared state).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_device_with_mock(
     mock: *const MediusMockBox,
@@ -604,7 +604,7 @@ pub unsafe extern "C" fn medius_device_with_mock(
     })
 }
 
-/// Build a `Device` over the mock AND run the version handshake (can fail if the mock is silent).
+/// Build a `Device` over the mock and run the version handshake (can fail if the mock is silent).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_device_open_mock(
     mock: *const MediusMockBox,

@@ -104,7 +104,7 @@ pub unsafe extern "C" fn medius_event_stream_close(stream: *mut MediusEventStrea
     });
 }
 
-/// Block until the next physical-input event, writing it to `*out`; `ErrDisconnected` on close.
+/// Block until the next native input event, writing it to `*out`; `ErrDisconnected` on close.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_event_stream_recv(
     stream: *mut MediusEventStream,
@@ -427,7 +427,7 @@ pub unsafe extern "C" fn medius_input_stream_held(
 ///
 /// A catch stamp is microseconds on a chip that booted before this process: it wraps every ~71.6
 /// minutes and is unrelated to any clock here. Feed every event in as it arrives, in order, with
-/// your monotonic `now_ns`.
+/// the caller's monotonic `now_ns`.
 pub struct MediusTimeline {
     inner: medius::Timeline,
     origin: std::time::Instant,

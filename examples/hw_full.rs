@@ -186,7 +186,7 @@ mod linux {
             };
             found.push((name, target.to_string_lossy().into_owned()));
         }
-        // The clone takes the attached device's VID:PID, so none is fixed.
+        // The clone takes the real device's VID:PID, so none is fixed.
         found.sort();
         if found.is_empty() {
             return Err("no usb event-mouse or event-kbd node in /dev/input/by-id; is USB1 cabled to this machine?".into());
@@ -446,8 +446,8 @@ mod linux {
         }
 
         {
-            // Per-command override on the wire: with riding on and the mouse idle, a plain move never
-            // reaches the PC, a NOW move does, FLUSH sends what was held and DISCARD drops it. Leaves
+            // Per-command override on the wire: with riding on and the mouse idle, a plain move is
+            // never emitted, a NOW move is, FLUSH sends what was held and DISCARD drops it. Leaves
             // riding off.
             let dev = device.as_ref().unwrap();
             let window = Duration::from_millis(20);
@@ -526,7 +526,7 @@ mod linux {
         }
 
         {
-            // OPTION(RENDER): the render texture, and whether native motion goes through it.
+            // OPTION(RENDER): the render texture, and whether native motion is rendered.
             let dev = device.as_ref().unwrap();
             let mut all_ok = true;
             let mut last = String::new();
@@ -668,8 +668,8 @@ mod linux {
         }
 
         {
-            // The clone cannot show the LED, so this is a smoke check: every mode is accepted, the box
-            // stays healthy, and the LED returns to the box.
+            // The clone cannot show the LED, so this is a smoke check: every mode is accepted, the
+            // box stays healthy, and the LED returns to the box's status display.
             let dev = device.as_ref().unwrap();
             let mut accepted = true;
             for (mode, level) in [
@@ -690,8 +690,8 @@ mod linux {
         }
 
         {
-            // LOCK: a locked axis still moves under injection (only physical input is suppressed). The
-            // 3 ms inject cadence doubles as the keepalive.
+            // LOCK: a locked axis still moves under injection (only native input is suppressed).
+            // The 3 ms inject cadence doubles as the keepalive.
             let dev = device.as_ref().unwrap();
             let _ = dev.reset();
             let _ = dev.lock(Axis::X, Direction::Both);
@@ -981,7 +981,7 @@ mod linux {
         }
 
         {
-            // LOCK: injection overrides a locked button (block-press, but a forced press wins).
+            // LOCK: injection overrides a locked button (a forced press passes a press block).
             let dev = device.as_ref().unwrap();
             let _ = dev.reset();
             let _ = dev.lock(Button::LEFT, Direction::Positive);
@@ -1021,8 +1021,8 @@ mod linux {
         }
 
         {
-            // LOCK (keyboard/blanket): a key lock and the all-keys blanket set HEALTH lock_on and RESET
-            // clears them; the physical block needs keyboard input (run `medius.py`).
+            // LOCK (keyboard/blanket): a key lock and the all-keys blanket set HEALTH lock_on and
+            // RESET clears them; verifying the block needs native keyboard input (run `medius.py`).
             let dev = device.as_ref().unwrap();
             let has_kbd = dev.query_health().map(|h| h.kbd_attached).unwrap_or(false);
             if has_kbd {
@@ -1131,9 +1131,9 @@ mod linux {
             // HID_IN is host-stamped (the real device produced it) and EMIT device-stamped (the clone
             // did). A wrong domain gives plausible wrong deltas, not an error, so it is asserted.
             //
-            // EMIT is driven by injecting: a change-driven mouse NAKs at rest (the Mamba Elite sends
-            // nothing untouched), so waiting alone sees neither class. HID_IN needs the device to
-            // report, and says so when it did not.
+            // EMIT is driven by injecting: a change-driven mouse NAKs at rest (the Mamba Elite
+            // sends nothing untouched), so waiting alone sees neither class. HID_IN needs the real
+            // device to report, and says so when it did not.
             let dev = device.as_ref().unwrap();
             let mut hid_in = 0usize;
             let mut emit = 0usize;
@@ -1564,8 +1564,8 @@ mod linux {
             b.release(Key::A);
             let appended = clip.append(&b).is_ok();
             let loaded = clip.query_status().map(|s| s.total > 0).unwrap_or(false);
-            // Selective auto-lock: cursor axes and buttons only, keyboard free (the clip still drives
-            // KEY_A; only physical input is locked).
+            // Selective auto-lock: cursor axes and buttons only, keyboard free (the clip still
+            // drives KEY_A; only native input is locked).
             let scoped = clip.set_autolock(&[Blanket::Aim, Blanket::Buttons]).is_ok();
             let started = scoped && clip.start().is_ok();
             std::thread::sleep(Duration::from_millis(150));
@@ -1597,7 +1597,7 @@ mod linux {
                 ),
             );
 
-            // Trigger set and config readback (firing needs a physical press, in the physical suite):
+            // Trigger set and config readback (firing needs a native press, in the physical suite):
             // bind two, read back, unbind, clear.
             let _ = clip.clear();
             let bound_key = clip
@@ -1760,7 +1760,7 @@ mod linux {
         }
 
         {
-            // Halving is a SUSTAINED rate fault, so this measures the sustained rate.
+            // Halving is a sustained rate fault, so this measures the sustained rate.
             let dev = device.as_ref().unwrap();
             let _ = dev.reset();
             std::thread::sleep(Duration::from_millis(100));
@@ -2194,8 +2194,8 @@ mod linux {
                 ),
             );
 
-            // CATCH marks a packet a rule acted on: a PATCH at EMIT turning the (3, 0) frame's X into 5
-            // reaches the PC as 5 on a marked frame; without the rule, neither.
+            // CATCH marks a packet a rule acted on: a PATCH at EMIT turning the (3, 0) frame's X
+            // into 5 is emitted as 5 on a marked frame; without the rule, neither.
             let _ = dev.set_spread(0);
             let x_at = frame.as_ref().and_then(|f| {
                 let at: Vec<usize> = (0..f.len()).filter(|&i| f[i] == 3).collect();
@@ -2511,8 +2511,8 @@ mod linux {
 
         {
             // Re-presenting the clone (a patch apply, then its clear) releases the session like a
-            // replug, with no hello: the crate sees the PC enumerate the new clone and re-sends the
-            // scale.
+            // replug, with no hello: the crate detects the PC enumerating the new clone and
+            // re-sends the scale.
             let reopened = match args.get(2) {
                 Some(p) => Device::open(p),
                 None => Device::find(),

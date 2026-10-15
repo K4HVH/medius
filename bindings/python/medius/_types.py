@@ -114,8 +114,8 @@ def _window_ms(window_ms):
 def _as_usage(usage) -> "Usage":
     """A `Usage`, a `Button` / `Key` / `MediaKey`, or a raw ctypes usage, as a `Usage`.
 
-    The three key enums are accepted directly, as in `lock`: `CatchFilter.watch(Key.A)`. Each is its
-    own type, so a bare id's class is unambiguous.
+    The three key enums are accepted directly: `CatchFilter.watch(Key.A)`. Each is a separate type,
+    so a bare id's class is unambiguous.
     """
     if isinstance(usage, Usage):
         return usage
@@ -284,15 +284,15 @@ class Stats:
     saturate, so a count keeps rising while loss continues.
 
     `tx_drops` (a report the clone's queue could not hold) and `link_rx_drops`/`host_rx_drops` (an
-    input-carrying frame one chip could not take off the inter-chip link) are lost player input and
+    input-carrying frame one chip could not take off the inter-chip link) count lost input and
     should read 0. `relay_drops` is relayed traffic and commands that went no further: a vendor IN
-    packet behind a queue full of RAW packets, a zero-length packet answering a poll a suspended PC
-    did not make, an OUT or RAW OUT packet the box could not queue or deliver, a relayed request or
-    flagged MOVE it could not queue, non-input frames either chip's link ring dropped, frames from
-    the control PC its receive ring had no room for, and control-port UART overruns. None of it is
-    native input. A rise across a burst of your own commands can mean some never reached the box;
-    a lost release can leave a key held, and `reapply()` re-sends only what is held, so send the
-    releases again or call `reset()`.
+    packet behind a queue full of RAW packets, a zero-length packet replying to a poll a suspended
+    PC did not make, an OUT or RAW OUT packet the box could not queue or deliver, a relayed request
+    or flagged MOVE it could not queue, non-input frames either chip's link ring dropped, frames
+    from the control PC its receive ring had no room for, and control-port UART overruns. None of it
+    is native input. A rise across a burst of commands can mean some never reached the box; a lost
+    release can leave a key held, and `reapply()` re-sends only what is held, so send the releases
+    again or call `reset()`.
     """
 
     inject_emits: int
@@ -314,7 +314,7 @@ class Stats:
 class LockEntry:
     """One weighed direction: what it addresses, which way, and how much is kept.
 
-    `scale` is a percent of the physical value: 0 blocks, 100 passes, above 100 amplifies, negative
+    `scale` is a percent of the native value: 0 blocks, 100 passes, above 100 amplifies, negative
     reverses what it keeps. A momentary usage carries one bit, so the box stores the block or pass
     it amounts to and reports nothing between.
 
@@ -351,8 +351,9 @@ class Locks:
     def scale_of(self, target: "LockTarget", direction) -> int:
         """The scale on that target and direction: of the covering entries, the one of smallest
         magnitude (a negative one on a tie), or 100 when none covers; `Direction.BOTH` spans every
-        direction. A block outranks a reversal of any size, and a pass outranks a reversal past -100.
-        A delta meets the product of its fixed and relative scales, which this does not compute.
+        direction. A block outranks a reversal of any size, and a pass outranks a reversal past
+        -100. A delta is scaled by the product of its fixed and relative scales, which this does not
+        compute.
         """
         c = locks_to_c(self)
         return int(
@@ -526,8 +527,8 @@ class PatchSet:
     next apply. ``pending``: the stored set differs from the served one in patches, bytes or order
     (not applied yet, changed or emptied since, refused, or held back by the opt-in). ``refused``:
     when last presented, the stored set failed a check the unpatched descriptors pass and is
-    unchanged since, so the device is served unpatched; the checks are the clone checks and four
-    consistency checks (descriptor length or type fields, ``bcdUSB`` with no BOS, a HID
+    unchanged since, so the clone serves the descriptors unpatched; the checks are the clone checks
+    and four consistency checks (descriptor length or type fields, ``bcdUSB`` with no BOS, a HID
     ``wDescriptorLength``, an interrupt-IN ``wMaxPacketSize``). ``table_full``: the box refused the
     last new patch or overwrite for room, 16 entries used or the 1024-byte pool full; the next set
     change or clear resets it.
@@ -622,7 +623,7 @@ class EmitPace:
 
 @dataclass
 class EmitPaceStatus:
-    """The configured pace, plus the emit-rate ceiling and the wire rate in effect."""
+    """The configured pace, plus the emit-rate ceiling and the poll rate in effect."""
 
     mode: EmitPace
     resolved_hz: int
@@ -659,7 +660,7 @@ class BoxInfo:
 
     @property
     def id(self) -> str:
-        """The canonical, stable box id: the device MAC as hex."""
+        """The canonical, stable box id: the device-chip MAC as hex."""
         return self.version.mac_hex
 
     @property
@@ -674,7 +675,7 @@ class BoxInfo:
 
 @dataclass
 class MotionEvent:
-    """A relative-axis catch event: physical motion at the merge point."""
+    """A relative-axis catch event: native motion at the merge point."""
 
     dx: int
     dy: int
@@ -696,7 +697,7 @@ class UsageSnapshot:
     direction: Direction = Direction.BOTH
 
     def __post_init__(self) -> None:
-        # A snapshot carries one class, so its entries are what that class IS.
+        # A snapshot carries one class, so its entries are what that class is.
         if self.usages:
             self.cls = Class(self.usages[0].kind)
 
@@ -975,8 +976,7 @@ class CatchFilter:
     """One CATCH subscription: what to observe, which direction, and how much of each packet to
     keep.
 
-    Input constructors take what `Device.lock` takes, so locking an input and watching it read
-    alike::
+    `watch` takes a `Usage`, `Button`, `Key` or `MediaKey`::
 
         CatchFilter.watch(Key.A)                      # one key, both edges
         CatchFilter.watch_class(Class.KEY)            # every key and modifier
@@ -1591,7 +1591,7 @@ def render_status_from_c(c) -> RenderStatus:
 
 @dataclass
 class RenderStatus:
-    """Render mode, whether native motion goes through it, and whether the attached device's profile
+    """Render mode, whether native motion is rendered, and whether the real device's profile
     is learned."""
 
     mode: "RenderMode"
@@ -1614,7 +1614,7 @@ class SpreadStatus:
 
 @dataclass
 class ClipStatus:
-    """Device-side clip ring and playback status (the RESP(CLIP) runtime view)."""
+    """Box-side clip ring and playback status (the RESP(CLIP) runtime view)."""
 
     state: ClipState
     free: int
@@ -1624,10 +1624,10 @@ class ClipStatus:
     underruns: int
     overruns: int
     seq_gaps: int
-    #: Clip transfers the device completed.
+    #: Clip transfers the real device completed.
     xfers: int
     #: Clip transfers that ended otherwise: refused, no reply, no room in the box's queue, or
-    #: dropped behind one the device did not reply to.
+    #: dropped behind one the real device did not reply to.
     xfer_errs: int
     #: Raw reports and transfers discarded with the imperfect-clone opt-in off.
     gated: int
@@ -1701,22 +1701,22 @@ class ClipPacketTrigger:
     ``match_bytes`` and ``mask`` are the masked head compare, equal in length and at most
     `PKT_MATCH_MAX`: a packet matches when ``head[i] & mask[i] == match_bytes[i]`` for each, and an
     empty match takes every packet on the address. For ``CONTROL`` the head is the 8 setup bytes,
-    then the first 8 bytes of OUT data. An ``EMIT`` trigger sees the clip's frames as well as native
-    and injected ones, but none of the clip's raw reports.
+    then the first 8 bytes of OUT data. An ``EMIT`` trigger matches the clip's frames as well as
+    native and injected ones, but none of the clip's raw reports.
 
     `ClipHandle.bind_packet` and the box refuse a trigger no packet can match: a match bit outside
     its mask (packet bytes are masked before the compare), or a direction the class never carries.
     ``HID_IN`` and ``EMIT`` flow ``IN``, ``HID_OUT`` flows ``OUT``, the vendor classes and
-    ``CONTROL`` carry either, and every class takes ``BOTH``. Match and mask go to the box as given.
+    ``CONTROL`` carry either, and every class takes ``BOTH``. Match and mask are sent as given.
 
     The box checks triggers against the packet as it arrived, ahead of the rewrite table and
     independently of it: one packet can fire a trigger and have a `RewriteRule` act on it. Of the
     triggers a packet matches, only the most specific acts: an exact ``id`` over `ANY_ID`, more
     masked bits over fewer, ``IN`` or ``OUT`` over ``BOTH``, then the earlier-bound trigger.
 
-    ``consume`` drops each packet the trigger matches as the top-ranked trigger, before the rewrite
-    table sees it. Dropping alters the wire, so the box holds a consuming trigger only under
-    `Device.allow_imperfect_clones`, on any class but ``CONTROL``.
+    ``consume`` drops each packet the trigger matches as the top-ranked trigger, ahead of the
+    rewrite table. Dropping makes the clone imperfect, so the box holds a consuming trigger only
+    under `Device.allow_imperfect_clones`, on any class but ``CONTROL``.
 
     ``once_per_run`` drives the action on the first of a run of matching packets, so a device
     repeating a held state every poll fires once per hold; the release is a second trigger matching

@@ -7,8 +7,8 @@
 /// USB control-transfer setup packet: `bmRequestType`, `bRequest`, `wValue`, `wIndex`, `wLength`
 /// (USB spec §9.3), eight bytes little-endian on the wire.
 ///
-/// `length` is the data-stage length: for an IN request, the bytes to read back (the device may
-/// return fewer); for an OUT request, the length of the data passed to
+/// `length` is the data-stage length: for an IN request, the bytes to read back (the real device
+/// may return fewer); for an OUT request, the length of the data passed to
 /// [`transfer`](crate::Device::transfer), which the box carries after the setup packet.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct Setup {
@@ -64,16 +64,17 @@ impl Setup {
 pub enum TransferStatus {
     /// Completed; any data is in [`TransferOutcome::data`].
     Ok,
-    /// The device STALLed the request.
+    /// The real device STALLed the request.
     Stall,
-    /// No reply: the device NAKed past the timeout or failed on the bus, `ep` names a control
-    /// endpoint the device does not declare, or the host chip did not reply in time. Also returned
-    /// while the game PC has the clone suspended, since the real device is suspended with it.
+    /// No reply: the real device NAKed past the timeout or failed on the bus, `ep` names a control
+    /// endpoint the real device does not declare, or the host chip did not reply in time. Also
+    /// returned while the game PC has the clone suspended, since the real device is suspended with
+    /// it.
     Nak,
     /// No device attached on the host chip.
     NoDevice,
-    /// Refused by the box before reaching the device: the opt-in is off, the request is malformed or
-    /// its data stage too large or short, or the host chip's control queue is full.
+    /// Refused by the box before reaching the real device: the opt-in is off, the request is
+    /// malformed or its data stage too large or short, or the host chip's control queue is full.
     Refused,
     /// Status byte this crate does not name, kept so a newer box's value is not lost.
     Other(u8),
@@ -110,7 +111,7 @@ impl TransferStatus {
     }
 }
 
-/// Device's reply to a [`transfer`](crate::Device::transfer): status and any IN data.
+/// Native reply to a [`transfer`](crate::Device::transfer): status and any IN data.
 ///
 /// A [`TransferStatus`] other than [`Ok`](TransferStatus::Ok) is a protocol outcome, not a link
 /// error, so it is returned, not raised; [`is_ok`](Self::is_ok) and [`data`](Self::data) read it.

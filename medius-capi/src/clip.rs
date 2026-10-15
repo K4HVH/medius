@@ -138,7 +138,7 @@ pub unsafe extern "C" fn medius_clip_frame_press(
     frame_edge(f, usage, medius::Action::Press)
 }
 
-/// Add an edge soft-releasing a usage: clears the injected press, leaving a physical hold.
+/// Add an edge soft-releasing a usage: clears the injected press; a hold on the real device stays.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_clip_frame_release(
     f: *mut MediusClipFrame,
@@ -147,7 +147,7 @@ pub unsafe extern "C" fn medius_clip_frame_release(
     frame_edge(f, usage, medius::Action::SoftRelease)
 }
 
-/// Add an edge force-releasing a usage, masking a physical hold too.
+/// Add an edge force-releasing a usage, masking a hold on the real device too.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_clip_frame_force_release(
     f: *mut MediusClipFrame,
@@ -321,7 +321,7 @@ pub unsafe extern "C" fn medius_clip_builder_press(
     builder_edge(b, usage, medius::Action::Press)
 }
 
-/// A frame soft-releasing a usage: clears the injected press, leaving a physical hold.
+/// A frame soft-releasing a usage: clears the injected press, leaving a hold on the real device.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_clip_builder_release(
     b: *mut MediusClipBuilder,
@@ -330,7 +330,7 @@ pub unsafe extern "C" fn medius_clip_builder_release(
     builder_edge(b, usage, medius::Action::SoftRelease)
 }
 
-/// A frame force-releasing a usage, masking a physical hold too.
+/// A frame force-releasing a usage, masking a hold on the real device too.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_clip_builder_force_release(
     b: *mut MediusClipBuilder,
@@ -438,7 +438,7 @@ pub unsafe extern "C" fn medius_clip_free(clip: *mut MediusClip) {
 }
 
 /// Append the builder's entries to the ring as whole-entry frames, each with the next append
-/// sequence. Every entry is checked before the first frame goes out, so a refusal sends nothing: a
+/// sequence. Every entry is checked before the first frame is sent, so a refusal sends nothing: a
 /// frame past `MEDIUS_CLIP_EDGES_MAX` edges or `MEDIUS_CLIP_RAW_MAX` raw reports
 /// (`MEDIUS_STATUS_ERR_CLIP_FRAME_COUNT`), one encoding past `MEDIUS_CLIP_ENTRY_MAX` bytes
 /// (`..._CLIP_FRAME_TOO_LONG`), a raw report whose direction is neither IN nor OUT
@@ -580,8 +580,8 @@ fn with_packet_trigger(
 /// - `once_per_run` without one stream (a class other than `CONTROL`, a concrete `id`, and `POSITIVE`
 ///   or `NEGATIVE`), without match bytes past its selector, or with no masked bit in them.
 ///
-/// A bearing-relative direction is `MEDIUS_STATUS_ERR_RELATIVE_DIRECTION`. Match and mask go to the
-/// box as given, so the key this trigger names is the key the box holds.
+/// A bearing-relative direction is `MEDIUS_STATUS_ERR_RELATIVE_DIRECTION`. Match and mask are sent
+/// as given, so the key this trigger names is the key the box holds.
 ///
 /// Three checks happen only on the box: a consuming trigger needs
 /// `medius_device_allow_imperfect_clones`, the set holds `MEDIUS_CLIP_PKT_TRIG_MAX` triggers, and

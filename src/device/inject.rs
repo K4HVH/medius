@@ -24,12 +24,12 @@ impl Device {
         self.inject(usage, Action::Press)
     }
 
-    /// Soft-release: clear the injected press, leaving a physical hold intact.
+    /// Soft-release: clear the injected press, leaving a hold on the real device intact.
     pub fn release(&self, usage: impl Into<Usage>) -> Result<()> {
         self.inject(usage, Action::SoftRelease)
     }
 
-    /// Force-release: force the usage inactive, masking a physical hold too.
+    /// Force-release: force the usage inactive, masking a hold on the real device too.
     pub fn force_release(&self, usage: impl Into<Usage>) -> Result<()> {
         self.inject(usage, Action::ForceRelease)
     }

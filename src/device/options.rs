@@ -37,15 +37,15 @@ pub(crate) fn emit_pace_wire(pace: EmitPace) -> (u8, u16) {
 }
 
 impl Device {
-    /// `OPTION(IMPERFECT)`: allow cloning a device the box cannot clone exactly, or return to
+    /// `OPTION(IMPERFECT)`: allow cloning a device the box cannot clone faithfully, or return to
     /// faithful-only; persisted in NVS.
     ///
     /// Turning the opt-in off clears the box's rewrite table, so the crate drops its held rules too
-    /// (restored if the frame never goes out); otherwise the keepalive would re-assert them once the
+    /// (restored if the frame is never sent); otherwise the keepalive would re-assert them once the
     /// opt-in is back on. The box also removes every clip packet trigger that
-    /// [consumes](crate::ClipPacketTrigger::consume), and the crate drops those the same way. Turning
-    /// the opt-in off concurrently with a `set_rewrite` on another thread is unordered: the rule may
-    /// reach the box after the opt-off and be refused.
+    /// [consumes](crate::ClipPacketTrigger::consume), and the crate drops those the same way.
+    /// Turning the opt-in off concurrently with a `set_rewrite` on another thread is unordered: the
+    /// rule may reach the box after the opt-off and be refused.
     ///
     /// A toggle that changes the served patch set presents the clone again, which releases the
     /// session like a device replug; the crate re-sends what it holds once the new clone is up, and
@@ -90,12 +90,12 @@ impl Device {
         )
     }
 
-    /// `OPTION(EMIT)`: pace ([`EmitPace`], the rate ceiling) and forced wire rate (`force_hz`);
+    /// `OPTION(EMIT)`: pace ([`EmitPace`], the rate ceiling) and forced poll rate (`force_hz`);
     /// persisted in NVS.
     ///
-    /// A non-zero `force_hz` re-clones with a `bInterval` the device did not advertise, snapped to
-    /// `1000/n` Hz (needs [`allow_imperfect_clones`](Self::allow_imperfect_clones)); `Some(0)`/`None`
-    /// is off.
+    /// A non-zero `force_hz` re-clones with a `bInterval` the real device did not advertise: a power
+    /// of two, so the rate is never slower than asked, floored at 62 Hz on a low-speed clone (needs
+    /// [`allow_imperfect_clones`](Self::allow_imperfect_clones)). `Some(0)`/`None` is off.
     pub fn set_emit_pace(&self, pace: EmitPace, force_hz: Option<u16>) -> Result<()> {
         let (mode, hz) = emit_pace_wire(pace);
         self.link.send(
@@ -144,8 +144,8 @@ impl Device {
     /// `OPTION(RENDER)`: render texture, and whether the model renders native motion too instead of
     /// relaying it; persisted in NVS.
     ///
-    /// Rendering adds a little latency, which `full` puts on native motion too; `full` is off by
-    /// default. Nothing renders until the box learns a profile for the attached device; until then
+    /// Rendering adds latency, which `full` puts on native motion too; `full` is off by default.
+    /// Nothing renders until the box learns a profile for the real device; until then
     /// motion is relayed and injection takes the paced fill
     /// ([`RenderStatus::ready`](crate::RenderStatus)).
     ///

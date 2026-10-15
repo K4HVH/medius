@@ -5,22 +5,22 @@ use std::time::Duration;
 
 use crate::protocol::opcode::{BEARING_PER_AXIS, BEARING_VECTOR};
 
-/// How the box reads whether physical motion runs with or against its injection.
+/// How the box reads whether native motion runs with or against injected motion.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum BearingMode {
     /// Each axis compares its sign against its bearing (the default).
     #[default]
     PerAxis,
-    /// The physical delta is projected onto the injected XY vector: only the part along the
-    /// injection is weighed, and the part across it passes untouched. Smoother on diagonals; X and
-    /// Y stop being independent.
+    /// The native delta is projected onto the injected XY vector: only the part along the injection
+    /// is weighed, and the part across it is relayed unscaled. Smoother on diagonals; X and Y are
+    /// not independent.
     ///
     /// One relative scale, the lower of X's and Y's, governs both axes, so setting only X's weighs
     /// Y's motion too. `RESP(LOCKS)` reports it on both relative entries.
     ///
     /// The projection moves motion between the axes, and each axis's absolute scale then applies to
-    /// what the projection left, not the sign the report carried: an absolute scale governs what
-    /// reaches the PC, so a block covers motion the projection put there.
+    /// what the projection left, not the sign the report carried: an absolute scale governs what is
+    /// emitted, so a block covers motion the projection put there.
     Vector,
 }
 

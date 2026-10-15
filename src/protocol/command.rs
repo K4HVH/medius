@@ -134,8 +134,8 @@ pub fn name_payload(name: &str) -> Vec<u8> {
 }
 
 /// `RAW` (§3.14): `[ep_num u8][dir u8][bytes…]`; put `bytes` verbatim on cloned endpoint `ep` in
-/// `direction` (IN toward the game PC, OUT to the device). `ep` is masked to its low nibble, the
-/// bare endpoint number the box reassembles into an address.
+/// `direction` (IN toward the game PC, OUT to the real device). `ep` is masked to its low nibble,
+/// the bare endpoint number the box reassembles into an address.
 pub fn raw_payload(ep: u8, direction: Direction, bytes: &[u8]) -> Vec<u8> {
     let mut v = Vec::with_capacity(2 + bytes.len());
     v.push(ep & 0x0f);
@@ -144,7 +144,7 @@ pub fn raw_payload(ep: u8, direction: Direction, bytes: &[u8]) -> Vec<u8> {
     v
 }
 
-/// `TRANSFER` (§3.14): `[ep u8][setup 8][OUT data…]`; run one control transfer against the device.
+/// `TRANSFER` (§3.14): `[ep u8][setup 8][OUT data…]`; one control transfer against the real device.
 pub fn transfer_payload(ep: u8, setup: Setup, out: &[u8]) -> Vec<u8> {
     let mut v = Vec::with_capacity(1 + 8 + out.len());
     v.push(ep);
@@ -208,7 +208,7 @@ pub fn patch_apply_payload() -> [u8; 1] {
     [PATCH_APPLY]
 }
 
-/// `PATCH` CLEAR (§3.14): the single `section = 0xFF` byte; erase this device's stored set.
+/// `PATCH` CLEAR (§3.14): the single `section = 0xFF` byte; erase the real device's stored set.
 pub fn patch_clear_payload() -> [u8; 1] {
     [PATCH_CLEAR]
 }
