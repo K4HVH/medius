@@ -1054,8 +1054,10 @@ def test_traffic_event_surfaces_on_every_receive_path():
 
 def test_catch_events_needs_at_least_one_filter():
     with MockBox() as mock, Device.with_mock(mock) as d:
-        with pytest.raises(InvalidArgError):
+        with pytest.raises(medius.EmptySubscriptionError):
             d.catch_events([])
+        with pytest.raises(medius.EmptySubscriptionError):
+            d.input_events([])
 
 
 def test_try_recv_returns_none_when_empty():
@@ -2788,3 +2790,89 @@ def test_a_release_the_box_counts_is_recovered():
                 assert time.monotonic() < deadline, "the scale never went back after a replug"
                 time.sleep(0.01)
             assert d.counters().restarts == 0
+
+
+@pytest.mark.parametrize("open_stream", ["catch", "input", "logs"])
+def test_close_on_another_thread_ends_a_blocked_recv(open_stream):
+    import threading
+
+    with MockBox() as mock, Device.with_mock(mock) as d:
+        if open_stream == "catch":
+            stream = d.catch_events(CatchFilter.everything())
+        elif open_stream == "input":
+            stream = d.input_events(CatchFilter.all_input())
+        else:
+            stream = d.logs()
+        got = []
+
+        def read():
+            try:
+                stream.recv()
+            except MediusError as e:
+                got.append(e)
+
+        reader = threading.Thread(target=read, daemon=True)
+        reader.start()
+        time.sleep(0.2)
+        if open_stream != "input":
+            start = time.monotonic()
+            assert stream.is_connected
+            assert time.monotonic() - start < 0.05
+        closer = threading.Thread(target=stream.close, daemon=True)
+        closer.start()
+        closer.join(2)
+        reader.join(2)
+        assert not closer.is_alive() and not reader.is_alive()
+        assert isinstance(got[0], medius.DisconnectedError)
+        assert stream.try_recv() is None and not stream.is_connected
+
+
+def test_set_spread_refuses_a_percent_past_u16():
+    with MockBox() as mock, Device.with_mock(mock) as d:
+        for bad in (70000, -1):
+            with pytest.raises(ValueError):
+                d.set_spread(bad)
+
+
+def test_an_update_refusal_carries_the_box_status():
+    with MockBox() as mock, Device.with_mock(mock) as d:
+        with pytest.raises(medius.UpdateError) as e:
+            d.activate_firmware()
+        assert (e.value.op, e.value.update_status) == (4, 0x19)
+
+
+def test_update_and_confirm_run_through_the_library():
+    with MockBox() as mock, Device.with_mock(mock) as d:
+        seen = []
+        d.update_firmware(medius.UpdateTarget.DEVICE, bytes(range(256)) * 8, lambda s, t: seen.append(s))
+        assert seen and seen[-1] == 2048
+        info = d.wait_firmware_confirmed()
+        assert not info.any_pending()
+
+
+def test_device_close_on_another_thread_waits_for_a_running_query():
+    import threading
+
+    mock = MockBox()
+    mock.silent()
+    d = Device.with_mock(mock)
+    got = []
+
+    def query():
+        try:
+            d.query_version()
+        except MediusError as e:
+            got.append(e)
+
+    caller = threading.Thread(target=query, daemon=True)
+    caller.start()
+    time.sleep(0.2)
+    start = time.monotonic()
+    d.close()
+    assert time.monotonic() - start < 0.05
+    caller.join(10)
+    assert not caller.is_alive()
+    assert isinstance(got[0], medius.QueryTimeoutError)
+    with pytest.raises(MediusError):
+        d.query_version()
+    mock.close()

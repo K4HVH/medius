@@ -26,11 +26,15 @@ pub unsafe extern "C" fn medius_device_catch_events(
     out: *mut *mut MediusEventStream,
 ) -> MediusStatus {
     guard_status(|| {
-        if dev.is_null() || out.is_null() || filters.is_null() {
+        if dev.is_null() || out.is_null() {
             return fail(MediusStatus::ErrInvalidArg, "null pointer");
         }
+        // an empty list often comes with a null pointer, it still gets the empty subscription status
         if n == 0 {
-            return fail(MediusStatus::ErrInvalidArg, "empty filter list");
+            return record(&medius::Error::EmptySubscription);
+        }
+        if filters.is_null() {
+            return fail(MediusStatus::ErrInvalidArg, "null pointer");
         }
         let slice = unsafe { std::slice::from_raw_parts(filters, n) };
         // Refuse the whole call: dropping the offender would narrow the subscription with no
@@ -220,11 +224,15 @@ pub unsafe extern "C" fn medius_device_input_events(
     out: *mut *mut MediusInputStream,
 ) -> MediusStatus {
     guard_status(|| {
-        if dev.is_null() || out.is_null() || filters.is_null() {
+        if dev.is_null() || out.is_null() {
             return fail(MediusStatus::ErrInvalidArg, "null pointer");
         }
+        // an empty list often comes with a null pointer, it still gets the empty subscription status
         if n == 0 {
-            return fail(MediusStatus::ErrInvalidArg, "empty filter list");
+            return record(&medius::Error::EmptySubscription);
+        }
+        if filters.is_null() {
+            return fail(MediusStatus::ErrInvalidArg, "null pointer");
         }
         let slice = unsafe { std::slice::from_raw_parts(filters, n) };
         let mut parsed = Vec::with_capacity(n);
@@ -611,6 +619,17 @@ pub unsafe extern "C" fn medius_log_stream_try_recv(
             }
             None => false,
         }
+    })
+}
+
+/// so a false from try_recv can be told apart from the end
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn medius_log_stream_is_connected(stream: *mut MediusLogStream) -> bool {
+    guard(false, || {
+        if stream.is_null() {
+            return false;
+        }
+        unsafe { (*stream).inner.is_connected() }
     })
 }
 

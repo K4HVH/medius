@@ -454,6 +454,17 @@ pub struct MediusChipFirmware {
     pub state: u8,
 }
 
+/// why the box refused an update op
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MediusUpdateError {
+    /// 0 begin, 1 data, 2 end, 3 abort, 4 activate
+    pub op: u8,
+    /// the box's update status byte (§4.16), like 0x1B for on probation
+    pub status: u8,
+    pub arg: u32,
+}
+
 /// Both chips' firmware state (`RESP(FIRMWARE)`).
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

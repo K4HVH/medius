@@ -139,6 +139,10 @@ class MediusFirmwareInfo(ctypes.Structure):
     ]
 
 
+class MediusUpdateError(ctypes.Structure):
+    _fields_ = [("op", u8), ("status", u8), ("arg", u32)]
+
+
 class MediusHealth(ctypes.Structure):
     _fields_ = [
         ("link_up", u8),
@@ -667,6 +671,7 @@ _decl("medius_abi_version", u32, [])
 _decl("medius_version_string", ctypes.c_char_p, [])
 _decl("medius_last_error_message", usize, [ctypes.c_char_p, usize])
 _decl("medius_last_error_proto_ver", u8, [])
+_decl("medius_last_error_update", c_bool, [ctypes.POINTER(MediusUpdateError)])
 
 _decl("medius_usage_button", MediusUsage, [u8])
 _decl("medius_usage_key", MediusUsage, [u8])
@@ -776,6 +781,7 @@ _decl("medius_log_stream_free", None, [HANDLE])
 _decl("medius_log_stream_recv", i32, [HANDLE, ctypes.POINTER(MediusLogLine)])
 _decl("medius_log_stream_try_recv", c_bool, [HANDLE, ctypes.POINTER(MediusLogLine)])
 _decl("medius_log_stream_recv_timeout", c_bool, [HANDLE, u64, ctypes.POINTER(MediusLogLine)])
+_decl("medius_log_stream_is_connected", c_bool, [HANDLE])
 
 _decl("medius_clip_frame_new", HANDLE, [])
 _decl("medius_clip_frame_free", None, [HANDLE])
@@ -838,6 +844,12 @@ _decl(
 )
 _decl("medius_device_abort_update", i32, [HANDLE, u8])
 _decl("medius_device_activate_firmware", i32, [HANDLE])
+_decl(
+    "medius_device_update_firmware",
+    i32,
+    [HANDLE, u8, ctypes.POINTER(u8), ctypes.c_size_t, UPDATE_PROGRESS_CB, ctypes.c_void_p],
+)
+_decl("medius_device_wait_firmware_confirmed", i32, [HANDLE, ctypes.POINTER(MediusFirmwareInfo)])
 
 HAS_MOCK = _decl("medius_mock_new", HANDLE, [], optional=True) is not None
 if HAS_MOCK:

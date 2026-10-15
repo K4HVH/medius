@@ -334,11 +334,8 @@ impl AsyncDevice {
         image: Vec<u8>,
         mut progress: impl FnMut(UpdateProgress) + Send + 'static,
     ) -> Result<()> {
-        self.offload(move |d| {
-            d.stage_firmware(target, &image, &mut progress)?;
-            d.activate_firmware()
-        })
-        .await
+        self.offload(move |d| d.update_firmware(target, &image, &mut progress))
+            .await
     }
 
     /// Wait until neither chip is on probation.
