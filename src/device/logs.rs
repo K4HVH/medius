@@ -25,6 +25,11 @@ impl LogStream {
         self.0.recv_timeout(timeout).ok()
     }
 
+    /// so a None from try_recv can be told apart from the end
+    pub fn is_connected(&self) -> bool {
+        !self.0.is_disconnected()
+    }
+
     /// Drain buffered `LOG` lines without blocking.
     pub fn try_iter(&self) -> impl Iterator<Item = LogLine> + '_ {
         self.0.try_iter()

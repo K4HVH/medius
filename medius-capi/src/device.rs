@@ -1109,6 +1109,43 @@ pub unsafe extern "C" fn medius_device_activate_firmware(dev: *mut MediusDevice)
     with_device(dev, |d| d.activate_firmware())
 }
 
+/// a refused activate aborts the image so a later activate doesn't boot it
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn medius_device_update_firmware(
+    dev: *mut MediusDevice,
+    target: u8,
+    image: *const u8,
+    len: usize,
+    progress: Option<unsafe extern "C" fn(*mut c_void, usize, usize)>,
+    user: *mut c_void,
+) -> MediusStatus {
+    let Some(tgt) = UpdateTarget::from_u8(target) else {
+        return fail(MediusStatus::ErrInvalidArg, "target must be 0 or 1");
+    };
+    if image.is_null() || len == 0 {
+        return fail(MediusStatus::ErrInvalidArg, "image is empty");
+    }
+    let bytes = unsafe { std::slice::from_raw_parts(image, len) };
+    let user_addr = user as usize;
+    with_device(dev, |d| {
+        let mut cb = |p: UpdateProgress| {
+            if let Some(f) = progress {
+                unsafe { f(user_addr as *mut c_void, p.sent, p.total) };
+            }
+        };
+        d.update_firmware(tgt, bytes, &mut cb)
+    })
+}
+
+/// waits until neither chip is on probation, it keeps asking while the box reboots after an activate
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn medius_device_wait_firmware_confirmed(
+    dev: *mut MediusDevice,
+    out: *mut MediusFirmwareInfo,
+) -> MediusStatus {
+    query(dev, out, |d| d.wait_firmware_confirmed())
+}
+
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_device_query_health(
     dev: *mut MediusDevice,

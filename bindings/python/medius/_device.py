@@ -3,13 +3,12 @@
 from __future__ import annotations
 
 import ctypes
-import time
 from typing import Optional, Sequence, Union
 
 from . import _native
 from ._enums import (Action, Axis, BearingMode, Blanket, EmitMode, RenderMode, LedMode, LedTarget,
                      Direction, MoveTiming, PendingMotion, RebootTarget, Status, UpdateTarget)
-from ._errors import InvalidArgError, MediusError, check
+from ._errors import MediusError, check
 from ._clip import ClipHandle
 from ._streams import EventStream, InputStream, LogStream
 from ._types import (
@@ -371,7 +370,7 @@ class Device:
         overlaps. A loop at the native report rate keeps each command whole on its own report. Until
         the box learns the host's command period from MOVE arrivals (`SpreadStatus.span_us`), each
         delta goes out whole."""
-        check(_native.lib.medius_device_set_spread(self._handle, int(percent)))
+        check(_native.lib.medius_device_set_spread(self._handle, _u16(percent, "percent")))
 
     def query_version(self) -> Version:
         out = _native.MediusVersion()
@@ -384,16 +383,11 @@ class Device:
         check(_native.lib.medius_device_firmware_info(self._handle, ctypes.byref(out)))
         return firmware_info_from_c(out)
 
-    def wait_firmware_confirmed(self, timeout: float = 55.0) -> FirmwareInfo:
+    def wait_firmware_confirmed(self) -> FirmwareInfo:
         """Block until neither chip is still on probation; a chip on probation refuses an update."""
-        deadline = time.monotonic() + timeout
-        while True:
-            info = self.firmware_info()
-            if not info.any_pending():
-                return info
-            if time.monotonic() >= deadline:
-                raise RuntimeError(f"still on probation after {timeout}s")
-            time.sleep(0.5)
+        out = _native.MediusFirmwareInfo()
+        check(_native.lib.medius_device_wait_firmware_confirmed(self._handle, ctypes.byref(out)))
+        return firmware_info_from_c(out)
 
     def stage_firmware(self, target: UpdateTarget, image: bytes, progress=None) -> None:
         """Write one image into that chip's spare slot; it stays inert until activate_firmware()."""
@@ -422,8 +416,20 @@ class Device:
 
     def update_firmware(self, target: UpdateTarget, image: bytes, progress=None) -> None:
         """Stage one image and activate it."""
-        self.stage_firmware(target, image, progress)
-        self.activate_firmware()
+        if not image:
+            raise ValueError("image is empty")
+        buf = (ctypes.c_uint8 * len(image)).from_buffer_copy(image)
+
+        def _cb(_user, sent, total):
+            if progress is not None:
+                progress(int(sent), int(total))
+
+        cb = _native.UPDATE_PROGRESS_CB(_cb)
+        check(
+            _native.lib.medius_device_update_firmware(
+                self._handle, int(target), buf, len(image), cb, None
+            )
+        )
 
     def query_health(self) -> Health:
         out = _native.MediusHealth()
@@ -690,8 +696,6 @@ class Device:
         consumer still receives everything it asked for.
         """
         seq = [filters] if isinstance(filters, CatchFilter) else list(filters)
-        if not seq:
-            raise InvalidArgError(Status.ERR_INVALID_ARG, "catch_events needs at least one filter")
         arr = (_native.MediusCatchFilter * len(seq))(*[f._c for f in seq])
         out = ctypes.c_void_p()
         check(
@@ -709,8 +713,6 @@ class Device:
         one-edge filter is refused.
         """
         seq = [filters] if isinstance(filters, CatchFilter) else list(filters)
-        if not seq:
-            raise InvalidArgError(Status.ERR_INVALID_ARG, "input_events needs at least one filter")
         arr = (_native.MediusCatchFilter * len(seq))(*[f._c for f in seq])
         out = ctypes.c_void_p()
         check(

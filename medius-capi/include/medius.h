@@ -1550,6 +1550,15 @@ typedef struct MediusCountersSnapshot {
     uint64_t restarts;
 } MediusCountersSnapshot;
 
+// why the box refused an update op
+typedef struct MediusUpdateError {
+    // 0 begin, 1 data, 2 end, 3 abort, 4 activate
+    uint8_t op;
+    // the box's update status byte (§4.16), like 0x1B for on probation
+    uint8_t status;
+    uint32_t arg;
+} MediusUpdateError;
+
 // A keyboard key as a HID Keyboard/Keypad usage; modifiers are `0xE0..=0xE7`.
 typedef uint8_t MediusKey;
 
@@ -2439,6 +2448,18 @@ MediusStatus medius_device_abort_update(struct MediusDevice *dev, uint8_t target
 // Commit every staged image and reboot into it; blocks until the host chip is back.
 MediusStatus medius_device_activate_firmware(struct MediusDevice *dev);
 
+// a refused activate aborts the image so a later activate doesn't boot it
+MediusStatus medius_device_update_firmware(struct MediusDevice *dev,
+                                           uint8_t target,
+                                           const uint8_t *image,
+                                           uintptr_t len,
+                                           void (*progress)(void*, uintptr_t, uintptr_t),
+                                           void *user);
+
+// waits until neither chip is on probation, it keeps asking while the box reboots after an activate
+MediusStatus medius_device_wait_firmware_confirmed(struct MediusDevice *dev,
+                                                   struct MediusFirmwareInfo *out);
+
 MediusStatus medius_device_query_health(struct MediusDevice *dev, struct MediusHealth *out);
 
 MediusStatus medius_device_device_info(struct MediusDevice *dev, struct MediusDeviceInfo *out);
@@ -2496,6 +2517,9 @@ uintptr_t medius_last_error_message(char *buf,
 
 // The last error's `BadProtoVer` version byte, or 0 if it carried none.
 uint8_t medius_last_error_proto_ver(void);
+
+// why the box refused the last update, false if the last error wasn't an update refusal
+bool medius_last_error_update(struct MediusUpdateError *out);
 
 // A [`MediusUsage`] for a mouse button. `button` takes a `MEDIUS_BUTTON_*` constant; an unnamed
 // byte is carried through and refused by the call that takes the usage.
@@ -2832,6 +2856,9 @@ MediusStatus medius_log_stream_recv(struct MediusLogStream *stream, struct Mediu
 
 // The next buffered LOG line, written to `*out`; returns false if none is queued (never blocks).
 bool medius_log_stream_try_recv(struct MediusLogStream *stream, struct MediusLogLine *out);
+
+// so a false from try_recv can be told apart from the end
+bool medius_log_stream_is_connected(struct MediusLogStream *stream);
 
 // Block up to `timeout_ms` for the next LOG line, written to `*out`; false on timeout or close.
 bool medius_log_stream_recv_timeout(struct MediusLogStream *stream,
