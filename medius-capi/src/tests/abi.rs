@@ -68,6 +68,25 @@ fn move_rel_parity() {
 }
 
 #[test]
+fn into_raw_shares_the_open_device() {
+    let want = native_frames(|d| {
+        d.move_rel(100, -50).unwrap();
+        d.move_rel(1, 1).unwrap();
+    });
+    let mock = MockBox::new();
+    let native = Device::with_mock(mock.clone());
+    let dev = MediusDevice::into_raw(native.clone());
+    assert_eq!(
+        unsafe { medius_device_move_rel(dev, 100, -50) },
+        MediusStatus::Ok
+    );
+    unsafe { medius_device_free(dev) };
+    // freeing the handle leaves the Rust side's clone open
+    native.move_rel(1, 1).unwrap();
+    assert_eq!(want, mock.recorded_frames());
+}
+
+#[test]
 fn wheel_parity() {
     assert_parity(
         |d| {
