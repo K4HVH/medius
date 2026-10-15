@@ -42,7 +42,9 @@ impl Device {
     /// `wMaxPacketSize` on the wire and ends with a short packet, or a zero-length one on an exact
     /// multiple. An OUT packet waits its turn behind the device's two-packet hold, as the game PC's
     /// writes do, and theirs wait behind it; up to 16 wait across all endpoints, and one past that is
-    /// dropped and counted in [`relay_drops`](crate::Stats::relay_drops).
+    /// dropped and counted in [`relay_drops`](crate::Stats::relay_drops). A vendor IN endpoint's
+    /// queue in the box holds 8 packets: when it is full, an interrupt endpoint loses its oldest and a
+    /// bulk endpoint drops the raw packet sent into it, and either counts in `relay_drops`.
     ///
     /// Admitted by [`allow_imperfect_clones`](Device::allow_imperfect_clones): with the opt-in off the
     /// box drops the frame with no reply, and this still returns `Ok`.
@@ -72,9 +74,11 @@ impl Device {
     /// raised; the surrounding `Ok` means the box replied.
     ///
     /// Admitted by [`allow_imperfect_clones`](Device::allow_imperfect_clones): with the opt-in off the
-    /// box replies [`Refused`](TransferStatus::Refused) without reaching the device. Runs over its own
-    /// inter-chip link pair, apart from the game PC's EP0 proxy, one at a time. Uses
-    /// [`DEFAULT_TRANSFER_TIMEOUT`]; [`transfer_timeout`](Device::transfer_timeout) sets another.
+    /// box replies [`Refused`](TransferStatus::Refused) without reaching the device. While the game
+    /// PC has the clone suspended, the real device is suspended with it and the box replies
+    /// [`Nak`](TransferStatus::Nak). Runs over its own inter-chip link pair, apart from the game PC's
+    /// EP0 proxy, one at a time. Uses [`DEFAULT_TRANSFER_TIMEOUT`];
+    /// [`transfer_timeout`](Device::transfer_timeout) sets another.
     ///
     /// ```no_run
     /// # use medius::{Device, Result, Setup, TransferStatus};

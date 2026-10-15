@@ -67,7 +67,8 @@ pub enum TransferStatus {
     /// The device STALLed the request.
     Stall,
     /// No reply: the device NAKed past the timeout or failed on the bus, `ep` names a control
-    /// endpoint the device does not declare, or the host chip did not reply in time.
+    /// endpoint the device does not declare, or the host chip did not reply in time. Also returned
+    /// while the game PC has the clone suspended, since the real device is suspended with it.
     Nak,
     /// No device attached on the host chip.
     NoDevice,

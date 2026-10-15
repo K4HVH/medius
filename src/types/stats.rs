@@ -8,8 +8,10 @@
 ///
 /// Act on [`tx_drops`](Self::tx_drops), [`link_rx_drops`](Self::link_rx_drops) and
 /// [`host_rx_drops`](Self::host_rx_drops): each counts the player's input going missing and should
-/// read 0. [`relay_drops`](Self::relay_drops) is relayed traffic and commands that went no further, none
-/// of it native input.
+/// read 0. [`relay_drops`](Self::relay_drops) is relayed traffic and commands that went no further,
+/// none of it native input. A rise across a burst of your own commands can mean some never reached
+/// the box. A lost release can leave a key held, and [`reapply`](crate::Device::reapply) re-sends only
+/// what is held, so send the releases again or call [`reset`](crate::Device::reset).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Stats {
     /// Pure-injection reports emitted (the no-halving / 1 kHz path).
@@ -23,7 +25,7 @@ pub struct Stats {
     pub tx_maxdepth: u8,
     /// Wedged-endpoint recoveries by the watchdog.
     pub tx_wedges: u8,
-    /// Remote-wakeups issued.
+    /// Remote wakeups signalled to the PC: for an injection, or one from the real device.
     pub wakeups: u16,
     /// USB bus resets seen.
     pub reset_count: u16,
@@ -34,13 +36,16 @@ pub struct Stats {
     pub link_rx_drops: u32,
     /// Same count for the chip reading the real device, relayed over the link.
     pub host_rx_drops: u32,
-    /// Relayed traffic and commands that went no further: a vendor IN packet that found its endpoint's queue
-    /// full of the control PC's `RAW` packets, or a device's zero-length packet answering a poll the PC did
-    /// not make (the one poll the box runs ahead of a suspended PC); an OUT packet the box could not
-    /// queue, that failed three times on the device's bus, or that a bus reset or `SET_INTERFACE`
-    /// overtook; a relayed request or a flagged `MOVE` the box could not queue; and any frame other than
-    /// native input that either chip's link receive ring dropped. Counted apart from `tx_drops` because no
-    /// native input goes missing with it.
+    /// Relayed traffic and commands that went no further: a vendor IN packet that found its
+    /// endpoint's queue full of the control PC's `RAW` packets, or a device's zero-length packet
+    /// answering a poll the PC did not make (the one poll the box runs ahead of a suspended PC); an
+    /// OUT packet the box could not queue, that failed three times on the device's bus, or that a
+    /// bus reset or `SET_INTERFACE` overtook; a `RAW` OUT packet with no room to wait; a relayed
+    /// request or a flagged `MOVE` the box could not queue; any frame other than native input that
+    /// either chip's link receive ring dropped; and a frame from the control PC the box's receive
+    /// ring had no room for (one a frame), or an overrun of the control port's UART (one an
+    /// overrun, however many frames it cost). Counted apart from `tx_drops` because no native input
+    /// goes missing with it.
     pub relay_drops: u32,
     /// Times the box released host-set session state (locks, held input, subscriptions, rules,
     /// transforms, the clip, an LED override). Wraps, so compare for inequality; 0 at boot. The crate

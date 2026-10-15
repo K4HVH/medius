@@ -612,7 +612,8 @@ pub unsafe extern "C" fn medius_device_raw(
 /// `TRANSFER` (§3.14): run one control transfer against the real device, writing the reply to
 /// `*out`. `ep` is 0 for EP0 or a control endpoint the device declares; `out_data[0..out_len]` is
 /// the OUT data stage (empty for IN). A non-OK `out->status` is a protocol outcome, not a failure;
-/// the box replies `REFUSED` while the opt-in is off. `MEDIUS_STATUS_OK` means only that the box
+/// the box replies `REFUSED` while the opt-in is off, and `NAK` while the game PC has the clone
+/// suspended (the real device is suspended with it). `MEDIUS_STATUS_OK` means only that the box
 /// replied.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_device_transfer(

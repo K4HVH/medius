@@ -554,7 +554,10 @@ pub struct MediusRate {
 /// saturate, so a count keeps rising while loss continues.
 ///
 /// `tx_drops`, `link_rx_drops` and `host_rx_drops` are lost player input and should read 0.
-/// `relay_drops` is relayed traffic and commands that went no further, none of it native input.
+/// `relay_drops` is relayed traffic and commands that went no further, none of it native input. A
+/// rise across a burst of your own commands can mean some never reached the box. A lost release
+/// can leave a key held, and `medius_device_reapply` re-sends only what is held, so send the releases
+/// again or call `medius_device_reset`.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MediusStats {
@@ -573,10 +576,16 @@ pub struct MediusStats {
     pub link_rx_drops: u32,
     /// The same count for the host chip, relayed over the link.
     pub host_rx_drops: u32,
-    /// A relayed packet the box could not carry: a vendor IN packet behind a queue full of RAW packets,
-    /// a zero-length packet answering a poll a suspended PC did not make, or an OUT packet the box could
-    /// not queue or that a bus reset overtook. OUT is otherwise paced by making the PC wait. No player
-    /// input is lost.
+    /// Relayed traffic and commands that went no further: a vendor IN packet that found its
+    /// endpoint's queue full of the control PC's RAW packets, or a device's zero-length packet
+    /// answering a poll the PC did not make (the one poll the box runs ahead of a suspended PC); an
+    /// OUT packet the box could not queue, that failed three times on the device's bus, or that a
+    /// bus reset or SET_INTERFACE overtook; a RAW OUT packet with no room to wait; a relayed
+    /// request or a flagged MOVE the box could not queue; any frame other than native input that
+    /// either chip's link receive ring dropped; and a frame from the control PC the box's receive
+    /// ring had no room for (one a frame), or an overrun of the control port's UART (one an
+    /// overrun, however many frames it cost). Counted apart from `tx_drops` because no native input
+    /// goes missing with it.
     pub relay_drops: u32,
     /// Times the box released host-set session state; 0 at boot. Wraps, so compare for inequality.
     pub session: u16,
@@ -1255,7 +1264,10 @@ pub enum MediusControlStatus {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MediusBusEventKind {
     Reset = 0,
+    /// The host suspended the bus; the box suspends the real device with it.
     Suspend = 1,
+    /// The host resumed the bus, and the box resumes the real device with it. Also follows a remote
+    /// wakeup the box signals, for an injection or one from the real device.
     Resume = 2,
     /// `SET_CONFIGURATION` selected `configuration`.
     Configured = 3,

@@ -57,7 +57,7 @@ The base crate is the sync core. Optional features:
 | `tracing` | per-frame TX/RX `tracing` instrumentation |
 
 ```toml
-medius = { version = "3.3", features = ["async", "mock"] }
+medius = { version = "3.4", features = ["async", "mock"] }
 ```
 
 ## API
@@ -120,6 +120,8 @@ device.release(MediaKey::VOLUME_UP)?;
 ```
 
 Keys are HID keycodes (`Key::A`, `Key::ENTER`, the eight modifiers, F-keys, arrows…) or any usage via `Key::new(0x04)`; media keys are Consumer usages (`MediaKey::VOLUME_UP`, `PLAY_PAUSE`, `MUTE`…). Like buttons, they take the tri-state `Action` (press / soft-release / force-release) and stay held across a reconnect. Both are present-gated: a key the board can't report is a no-op with no error; see `caps()`.
+
+Each key change waits until the PC has collected the report carrying the one before it. The box holds 160 waiting key changes, so about 80 characters sent back to back arrive whole (fewer when capitals use Shift, which costs four changes each); buttons and media keys hold 16 changes.
 
 ### Sustained motion
 

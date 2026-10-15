@@ -20,7 +20,8 @@ pub struct Health {
     pub clone_configured: bool,
     /// Injection is active.
     pub injection_active: bool,
-    /// Native-rate estimator window is full, so [`Rate`](crate::Rate) is trustworthy.
+    /// A mouse is bound and the native-rate estimator window is full, so [`Rate`](crate::Rate) is
+    /// trustworthy.
     pub rate_confident: bool,
     /// At least one lock is active.
     pub lock_on: bool,
