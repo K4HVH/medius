@@ -286,10 +286,13 @@ class Stats:
     `tx_drops` (a report the clone's queue could not hold) and `link_rx_drops`/`host_rx_drops` (an
     input-carrying frame one chip could not take off the inter-chip link) are lost player input and
     should read 0. `relay_drops` is relayed traffic and commands that went no further: a vendor IN
-    packet behind a queue full of RAW packets, a zero-length packet answering a poll a suspended PC did
-    not make, an OUT packet the box could not queue or deliver, a relayed request
-    or flagged MOVE it could not queue, and non-input frames either chip's link ring dropped. None of
-    it is native input.
+    packet behind a queue full of RAW packets, a zero-length packet answering a poll a suspended PC
+    did not make, an OUT or RAW OUT packet the box could not queue or deliver, a relayed request or
+    flagged MOVE it could not queue, non-input frames either chip's link ring dropped, frames from
+    the control PC its receive ring had no room for, and control-port UART overruns. None of it is
+    native input. A rise across a burst of your own commands can mean some never reached the box;
+    a lost release can leave a key held, and `reapply()` re-sends only what is held, so send the
+    releases again or call `reset()`.
     """
 
     inject_emits: int

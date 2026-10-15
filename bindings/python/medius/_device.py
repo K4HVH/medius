@@ -528,7 +528,8 @@ class Device:
 
         `ep` is 0 for EP0 or a control endpoint the device declares; `out` is the OUT data stage
         (empty for IN). A non-OK `TransferOutcome.status` is a protocol outcome, returned, not
-        raised; the box replies `REFUSED` while the opt-in is off. `timeout_ms` is the reply wait,
+        raised; the box replies `REFUSED` while the opt-in is off, and `NAK` while the game PC has
+        the clone suspended (the real device is suspended with it). `timeout_ms` is the reply wait,
         default `default_transfer_timeout_ms()`; the box abandons a transfer after its own ~800 ms,
         so a shorter wait gives up before a slow device replies.
         """

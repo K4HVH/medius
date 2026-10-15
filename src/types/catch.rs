@@ -9,8 +9,11 @@ use crate::types::{Axis, Class, ClockEstimate, Direction, Usage};
 
 /// Class a [`CatchFilter`] addresses.
 ///
-/// Classes 0 to 3 are `LOCK`'s classes at the same byte values. Classes 4 to 10 are the
-/// byte-oriented traffic the box relays; [`TrafficClass`] is that half alone.
+/// Classes 0 to 3 are `LOCK`'s classes at the same byte values. Classes 4 to 11 are the
+/// byte-oriented traffic the box relays; [`TrafficClass`] is that half alone. After the real device
+/// STALLs an interrupt or bulk IN endpoint, its [`HidIn`](Self::HidIn) or vendor IN events stop
+/// until the game PC clears the halt: the box passes the STALL to the PC and does not clear it
+/// itself.
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum CatchClass {

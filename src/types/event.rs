@@ -110,9 +110,10 @@ impl UsageSnapshot {
 pub enum BusEvent {
     /// USB bus reset.
     Reset,
-    /// The host suspended the bus.
+    /// The host suspended the bus; the box suspends the real device with it.
     Suspend,
-    /// The host resumed the bus.
+    /// The host resumed the bus, and the box resumes the real device with it. Also follows a remote
+    /// wakeup the box signals, for an injection or one from the real device.
     Resume,
     /// `SET_CONFIGURATION` selected this configuration index.
     Configured(u8),
