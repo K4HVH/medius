@@ -3,8 +3,8 @@
 //! Windows serialises every request on a synchronous file object, duplicated handles included: a
 //! reader parked in `ReadFile` holds the port for the read timeout and a concurrent `WriteFile`
 //! waits, so injection lands only between reads. `serial2` opens the port with
-//! `FILE_FLAG_OVERLAPPED` and completes each request through its own `OVERLAPPED`, so a read and a
-//! write are in flight at once.
+//! `FILE_FLAG_OVERLAPPED` and completes each request through a separate `OVERLAPPED`, so a read and
+//! a write are in flight at once.
 
 use std::io;
 use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
@@ -126,7 +126,7 @@ impl Transport for SerialTransport {
 }
 
 // Windows cancels a thread's pending I/O when the thread exits, so a wait is retired, not handed to
-// another thread, and retired before its own thread leaves.
+// another thread, and retired before the thread that started it leaves.
 struct RxWait {
     event: OwnedHandle,
     op: NonNull<WaitOp>,
@@ -242,7 +242,7 @@ impl RxWait {
         unsafe { SetCommMask(handle(port), EV_RXCHAR) };
     }
 
-    // A cancel is only the fallback: WCH's cancel routine races its own completion path.
+    // A cancel is only the fallback: WCH's cancel routine races the driver's completion path.
     fn retire(&mut self, port: &SerialPort) -> io::Result<()> {
         if self.owner.is_none() {
             return Ok(());

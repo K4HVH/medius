@@ -26,8 +26,10 @@ impl MediusDevice {
         Box::into_raw(Box::new(MediusDevice { inner }))
     }
 
-    /// wraps a `Device` you already opened in a C handle, for when your own library links medius-capi. pass
-    /// `device.clone()` to keep using it from Rust, both share the connection. free it with `medius_device_free`
+    /// Wrap a `Device` that is already open in a C handle, for a Rust library that exports a C API
+    /// built on this one. Pass `device.clone()` to keep using it from Rust: both share the
+    /// connection. Free the handle with `medius_device_free`.
+    #[must_use = "the handle owns the connection until medius_device_free"]
     pub fn into_raw(device: Device) -> *mut MediusDevice {
         Self::boxed(device)
     }
@@ -652,7 +654,7 @@ pub unsafe extern "C" fn medius_device_transfer(
 }
 
 /// [`medius_device_transfer`] with a reply timeout in milliseconds. The box abandons a control
-/// transfer after its own ~800 ms, so keep `timeout_ms` at or above
+/// transfer after ~800 ms, so keep `timeout_ms` at or above
 /// `medius_default_transfer_timeout_ms()`; a shorter one stops waiting before a slow device
 /// replies.
 #[unsafe(no_mangle)]
@@ -1041,7 +1043,7 @@ pub unsafe extern "C" fn medius_device_set_render(
 
 /// Set the percent of the host's command interval an injected delta is released across: 0 puts it
 /// all on the box's next report, 100 spreads it across one command interval, above 100 overlaps. A
-/// loop at the native report rate keeps each command whole on its own report. Until the box learns
+/// loop at the native report rate keeps each command whole on one report. Until the box learns
 /// the host's command period from `MOVE` arrivals, each delta goes out whole.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_device_set_spread(
@@ -1110,13 +1112,20 @@ pub unsafe extern "C" fn medius_device_abort_update(
     with_device(dev, |d| d.abort_update(tgt))
 }
 
-/// Commit every staged image and reboot into it; blocks until the host chip is back.
+/// Commit every staged image and reboot into it. With a host image staged, blocks until the host chip
+/// is back.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_device_activate_firmware(dev: *mut MediusDevice) -> MediusStatus {
     with_device(dev, |d| d.activate_firmware())
 }
 
-/// a refused activate aborts the image so a later activate doesn't boot it
+/// Stage `len` bytes into `target`'s spare slot (0 = device chip, 1 = host chip) and activate them.
+/// For the host chip, blocks until it is back. A refused activate aborts the staged image, so a later
+/// activate cannot boot it. `progress`, if non-null, gets bytes sent and the total, on the calling
+/// thread.
+///
+/// # Safety
+/// `dev` must be a live device handle; `image` must point to `len` readable bytes.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_device_update_firmware(
     dev: *mut MediusDevice,
@@ -1144,7 +1153,12 @@ pub unsafe extern "C" fn medius_device_update_firmware(
     })
 }
 
-/// waits until neither chip is on probation, it keeps asking while the box reboots after an activate
+/// Block until neither chip is on probation and write both chips' firmware state to `*out`. Keeps
+/// asking while the box reboots after an activate. After 55 s it returns `ErrUpdate` if a chip is
+/// still on probation, or `ErrQueryTimeout` if the box has not answered.
+///
+/// # Safety
+/// `dev` must be a live device handle and `out` writable.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_device_wait_firmware_confirmed(
     dev: *mut MediusDevice,
@@ -1320,7 +1334,7 @@ pub extern "C" fn medius_default_keepalive_cadence_ms() -> u32 {
 
 /// The C ABI version this header declares, bumped on any breaking change. Compare with
 /// `medius_abi_version()` once at start-up.
-pub const MEDIUS_ABI_VERSION: u32 = 9;
+pub const MEDIUS_ABI_VERSION: u32 = 10;
 
 /// The loaded library's C ABI version, bumped on any breaking header change. Compare with
 /// `MEDIUS_ABI_VERSION` once at start-up. On a mismatch call nothing else: the header's struct

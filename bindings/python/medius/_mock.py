@@ -236,6 +236,16 @@ class MockBox:
         """Make the mock stop replying to queries (one-way, for timeout tests)."""
         _native.lib.medius_mock_silent(self._handle)
 
+    def refuse_next_activate(self, status: int):
+        """Refuse the next `ACTIVATE` with update status `status` (protocol §4.16), keeping whatever
+        is staged."""
+        _native.lib.medius_mock_refuse_next_activate(self._handle, int(status))
+
+    def reboot_after_activate(self, unanswered: int, pending: int):
+        """After each accepted `ACTIVATE`, leave the next `unanswered` FIRMWARE queries unanswered,
+        as a rebooting box does, then report the device chip on probation for the next `pending`."""
+        _native.lib.medius_mock_reboot_after_activate(self._handle, int(unanswered), int(pending))
+
     def push_raw(self, data: bytes):
         if not data:
             return

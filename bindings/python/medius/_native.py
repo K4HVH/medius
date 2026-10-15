@@ -10,7 +10,7 @@ from pathlib import Path
 
 # The header's MEDIUS_ABI_VERSION these mirrors follow; the tests hold it to the header, and import
 # refuses a library whose medius_abi_version() reports another number.
-ABI_VERSION = 9
+ABI_VERSION = 10
 
 MEDIUS_MAX_USAGES = 256
 MEDIUS_CLIP_TRIG_MAX = 8
@@ -740,6 +740,7 @@ _decl(
 )
 _decl("medius_event_stream_clone", HANDLE, [HANDLE])
 _decl("medius_event_stream_free", None, [HANDLE])
+_decl("medius_event_stream_close", None, [HANDLE])
 _decl("medius_event_stream_recv", i32, [HANDLE, ctypes.POINTER(MediusCatchEvent)])
 _decl("medius_event_stream_try_recv", c_bool, [HANDLE, ctypes.POINTER(MediusCatchEvent)])
 _decl("medius_event_stream_recv_timeout", c_bool, [HANDLE, u64, ctypes.POINTER(MediusCatchEvent)])
@@ -751,6 +752,7 @@ _decl(
     [HANDLE, ctypes.POINTER(MediusCatchFilter), usize, PHANDLE],
 )
 _decl("medius_input_stream_free", None, [HANDLE])
+_decl("medius_input_stream_close", None, [HANDLE])
 _decl("medius_input_stream_recv", i32, [HANDLE, ctypes.POINTER(MediusInputEvent)])
 _decl("medius_input_stream_try_recv", c_bool, [HANDLE, ctypes.POINTER(MediusInputEvent)])
 _decl("medius_input_stream_recv_timeout", c_bool, [HANDLE, u64, ctypes.POINTER(MediusInputEvent)])
@@ -778,6 +780,7 @@ _decl("medius_timeline_samples", u64, [HANDLE, u8])
 _decl("medius_device_logs", i32, [HANDLE, PHANDLE])
 _decl("medius_log_stream_clone", HANDLE, [HANDLE])
 _decl("medius_log_stream_free", None, [HANDLE])
+_decl("medius_log_stream_close", None, [HANDLE])
 _decl("medius_log_stream_recv", i32, [HANDLE, ctypes.POINTER(MediusLogLine)])
 _decl("medius_log_stream_try_recv", c_bool, [HANDLE, ctypes.POINTER(MediusLogLine)])
 _decl("medius_log_stream_recv_timeout", c_bool, [HANDLE, u64, ctypes.POINTER(MediusLogLine)])
@@ -885,6 +888,8 @@ if HAS_MOCK:
     _decl("medius_mock_detach", None, [HANDLE, c_bool])
     _decl("medius_mock_attach", None, [HANDLE])
     _decl("medius_mock_silent", None, [HANDLE])
+    _decl("medius_mock_refuse_next_activate", None, [HANDLE, u8])
+    _decl("medius_mock_reboot_after_activate", None, [HANDLE, u32, u32])
     _decl("medius_mock_push_raw", None, [HANDLE, ctypes.POINTER(u8), usize])
     _decl("medius_mock_push_log", None, [HANDLE, u8, ctypes.c_char_p])
     _decl("medius_mock_push_motion", None, [HANDLE, u8, u32, MediusMotionEvent])

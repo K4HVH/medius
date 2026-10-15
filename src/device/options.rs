@@ -171,7 +171,7 @@ impl Device {
     ///
     /// 0 puts the whole delta on the next emitted report; 100 releases it evenly across one command
     /// interval; above 100 overlaps and is allowed. A loop at the native report rate keeps each
-    /// command whole, on its own report.
+    /// command whole, on one report.
     ///
     /// The box learns the interval from `MOVE` arrivals and spreads nothing until it has
     /// ([`SpreadStatus::span_us`](crate::SpreadStatus)). Motion asking for exact timing is released

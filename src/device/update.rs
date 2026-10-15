@@ -20,7 +20,7 @@ pub(crate) const ACTIVATE_TIMEOUT: Duration = Duration::from_secs(60);
 // How often a blocked receive wakes to check for a reply another caller parked.
 const HELD_POLL: Duration = Duration::from_millis(50);
 
-// Outlasts the mouse-side chip's 40 s probation, the longer of the two.
+// Outlasts the host chip's 40 s probation, the longer of the two.
 pub(crate) const CONFIRM_TIMEOUT: Duration = Duration::from_secs(55);
 
 // Chunking and credit accounting for one staged image, transport-free, so the sync and async
@@ -121,8 +121,10 @@ impl Device {
     }
 
     /// Block until neither chip is on probation; a chip that has not confirmed its booted image
-    /// refuses another update. The device chip confirms after ten seconds of running; the mouse-side
-    /// chip only on a completed clock exchange over the inter-chip link.
+    /// refuses another update. The device chip confirms after ten seconds of running; the host chip
+    /// only on a completed clock exchange over the inter-chip link. Keeps asking while the box reboots
+    /// after an activate. After 55 s it returns [`Error::Update`] (`ON_PROBATION`) if a chip is still
+    /// on probation, or [`Error::QueryTimeout`] if the box has not answered.
     pub fn wait_firmware_confirmed(&self) -> Result<FirmwareInfo> {
         let deadline = Instant::now() + CONFIRM_TIMEOUT;
         loop {
@@ -230,7 +232,8 @@ impl Device {
         Ok(())
     }
 
-    /// Stage one image and activate it.
+    /// Stage one image and activate it; a refused activate aborts the staged image, so a later
+    /// activate cannot boot it.
     pub fn update_firmware(
         &self,
         target: UpdateTarget,
@@ -270,9 +273,9 @@ impl Device {
     }
 
     // Matched on the op byte, not `SEQ`: one acknowledgement answers a window of `DATA` frames and
-    // carries its own rolling `SEQ`. A reply for another op is parked, not dropped: the MPMC channel
-    // is shared and `AsyncDevice::offload` runs transfers on their own threads, so dropping it would
-    // time out another caller whose box replied.
+    // carries a separate rolling `SEQ`. A reply for another op is parked, not dropped: the MPMC
+    // channel is shared and `AsyncDevice::offload` runs transfers on separate threads, so dropping
+    // it would time out another caller whose box replied.
     pub(crate) fn recv_update(&self, op: u8, timeout: Duration) -> Result<(UpdateStatus, u32)> {
         let deadline = Instant::now() + timeout;
         loop {

@@ -109,8 +109,8 @@ impl Transform {
     }
 
     /// Move a source field's value into a destination, clearing the source. Same-report for axis to
-    /// axis and button to button; a button to key or media remap holds the destination on its own
-    /// interface while the button is down.
+    /// axis and button to button; a button to key or media remap holds the destination on the
+    /// keyboard or media interface while the button is down.
     pub fn remap(source: impl Into<LockTarget>, dest: impl Into<LockTarget>) -> Transform {
         Transform {
             op: TransformOp::Remap,

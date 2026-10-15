@@ -8,7 +8,7 @@ use crate::protocol::opcode::{BEARING_PER_AXIS, BEARING_VECTOR};
 /// How the box reads whether physical motion runs with or against its injection.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum BearingMode {
-    /// Each axis compares its sign against its own bearing (the default).
+    /// Each axis compares its sign against its bearing (the default).
     #[default]
     PerAxis,
     /// The physical delta is projected onto the injected XY vector: only the part along the

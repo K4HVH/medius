@@ -178,7 +178,7 @@ pub enum MediusDirection {
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MediusBearingMode {
-    /// Each axis compares its sign against its own bearing.
+    /// Each axis compares its sign against its bearing.
     PerAxis = 0,
     /// Projects the physical delta onto the injected XY vector. One relative scale, the lower of
     /// X's and Y's, governs both axes and is what reads back. Each axis's absolute scale then
@@ -454,14 +454,17 @@ pub struct MediusChipFirmware {
     pub state: u8,
 }
 
-/// why the box refused an update op
+/// The detail of an `ErrUpdate`: the update op the box refused and its status. A
+/// `medius_device_wait_firmware_confirmed` that ran out of time gives op 0 and `0x1B` (on probation),
+/// the refusal the next update would meet.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MediusUpdateError {
-    /// 0 begin, 1 data, 2 end, 3 abort, 4 activate
+    /// The op: 0 begin, 1 data, 2 end, 3 abort, 4 activate.
     pub op: u8,
-    /// the box's update status byte (§4.16), like 0x1B for on probation
+    /// The update status byte (protocol §4.16), such as 0x1B for a chip on probation.
     pub status: u8,
+    /// The status argument; what it holds depends on the status (§4.16).
     pub arg: u32,
 }
 
@@ -566,8 +569,8 @@ pub struct MediusRate {
 ///
 /// `tx_drops`, `link_rx_drops` and `host_rx_drops` are lost player input and should read 0.
 /// `relay_drops` is relayed traffic and commands that went no further, none of it native input. A
-/// rise across a burst of your own commands can mean some never reached the box. A lost release
-/// can leave a key held, and `medius_device_reapply` re-sends only what is held, so send the releases
+/// rise across a burst of your own commands can mean some never reached the box. A lost release can
+/// leave a key held, and `medius_device_reapply` re-sends only what is held, so send the releases
 /// again or call `medius_device_reset`.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -725,7 +728,7 @@ pub enum MediusRewriteClass {
 
 /// What the top-ranked matching rewrite rule does to the packet (§3.14), as the `action` byte.
 /// `Drop` is report surfaces only; `Answer`/`Stall`/`Nak` and the two reply rewrites are
-/// control-only, matching the box's own check.
+/// control-only, matching the box's check.
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MediusRewriteAction {

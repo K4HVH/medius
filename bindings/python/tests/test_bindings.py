@@ -125,8 +125,8 @@ def test_mock_feature_present():
 
 def test_meta_functions():
     # The ctypes structs hand-mirror the C header, so a bumped ABI leaves them stale: pin it.
-    assert medius.abi_version() == 9
-    assert medius._native.ABI_VERSION == 9
+    assert medius.abi_version() == 10
+    assert medius._native.ABI_VERSION == 10
     assert medius.version_string()
     assert medius.default_query_timeout_ms() > 0
     assert medius.default_keepalive_cadence_ms() > 0
@@ -753,7 +753,7 @@ def test_spread_roundtrip():
     with MockBox() as mock, Device.with_mock(mock) as d:
         # A fresh box boots at the full percent with no command period learned, so it spreads nothing.
         assert d.query_spread() == SpreadStatus(100, 0)
-        # The period is the box's own state, learned off MOVE arrivals, not something the host sets.
+        # The period is box state, learned off MOVE arrivals, not something the host sets.
         mock.set_spread_learned(8000)
         assert d.query_spread() == SpreadStatus(100, 8000)
         d.set_spread(50)
@@ -768,7 +768,7 @@ def test_spread_roundtrip():
 
 
 def test_render_roundtrip():
-    # The texture is its own command; the pace still reports the gate it implies.
+    # The texture is a separate command; the pace still reports the gate it implies.
     with MockBox() as mock, Device.with_mock(mock) as d:
         # The box's factory setting: de-spiked, native motion relayed, nothing learned yet.
         status = d.query_render()
@@ -844,7 +844,7 @@ def test_rate_force_needs_the_imperfect_opt_in():
 
 
 def test_rate_force_through_the_setter():
-    # Drives OPTION(EMIT) out of the setter and reads the box's own state back, so a setter that drops
+    # Drives OPTION(EMIT) out of the setter and reads the box's state back, so a setter that drops
     # the force on the wire fails here rather than passing on a mock nobody sent anything to.
     with MockBox() as mock, Device.with_mock(mock) as d:
         d.allow_imperfect_clones(True)
@@ -1453,7 +1453,7 @@ def test_clip_status_and_config_roundtrip():
     assert cfg == settings
 
 
-# The protocol's own example: HID_IN interface 2, IN, START, consume and once per run, selector 1,
+# The protocol doc's example: HID_IN interface 2, IN, START, consume and once per run, selector 1,
 # match 07 20 under mask FF 20.
 _HELD = (TrafficClass.HID_IN, 2, Direction.IN, ClipAction.START, b"\x07\x20", b"\xFF\x20", True, True, 1)
 
@@ -1536,7 +1536,7 @@ def test_packet_triggers_read_back_field_for_field():
             with Device.with_mock(mock) as d:
                 cfg = d.clip().query_config()
         assert cfg.packet_triggers == rows[:n]
-        assert cfg.triggers == inputs, "the input triggers keep their own count"
+        assert cfg.triggers == inputs, "the input triggers keep a separate count"
 
     # The protocol's read-back example: HID_IN id 0x0102, IN, TOGGLE, consume and once per run,
     # selector 1, hits saturated.
@@ -1605,7 +1605,7 @@ def test_a_bound_packet_trigger_reads_back_as_it_was_bound():
             for t in rows:
                 clip.bind_packet(t)
             cfg = clip.query_config()
-            # Each flag reads back on its own: row 0 consumes, row 1 is once per run.
+            # Each flag reads back separately: row 0 consumes, row 1 is once per run.
             assert [(t.consume, t.once_per_run) for t in cfg.packet_triggers[:2]] == [(True, False), (False, True)]
             # A bind starts its count at zero, whatever hits the trigger held.
             assert [t.hits for t in cfg.packet_triggers] == [0] * 8
@@ -2083,7 +2083,7 @@ def test_input_events_decode_snapshots_into_edges():
 
 
 def test_input_events_refuse_what_they_cannot_decode():
-    # Each refusal has its own status across the ABI, so a caller can tell a wrong filter from a
+    # Each refusal has a distinct status across the ABI, so a caller can tell a wrong filter from a
     # dead link.
     with MockBox() as mock, Device.with_mock(mock) as d:
         with pytest.raises(medius.NotAnInputFilterError):
@@ -2813,18 +2813,47 @@ def test_close_on_another_thread_ends_a_blocked_recv(open_stream):
 
         reader = threading.Thread(target=read, daemon=True)
         reader.start()
-        time.sleep(0.2)
-        if open_stream != "input":
-            start = time.monotonic()
-            assert stream.is_connected
-            assert time.monotonic() - start < 0.05
-        closer = threading.Thread(target=stream.close, daemon=True)
-        closer.start()
-        closer.join(2)
+        _wait_for_a_call(stream)
+        # Nothing on the stream waits behind the blocked receive.
+        start = time.monotonic()
+        assert stream.is_connected
+        if open_stream != "logs":
+            assert stream.dropped == 0
+        if open_stream == "input":
+            assert stream.held(Class.BUTTON) == []
+        assert time.monotonic() - start < 0.05
+        start = time.monotonic()
+        stream.close()
         reader.join(2)
-        assert not closer.is_alive() and not reader.is_alive()
+        assert not reader.is_alive()
+        assert time.monotonic() - start < 0.2
         assert isinstance(got[0], medius.DisconnectedError)
         assert stream.try_recv() is None and not stream.is_connected
+
+
+def _wait_for_a_call(handle):
+    # A call is running on the handle once its use count is up: a native call, not a sleep, decides.
+    deadline = time.monotonic() + 2
+    while handle._users == 0:
+        assert time.monotonic() < deadline, "the call never started"
+        time.sleep(0.001)
+    time.sleep(0.02)
+
+
+def test_closing_one_clone_ends_the_stream_and_collecting_one_does_not():
+    import gc
+
+    with MockBox() as mock, Device.with_mock(mock) as d:
+        stream = d.catch_events(CatchFilter.everything())
+        spare = stream.clone()
+        del spare
+        gc.collect()
+        assert stream.is_connected
+        other = stream.clone()
+        other.close()
+        assert not stream.is_connected
+        with pytest.raises(medius.DisconnectedError):
+            stream.recv()
 
 
 def test_set_spread_refuses_a_percent_past_u16():
@@ -2843,36 +2872,49 @@ def test_an_update_refusal_carries_the_box_status():
 
 def test_update_and_confirm_run_through_the_library():
     with MockBox() as mock, Device.with_mock(mock) as d:
+        mock.reboot_after_activate(1, 2)
         seen = []
         d.update_firmware(medius.UpdateTarget.DEVICE, bytes(range(256)) * 8, lambda s, t: seen.append(s))
         assert seen and seen[-1] == 2048
+        mock.clear_recorded()
         info = d.wait_firmware_confirmed()
         assert not info.any_pending()
+        # Asked through the reboot: one unanswered, two on probation, then confirmed.
+        assert len(_clip_frames(d, mock, FrameType.QUERY)) == 4
+
+
+def test_a_refused_activate_aborts_the_staged_image():
+    with MockBox() as mock, Device.with_mock(mock) as d:
+        mock.refuse_next_activate(0x1B)
+        with pytest.raises(medius.UpdateError) as e:
+            d.update_firmware(medius.UpdateTarget.HOST, bytes(range(256)) * 8)
+        assert (e.value.op, e.value.update_status) == (4, 0x1B)
+        aborts = [p for p in _clip_frames(d, mock, FrameType.UPDATE) if p[0] == 3]
+        assert [p[1] for p in aborts] == [int(medius.UpdateTarget.HOST)]
 
 
 def test_device_close_on_another_thread_waits_for_a_running_query():
     import threading
 
-    mock = MockBox()
-    mock.silent()
-    d = Device.with_mock(mock)
-    got = []
+    with MockBox() as mock:
+        mock.silent()
+        d = Device.with_mock(mock)
+        got = []
 
-    def query():
-        try:
+        def query():
+            try:
+                d.query_version()
+            except MediusError as e:
+                got.append(e)
+
+        caller = threading.Thread(target=query, daemon=True)
+        caller.start()
+        _wait_for_a_call(d)
+        start = time.monotonic()
+        d.close()
+        assert time.monotonic() - start < 0.05
+        caller.join(10)
+        assert not caller.is_alive()
+        assert isinstance(got[0], medius.QueryTimeoutError)
+        with pytest.raises(MediusError):
             d.query_version()
-        except MediusError as e:
-            got.append(e)
-
-    caller = threading.Thread(target=query, daemon=True)
-    caller.start()
-    time.sleep(0.2)
-    start = time.monotonic()
-    d.close()
-    assert time.monotonic() - start < 0.05
-    caller.join(10)
-    assert not caller.is_alive()
-    assert isinstance(got[0], medius.QueryTimeoutError)
-    with pytest.raises(MediusError):
-        d.query_version()
-    mock.close()

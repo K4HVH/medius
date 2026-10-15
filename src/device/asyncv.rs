@@ -324,10 +324,10 @@ impl AsyncDevice {
         self.offload(|d| d.activate_firmware()).await
     }
 
-    /// Stage one image and activate it.
+    /// Stage one image and activate it; a refused activate aborts the staged image.
     ///
     /// Not cancellable: dropping the future stops the wait, not the transfer, which runs to completion
-    /// on its own thread, and the box still reboots into the new image.
+    /// on a separate thread, and the box still reboots into the new image.
     pub async fn update_firmware(
         &self,
         target: UpdateTarget,

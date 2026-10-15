@@ -4,13 +4,15 @@ resolver = "3"
 
 [package]
 name = "medius"
-version = "3.4.3"
+version = "3.4.6"
 edition = "2024"
 rust-version = "1.85"
-description = "Host control library for the medius transparent mouse passthrough box"
+description = "Rust library for Medius, replacement firmware for the MAKCU box"
 license = "MIT"
 keywords = ["medius", "mouse", "hid", "serial", "makcu"]
 categories = ["hardware-support", "api-bindings"]
+repository = "https://github.com/K4HVH/medius"
+homepage = "https://medius.k4tech.net"
 
 # docs.rs renders the feature-gated async and mock APIs.
 [package.metadata.docs.rs]

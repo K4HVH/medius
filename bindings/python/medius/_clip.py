@@ -193,7 +193,8 @@ class ClipHandle(Handle):
         check(self._call(_native.lib.medius_clip_set_retain, 1 if on else 0))
 
     def set_ride(self, on: bool):
-        """Make the clip's motion wait to ride a native report (False = the box's own clock, the default); only its wheel and pan while rendering is on with a profile armed."""
+        """Make the clip's motion ride native reports; False, the default, emits it at once. While
+        rendering is on with a profile armed, this applies to wheel and pan only."""
         check(self._call(_native.lib.medius_clip_set_ride, 1 if on else 0))
 
     def bind(self, trigger: ClipTrigger):

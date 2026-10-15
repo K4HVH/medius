@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import ctypes
+import math
 import time
 from typing import List, Optional
 
 from . import _native
 from ._enums import Class, ClockDomain, Status
-from ._errors import DisconnectedError, MediusError
+from ._errors import DisconnectedError, MediusError, check
 from ._handle import Handle
 from ._types import (
     CatchEvent,
@@ -22,33 +23,28 @@ from ._types import (
     input_event_from_c,
 )
 
-# a blocking recv waits in slices so a close from another thread ends it
-_SLICE_MS = 100
-
-
 class _Stream(Handle):
-    _recv_timeout = ""
-    _is_connected = ""
-
     def __init__(self, handle, device=None):
         super().__init__(handle)
         self._device = device  # keep the device alive while the stream is open
 
-    def _wait(self, out, ms) -> bool:
-        recv = getattr(_native.lib, self._recv_timeout)
-        connected = getattr(_native.lib, self._is_connected)
-        deadline = None if ms is None else time.monotonic() + ms / 1000
-        while True:
-            step = _SLICE_MS
-            if deadline is not None:
-                step = max(0, min(_SLICE_MS, int((deadline - time.monotonic()) * 1000)))
-            if self._call(recv, step, ctypes.byref(out)):
-                return True
-            if not self._call(connected):
-                # the box can send its last item and drop the link right after the slice timed out
-                return bool(self._call(recv, 0, ctypes.byref(out)))
-            if deadline is not None and time.monotonic() >= deadline:
-                return False
+    def close(self):
+        """End the stream for every handle on it and free this one. A receive blocked on it in
+        another thread returns at once, raising `DisconnectedError`, and frees the handle as it
+        ends.
+        """
+        super().close()
+
+    def _recv(self, fn, out) -> None:
+        status = self._call(fn, ctypes.byref(out))
+        if status == Status.OK:
+            return
+        if self._closing or status == Status.ERR_DISCONNECTED:
+            raise self._ended()
+        check(status)
+
+    def _recv_timeout(self, fn, out, ms) -> bool:
+        return bool(self._call(fn, max(0, math.ceil(ms)), ctypes.byref(out)))
 
     def _ended(self) -> DisconnectedError:
         text = "stream closed" if self._closing else "device disconnected"
@@ -68,14 +64,12 @@ class EventStream(_Stream):
     """A live CATCH event stream. Iterate it to consume events until the link drops."""
 
     _free = "medius_event_stream_free"
-    _recv_timeout = "medius_event_stream_recv_timeout"
-    _is_connected = "medius_event_stream_is_connected"
+    _end = "medius_event_stream_close"
 
     def recv(self) -> CatchEvent:
         """Block for the next event. Raises `DisconnectedError` when the stream closes."""
         ev = _native.MediusCatchEvent()
-        if not self._wait(ev, None):
-            raise self._ended()
+        self._recv(_native.lib.medius_event_stream_recv, ev)
         return decode_catch_event(ev)
 
     def try_recv(self) -> Optional[CatchEvent]:
@@ -86,7 +80,7 @@ class EventStream(_Stream):
 
     def recv_timeout(self, ms) -> Optional[CatchEvent]:
         ev = _native.MediusCatchEvent()
-        if self._wait(ev, int(ms)):
+        if self._recv_timeout(_native.lib.medius_event_stream_recv_timeout, ev, ms):
             return decode_catch_event(ev)
         return None
 
@@ -121,15 +115,12 @@ class InputStream(_Stream):
     """
 
     _free = "medius_input_stream_free"
-    _exclusive = True
-    _recv_timeout = "medius_input_stream_recv_timeout"
-    _is_connected = "medius_input_stream_is_connected"
+    _end = "medius_input_stream_close"
 
     def recv(self) -> InputEvent:
         """Block for the next input event. Raises `DisconnectedError` when the stream closes."""
         ev = _native.MediusInputEvent()
-        if not self._wait(ev, None):
-            raise self._ended()
+        self._recv(_native.lib.medius_input_stream_recv, ev)
         return input_event_from_c(ev)
 
     def try_recv(self) -> Optional[InputEvent]:
@@ -140,7 +131,7 @@ class InputStream(_Stream):
 
     def recv_timeout(self, ms) -> Optional[InputEvent]:
         ev = _native.MediusInputEvent()
-        if self._wait(ev, int(ms)):
+        if self._recv_timeout(_native.lib.medius_input_stream_recv_timeout, ev, ms):
             return input_event_from_c(ev)
         return None
 
@@ -236,14 +227,12 @@ class LogStream(_Stream):
     """A device LOG stream. Iterate it to consume lines until the link drops."""
 
     _free = "medius_log_stream_free"
-    _recv_timeout = "medius_log_stream_recv_timeout"
-    _is_connected = "medius_log_stream_is_connected"
+    _end = "medius_log_stream_close"
 
     def recv(self) -> LogLine:
         """Block for the next log line. Raises `DisconnectedError` when the stream closes."""
         line = _native.MediusLogLine()
-        if not self._wait(line, None):
-            raise self._ended()
+        self._recv(_native.lib.medius_log_stream_recv, line)
         return decode_log_line(line)
 
     def try_recv(self) -> Optional[LogLine]:
@@ -254,12 +243,13 @@ class LogStream(_Stream):
 
     def recv_timeout(self, ms) -> Optional[LogLine]:
         line = _native.MediusLogLine()
-        if self._wait(line, int(ms)):
+        if self._recv_timeout(_native.lib.medius_log_stream_recv_timeout, line, ms):
             return decode_log_line(line)
         return None
 
     @property
     def is_connected(self) -> bool:
+        """Whether the box is still delivering. See `EventStream.is_connected`."""
         return bool(self._call(_native.lib.medius_log_stream_is_connected))
 
     def clone(self) -> "LogStream":

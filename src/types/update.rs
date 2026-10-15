@@ -251,9 +251,9 @@ pub(crate) fn update_reason(op: u8, status: UpdateStatus, arg: u32) -> String {
         UpdateStatus::WRITE_FAILED => format!("flash write failed (error {arg})"),
         UpdateStatus::BAD_SHA => "image corrupted in transit; retry".into(),
         UpdateStatus::BAD_IMAGE => format!("not a bootable image (error {arg})"),
-        UpdateStatus::LINK_DOWN => "the mouse-side chip is not reachable".into(),
+        UpdateStatus::LINK_DOWN => "the host chip is not reachable".into(),
         UpdateStatus::TIMEOUT if op == OTA_OP_ACTIVATE => {
-            "the mouse-side chip did not come back; power cycle the box".into()
+            "the host chip did not come back; power cycle the box".into()
         }
         UpdateStatus::TIMEOUT => "the box stopped answering; transfer dropped".into(),
         UpdateStatus::NOTHING_STAGED => "nothing is staged".into(),

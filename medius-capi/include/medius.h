@@ -1,4 +1,11 @@
-/* medius C ABI. See https://github.com/K4HVH/medius. MIT. */
+/* medius C ABI. https://medius.k4tech.net/bindings/c. MIT.
+ *
+ * Threads: a device, event-stream, input-stream, LOG-stream, clip or mock handle may be used from
+ * several threads at once. A stream may be closed (medius_*_stream_close) while another thread is
+ * blocked receiving on it, and that receive returns at once. A clip builder, clip frame or timeline
+ * is used by one thread at a time. Free a handle only when no other thread is using it: close a
+ * stream, let its receivers return, then free it.
+ */
 
 #ifndef MEDIUS_H
 #define MEDIUS_H
@@ -143,7 +150,7 @@
 
 // The C ABI version this header declares, bumped on any breaking change. Compare with
 // `medius_abi_version()` once at start-up.
-#define MEDIUS_ABI_VERSION 9
+#define MEDIUS_ABI_VERSION 10
 
 // Result of a fallible `medius_*` call: `MEDIUS_OK` is 0, anything else a failure.
 enum MediusStatus
@@ -245,7 +252,7 @@ enum MediusBearingMode
   : uint8_t
 #endif // defined(__cplusplus) || __STDC_VERSION__ >= 202311L
  {
-    // Each axis compares its sign against its own bearing.
+    // Each axis compares its sign against its bearing.
     MEDIUS_BEARING_MODE_PER_AXIS = 0,
     // Projects the physical delta onto the injected XY vector. One relative scale, the lower of
     // X's and Y's, governs both axes and is what reads back. Each axis's absolute scale then
@@ -821,7 +828,7 @@ typedef uint8_t MediusRebootTarget;
 
 // What the top-ranked matching rewrite rule does to the packet (§3.14), as the `action` byte.
 // `Drop` is report surfaces only; `Answer`/`Stall`/`Nak` and the two reply rewrites are
-// control-only, matching the box's own check.
+// control-only, matching the box's check.
 enum MediusRewriteAction
 #if defined(__cplusplus) || __STDC_VERSION__ >= 202311L
   : uint8_t
@@ -1385,8 +1392,8 @@ typedef struct MediusRate {
 //
 // `tx_drops`, `link_rx_drops` and `host_rx_drops` are lost player input and should read 0.
 // `relay_drops` is relayed traffic and commands that went no further, none of it native input. A
-// rise across a burst of your own commands can mean some never reached the box. A lost release
-// can leave a key held, and `medius_device_reapply` re-sends only what is held, so send the releases
+// rise across a burst of your own commands can mean some never reached the box. A lost release can
+// leave a key held, and `medius_device_reapply` re-sends only what is held, so send the releases
 // again or call `medius_device_reset`.
 typedef struct MediusStats {
     uint32_t inject_emits;
@@ -1562,12 +1569,15 @@ typedef struct MediusCountersSnapshot {
     uint64_t restarts;
 } MediusCountersSnapshot;
 
-// why the box refused an update op
+// The detail of an `ErrUpdate`: the update op the box refused and its status. A
+// `medius_device_wait_firmware_confirmed` that ran out of time gives op 0 and `0x1B` (on probation),
+// the refusal the next update would meet.
 typedef struct MediusUpdateError {
-    // 0 begin, 1 data, 2 end, 3 abort, 4 activate
+    // The op: 0 begin, 1 data, 2 end, 3 abort, 4 activate.
     uint8_t op;
-    // the box's update status byte (§4.16), like 0x1B for on probation
+    // The update status byte (protocol §4.16), such as 0x1B for a chip on probation.
     uint8_t status;
+    // The status argument; what it holds depends on the status (§4.16).
     uint32_t arg;
 } MediusUpdateError;
 
@@ -2003,7 +2013,8 @@ MediusStatus medius_clip_set_loop(struct MediusClip *clip, uint8_t on);
 MediusStatus medius_clip_set_retain(struct MediusClip *clip,
                                     uint8_t on);
 
-// Make the clip's motion wait to ride a native report (0 = the box's own clock, the default); only its wheel and pan while rendering is on with a profile armed.
+// Make the clip's motion ride native reports; 0, the default, emits it at once. While rendering is on
+// with a profile armed, this applies to wheel and pan only.
 MediusStatus medius_clip_set_ride(struct MediusClip *clip,
                                   uint8_t on);
 
@@ -2287,7 +2298,7 @@ MediusStatus medius_device_transfer(struct MediusDevice *dev,
                                     struct MediusTransferOutcome *out);
 
 // [`medius_device_transfer`] with a reply timeout in milliseconds. The box abandons a control
-// transfer after its own ~800 ms, so keep `timeout_ms` at or above
+// transfer after ~800 ms, so keep `timeout_ms` at or above
 // `medius_default_transfer_timeout_ms()`; a shorter one stops waiting before a slow device
 // replies.
 MediusStatus medius_device_transfer_timeout(struct MediusDevice *dev,
@@ -2436,7 +2447,7 @@ MediusStatus medius_device_set_render(struct MediusDevice *dev, uint8_t mode, bo
 
 // Set the percent of the host's command interval an injected delta is released across: 0 puts it
 // all on the box's next report, 100 spreads it across one command interval, above 100 overlaps. A
-// loop at the native report rate keeps each command whole on its own report. Until the box learns
+// loop at the native report rate keeps each command whole on one report. Until the box learns
 // the host's command period from `MOVE` arrivals, each delta goes out whole.
 MediusStatus medius_device_set_spread(struct MediusDevice *dev, uint16_t percent);
 
@@ -2458,10 +2469,17 @@ MediusStatus medius_device_stage_firmware(struct MediusDevice *dev,
 // Drop whatever is staged or in flight for one target; the clone comes back without a reboot.
 MediusStatus medius_device_abort_update(struct MediusDevice *dev, uint8_t target);
 
-// Commit every staged image and reboot into it; blocks until the host chip is back.
+// Commit every staged image and reboot into it. With a host image staged, blocks until the host chip
+// is back.
 MediusStatus medius_device_activate_firmware(struct MediusDevice *dev);
 
-// a refused activate aborts the image so a later activate doesn't boot it
+// Stage `len` bytes into `target`'s spare slot (0 = device chip, 1 = host chip) and activate them.
+// For the host chip, blocks until it is back. A refused activate aborts the staged image, so a later
+// activate cannot boot it. `progress`, if non-null, gets bytes sent and the total, on the calling
+// thread.
+//
+// # Safety
+// `dev` must be a live device handle; `image` must point to `len` readable bytes.
 MediusStatus medius_device_update_firmware(struct MediusDevice *dev,
                                            uint8_t target,
                                            const uint8_t *image,
@@ -2469,7 +2487,12 @@ MediusStatus medius_device_update_firmware(struct MediusDevice *dev,
                                            void (*progress)(void*, uintptr_t, uintptr_t),
                                            void *user);
 
-// waits until neither chip is on probation, it keeps asking while the box reboots after an activate
+// Block until neither chip is on probation and write both chips' firmware state to `*out`. Keeps
+// asking while the box reboots after an activate. After 55 s it returns `ErrUpdate` if a chip is
+// still on probation, or `ErrQueryTimeout` if the box has not answered.
+//
+// # Safety
+// `dev` must be a live device handle and `out` writable.
 MediusStatus medius_device_wait_firmware_confirmed(struct MediusDevice *dev,
                                                    struct MediusFirmwareInfo *out);
 
@@ -2531,7 +2554,11 @@ uintptr_t medius_last_error_message(char *buf,
 // The last error's `BadProtoVer` version byte, or 0 if it carried none.
 uint8_t medius_last_error_proto_ver(void);
 
-// why the box refused the last update, false if the last error wasn't an update refusal
+// Write the last error's update detail to `*out` and return true; false, `*out` untouched, if the
+// last error on this thread was not an update error.
+//
+// # Safety
+// `out` must be writable, or null.
 bool medius_last_error_update(struct MediusUpdateError *out);
 
 // A [`MediusUsage`] for a mouse button. `button` takes a `MEDIUS_BUTTON_*` constant; an unnamed
@@ -2722,6 +2749,15 @@ struct MediusEventStream *medius_event_stream_clone(const struct MediusEventStre
 // Free an event-stream handle. Null is a no-op.
 void medius_event_stream_free(struct MediusEventStream *stream);
 
+// End the subscription for this handle and every clone of it. A receive blocked on it in another
+// thread returns at once, as does every later receive; queued events are dropped. Free the handle
+// once no thread is using it. Null is a no-op.
+//
+// # Safety
+// `stream` must be a live handle from `medius_device_catch_events` or a clone, or null. Other
+// threads may be receiving on it.
+void medius_event_stream_close(struct MediusEventStream *stream);
+
 // Block until the next physical-input event, writing it to `*out`; `ErrDisconnected` on close.
 MediusStatus medius_event_stream_recv(struct MediusEventStream *stream,
                                       struct MediusCatchEvent *out);
@@ -2756,6 +2792,15 @@ MediusStatus medius_device_input_events(struct MediusDevice *dev,
 // `stream` must come from `medius_device_input_events` and not be used afterwards.
 void medius_input_stream_free(struct MediusInputStream *stream);
 
+// End the subscription. A receive blocked on it in another thread returns at once, as does every
+// later receive; queued events are dropped. Free the handle once no thread is using it. Null is a
+// no-op.
+//
+// # Safety
+// `stream` must be a live handle from `medius_device_input_events`, or null. Other threads may be
+// receiving on it.
+void medius_input_stream_close(struct MediusInputStream *stream);
+
 // Block until the next input event, writing it to `*out`; `ErrDisconnected` on close.
 //
 // # Safety
@@ -2763,7 +2808,8 @@ void medius_input_stream_free(struct MediusInputStream *stream);
 MediusStatus medius_input_stream_recv(struct MediusInputStream *stream,
                                       struct MediusInputEvent *out);
 
-// The next decoded event, written to `*out`; returns false if none is queued (never blocks).
+// The next decoded event, written to `*out`; returns false if none is queued or another thread is
+// receiving (never blocks).
 //
 // # Safety
 // `stream` and `out` must be non-null and valid.
@@ -2780,7 +2826,7 @@ bool medius_input_stream_recv_timeout(struct MediusInputStream *stream,
 // Events the underlying subscription dropped because the consumer fell behind.
 //
 // # Safety
-// `stream` must be non-null and valid, or null.
+// `stream` must be a live handle, or null.
 uint64_t medius_input_stream_dropped(struct MediusInputStream *stream);
 
 // Write the usages of `class` this stream holds to `out[0..cap]`, returning how many there are;
@@ -2829,14 +2875,14 @@ bool medius_timeline_observe_input(struct MediusTimeline *t,
 // `MEDIUS_CLOCK_DOMAIN_*` constant; any other value is a no-op.
 //
 // # Safety
-// `t` must be non-null and valid, or null.
+// `t` must be a live handle, or null.
 void medius_timeline_reset(struct MediusTimeline *t, uint8_t domain);
 
 // Events observed for a domain. The floor is a minimum over these: a handful is a loose estimate.
 // `domain` takes a `MEDIUS_CLOCK_DOMAIN_*` constant; any other value reads as 0.
 //
 // # Safety
-// `t` must be non-null and valid, or null.
+// `t` must be a live handle, or null.
 uint64_t medius_timeline_samples(struct MediusTimeline *t, uint8_t domain);
 
 // Whether the box is still delivering to this stream.
@@ -2845,14 +2891,14 @@ uint64_t medius_timeline_samples(struct MediusTimeline *t, uint8_t domain);
 // "nothing ever again"; this tells them apart.
 //
 // # Safety
-// `stream` must be non-null and valid, or null.
+// `stream` must be a live handle, or null.
 bool medius_event_stream_is_connected(struct MediusEventStream *stream);
 
 // Whether the box is still delivering to this input stream. See
 // `medius_event_stream_is_connected`.
 //
 // # Safety
-// `stream` must be non-null and valid, or null.
+// `stream` must be a live handle, or null.
 bool medius_input_stream_is_connected(struct MediusInputStream *stream);
 
 // Open the device LOG stream, writing the handle to `*out`.
@@ -2864,13 +2910,25 @@ struct MediusLogStream *medius_log_stream_clone(const struct MediusLogStream *st
 // Free a log-stream handle. Null is a no-op.
 void medius_log_stream_free(struct MediusLogStream *stream);
 
+// End this LOG stream and every clone of it. A receive blocked on it in another thread returns at
+// once, as does every later receive; other LOG streams go on reading. Free the handle once no
+// thread is using it. Null is a no-op.
+//
+// # Safety
+// `stream` must be a live handle from `medius_device_logs` or a clone, or null. Other threads may
+// be receiving on it.
+void medius_log_stream_close(struct MediusLogStream *stream);
+
 // Block until the next LOG line, writing it to `*out`. Returns `ErrDisconnected` on close.
 MediusStatus medius_log_stream_recv(struct MediusLogStream *stream, struct MediusLogLine *out);
 
 // The next buffered LOG line, written to `*out`; returns false if none is queued (never blocks).
 bool medius_log_stream_try_recv(struct MediusLogStream *stream, struct MediusLogLine *out);
 
-// so a false from try_recv can be told apart from the end
+// Whether the box is still delivering to this LOG stream. See `medius_event_stream_is_connected`.
+//
+// # Safety
+// `stream` must be a live handle, or null.
 bool medius_log_stream_is_connected(struct MediusLogStream *stream);
 
 // Block up to `timeout_ms` for the next LOG line, written to `*out`; false on timeout or close.
@@ -3066,6 +3124,20 @@ void medius_mock_detach(struct MediusMockBox *mock, bool back_within_grace);
 // Simulate the device attaching again: inside a detach's grace the clone stays as it is; after
 // teardown a fresh clone starts with nothing to release.
 void medius_mock_attach(struct MediusMockBox *mock);
+#endif
+
+#if defined(MEDIUS_FEATURE_MOCK)
+// Refuse the next `ACTIVATE` with update status `status` (protocol §4.16), keeping whatever is
+// staged.
+void medius_mock_refuse_next_activate(struct MediusMockBox *mock, uint8_t status);
+#endif
+
+#if defined(MEDIUS_FEATURE_MOCK)
+// After each accepted `ACTIVATE`, leave the next `unanswered` FIRMWARE queries unanswered, as a
+// rebooting box does, then report the device chip on probation for the next `pending`.
+void medius_mock_reboot_after_activate(struct MediusMockBox *mock,
+                                       uint32_t unanswered,
+                                       uint32_t pending);
 #endif
 
 #if defined(MEDIUS_FEATURE_MOCK)

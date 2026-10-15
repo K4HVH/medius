@@ -28,7 +28,7 @@ fn option_payload_bytes() {
         emit_pace_payload(2, 500, 1000),
         [2, 2, 0xF4, 0x01, 0xE8, 0x03]
     );
-    // The texture is its own command, so nothing about it can disturb the pace.
+    // The texture is a separate command, so nothing about it can disturb the pace.
     assert_eq!(render_payload(0, false), [5, 0, 0]);
     assert_eq!(render_payload(2, true), [5, 2, 1]);
     assert_eq!(render_payload(3, false), [5, 3, 0]);
@@ -288,7 +288,7 @@ fn mock_emit_pace_matches_firmware_snap() {
             force_active: false,
         }
     );
-    // The texture is its own command now, but it still governs the resolved rate.
+    // The texture is a separate command now, but it still governs the resolved rate.
     device.set_render(RenderMode::Stock, false).unwrap();
     device.set_emit_pace(EmitPace::Learned, None).unwrap();
     assert_eq!(device.query_emit_pace().unwrap().resolved_hz, 0);
