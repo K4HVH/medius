@@ -102,8 +102,8 @@ fn the_clip_probe_reads_a_packet_trigger_the_reconnect_adopts() {
     assert!(idle());
 }
 
-// A box replying in an unreadable shape does so to every re-send, so the probe ends on the first
-// and the reconnect skips the deadline.
+// A box that replies in an unreadable shape does so to every re-send, so the probe ends on the
+// first reply and the reconnect doesn't wait out the deadline.
 #[test]
 fn a_clip_reply_the_crate_cannot_read_ends_the_probe_at_once() {
     let mut older = vec![0u8; 25];

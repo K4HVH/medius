@@ -23,9 +23,9 @@ impl Device {
             return Err(Error::LockScaleUsage { scale, class });
         }
         let dir = lock_direction(class, direction)?.as_u8();
-        // Serialised against recovery re-sends, or a stale lock can land after this one. Recorded
-        // before the write so a racing reconnect replays it; rolled back if the frame was never
-        // sent, or the keepalive stays open for a lock nothing applies.
+        // Serialised against recovery re-sends; otherwise a stale lock can land after this one.
+        // Recorded before the write so a racing reconnect replays it. Rolled back if the frame was
+        // never sent; otherwise the keepalive stays open for a lock nothing applies.
         let _serial = self.link.reassert_guard();
         let undo = self
             .link
@@ -45,33 +45,33 @@ impl Device {
     /// control-PC silence.
     ///
     /// `scale` is the percent of the native value kept on that direction: [`LOCK_SCALE_BLOCK`]
-    /// blocks, [`LOCK_SCALE_PASS`] passes untouched, and above that amplifies, up to
-    /// [`LOCK_SCALE_MAX`](crate::LOCK_SCALE_MAX) = 2.55x. [`lock`](Self::lock) and
-    /// [`unlock`](Self::unlock) are its two ends.
+    /// blocks, [`LOCK_SCALE_PASS`] passes untouched, and values above that amplify, up to
+    /// [`LOCK_SCALE_MAX`](crate::LOCK_SCALE_MAX) = 2.55x. [`lock`](Self::lock) is `scale`
+    /// at [`LOCK_SCALE_BLOCK`], and [`unlock`](Self::unlock) is `scale` at [`LOCK_SCALE_PASS`].
     ///
     /// Signed down to [`LOCK_SCALE_MIN`](crate::LOCK_SCALE_MIN): a negative scale weighs the native
-    /// value and reverses it, so `-100` inverts. The slot is picked by the delta's sign before the
-    /// weigh, so a `Positive` of `-100` turns rightward motion leftward and leaves leftward motion
-    /// alone. Axes only: [`Error::LockScaleUsage`](crate::Error::LockScaleUsage) otherwise, and
-    /// [`Error::LockScaleRange`](crate::Error::LockScaleRange) outside the range.
+    /// value and reverses it (`-100` inverts). The delta's sign picks the slot before the weigh, so
+    /// a `Positive` of `-100` turns rightward motion leftward and leaves leftward motion alone. A
+    /// negative scale is for axes only, else
+    /// [`Error::LockScaleUsage`](crate::Error::LockScaleUsage); a scale outside the range gives
+    /// [`Error::LockScaleRange`](crate::Error::LockScaleRange).
     ///
-    /// A delta takes at most two scales, its absolute direction's and its relative direction's, and
-    /// they multiply: a `Negative` of 50 with an `Against` of 40 puts leftward motion, while injecting
-    /// rightward, at 20%. A block in either zeroes the product.
+    /// A delta takes at most two scales, one for its absolute direction and one for its relative
+    /// direction, and they multiply. With a rightward bearing, a `Negative` of 50 and an `Against`
+    /// of 40 put leftward motion at 20%. A block in either zeroes the product.
     ///
-    /// [`Direction::Both`] writes the scale to the two absolute directions and a full pass to the two
-    /// relative ones; writing all four would square it (50% with no bearing, 25% with one). Name a
-    /// relative direction to weigh it.
+    /// [`Direction::Both`] writes the scale to the two absolute directions and a full pass to the
+    /// two relative ones. Name a relative direction to weigh it.
     ///
-    /// [`Direction::With`] and [`Direction::Against`] are measured against the bearing and do nothing
-    /// until one is live; see [`set_bearing`](Self::set_bearing). Only an axis has a bearing, so a
-    /// relative direction on a button, key or media usage is
-    /// [`Error::RelativeDirection`](crate::Error::RelativeDirection) instead of a frame the box
-    /// discards. A momentary usage carries one bit: any scale below a full pass locks it, and a full
-    /// pass or more unlocks it.
+    /// [`Direction::With`] and [`Direction::Against`] are measured against the bearing and do
+    /// nothing until a bearing is live; see [`set_bearing`](Self::set_bearing). Only an axis has a
+    /// bearing, so a relative direction on a button, key or media usage gives
+    /// [`Error::RelativeDirection`](crate::Error::RelativeDirection) (the box would discard the
+    /// frame). A momentary usage carries one bit: a scale below full pass locks it, and full pass
+    /// or more unlocks it.
     ///
-    /// A media usage has no edges (it is suppressed whole), so an edge direction on one is sent, and
-    /// reported by `RESP(LOCKS)`, as [`Direction::Both`].
+    /// A media usage has no edges (it is suppressed whole), so an edge direction on one is sent as
+    /// [`Direction::Both`], and `RESP(LOCKS)` reports it as `Both`.
     ///
     /// ```no_run
     /// # use medius::{Axis, Device, Direction, Result};
@@ -100,8 +100,8 @@ impl Device {
     /// Release a lock, back to passing untouched: [`scale`](Self::scale) at [`LOCK_SCALE_PASS`].
     ///
     /// [`Direction::Both`] clears every direction of the target, the relative pair included, so no
-    /// bearing scale is left weighing motion. Only a full pass reaches the relative pair this
-    /// way; a `Both` at any other scale does not.
+    /// bearing scale is left weighing motion. At any scale, `Both` writes only full pass to the
+    /// relative pair.
     pub fn unlock(&self, target: impl Into<LockTarget>, direction: Direction) -> Result<()> {
         self.scale(target, direction, LOCK_SCALE_PASS)
     }

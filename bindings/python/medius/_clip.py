@@ -74,7 +74,7 @@ class ClipBuilder(Handle):
         return self
 
     def release(self, usage: Usage) -> "ClipBuilder":
-        """A frame soft-releasing a usage, leaving a hold on the real device."""
+        """A frame soft-releasing a usage; a hold on the real device stays."""
         check(self._call(_native.lib.medius_clip_builder_release, usage._c))
         return self
 
@@ -165,15 +165,15 @@ class ClipHandle(Handle):
         self._device = device  # keep the device alive while the handle is open
 
     def append(self, builder: ClipBuilder):
-        """Append the builder's entries to the ring as whole-entry frames, each with the next append
-        seq.
+        """Append the builder's entries to the ring as whole-entry frames, each stamped with the
+        next append-sequence number.
 
-        Every entry is checked before the first frame is sent, so a refusal sends nothing: a frame
-        past `CLIP_EDGES_MAX` edges or `CLIP_RAW_MAX` raw reports (`ClipFrameCountError`), one
-        encoding past `CLIP_ENTRY_MAX` bytes (`ClipFrameTooLongError`), a raw report whose direction
-        is neither `Direction.IN` nor `Direction.OUT` (`RawDirectionError`, or
-        `RelativeDirectionError` for the bearing-relative pair), or a transfer whose data disagrees
-        with its setup packet (`ClipTransferDataError`).
+        Every entry is checked before the first frame is sent, so a refusal sends nothing. Refused:
+        a frame with more than `CLIP_EDGES_MAX` edges or `CLIP_RAW_MAX` raw reports
+        (`ClipFrameCountError`); a frame encoding to more than `CLIP_ENTRY_MAX` bytes
+        (`ClipFrameTooLongError`); a raw report neither `Direction.IN` nor `Direction.OUT`
+        (`RawDirectionError`, or `RelativeDirectionError` for the bearing-relative pair); a transfer
+        whose data doesn't match its setup packet (`ClipTransferDataError`).
         """
         check(self._call(lambda c: builder._call(lambda b: _native.lib.medius_clip_append(c, b))))
 
@@ -193,8 +193,8 @@ class ClipHandle(Handle):
         check(self._call(_native.lib.medius_clip_set_retain, 1 if on else 0))
 
     def set_ride(self, on: bool):
-        """Make the clip's motion ride native reports; False, the default, emits it at once. While
-        rendering is on with a profile armed, this applies to wheel and pan only."""
+        """Make clip motion ride native reports; with False (the default) it is emitted at once.
+        While rendering is on with a profile armed, this applies to wheel and pan only."""
         check(self._call(_native.lib.medius_clip_set_ride, 1 if on else 0))
 
     def bind(self, trigger: ClipTrigger):
@@ -213,14 +213,14 @@ class ClipHandle(Handle):
         check(self._call(_native.lib.medius_clip_unbind, usage._c, int(edge)))
 
     def bind_packet(self, trigger: ClipPacketTrigger):
-        """Add or overwrite a packet trigger: a packet `trigger` matches fires its action on the
-        box's next tick, with no host round trip. Binding a held key overwrites it.
+        """Add or overwrite a packet trigger: a matching packet fires its action on the box's next
+        tick, with no host round trip. Binding a held key overwrites it.
 
         A trigger the box would refuse raises `ClipPacketTriggerError` before anything is sent, and
         the message says why:
 
         - `traffic_class` ``BUS`` or ``CLIP_TRANSFER``;
-        - a match past `PKT_MATCH_MAX` bytes, or unlike its mask in length;
+        - a match longer than `PKT_MATCH_MAX` bytes, or not the length of its mask;
         - a direction the class never carries: ``OUT`` on ``HID_IN`` or ``EMIT``, ``IN`` on
           ``HID_OUT``;
         - a match bit outside its mask, which no packet can equal;
@@ -229,13 +229,13 @@ class ClipHandle(Handle):
         - ``once_per_run`` without one stream (a class other than ``CONTROL``, a concrete ``id``, and
           ``IN`` or ``OUT``), without match bytes past its selector, or with no masked bit in them.
 
-        A bearing-relative direction is `RelativeDirectionError`.
+        A bearing-relative direction raises `RelativeDirectionError`.
 
         Three checks happen only on the box: a consuming trigger needs
-        `Device.allow_imperfect_clones`, the set holds `CLIP_PKT_TRIG_MAX` triggers, and their match
-        bytes share a `CLIP_PKT_MATCH_POOL`-byte pool. A refused bind leaves the set as it was: a
-        new key is not held, and a held key keeps its previous trigger, action and flags. To confirm
-        a bind, compare what `query_config` reads back with what was bound.
+        `Device.allow_imperfect_clones`, the set holds at most `CLIP_PKT_TRIG_MAX` triggers, and
+        their match bytes share a `CLIP_PKT_MATCH_POOL`-byte pool. A refused bind leaves the set as
+        it was: a new key is not held, and a held key keeps its previous trigger, action and flags.
+        To confirm a bind, compare what `query_config` reads back with what was bound.
         """
         c = clip_packet_trigger_to_c(trigger)
         check(self._call(_native.lib.medius_clip_bind_packet, ctypes.byref(c)))
@@ -284,9 +284,9 @@ class ClipHandle(Handle):
         check(self._call(_native.lib.medius_clip_finalize))
 
     def lost(self) -> bool:
-        """Whether the box dropped the clip appended since the last `clear`: its device chip restarted,
-        the box released the session, or a reconnect found it gone. Set once the box takes a reload
-        again, and reset by the next `append` or `clear`."""
+        """Whether the box dropped the clip appended since the last `clear` (the device chip
+        restarted, the box released the session, or a reconnect found the clip gone). Goes true once
+        the box can take a reload; the next `append` or `clear` resets it."""
         return bool(self._call(_native.lib.medius_clip_lost))
 
     def query_status(self) -> ClipStatus:

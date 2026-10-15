@@ -9,7 +9,7 @@ pub const SOF: u8 = 0xA5;
 pub const MAX_PAYLOAD: usize = 512;
 
 /// Control-protocol version in `RESP(VERSION)` (§4.1). The handshake refuses a box reporting any
-/// other with [`Error::BadProtoVer`](crate::Error::BadProtoVer); update that box from
+/// other version with [`Error::BadProtoVer`](crate::Error::BadProtoVer); update that box from
 /// <https://medius.k4tech.net/dashboard>.
 ///
 /// 9 (v3.4.2): `RESP(STATS)` grows from 17 to 31 bytes (a dropped-frame counter per inter-chip link
@@ -129,8 +129,8 @@ pub const CLIP_TRIG_F_CONSUME: u8 = 0x02;
 pub const CLIP_TRIG_F_RUN: u8 = 0x04;
 /// Packet triggers the box holds beside its input bindings (`CLIP_PKT_TRIG_MAX`).
 pub const CLIP_PKT_TRIG_MAX: usize = 8;
-/// Match bytes the box holds across every packet trigger (`CLIP_PKT_MATCH_POOL`); it bounds
-/// `RESP(CLIP)` to one frame.
+/// Match bytes the box holds across every packet trigger (`CLIP_PKT_MATCH_POOL`); the pool keeps
+/// `RESP(CLIP)` within one frame.
 pub const CLIP_PKT_MATCH_POOL: usize = 112;
 /// `CLIP_TRIGGER` bytes ahead of a packet trigger's match: `[class][id u16][dir][action][flags][slen][mlen]`.
 pub const CLIP_PKT_TRIG_HDR: usize = 8;
@@ -169,8 +169,8 @@ pub const BTN_SIDE1: u8 = 3;
 pub const BTN_SIDE2: u8 = 4;
 /// Count of *named* buttons; ids past it are numeric and drive up to the clone's declared count.
 pub const BTN_COUNT: u8 = 5;
-/// Ceiling on injectable/lockable/catchable buttons: the widest owned devices declare sixteen in one
-/// run; a wider device caps here. Mirrors the firmware's `MAX_BUTTONS`.
+/// Ceiling on injectable/lockable/catchable buttons: the widest devices owned declare 16 in one run;
+/// a wider device is capped here. Mirrors the firmware's `MAX_BUTTONS`.
 pub const MAX_BUTTONS: u8 = 16;
 
 /// Clear the injected press; the native state applies.
@@ -250,8 +250,8 @@ pub const CATCH_CTRL_MASK: u8 = 0x03;
 /// answered or refused the packet.
 pub const CATCH_F_RULE: u8 = 0x80;
 /// `TRAFFIC_EVENT.flags` bit 1 on a packet class: a zero-length packet. A `CATCH_CLS_HID_IN` or
-/// `CATCH_CLS_EMIT` event on a HID endpoint carries a report of up to 64 bytes whole, so there it
-/// can also be the one that ended the report after the event's bytes.
+/// `CATCH_CLS_EMIT` event on a HID endpoint carries a whole report of <=64 bytes; there the bit can
+/// also mean a zero-length packet ended the report after the event's bytes.
 pub const CATCH_F_ZLP: u8 = 0x02;
 
 /// `RESP(CATCH).clk_rate_ppb` sentinel: no fitted drift rate. A fitted 0 means matched crystals.
@@ -266,8 +266,8 @@ pub const RW_DROP: u8 = 1;
 /// Overwrite `plen` payload bytes at `off`, length preserved. On the control class, an OUT data
 /// stage only.
 pub const RW_PATCH: u8 = 2;
-/// The packet becomes the payload. On the control class, it overwrites the start of an OUT data stage
-/// and `wLength` is kept.
+/// The packet becomes the payload. On the control class, the payload overwrites the start of an OUT
+/// data stage and `wLength` is kept.
 pub const RW_REPLACE: u8 = 3;
 /// Control: answer with the payload, without forwarding the request to the real device.
 pub const RW_ANSWER: u8 = 4;
@@ -286,7 +286,7 @@ pub const RW_REPLY_REPLACE: u8 = 8;
 pub const PATCH_SEC_DEVICE: u8 = 0;
 /// A configuration's descriptor (`cfg` = configuration index).
 pub const PATCH_SEC_CONFIG: u8 = 1;
-/// An interface's report descriptor (`cfg` + `index` = interface number).
+/// An interface's report descriptor (`cfg` = configuration index, `index` = interface number).
 pub const PATCH_SEC_REPORT: u8 = 2;
 /// A string descriptor (`index` = string index), the whole string.
 pub const PATCH_SEC_STRING: u8 = 3;
@@ -351,7 +351,7 @@ pub const LOCK_DIR_NEG: u8 = 2;
 pub const LOCK_DIR_WITH: u8 = 3;
 pub const LOCK_DIR_AGAINST: u8 = 4;
 /// `LOCK` scale (§3.8), an `i16` on the wire: percent of the native value kept. 0 blocks, 100
-/// passes untouched, above 100 amplifies, up to 255 (2.55x).
+/// passes untouched, >100 amplifies, up to 255 (2.55x).
 pub const LOCK_SCALE_BLOCK: i16 = 0;
 pub const LOCK_SCALE_PASS: i16 = 100;
 pub const LOCK_SCALE_MAX: i16 = 255;
@@ -393,7 +393,8 @@ pub const CAP_PAN: u8 = 0x10;
 
 /// `RATE` flag: estimator window full (same source as [`H_RATE_CONFIDENT`], §4.5).
 pub const RATE_CONFIDENT: u8 = 0x01;
-/// `RATE` flag: the active input is change-driven (keyboard/media); no continuous cadence, poll floor only.
+/// `RATE` flag: the active input is change-driven (keyboard/media); no continuous cadence, so only
+/// the poll period applies.
 pub const RATE_CHANGE_DRIVEN: u8 = 0x02;
 
 pub const LOG_ERROR: u8 = 0;
@@ -406,7 +407,7 @@ pub const LOG_VERBOSE: u8 = 4;
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum FrameType {
-    /// `MOVE`: relative-axis motion, motion-tagged (cursor dx/dy or wheel dz) (PC→box).
+    /// `MOVE`: relative-axis motion, motion-tagged (cursor dx/dy, wheel dz or pan dpan) (PC→box).
     Move = 0x01,
     /// `INJECT`: set a momentary-usage override (button/key/media), class-tagged (PC→box).
     Inject = 0x03,
@@ -439,7 +440,7 @@ pub enum FrameType {
     ClipAppend = 0x12,
     /// `CLIP_CTRL`: a clip engine verb (start/stop/pause/resume/restart/toggle/clear/finalize) (PC→box).
     ClipCtrl = 0x13,
-    /// `CLIP_SET`: a clip scalar setting `[id][value]` (autolock/loop/retain) (PC→box).
+    /// `CLIP_SET`: a clip scalar setting `[id][value]` (autolock/loop/retain/ride) (PC→box).
     ClipSet = 0x14,
     /// `CLIP_TRIGGER`: add/remove a clip trigger (PC→box). An input binding is
     /// `[class][id u16][edge][action][flags]`; a packet trigger names a traffic class and carries

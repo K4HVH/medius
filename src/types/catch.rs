@@ -9,10 +9,10 @@ use crate::types::{Axis, Class, ClockEstimate, Direction, Usage};
 
 /// Class a [`CatchFilter`] addresses.
 ///
-/// Classes 0 to 3 are `LOCK`'s classes at the same byte values. Classes 4 to 11 are the
-/// byte-oriented traffic the box relays; [`TrafficClass`] is that half alone. After the real device
-/// STALLs an interrupt or bulk IN endpoint, its [`HidIn`](Self::HidIn) or vendor IN events stop
-/// until the game PC clears the halt: the box relays the STALL to the PC and does not clear it.
+/// Classes 0-3 are `LOCK`'s classes at the same byte values. Classes 4-11 are the byte-oriented
+/// traffic the box relays; [`TrafficClass`] is that half alone. If the real device STALLs an
+/// interrupt or bulk IN endpoint, that endpoint's [`HidIn`](Self::HidIn) or vendor IN events stop
+/// until the game PC clears the halt. The box relays the STALL to the PC and never clears it.
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum CatchClass {
@@ -35,7 +35,7 @@ pub enum CatchClass {
     VendorInterrupt = CATCH_CLS_VEND_INTR,
     /// Bulk traffic on a vendor interface; `id` is the endpoint number, `direction`
     /// [`IN`](Direction::IN) or [`OUT`](Direction::OUT). The only class that can saturate the
-    /// control link by itself, and the first dropped when it cannot keep up.
+    /// control link by itself, and the first dropped when the link cannot keep up.
     VendorBulk = CATCH_CLS_VEND_BULK,
     /// Control transaction the game PC received, on any control endpoint; `id` is the endpoint
     /// number (0 = EP0). On EP0 only class and vendor requests raise one.
@@ -206,8 +206,8 @@ impl From<Class> for CatchClass {
 /// Traffic classes only: an input class carries no packet, so a capture on one is refused. The
 /// control link runs at 6 Mbaud, and a vendor bulk pipe at whole packets saturates it by itself.
 ///
-/// A ceiling request: the box holds one entry per address and cuts once, so another subscriber
-/// naming the same address more widely raises yours too.
+/// A ceiling request: the box holds one entry per address and cuts once. Another subscriber asking
+/// for more of the same address raises yours too.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Default)]
 pub enum Capture {
     /// Keep the whole packet.
@@ -486,8 +486,8 @@ pub struct CatchEntry {
 
 /// Decoded `RESP(CATCH)` (§4.9): live subscription table, drop counts, inter-chip clock estimate.
 ///
-/// The box holds one table, so it is the union of every subscription in this process, not what any
-/// single [`EventStream`](crate::EventStream) asked for.
+/// The box holds one table: the union of every subscription in this process, not what any single
+/// [`EventStream`](crate::EventStream) asked for.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct CatchState {
     /// The box refused an entry because its table is full.

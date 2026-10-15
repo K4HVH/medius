@@ -19,8 +19,8 @@ pub enum Motion {
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum MoveTiming {
-    /// Follow the movement-riding option: with it on, wait for a native cursor-motion report to carry
-    /// this delta; with it off (the box default), nothing waits.
+    /// Follow the movement-riding option. On: wait for a native cursor-motion report to carry this
+    /// delta. Off (the box default): nothing waits.
     #[default]
     Ride = 0,
     /// Emit on the next mouse report, native or one the box makes, whatever the riding option.

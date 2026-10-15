@@ -100,10 +100,11 @@ fn lock_entry_covers(e: &MediusLockEntry, target: MediusLockTarget) -> bool {
     }
 }
 
-/// The scale on `target`/`dir`: of the covering entries, the one of smallest magnitude (a negative
-/// one on a tie), or `MEDIUS_LOCK_SCALE_PASS` when none covers; `Both` spans every direction. A
-/// block outranks a reversal of any size, and a pass outranks a reversal past -100. A delta is
-/// scaled by the product of its fixed and relative scales, which this does not compute. Mirrors
+/// The scale on `target`/`dir`, or `MEDIUS_LOCK_SCALE_PASS` when nothing covers it. Where several
+/// entries cover it, the one that keeps least applies, ranked by magnitude (the negative one wins a
+/// tie). So a block outranks a reversal of any size, and a pass outranks a reversal below -100.
+/// `Both` reports the scale that keeps least across every direction. A delta is scaled by the
+/// product of its fixed and relative scales, which this does not compute. Mirrors
 /// `medius::Locks::scale_of`. `dir` takes a `MEDIUS_DIRECTION_*` constant; any other value reads as
 /// `MEDIUS_LOCK_SCALE_PASS`.
 #[unsafe(no_mangle)]
@@ -126,15 +127,16 @@ pub unsafe extern "C" fn medius_locks_scale_of(
                     && (dir == both || e.direction == both || e.direction == dir)
             })
             .map(|e| e.scale)
-            // By magnitude: a signed minimum ranks -50 below 0 and would report a reversal over the
+            // By magnitude: a signed minimum would rank -50 below 0 and report a reversal over the
             // block applied to the delta.
             .min_by_key(|s| (s.unsigned_abs(), *s))
             .unwrap_or(MEDIUS_LOCK_SCALE_PASS)
     })
 }
 
-/// Whether `target`/`dir` is blocked outright in `locks`; a weighed direction is not locked. `Both`
-/// asks about the two fixed signs; ask for a relative direction by name. Mirrors
+/// Whether `target`/`dir` is blocked outright in `locks`; a direction weighed between block and
+/// pass is not locked. `Both` asks about the two fixed signs only; ask about a relative direction
+/// by name. Mirrors
 /// `medius::Locks::is_locked`. `dir` takes a `MEDIUS_DIRECTION_*` constant; any other value reads
 /// as unlocked.
 #[unsafe(no_mangle)]
@@ -209,7 +211,7 @@ fn unaddressable() -> MediusCatchFilter {
 }
 
 /// One momentary usage (button, key, or media), as `medius_device_lock` takes. An unnamed
-/// `usage.kind` yields a filter subscribing refuses.
+/// `usage.kind` yields a filter that subscribing refuses.
 #[unsafe(no_mangle)]
 pub extern "C" fn medius_catch_filter_watch(usage: MediusUsage) -> MediusCatchFilter {
     match input_catch_class(usage.kind) {
@@ -218,7 +220,7 @@ pub extern "C" fn medius_catch_filter_watch(usage: MediusUsage) -> MediusCatchFi
     }
 }
 
-/// One relative axis. `axis` takes a `MEDIUS_AXIS_*` constant; any other byte yields a filter
+/// One relative axis. `axis` takes a `MEDIUS_AXIS_*` constant; any other byte yields a filter that
 /// subscribing refuses.
 #[unsafe(no_mangle)]
 pub extern "C" fn medius_catch_filter_watch_axis(axis: u8) -> MediusCatchFilter {
@@ -229,7 +231,7 @@ pub extern "C" fn medius_catch_filter_watch_axis(axis: u8) -> MediusCatchFilter 
 }
 
 /// Every usage in one momentary class. `class` takes a `MEDIUS_CLASS_*` constant; any other byte
-/// yields a filter subscribing refuses.
+/// yields a filter that subscribing refuses.
 #[unsafe(no_mangle)]
 pub extern "C" fn medius_catch_filter_watch_class(class: u8) -> MediusCatchFilter {
     match input_catch_class(class) {
@@ -283,8 +285,8 @@ pub extern "C" fn medius_catch_filter_traffic_class(class: MediusCatchClass) -> 
 
 /// Every class, every id, both directions, whole packets, as one table entry.
 ///
-/// Includes `MEDIUS_CATCH_CLASS_VENDOR_BULK`, which alone can saturate the control link; pair it
-/// with `medius_catch_filter_with_capture` unless tracing bulk in full.
+/// Includes `MEDIUS_CATCH_CLASS_VENDOR_BULK`, which can saturate the control link by itself; pair
+/// it with `medius_catch_filter_with_capture` unless tracing bulk in full.
 #[unsafe(no_mangle)]
 pub extern "C" fn medius_catch_filter_everything() -> MediusCatchFilter {
     MediusCatchFilter {
@@ -597,8 +599,9 @@ pub unsafe extern "C" fn medius_traffic_event_bulk_end_of_transfer(
     })
 }
 
-/// Whether this event is a zero-length packet, or on a HID endpoint a HID_IN or EMIT report one
-/// ended after its bytes. Mirrors `medius::TrafficEvent::zlp`.
+/// Whether this event is a zero-length packet. A HID_IN or EMIT event on a HID endpoint carries a
+/// whole report of <=64 bytes; if it has bytes, a zero-length packet ended the report after them.
+/// Mirrors `medius::TrafficEvent::zlp`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_traffic_event_zlp(event: *const MediusTrafficEvent) -> bool {
     guard(false, || {

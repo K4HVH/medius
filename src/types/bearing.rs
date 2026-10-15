@@ -1,5 +1,5 @@
-//! The bearing [`Direction::With`](crate::Direction) and [`Direction::Against`](crate::Direction)
-//! are measured against (§3.12).
+//! Bearing: the injected direction that [`Direction::With`](crate::Direction) and
+//! [`Direction::Against`](crate::Direction) are measured against (§3.12).
 
 use std::time::Duration;
 
@@ -11,16 +11,16 @@ pub enum BearingMode {
     /// Each axis compares its sign against its bearing (the default).
     #[default]
     PerAxis,
-    /// The native delta is projected onto the injected XY vector: only the part along the injection
-    /// is weighed, and the part across it is relayed unscaled. Smoother on diagonals; X and Y are
-    /// not independent.
+    /// The native delta is projected onto the injected XY vector. Only the part along the injection
+    /// is weighed; the part across it is relayed unscaled. Smoother on diagonals, but X and Y are not
+    /// independent.
     ///
-    /// One relative scale, the lower of X's and Y's, governs both axes, so setting only X's weighs
-    /// Y's motion too. `RESP(LOCKS)` reports it on both relative entries.
+    /// One relative scale governs both axes: the lower of X's and Y's. Setting only X's scale weighs
+    /// Y's motion too. `RESP(LOCKS)` reports that scale on both relative entries.
     ///
-    /// The projection moves motion between the axes, and each axis's absolute scale then applies to
-    /// what the projection left, not the sign the report carried: an absolute scale governs what is
-    /// emitted, so a block covers motion the projection put there.
+    /// The projection moves motion between the axes. Each axis's absolute scale then applies to what
+    /// the projection left on that axis, not to the sign the report carried (an absolute scale governs
+    /// what is emitted). So a block also covers motion the projection moved onto the axis.
     Vector,
 }
 
@@ -51,8 +51,8 @@ impl BearingMode {
 pub struct Bearing {
     /// How long the last injected delta's direction stays the reference for
     /// [`Direction::With`](crate::Direction) and [`Direction::Against`](crate::Direction). `None` =
-    /// never, so the relative directions are inert whatever their scale. Whole milliseconds on the
-    /// wire, so it reads back rounded.
+    /// off: the relative directions are inert whatever their scale. Whole milliseconds on the wire,
+    /// so it reads back rounded.
     pub window: Option<Duration>,
     /// Whether the bearing is read per axis or as one vector.
     pub mode: BearingMode,
@@ -80,7 +80,7 @@ impl Bearing {
         })
     }
 
-    /// Whether a bearing is held; without one the relative directions do nothing.
+    /// Whether the bearing window is on; with it off the relative directions do nothing.
     pub fn is_live(&self) -> bool {
         self.window.is_some()
     }

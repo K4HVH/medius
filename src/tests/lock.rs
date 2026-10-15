@@ -625,8 +625,8 @@ fn the_signed_scale_is_bounded_and_axis_only() {
 #[cfg(feature = "mock")]
 #[test]
 fn the_box_writes_nothing_at_all_for_a_reversal_on_a_one_bit_class() {
-    // The crate refuses one before the wire, so drive the modelled table directly: were a negative
-    // truncated to a block, a host without the guard would see a lock the box refused.
+    // The crate refuses one before the wire, so drive the modelled table directly: if a negative
+    // were truncated to a block, a host without the guard would see a lock the box refused.
     use crate::mock::LockTable;
     use crate::protocol::opcode::{LOCK_CLS_BTN, LOCK_CLS_KEY, LOCK_CLS_MEDIA};
     use crate::types::BearingMode;
@@ -644,8 +644,8 @@ fn the_box_writes_nothing_at_all_for_a_reversal_on_a_one_bit_class() {
 
 #[test]
 fn scale_of_both_ranks_a_block_above_a_reversal() {
-    // A signed minimum ranks -50 lowest and reports a reversal over the block applied to a delta;
-    // Both is the least that survives, a magnitude.
+    // Both reports the least-kept scale by magnitude, so the block (0) ranks below the -50
+    // reversal; a signed minimum would report the reversal.
     let l = Locks::from_payload(&[
         6,
         2,
@@ -666,7 +666,7 @@ fn scale_of_both_ranks_a_block_above_a_reversal() {
     assert_eq!(l.scale_of(Axis::X, Direction::Both), LOCK_SCALE_BLOCK);
     assert_eq!(l.scale_of(Axis::X, Direction::Against), -50);
     assert!(l.is_locked(Axis::X, Direction::Positive));
-    // and with nothing blocked, the reversal is still the least that survives against a wider pass
+    // and with nothing blocked, the -100 reversal keeps less than the 130 pass
     let l = Locks::from_payload(&[
         6,
         2,
@@ -699,8 +699,8 @@ fn a_reset_clears_the_lock_table() {
     assert_eq!(dev.query_locks().unwrap().entries().len(), 0);
 }
 
-// The flag against the firmware's CTRL_RST_F_NVS. A wrong value loses the release too: the box
-// refuses a RESET with an undefined bit whole.
+// Pins the flag to the firmware's CTRL_RST_F_NVS. A wrong value loses the release too: the box
+// refuses a whole RESET with an undefined bit.
 #[cfg(feature = "mock")]
 #[test]
 fn a_factory_reset_carries_the_nvs_bit_and_a_plain_reset_carries_nothing() {

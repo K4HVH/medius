@@ -121,8 +121,8 @@ impl EventStream {
         }
     }
 
-    /// End the subscription for this stream and every clone of it. Every receive blocked on it
-    /// returns at once, and every receive after it too; events still queued are dropped.
+    /// End the subscription for this stream and every clone of it. Every blocked receive returns at
+    /// once, as does every later one; events still queued are dropped.
     ///
     /// For a thread that holds no handle to the stream, see [`Self::closer`].
     pub fn close(&self) {
@@ -195,7 +195,7 @@ pub(crate) fn prepare(filters: impl IntoIterator<Item = CatchFilter>) -> Result<
     if wanted.is_empty() {
         return Err(Error::EmptySubscription);
     }
-    // WITH/AGAINST resolve against the injection in flight when a report is weighed.
+    // WITH/AGAINST only resolve when a report is weighed, against the bearing at that moment.
     if let Some(f) = wanted.iter().find(|f| f.direction().is_relative()) {
         return Err(Error::RelativeDirection {
             direction: f.direction(),
@@ -207,7 +207,7 @@ pub(crate) fn prepare(filters: impl IntoIterator<Item = CatchFilter>) -> Result<
             class: f.class().expect("a meaningless capture names a class"),
         });
     }
-    // 0xFFFF is the every-id sentinel: an exact subscription to it is sent as the class
+    // 0xFFFF is the every-id sentinel: an exact subscription to it would be sent as the class
     // blanket, a much wider stream than asked for, with no error.
     if let Some((class, id)) = wanted.iter().find_map(|f| {
         let (_, id) = f.wire();

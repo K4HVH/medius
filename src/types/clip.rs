@@ -55,7 +55,7 @@ impl From<Edge> for Direction {
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ClipAction {
-    /// Rewind and play (resume from a pause).
+    /// Rewind and play; a paused clip resumes instead.
     Start = CLIP_OP_START,
     /// Stop, release held input and the clip auto-lock.
     Stop = CLIP_OP_STOP,
@@ -127,7 +127,7 @@ impl ClipTrigger {
 /// `head[i] & mask[i] == match_bytes[i]` for every match byte; an empty match takes every packet on
 /// the address. For [`Control`](TrafficClass::Control) the head is the 8 setup bytes, then the
 /// first 8 bytes of OUT data. An [`Emit`](TrafficClass::Emit) trigger matches the clip's frames as
-/// well as native and injected ones, and none of the clip's raw reports.
+/// well as native and injected ones, but not the clip's raw reports.
 ///
 /// [`bind_packet`](crate::ClipHandle::bind_packet) and the box refuse a trigger no packet can match:
 /// a match bit outside its mask (a packet byte is masked before the compare), or a direction the
@@ -141,11 +141,11 @@ impl ClipTrigger {
 /// [`ANY_ID`](Self::ANY_ID), more masked bits above fewer, [`IN`](Direction::IN) or
 /// [`OUT`](Direction::OUT) above [`Both`](Direction::Both), then the earlier bind.
 ///
-/// A managed set keyed by `(class, id, direction, match_bytes, mask)`: binding a held key overwrites
-/// it. The box holds [`CLIP_PKT_TRIG_MAX`](crate::CLIP_PKT_TRIG_MAX) of them, sharing
-/// [`CLIP_PKT_MATCH_POOL`](crate::CLIP_PKT_MATCH_POOL) match bytes. They are clip config, cleared with
-/// the rest of it on control-PC silence, [`reset`](crate::Device::reset), a detach, a link loss and a
-/// re-clone.
+/// A managed set keyed by `(class, id, direction, match_bytes, mask)`: binding a key already held
+/// overwrites it. The box holds up to [`CLIP_PKT_TRIG_MAX`](crate::CLIP_PKT_TRIG_MAX) triggers,
+/// sharing [`CLIP_PKT_MATCH_POOL`](crate::CLIP_PKT_MATCH_POOL) match bytes. Triggers are clip config,
+/// cleared with the rest of it on control-PC silence, [`reset`](crate::Device::reset), a detach, a
+/// link loss and a re-clone.
 ///
 /// ```no_run
 /// # use medius::{ClipAction, ClipPacketTrigger, Device, Direction, Result, TrafficClass};
@@ -179,8 +179,8 @@ pub struct ClipPacketTrigger {
     pub direction: Direction,
     /// Engine action the trigger drives.
     pub action: ClipAction,
-    /// Head bytes compared under [`mask`](Self::mask), every set bit inside it; empty matches every
-    /// packet.
+    /// Head bytes compared under [`mask`](Self::mask), with every set bit inside the mask; empty
+    /// matches every packet.
     pub match_bytes: Vec<u8>,
     /// Mask over [`match_bytes`](Self::match_bytes); same length.
     pub mask: Vec<u8>,
@@ -219,7 +219,7 @@ impl ClipPacketTrigger {
 
     /// Narrow to packets whose head equals `match_bytes` under `mask`. Both are one length, at most
     /// [`PKT_MATCH_MAX`](crate::PKT_MATCH_MAX) bytes, and every set bit of `match_bytes` is set in
-    /// `mask`; a longer packet matches on its head. Both are sent as given and form the trigger's
+    /// `mask`. A longer packet matches on its head. Both are sent as given and form the trigger's
     /// key.
     pub fn matching(mut self, match_bytes: impl Into<Vec<u8>>, mask: impl Into<Vec<u8>>) -> Self {
         self.match_bytes = match_bytes.into();
@@ -228,7 +228,7 @@ impl ClipPacketTrigger {
     }
 
     /// Drop every packet the trigger matches as the top-ranked trigger, whether or not the action
-    /// runs on it. [`Control`](TrafficClass::Control) takes none.
+    /// runs on it. A [`Control`](TrafficClass::Control) trigger can't consume.
     ///
     /// A consumed [`HidIn`](TrafficClass::HidIn) report is dropped whole, motion and buttons
     /// included; a release edge in it is emitted with the next report. A catch subscription still
@@ -236,10 +236,10 @@ impl ClipPacketTrigger {
     /// [`Emit`](TrafficClass::Emit) packets.
     ///
     /// Dropping traffic makes the clone imperfect, so the box holds a consuming trigger only under
-    /// [`allow_imperfect_clones(true)`](crate::Device::allow_imperfect_clones). With the opt-in off
-    /// the box refuses the bind with no reply to [`bind_packet`](crate::ClipHandle::bind_packet)
-    /// (its docs say how to confirm one). Turning the opt-in off removes every consuming trigger
-    /// the box holds.
+    /// [`allow_imperfect_clones(true)`](crate::Device::allow_imperfect_clones). With the opt-in off,
+    /// the box refuses the bind without a reply ([`bind_packet`](crate::ClipHandle::bind_packet)'s
+    /// docs say how to confirm a bind). Turning the opt-in off removes every consuming trigger the
+    /// box holds.
     pub fn consume(mut self) -> Self {
         self.consume = true;
         self
@@ -251,15 +251,15 @@ impl ClipPacketTrigger {
     /// A run is over one stream, so the trigger names a report class (any but
     /// [`Control`](TrafficClass::Control)), a concrete `id`, and [`IN`](Direction::IN) or
     /// [`OUT`](Direction::OUT). The first `selector_len` match bytes select the stream within that
-    /// address (a report ID) and the rest are the condition, so `selector_len` is below the match
-    /// length and the mask past it has at least one bit set: a condition every packet of the stream
-    /// meets is a run that never ends. A packet failing the selector leaves the run unchanged.
+    /// address (a report ID); the rest are the condition. So `selector_len` is below the match
+    /// length, and the mask past it has >=1 bit set: a condition every packet of the stream meets
+    /// would make a run that never ends. A packet failing the selector leaves the run unchanged.
     ///
-    /// A run has no priming: a trigger whose condition holds when bound drives its action on the
-    /// next packet of its stream, so a release trigger bound with the button up fires at once on a
-    /// device that repeats its state every poll. Bind the press trigger first and the release trigger
-    /// while the button is held, or accept the one action. An identical re-bind keeps the run; an
-    /// overwrite, a bus reset and a configuration change restart it.
+    /// A run has no priming: if the condition holds at bind time, the trigger drives its action on
+    /// the next packet of its stream. So on a device that repeats its state every poll, a release
+    /// trigger bound with the button up fires at once. Bind the press trigger first and the release
+    /// trigger while the button is held, or accept the one action. An identical re-bind keeps the
+    /// run; an overwrite, a bus reset or a configuration change restarts it.
     pub fn once_per_run(mut self, selector_len: u8) -> Self {
         self.once_per_run = true;
         self.selector_len = selector_len;
@@ -456,7 +456,7 @@ pub struct ClipSettings {
     pub retain: bool,
     /// Whether a retained clip is finalized (its end fixed).
     pub finalized: bool,
-    /// Whether clip motion rides native reports; `false`, the default, emits it at once.
+    /// Whether clip motion rides native reports. `false` (the default) emits it at once.
     pub ride: bool,
     /// Input triggers.
     pub triggers: Vec<ClipTrigger>,

@@ -71,7 +71,8 @@ pub enum MediusStatus {
     ErrClipPacketTrigger = 33,
     /// A rewrite rule with more than `MEDIUS_MAX_REWRITE_MATCH` match bytes.
     ErrRewriteMatchTooLong = 34,
-    /// A rewrite payload past what the held rules leave of `MEDIUS_REWRITE_PAYLOAD_POOL`.
+    /// A rewrite payload larger than what the other held rules leave of
+    /// `MEDIUS_REWRITE_PAYLOAD_POOL`.
     ErrRewritePoolFull = 35,
 }
 
@@ -214,8 +215,8 @@ pub unsafe extern "C" fn medius_last_error_proto_ver() -> u8 {
     guard(0, || LAST_ERROR.with(|e| e.borrow().proto_ver))
 }
 
-/// Write the last error's update detail to `*out` and return true; false, `*out` untouched, if the
-/// last error on this thread was not an update error.
+/// Write the last error's update detail to `*out` and return true. If the last error on this thread
+/// was not an update error, return false and leave `*out` untouched.
 ///
 /// # Safety
 /// `out` must be writable, or null.

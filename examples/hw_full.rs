@@ -337,8 +337,8 @@ mod linux {
                         .is_none_or(|hz| (100.0..=8000.0).contains(&hz))
                 })
                 .unwrap_or(false);
-            // Link drop counters are cumulative since boot; nonzero means a report or injected delta
-            // lost between the box's two chips.
+            // Link drop counters are cumulative since boot; nonzero means a report or injected
+            // delta was lost between the box's two chips.
             let stats_ok = stats
                 .as_ref()
                 .map(|s| s.tx_drops == 0 && s.link_rx_drops == 0 && s.host_rx_drops == 0)
@@ -471,8 +471,9 @@ mod linux {
             std::thread::sleep(Duration::from_millis(300));
             let bypassed = acc.rel_x.load(Ordering::Relaxed);
 
-            // Only a native cursor-motion report clears held motion, and the mouse stays still here, so
-            // each step drops the previous step's motion first or FLUSH reads the running total.
+            // Only a native cursor-motion report clears held motion, and the mouse stays still
+            // here, so each step drops the previous step's motion first; otherwise FLUSH reads the
+            // running total.
             reset_motion(&acc);
             let _ = dev.discard_motion();
             let _ = dev.move_rel(70, 0);
@@ -548,8 +549,8 @@ mod linux {
                     last = format!("{mode:?}/full={full} -> {read:?}");
                 }
             }
-            // The pace reports the rendered gate: on LEARNED a rendered stream self-paces at 1 kHz once
-            // a profile arms, and stays at the learnt cap before.
+            // The pace reports the rendered gate: on LEARNED a rendered stream self-paces at 1 kHz
+            // once a profile arms, and at the learnt cap until then.
             let _ = dev.set_render(RenderMode::Stock, false);
             let _ = dev.set_emit_pace(EmitPace::Learned, None);
             std::thread::sleep(Duration::from_millis(60));
@@ -608,10 +609,10 @@ mod linux {
         }
 
         {
-            // With the opt-in on, a force re-clones and drops the control port mid-suite, so this runs
-            // faithful-only, where the box stores the request inert: force_active stays 0 and
-            // advertised_hz native, which an echo cannot fake. tools/validate_rate_force.py covers the
-            // descriptor half, with the reboot.
+            // With the opt-in on, a force re-clones and drops the control port mid-suite. So this
+            // runs faithful-only, where the box stores the request inert: force_active stays 0 and
+            // advertised_hz stays native, which an echo can't fake. tools/validate_rate_force.py
+            // covers the descriptor half, with the reboot.
             let dev = device.as_ref().unwrap();
             let allowed = dev.query_imperfect().map(|i| i.allowed).unwrap_or(true);
             if allowed {
@@ -818,8 +819,8 @@ mod linux {
                         && !l.is_locked(Axis::X, Direction::Both)
                 })
                 .unwrap_or(false);
-            // A momentary usage has nothing to reverse, and a magnitude past the bound is refused, not
-            // clamped; both before the wire.
+            // A momentary usage has nothing to reverse, and a magnitude past the bound is refused,
+            // not clamped; both are refused before the wire.
             let n_usage = matches!(
                 dev.scale(Button::LEFT, Direction::Positive, -100),
                 Err(medius::Error::LockScaleUsage { .. })
@@ -1934,9 +1935,9 @@ mod linux {
         }
 
         {
-            // A held Y scale survives the host chip's reboot: the chip returns within the link watch's
-            // timeout, so nothing is released; a counted release (a slower reboot) gets the scale
-            // re-sent.
+            // A held Y scale survives the host chip's reboot: the chip returns within the link
+            // watch's timeout, so nothing is released. A slower reboot is a counted release, and
+            // the scale is re-sent.
             let dev = device.as_ref().unwrap();
             let _ = dev.scale(Axis::Y, Direction::Both, 40);
             let session = dev.query_stats().map(|s| s.session).ok();

@@ -20,8 +20,8 @@ impl Device {
         self.move_axis(Motion::Wheel(delta), MoveTiming::Ride, PendingMotion::Keep)
     }
 
-    /// `MOVE` (cursor) bypassing movement riding: emitted on the next mouse report, native or one
-    /// the box makes; motion already held for a ride stays held.
+    /// `MOVE` (cursor) bypassing movement riding: emitted on the next mouse report, native or made
+    /// by the box. Motion already held for a ride stays held.
     pub fn move_rel_now(&self, dx: i16, dy: i16) -> Result<()> {
         self.move_axis(
             Motion::Cursor { dx, dy },

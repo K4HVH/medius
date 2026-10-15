@@ -4,13 +4,14 @@ use core::fmt;
 
 use crate::protocol::opcode::{DI_HAS_BOS, DI_HAS_SERIAL};
 
-/// Cloned device's primary kind, from its HID report descriptors and Boot declarations (§4.3). One
-/// carrying both kinds reads keyboard with a full key bitmap (unless it declares Boot for both) or a
-/// Boot keyboard alone, and mouse otherwise.
+/// Cloned device's primary kind, from its HID report descriptors and Boot declarations (§4.3).
+///
+/// A device with both kinds reads keyboard if it has a full key bitmap (unless it declares Boot for
+/// both) or declares Boot for its keyboard only. Otherwise it reads mouse.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum DeviceKind {
-    /// Neither a mouse nor a keyboard (a vendor-class pad has no HID interface at all), or nothing cloned
-    /// yet: [`DeviceInfo::is_cloned`] tells them apart.
+    /// Neither a mouse nor a keyboard (e.g. a vendor-class pad with no HID interface), or nothing
+    /// cloned yet; [`DeviceInfo::is_cloned`] tells the two apart.
     #[default]
     Unknown,
     Keyboard,
@@ -54,7 +55,8 @@ pub struct DeviceInfo {
     pub has_bos: bool,
     /// Primary kind (§4.3).
     pub kind: DeviceKind,
-    /// `iProduct` string as ASCII, `?` for each other character (empty if it serves none).
+    /// `iProduct` string as ASCII, with `?` for each non-ASCII character (empty if the clone serves
+    /// none).
     pub product: String,
 }
 

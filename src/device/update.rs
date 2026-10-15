@@ -120,11 +120,11 @@ impl Device {
         }
     }
 
-    /// Block until neither chip is on probation; a chip that has not confirmed its booted image
-    /// refuses another update. The device chip confirms after ten seconds of running; the host chip
-    /// only on a completed clock exchange over the inter-chip link. Keeps asking while the box
-    /// reboots after an activate. After 55 s it returns [`Error::Update`] (`ON_PROBATION`) if a
-    /// chip is still on probation, or [`Error::QueryTimeout`] if the box has not replied.
+    /// Block until neither chip is on probation (a chip that hasn't confirmed its booted image
+    /// refuses another update). The device chip confirms after 10 s of running; the host chip
+    /// confirms only on a completed clock exchange over the inter-chip link. Keeps asking while the
+    /// box reboots after an activate. After 55 s, returns [`Error::Update`] (`ON_PROBATION`) if a
+    /// chip is still on probation, or [`Error::QueryTimeout`] if the box hasn't replied.
     pub fn wait_firmware_confirmed(&self) -> Result<FirmwareInfo> {
         let deadline = Instant::now() + CONFIRM_TIMEOUT;
         loop {
@@ -273,9 +273,9 @@ impl Device {
     }
 
     // Matched on the op byte, not `SEQ`: one acknowledgement covers a window of `DATA` frames and
-    // carries a separate rolling `SEQ`. A reply for another op is parked, not dropped: the MPMC
+    // carries a separate rolling `SEQ`. A reply for another op is parked, not dropped. The MPMC
     // channel is shared and `AsyncDevice::offload` runs transfers on separate threads, so dropping
-    // it would time out another caller whose box replied.
+    // the reply would time out another caller whose box replied.
     pub(crate) fn recv_update(&self, op: u8, timeout: Duration) -> Result<(UpdateStatus, u32)> {
         let deadline = Instant::now() + timeout;
         loop {

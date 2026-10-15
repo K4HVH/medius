@@ -8,11 +8,11 @@ use crate::protocol::opcode::{
 ///
 /// [`Positive`](Direction::Positive) and [`Negative`](Direction::Negative) name a fixed sign or edge.
 /// [`With`](Direction::With) and [`Against`](Direction::Against) name a sign relative to the bearing
-/// (the direction the box is injecting), so their sign follows the injection, not the axis; see
+/// (the direction the box is injecting): their sign follows the injection, not the axis. See
 /// [`Device::scale`](crate::Device::scale) and [`Device::set_bearing`](crate::Device::set_bearing).
 ///
 /// Variants are named for the axis reading; the constants below alias them for the edge and flow
-/// readings. The class selects the reading, and no class carries two.
+/// readings. The class picks the reading, and no class has two.
 ///
 /// | Constant | Same as | Classes |
 /// |---|---|---|
@@ -23,20 +23,19 @@ use crate::protocol::opcode::{
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Default)]
 pub enum Direction {
-    /// Both edges, signs or flows. On a `LOCK` scale, the scale goes to the two fixed signs and a full
-    /// pass to the relative pair, since the two multiply and writing both would square it; only an
-    /// unlock, a full pass, reaches the relative pair as sent.
+    /// Both edges, signs or flows. A `LOCK` scale on `Both` goes to the two fixed signs, and the
+    /// relative pair gets a full pass. Only an unlock (a full pass) reaches the relative pair as sent.
     #[default]
     Both = LOCK_DIR_BOTH,
     /// Press edge, positive sign or IN flow.
     Positive = LOCK_DIR_POS,
     /// Release edge, negative sign or OUT flow.
     Negative = LOCK_DIR_NEG,
-    /// Axis sign along the bearing (the injected direction), so it follows the bearing, not the axis;
-    /// inert while no bearing is live. Axes only.
+    /// Axis sign along the bearing (the injected direction), not a fixed axis sign. Inert while no
+    /// bearing is live. Axes only.
     With = LOCK_DIR_WITH,
-    /// Axis sign opposing the bearing (the injected direction), so it follows the bearing, not the
-    /// axis; inert while no bearing is live. Axes only.
+    /// Axis sign opposing the bearing (the injected direction), not a fixed axis sign. Inert while no
+    /// bearing is live. Axes only.
     Against = LOCK_DIR_AGAINST,
 }
 
@@ -69,10 +68,10 @@ impl Direction {
 
     /// Whether this direction is relative to the bearing.
     ///
-    /// Only the relative-axis class reads one. A catch subscription (addressed before any injection),
-    /// a button, key or media lock (no bearing) and a clip packet trigger refuse one with
-    /// [`Error::RelativeDirection`](crate::Error::RelativeDirection). A clip input trigger's edge is
-    /// the three-variant [`Edge`](crate::Edge).
+    /// Only the relative-axis class reads one. These refuse one with
+    /// [`Error::RelativeDirection`](crate::Error::RelativeDirection): a catch subscription (addressed
+    /// before any injection), a button, key or media lock (no bearing), and a clip packet trigger. A
+    /// clip input trigger's edge is the three-variant [`Edge`](crate::Edge).
     pub fn is_relative(self) -> bool {
         matches!(self, Direction::With | Direction::Against)
     }

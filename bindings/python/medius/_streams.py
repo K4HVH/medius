@@ -30,8 +30,8 @@ class _Stream(Handle):
 
     def close(self):
         """End the stream for every handle on it and free this one. A receive blocked on it in
-        another thread returns at once, raising `DisconnectedError`, and frees the handle as it
-        ends.
+        another thread returns at once with `DisconnectedError`; the handle is freed when that
+        receive returns.
         """
         super().close()
 

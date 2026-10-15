@@ -158,9 +158,10 @@ jobs:
       run: cargo publish -p medius --dry-run --allow-dirty
 
     - name: Package the C ABI against this medius
-      # Packaged together, the C ABI builds against the medius packaged beside it, not the one on crates.io,
-      # which lacks whatever the C ABI calls that this release adds. Cargo never rebuilds a registry crate
-      # it has built at that version, so a cached target would hold the medius an earlier push packaged.
+      # Packaged together, the C ABI builds against this medius, not the crates.io one, which
+      # lacks anything new this release adds for the C ABI to call. Cargo never rebuilds a registry
+      # crate it has built at that version, so a cached target would hold the medius an earlier
+      # push packaged.
       run: cargo package -p medius -p medius-capi --allow-dirty --target-dir "$RUNNER_TEMP/package"
 
     - name: Check the crate, the C ABI and the Python binding share one version
@@ -200,9 +201,9 @@ jobs:
         CRATE_VERSION=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name=="medius") | .version')
         echo "version=$CRATE_VERSION" >> $GITHUB_OUTPUT
 
-        # crates.io rejects requests without a User-Agent, so this must send one or the check never
-        # matches and the job tries to re-publish every push. A 404 (curl exit 22) is a crate not there
-        # yet; any other failure stops the job rather than read as "not published".
+        # crates.io rejects requests without a User-Agent. Without one the check never matches,
+        # and the job tries to re-publish on every push. A 404 (curl exit 22) means the crate
+        # isn't there yet; any other failure stops the job instead of reading as "not published".
         published() {
           local body rc=0
           body=$(curl -sf -H "User-Agent: medius-ci (github.com/K4HVH/medius)" "https://crates.io/api/v1/crates/$1") || rc=$?
@@ -217,7 +218,8 @@ jobs:
           echo "Version $CRATE_VERSION not found on crates.io, proceeding with publish"
           echo "should_publish=true" >> $GITHUB_OUTPUT
         fi
-        # The C ABI separately, so the next push publishes one that failed after medius published.
+        # The C ABI is checked separately: if it failed to publish after medius did, the next push
+        # publishes it.
         if published medius-capi; then
           echo "should_publish_capi=false" >> $GITHUB_OUTPUT
         else

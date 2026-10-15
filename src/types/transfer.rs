@@ -2,14 +2,14 @@
 //!
 //! [`Device::transfer`](crate::Device::transfer) runs one control transfer against the real device,
 //! through the host chip, and returns the native reply. Its request and reply cross the inter-chip
-//! link apart from the game PC's EP0 proxy. One at a time: issue one and wait for the reply.
+//! link separately from the game PC's EP0 proxy. One at a time: wait for the reply before the next.
 
 /// USB control-transfer setup packet: `bmRequestType`, `bRequest`, `wValue`, `wIndex`, `wLength`
 /// (USB spec §9.3), eight bytes little-endian on the wire.
 ///
-/// `length` is the data-stage length: for an IN request, the bytes to read back (the real device
-/// may return fewer); for an OUT request, the length of the data passed to
-/// [`transfer`](crate::Device::transfer), which the box carries after the setup packet.
+/// `length` is the data-stage length. IN: the bytes to read back (the real device may return fewer).
+/// OUT: the length of the data passed to [`transfer`](crate::Device::transfer), which the box
+/// carries after the setup packet.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct Setup {
     /// `bmRequestType`: direction (b7), type and recipient.
@@ -68,8 +68,7 @@ pub enum TransferStatus {
     Stall,
     /// No reply: the real device NAKed past the timeout or failed on the bus, `ep` names a control
     /// endpoint the real device does not declare, or the host chip did not reply in time. Also
-    /// returned while the game PC has the clone suspended, since the real device is suspended with
-    /// it.
+    /// returned while the game PC has the clone suspended (the real device is suspended with it).
     Nak,
     /// No device attached on the host chip.
     NoDevice,
@@ -114,7 +113,7 @@ impl TransferStatus {
 /// Native reply to a [`transfer`](crate::Device::transfer): status and any IN data.
 ///
 /// A [`TransferStatus`] other than [`Ok`](TransferStatus::Ok) is a protocol outcome, not a link
-/// error, so it is returned, not raised; [`is_ok`](Self::is_ok) and [`data`](Self::data) read it.
+/// error: it is returned, not raised. Read it with [`is_ok`](Self::is_ok) and [`data`](Self::data).
 /// The surrounding [`Result`](crate::Result)'s `Ok(_)` means the box replied.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TransferOutcome {

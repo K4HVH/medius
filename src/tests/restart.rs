@@ -232,8 +232,8 @@ fn a_device_chip_reboot_is_recovered_like_any_restart() {
     );
 }
 
-// A clone with no HID interface (a vendor-class pad) reads `n_hid` 0, as nothing cloned does; its
-// identity says it is up, so held state is re-sent to it.
+// A clone with no HID interface (a vendor-class pad) reads `n_hid` 0, like no clone. Its identity
+// says it is up, so held state is re-sent to it.
 #[test]
 fn a_clone_with_no_hid_interface_is_up() {
     use crate::{Caps, DeviceInfo};
@@ -423,8 +423,7 @@ fn holding_everything(mock: &MockBox) -> (Device, crate::ClipHandle, RewriteRule
     (device, clip, rule, trigger)
 }
 
-// Everything held was re-sent to the clone presented after `sent`, the ring included in what is
-// lost.
+// Everything held was re-sent to the clone presented after `sent`, and the clip was reported lost.
 fn assert_everything_back(
     mock: &MockBox,
     device: &Device,
@@ -593,8 +592,8 @@ fn scale_x(device: &Device) -> i16 {
 }
 
 // An inter-chip link drop, or a detach the device returns from within the grace, releases the
-// session with no re-clone or hello. The box counts it and the crate re-sends at once, the clone
-// being up.
+// session with no re-clone or hello. The box counts it, and since the clone is up the crate
+// re-sends at once.
 #[test]
 fn a_release_that_leaves_the_clone_up_is_recovered() {
     for event in ["link", "short detach"] {
@@ -666,8 +665,9 @@ fn the_mock_counts_a_release_only_after_a_command() {
     mock.link_lost();
     mock.detach(true);
     assert_eq!(session(), 1, "one command, one release counted");
-    // A detach counts at once; its teardown after the grace counts again only if a command came in
-    // it, and a device returning to a torn-down clone starts a fresh one, releasing nothing.
+    // A detach counts at once. Its teardown after the grace counts again only if a command came
+    // during the grace. A device returning to a torn-down clone starts a fresh clone, releasing
+    // nothing.
     device.scale(Axis::X, Direction::Both, 40).unwrap();
     mock.detach(false);
     assert_eq!(session(), 2);
@@ -735,7 +735,7 @@ fn a_command_waits_for_a_re_send_in_progress() {
 }
 
 // A teardown between the re-send's counter reading and the re-send takes the re-send with it and
-// counts nothing: the recovery sees the clone gone and waits for the next.
+// counts nothing: the recovery sees the clone gone and waits for the next clone.
 #[test]
 fn a_re_send_that_lands_on_a_going_clone_is_sent_again() {
     let mock = MockBox::new();
@@ -813,8 +813,8 @@ fn a_ring_the_box_had_emptied_is_not_lost() {
     assert!(!clip.lost());
 }
 
-// Rules and packet triggers return in the box's order, the tie-break between equally specific
-// entries: a changed rule moves to the end, a changed packet trigger keeps its place.
+// Rules and packet triggers return in the box's order, which breaks ties between equally specific
+// entries. A changed rule moves to the end; a changed packet trigger keeps its place.
 #[test]
 fn a_re_send_rebuilds_the_tables_in_the_box_s_order() {
     let mock = MockBox::new().with_imperfect(true);
@@ -911,8 +911,8 @@ fn the_mock_holds_a_presentation_through_a_detach_s_grace() {
     }
 }
 
-// A ring read overtaken by a release shows it empty with nothing reported yet; that release's
-// recovery reports the clip lost.
+// A ring read overtaken by a release shows the ring empty before anything is reported; that
+// release's recovery reports the clip lost.
 #[test]
 fn a_ring_read_across_a_release_is_left_to_its_recovery() {
     let mock = MockBox::new();

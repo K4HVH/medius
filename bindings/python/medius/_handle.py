@@ -75,7 +75,8 @@ class Handle:
         self.close()
 
     def __del__(self):
-        # Collected, a stream's clone frees its handle and leaves the stream open for the others.
+        # When garbage-collected, a stream's clone frees its handle and leaves the stream open for
+        # the others.
         try:
             self._shut(end=False)
         except Exception:

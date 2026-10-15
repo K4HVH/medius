@@ -21,7 +21,7 @@ const CLONE_POLL_SLOW: Duration = Duration::from_millis(500);
 const CLONE_POLL_CLOSE: Duration = Duration::from_secs(5);
 const QUERY_TIMEOUT: Duration = Duration::from_millis(250);
 const QUERY_SLICE: Duration = Duration::from_millis(20);
-// How long after a command that can re-present the clone the keepalive checks every slice.
+// After a command that can re-present the clone, the keepalive checks every slice for this long.
 const REPRESENT_WATCH: Duration = Duration::from_secs(5);
 
 /// Cause of the recovery.
@@ -71,7 +71,7 @@ impl Pending {
     }
 }
 
-/// Device-chip hellos seen by the reader, the recovery one owes, and the `RESP(STATS)` session
+/// Device-chip hellos seen by the reader, the recovery a hello owes, and the `RESP(STATS)` session
 /// counter.
 #[derive(Debug, Default)]
 pub(crate) struct RestartWatch {
@@ -88,7 +88,7 @@ struct Watch {
     hellos: u64,
     // A hello landed while a recovery was running: a boot to count when it ends.
     booted: bool,
-    // `RESP(STATS)` session when last read; it moves on each release of host-set state.
+    // `RESP(STATS)` session at the last read; it changes each time the box releases host-set state.
     session: Option<u16>,
     represent_until: Option<Instant>,
 }
@@ -98,8 +98,8 @@ impl RestartWatch {
         self.state.lock().armed = true;
     }
 
-    // An unrequested hello owes a recovery when it is a new boot. A box back on another protocol is
-    // refused as a reconnect refuses one: every command fails with it.
+    // An unrequested hello that is a new boot owes a recovery. A box back on another protocol is
+    // refused, as on reconnect: every command then fails with `BadProtoVer`.
     pub(crate) fn note_hello(&self, payload: &[u8], transport: &TransportSlot) {
         let proto = match parse_resp(payload) {
             Some(Resp::Version(v)) => v.proto_ver,
@@ -193,8 +193,8 @@ impl RestartWatch {
         self.state.lock().represent_until.is_some_and(|t| now < t)
     }
 
-    // The close watch stays open: a release can come in two parts (the opt-in going off drops rules
-    // at once and re-presents the clone later), and the second needs it.
+    // Keeps the close watch open: a release can come in two parts, and the second needs it (turning
+    // the opt-in off drops rules at once and re-presents the clone later).
     pub(crate) fn begin_release(&self) {
         self.state.lock().recovering = true;
     }
@@ -228,12 +228,12 @@ fn read_stats(ctx: &KeepaliveCtx) -> Option<Stats> {
     }
 }
 
-// Declared button count when a clone is up (0 for one with no HID interface); `None` when none is, or
-// the box did not reply.
+// Declared button count when a clone is up (0 if the clone has no HID interface); `None` if no
+// clone is up or the box didn't reply.
 fn clone_up(ctx: &KeepaliveCtx) -> Option<u8> {
     match query(ctx, Q_CAPS).as_deref().and_then(parse_resp) {
         Some(Resp::Caps(c)) if c.mouse.n_hid > 0 => Some(c.mouse.n_buttons),
-        // No HID interface reads as nothing cloned does; the clone's identity tells them apart.
+        // A clone with no HID interface reads like no clone; the clone's identity tells them apart.
         Some(Resp::Caps(_)) => match query(ctx, Q_DEVICE_INFO).as_deref().and_then(parse_resp) {
             Some(Resp::DeviceInfo(d)) if d.is_cloned() => Some(0),
             _ => None,
@@ -242,9 +242,9 @@ fn clone_up(ctx: &KeepaliveCtx) -> Option<u8> {
     }
 }
 
-// The ring's contents, noted against the append it was read after. A missing reading says nothing;
-// one taken across a release or boot is left to that recovery, which reports the loss (noted here it
-// would clear the ring with nothing lost).
+// Notes the clip ring's contents against the last append before the read. A failed read notes
+// nothing. A read across a release or boot is left to that recovery, which reports the loss; noting
+// it here would clear the ring as if nothing were lost.
 pub(crate) fn read_ring(ctx: &KeepaliveCtx) {
     let seen = ctx.desired.lock().clip_ring_gen();
     let hellos = ctx.restart.hellos();
@@ -260,9 +260,9 @@ pub(crate) fn read_ring(ctx: &KeepaliveCtx) {
     ctx.desired.lock().clip_note_ring(seen, &status, false);
 }
 
-// On the keepalive thread. Held state is re-sent only to a clone that is up, since the box drops a
-// lock, transform or clip append sent before it exists; a release that left the clone standing (the
-// link, a silence, a short detach) finds it up at once.
+// Runs on the keepalive thread. Held state is re-sent only once the clone is up: the box drops a
+// lock, transform or clip append sent before the clone exists. After a release that left the clone
+// standing (the link, a silence, a short detach), the clone is up at once.
 pub(crate) fn step(ctx: &KeepaliveCtx, cause: Cause) -> Outcome {
     let Some(buttons) = clone_up(ctx) else {
         return Outcome::Wait;
@@ -291,8 +291,8 @@ pub(crate) fn step(ctx: &KeepaliveCtx, cause: Cause) -> Outcome {
         return Outcome::Wait;
     }
     // A release can come in two parts (a detach counts at once and takes the clone down after its
-    // grace), and a re-send between them lands on a departing clone. It took, and the ring reading
-    // describes this release, only if the clone is still up and nothing was released since.
+    // grace), and a re-send between them lands on a departing clone. If the clone is still up and
+    // nothing was released since, the re-send took and the ring reading describes this release.
     let up = clone_up(ctx).is_some();
     let ring_seen = ctx.desired.lock().clip_ring_gen();
     let ring = query(ctx, Q_CLIP).and_then(|p| ClipStatus::from_payload(&p));
@@ -318,7 +318,7 @@ fn query(ctx: &KeepaliveCtx, what: u8) -> Option<Vec<u8>> {
     query_sent(ctx, what).flatten()
 }
 
-// The outer `None` is a frame never sent. The wait yields to a device being dropped.
+// The outer `None` means the frame wasn't sent. The wait ends early if the device is dropped.
 fn query_sent(ctx: &KeepaliveCtx, what: u8) -> Option<Option<Vec<u8>>> {
     let (seq, gen_id, rx) = correlation::register(
         &ctx.pending,

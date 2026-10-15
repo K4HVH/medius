@@ -1,10 +1,10 @@
 //! Serial transport over an overlapped Win32 COM handle.
 //!
-//! Windows serialises every request on a synchronous file object, duplicated handles included: a
+//! Windows serialises every request on a synchronous file object, duplicated handles included. A
 //! reader parked in `ReadFile` holds the port for the read timeout and a concurrent `WriteFile`
-//! waits, so commands are sent only between reads. `serial2` opens the port with
+//! waits, so commands are written only between reads. `serial2` opens the port with
 //! `FILE_FLAG_OVERLAPPED` and completes each request through a separate `OVERLAPPED`, so a read and
-//! a write are in flight at once.
+//! a write can be in flight at once.
 
 use std::io;
 use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
@@ -27,8 +27,9 @@ use windows_sys::Win32::System::Threading::{CreateEventW, WaitForSingleObject};
 use super::{CTRL_BAUD, IO_TIMEOUT};
 use crate::transport::Transport;
 
-// fAbortOnError: the driver fails every transfer after a comm error until ClearCommError, which
-// nothing here calls, so one overrun at 6 Mbaud would wedge the link until a reconnect.
+// fAbortOnError, cleared at open: after a comm error the driver fails every transfer until
+// ClearCommError, which nothing here calls. One overrun at 6 Mbaud would wedge the link until a
+// reconnect.
 const DCB_ABORT_ON_ERROR: u32 = 1 << 14;
 
 const RETIRE_WAIT: Duration = Duration::from_millis(20);
@@ -92,8 +93,8 @@ impl Transport for SerialTransport {
             // Armed before the drain, so a byte landing after an empty read still fires it.
             let fired = rx.arm(&self.port)?;
             match self.port.read(buf) {
-                // serial2 reports a vanished port as EOF, which must reach the reader as an error
-                // to start a reconnect; an empty port returns a timeout.
+                // serial2 reports a vanished port as EOF; it must reach the reader as an error to
+                // start a reconnect. An empty port returns a timeout.
                 Ok(0) => return Err(io::Error::from(io::ErrorKind::BrokenPipe)),
                 Ok(n) => return Ok(n),
                 Err(e) if e.kind() == io::ErrorKind::TimedOut => {}
@@ -106,8 +107,8 @@ impl Transport for SerialTransport {
             if !fired && !rx.wait(&self.port, left)? {
                 return Ok(0);
             }
-            // A wait takes at most two empty wakes to clear the history of bytes already read; a
-            // driver that keeps waking with nothing to read is paced instead of spun on.
+            // A wait takes at most two empty wakes to clear the history of bytes already read.
+            // After that, a driver that keeps waking with nothing to read is paced, not spun on.
             empty_wakes += 1;
             if empty_wakes > 2 {
                 std::thread::sleep(Duration::from_millis(1));
@@ -125,8 +126,8 @@ impl Transport for SerialTransport {
     }
 }
 
-// Windows cancels a thread's pending I/O when the thread exits, so a wait is retired, not handed to
-// another thread, and retired before the thread that started it leaves.
+// Windows cancels a thread's pending I/O when the thread exits. So a wait is never handed to
+// another thread: it is retired before the thread that started it leaves.
 struct RxWait {
     event: OwnedHandle,
     op: NonNull<WaitOp>,
@@ -265,7 +266,7 @@ impl RxWait {
 
 impl Drop for RxWait {
     fn drop(&mut self) {
-        // A wait that never ended still has the kernel writing `op`, so it is leaked.
+        // A wait that never ended still has the kernel writing `op`, so `op` is leaked.
         if self.owner.is_none() {
             #[allow(unsafe_code)]
             // SAFETY: `new` allocated `op` and no request is pending on it.

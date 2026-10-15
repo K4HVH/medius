@@ -559,7 +559,8 @@ fn the_render_option_reads_back_what_was_set_through_the_boundary() {
         MediusStatus::Ok
     );
     let mut st: MediusRenderStatus = unsafe { std::mem::zeroed() };
-    // The mock boots holding what a real box boots holding: de-spiked, relayed, and unarmed.
+    // The mock boots holding what a real box boots holding: de-spiked, relayed, and no profile
+    // learned.
     assert_eq!(
         unsafe { medius_device_query_render(dev, &mut st) },
         MediusStatus::Ok
@@ -599,7 +600,7 @@ fn the_spread_option_reads_back_what_was_set_through_the_boundary() {
         MediusStatus::Ok
     );
     let mut st: MediusSpreadStatus = unsafe { std::mem::zeroed() };
-    // A fresh box boots at the full percent with no command period learned, so it spreads nothing.
+    // A fresh box boots at 100% with no command period learned, so it spreads nothing.
     assert_eq!(
         unsafe { medius_device_query_spread(dev, &mut st) },
         MediusStatus::Ok
@@ -613,7 +614,7 @@ fn the_spread_option_reads_back_what_was_set_through_the_boundary() {
         MediusStatus::Ok
     );
     assert_eq!(st.span_us, 8000);
-    // A percent past 100 overlaps, unclamped, and both fields survive the trip. Past 255 too: 250
+    // A percent >100 overlaps, unclamped, and both fields survive the trip. So does one >255: 250
     // fits a u8 and proves nothing about the width.
     assert_eq!(
         unsafe { medius_device_set_spread(dev, 1000) },
@@ -709,8 +710,8 @@ fn a_scale_reaches_the_box_lock_table_through_the_boundary() {
         unsafe { medius_locks_scale_of(&locks, x, MediusDirection::With as u8) },
         130
     );
-    // In vector mode one relative scale governs both axes, the lower of the two, and the box reports
-    // that number on both axes rather than each axis's stored byte.
+    // In vector mode one relative scale governs both axes: the lower of the two. The box reports
+    // that number on both axes, not each axis's stored byte.
     assert_eq!(
         unsafe { medius_device_set_bearing(dev, 20, MediusBearingMode::Vector as u8) },
         MediusStatus::Ok
@@ -1490,7 +1491,7 @@ fn the_timeline_unwraps_and_maps_onto_the_callers_clock() {
     assert_eq!(a.excess_ns, 0);
 
     // Past the rollover: 32 bits of microseconds is 71.6 minutes, and a raw subtraction here would
-    // come out about 4295 seconds negative.
+    // come out ~4295 seconds negative.
     let mut b: MediusStamped = unsafe { std::mem::zeroed() };
     ev.ts_us = 500;
     assert!(unsafe { medius_timeline_observe(t, &ev, 51_001_000, &mut b) });
@@ -2286,7 +2287,7 @@ fn settings_to_c(s: &medius::ClipSettings) -> MediusClipSettings {
 
 #[test]
 fn a_read_back_past_the_arrays_is_clamped_to_them() {
-    // The box holds eight of each kind and sixteen match bytes, so only a hand-built state has more.
+    // The box holds 8 of each kind and 16 match bytes, so only a hand-built state has more.
     let mut trigger = medius::ClipPacketTrigger::new(
         medius::TrafficClass::HidIn,
         2,
@@ -4920,8 +4921,9 @@ fn raw_rejects_a_non_flow_direction_with_its_own_status() {
         MediusStatus::Ok
     );
     let bytes = [0u8, 1];
-    // Both names two flows and the bearing-relative pair has none here; each carries a separate
-    // status, ahead of the opt-in, and an unknown direction byte is refused as an invalid argument.
+    // Both names two flows, and the bearing-relative pair names none here. Each gets its own
+    // status, checked ahead of the opt-in; an unknown direction byte is refused as an invalid
+    // argument.
     assert_eq!(
         unsafe {
             medius_device_raw(

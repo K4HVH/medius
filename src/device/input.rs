@@ -23,9 +23,9 @@ fn class_index(class: Class) -> usize {
 /// Live stream of decoded [`InputEvent`]s: press and release edges, and motion.
 ///
 /// An [`EventStream`] subscription with held-usage snapshots decoded into edges. It can be shared
-/// between threads: receives run one at a time, since one report can decode to several events that
-/// must come out in order, and [`Self::held`], [`Self::dropped`] and [`Self::is_connected`] never
-/// wait for a receive.
+/// between threads. Receives run one at a time, since one report can decode to several events that
+/// must come out in order. [`Self::held`], [`Self::dropped`] and [`Self::is_connected`] never wait
+/// for a receive.
 #[derive(Debug)]
 pub struct InputStream {
     events: EventStream,
@@ -42,10 +42,10 @@ struct Decoded {
     pending: VecDeque<InputEvent>,
 }
 
-// A snapshot lists every held usage of the class once any subscriber widens the table, so routing
-// is class-only (or the release edge is lost) and each stream filters to its subscribed addresses
-// here. The class check matters: a usage whose class byte disagrees with the frame's would be filed
-// under the wrong class and never released.
+// Once any subscriber widens the table, a snapshot lists every held usage of the class. So routing
+// is class-only (else the release edge is lost), and each stream filters to its subscribed
+// addresses here. The class check matters: a usage whose class byte disagrees with the frame's
+// would be filed under the wrong class and never released.
 fn subscribed(filters: &[CatchFilter], class: Class, usage: Usage) -> bool {
     usage.class == class
         && filters
@@ -170,8 +170,8 @@ impl InputStream {
                 return Some(e);
             }
             // A report can decode to nothing (an empty snapshot for an already-empty class), so the
-            // deadline must survive a pump that yields no event. Past it, what is queued is still
-            // read: a zero wait takes a queued report instead of giving up before looking.
+            // deadline must survive a pump that yields no event. Past the deadline, what is queued
+            // is still read: a zero wait takes a queued report instead of giving up before looking.
             let left = deadline.saturating_duration_since(Instant::now());
             let event = self.events.recv_timeout(left)?;
             self.pump(event);
@@ -211,8 +211,8 @@ impl InputStream {
         self.state.lock().held[class_index(class)].clone()
     }
 
-    /// End the subscription. Every receive blocked on the stream returns at once, and every receive
-    /// after it too; events still queued are dropped.
+    /// End the subscription. Every blocked receive returns at once, as does every later one; events
+    /// still queued are dropped.
     ///
     /// For a thread that holds no handle to the stream, see [`Self::closer`].
     pub fn close(&self) {

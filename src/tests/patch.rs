@@ -127,7 +127,7 @@ mod mock_roundtrip {
 
     #[test]
     fn store_is_not_gated_on_the_opt_in() {
-        // The box stores a patch whatever the opt-in; only APPLY is gated.
+        // The box stores a patch with the opt-in on or off; only APPLY is gated.
         let device = Device::with_mock(MockBox::new()); // opt-in off
         device
             .set_patch(&Patch::new(PatchSection::Device, 8, [0x34, 0x12]))
@@ -212,8 +212,8 @@ mod mock_roundtrip {
         assert_eq!(read.bytes, vec![0xAB; 300]);
     }
 
-    // pending compares the stored set with the served one; applied is the served one being
-    // non-empty. An edit or emptying after an apply leaves the clone as it was until the next apply.
+    // pending: the stored set differs from the served one. applied: the served set is non-empty. An
+    // edit or emptying after an apply leaves the clone as it was until the next apply.
     #[test]
     fn pending_is_the_stored_set_against_the_one_served() {
         let device = Device::with_mock(MockBox::new().with_imperfect(true));

@@ -88,9 +88,9 @@ pub unsafe extern "C" fn medius_event_stream_free(stream: *mut MediusEventStream
     });
 }
 
-/// End the subscription for this handle and every clone of it. A receive blocked on it in another
-/// thread returns at once, as does every later receive; queued events are dropped. Free the handle
-/// once no thread is using it. Null is a no-op.
+/// End the subscription for this handle and every clone of it. Every blocked receive returns at
+/// once, as does every later one; queued events are dropped. Free the handle once no thread is
+/// using it. Null is a no-op.
 ///
 /// # Safety
 /// `stream` must be a live handle from `medius_device_catch_events` or a clone, or null. Other
@@ -104,7 +104,7 @@ pub unsafe extern "C" fn medius_event_stream_close(stream: *mut MediusEventStrea
     });
 }
 
-/// Block until the next native input event, writing it to `*out`; `ErrDisconnected` on close.
+/// Block until the next event, writing it to `*out`; `ErrDisconnected` on close.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_event_stream_recv(
     stream: *mut MediusEventStream,
@@ -288,9 +288,8 @@ pub unsafe extern "C" fn medius_input_stream_free(stream: *mut MediusInputStream
     });
 }
 
-/// End the subscription. A receive blocked on it in another thread returns at once, as does every
-/// later receive; queued events are dropped. Free the handle once no thread is using it. Null is a
-/// no-op.
+/// End the subscription. Every blocked receive returns at once, as does every later one; queued
+/// events are dropped. Free the handle once no thread is using it. Null is a no-op.
 ///
 /// # Safety
 /// `stream` must be a live handle from `medius_device_input_events`, or null. Other threads may be
@@ -393,9 +392,9 @@ pub unsafe extern "C" fn medius_input_stream_dropped(stream: *mut MediusInputStr
     })
 }
 
-/// Write the usages of `class` this stream holds to `out[0..cap]`, returning how many there are;
-/// above `cap`, only `cap` were written. `class` takes a `MEDIUS_CLASS_*` constant; any other value
-/// reads as 0.
+/// Write the usages of `class` this stream holds to `out[0..cap]` and return how many are held; if
+/// more than `cap`, only `cap` were written. `class` takes a `MEDIUS_CLASS_*` constant; any other
+/// value reads as 0.
 ///
 /// # Safety
 /// `out` must point to space for `cap` `MediusUsage`.
@@ -612,9 +611,9 @@ pub unsafe extern "C" fn medius_log_stream_free(stream: *mut MediusLogStream) {
     });
 }
 
-/// End this LOG stream and every clone of it. A receive blocked on it in another thread returns at
-/// once, as does every later receive; other LOG streams go on reading. Free the handle once no
-/// thread is using it. Null is a no-op.
+/// End this LOG stream and every clone of it. Every blocked receive returns at once, as does every
+/// later one. Other LOG streams keep reading. Free the handle once no thread is using it. Null is a
+/// no-op.
 ///
 /// # Safety
 /// `stream` must be a live handle from `medius_device_logs` or a clone, or null. Other threads may

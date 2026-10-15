@@ -122,7 +122,7 @@ pub unsafe extern "C" fn medius_device_clone(dev: *const MediusDevice) -> *mut M
     })
 }
 
-/// Free a device handle; joins the background threads when the last clone drops, null is a no-op.
+/// Free a device handle (null is a no-op). Freeing the last clone joins the background threads.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_device_free(dev: *mut MediusDevice) {
     guard((), || {
@@ -187,7 +187,7 @@ pub unsafe extern "C" fn medius_list(
 }
 
 /// Open the box whose identity matches `id` (device-chip MAC hex or CH343 serial), handshake, and
-/// write the handle to `*out`. `MEDIUS_STATUS_ERR_BAD_PROTO_VER` when that box speaks another
+/// write the handle to `*out`. `MEDIUS_STATUS_ERR_BAD_PROTO_VER` if that box speaks another
 /// control protocol.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_device_open_by_id(
@@ -212,7 +212,7 @@ pub unsafe extern "C" fn medius_device_open_by_id(
     })
 }
 
-/// Open the first box whose clone is a mouse, handshake, and write the handle to `*out`. `MEDIUS_STATUS_ERR_BAD_PROTO_VER` when no other box clones a mouse and a box on another control protocol (clone unread) is connected.
+/// Open the first box whose clone is a mouse, handshake, and write the handle to `*out`. With no such box, a box on another control protocol (which reports no clone) gives `MEDIUS_STATUS_ERR_BAD_PROTO_VER`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_device_find_mouse_box(out: *mut *mut MediusDevice) -> MediusStatus {
     guard_status(|| {
@@ -230,7 +230,7 @@ pub unsafe extern "C" fn medius_device_find_mouse_box(out: *mut *mut MediusDevic
     })
 }
 
-/// Open the first box whose clone is a keyboard, handshake, and write the handle to `*out`. `MEDIUS_STATUS_ERR_BAD_PROTO_VER` when no other box clones a keyboard and a box on another control protocol (clone unread) is connected.
+/// Open the first box whose clone is a keyboard, handshake, and write the handle to `*out`. With no such box, a box on another control protocol (which reports no clone) gives `MEDIUS_STATUS_ERR_BAD_PROTO_VER`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_device_find_keyboard_box(
     out: *mut *mut MediusDevice,
@@ -436,25 +436,26 @@ fn with_blanket(
 }
 
 /// Weigh native input on a target and direction. `scale` is the percent of the native value
-/// kept: `MEDIUS_LOCK_SCALE_BLOCK` blocks, `MEDIUS_LOCK_SCALE_PASS` passes, and above that
-/// amplifies up to `MEDIUS_LOCK_SCALE_MAX` (2.55x). Lock and unlock are its two ends.
+/// kept: `MEDIUS_LOCK_SCALE_BLOCK` blocks, `MEDIUS_LOCK_SCALE_PASS` passes, and values above that
+/// amplify, up to `MEDIUS_LOCK_SCALE_MAX` (2.55x). `medius_device_lock` is a scale of
+/// `MEDIUS_LOCK_SCALE_BLOCK`, and `medius_device_unlock` a scale of `MEDIUS_LOCK_SCALE_PASS`.
 ///
-/// A negative percent, down to `MEDIUS_LOCK_SCALE_MIN`, weighs and reverses: `-100` inverts. The
-/// slot is picked from the delta's sign before the weigh, so `-100` on `MEDIUS_DIRECTION_POSITIVE`
-/// turns rightward input leftward and leaves leftward input alone. Axes only: on a momentary usage,
-/// which carries one bit, it is `MEDIUS_STATUS_ERR_LOCK_SCALE_USAGE`. A magnitude out of range is
+/// A negative scale, down to `MEDIUS_LOCK_SCALE_MIN`, weighs the native value and reverses it
+/// (`-100` inverts). The delta's sign picks the slot before the weigh, so `-100` on
+/// `MEDIUS_DIRECTION_POSITIVE` turns rightward motion leftward and leaves leftward motion alone. A
+/// negative scale is for axes only: on a momentary usage, which carries one bit, it gives
+/// `MEDIUS_STATUS_ERR_LOCK_SCALE_USAGE`. A scale outside the range gives
 /// `MEDIUS_STATUS_ERR_LOCK_SCALE_RANGE`.
 ///
-/// A delta picks up at most two scales, its absolute direction's and its relative direction's, and
-/// they multiply. `MEDIUS_DIRECTION_BOTH` writes the scale to the two fixed signs and a full pass
-/// to the relative pair, so a `Both` of 50 is 50% with or without a bearing. Name a relative
-/// direction to weigh it.
+/// A delta takes at most two scales, one for its absolute direction and one for its relative
+/// direction, and they multiply. `MEDIUS_DIRECTION_BOTH` writes the scale to the two fixed signs
+/// and a full pass to the relative pair. Name a relative direction to weigh it.
 ///
-/// `MEDIUS_DIRECTION_WITH` / `_AGAINST` need a live bearing (`medius_device_set_bearing`), which
-/// only an axis has; on a button, key or media usage either is
-/// `MEDIUS_STATUS_ERR_RELATIVE_DIRECTION`. Any scale below a full pass locks a momentary usage; at
-/// or above one unlocks it. A media usage has no edges: it is sent, and `RESP(LOCKS)` reports it,
-/// as `MEDIUS_DIRECTION_BOTH` whatever edge is named.
+/// `MEDIUS_DIRECTION_WITH` / `_AGAINST` do nothing until a bearing is live
+/// (`medius_device_set_bearing`). Only an axis has a bearing, so on a button, key or media usage
+/// either gives `MEDIUS_STATUS_ERR_RELATIVE_DIRECTION`. A scale below full pass locks a momentary
+/// usage, and full pass or more unlocks it. A media usage has no edges, so an edge direction on one
+/// is sent as `MEDIUS_DIRECTION_BOTH`, and `RESP(LOCKS)` reports it as `Both`.
 ///
 /// `dir` takes a `MEDIUS_DIRECTION_*` constant; any other value is `MEDIUS_STATUS_ERR_INVALID_ARG`.
 #[unsafe(no_mangle)]
@@ -548,9 +549,9 @@ pub unsafe extern "C" fn medius_device_reset(dev: *mut MediusDevice) -> MediusSt
 }
 
 /// `RESET` with the NVS flag: the `medius_device_reset` release, then the box erases its persistent
-/// store and reboots to its defaults under its MAC-derived name. Erases the box name, every option,
-/// and everything learned about devices seen, descriptor patch sets included. While it reboots the
-/// control port stays enumerated but silent, so queries time out; the link does not drop.
+/// store and reboots with defaults and its MAC-derived name. Erases the box name, every option and
+/// everything learned about devices seen, descriptor patch sets included. The control port stays
+/// enumerated during the reboot, so queries time out with the link up: poll one until it replies.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_device_factory_reset(dev: *mut MediusDevice) -> MediusStatus {
     with_device(dev, |d| d.factory_reset())
@@ -561,8 +562,8 @@ pub unsafe extern "C" fn medius_device_reapply(dev: *mut MediusDevice) -> Medius
     with_device(dev, |d| d.reapply())
 }
 
-/// Rescan by VID/PID, reopen this box, and re-apply held state. `MEDIUS_STATUS_ERR_BAD_PROTO_VER` when
-/// the box replies on another control protocol; it stays disconnected.
+/// Rescan by VID/PID, reopen this box, and re-apply held state. If the box replies on another
+/// control protocol, returns `MEDIUS_STATUS_ERR_BAD_PROTO_VER` and stays disconnected.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_device_reconnect(dev: *mut MediusDevice) -> MediusStatus {
     with_device(dev, |d| d.reconnect())
@@ -579,9 +580,9 @@ pub unsafe extern "C" fn medius_device_reboot(dev: *mut MediusDevice, target: u8
 }
 
 /// `OPTION(IMPERFECT)`: opt into cloning devices the box cannot clone faithfully, or back to
-/// faithful-only. A toggle that changes the served patch set re-presents the clone, releasing the
-/// session like a device replug; the library re-sends its held state once the new clone is up, and
-/// `medius_clip_lost` reports a dropped clip.
+/// faithful-only. If a toggle changes the served patch set, the clone is presented again. That
+/// releases the session like a device replug: once the new clone is up the library re-sends its
+/// held state, and `medius_clip_lost` reports a dropped clip.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_device_allow_imperfect_clones(
     dev: *mut MediusDevice,
@@ -590,12 +591,12 @@ pub unsafe extern "C" fn medius_device_allow_imperfect_clones(
     with_device(dev, |d| d.allow_imperfect_clones(allow))
 }
 
-/// `RAW` (§3.14): put `bytes[0..len]` verbatim on the clone's bare endpoint number `ep_num` (0 to
-/// 15) in `dir`, fire-and-forget. `dir` is `MEDIUS_DIRECTION_POSITIVE` (IN, to the game PC) or
+/// `RAW` (§3.14): put `bytes[0..len]` verbatim on the clone's bare endpoint number `ep_num` (0-15)
+/// in `dir`, fire-and-forget. `dir` is `MEDIUS_DIRECTION_POSITIVE` (IN, to the game PC) or
 /// `MEDIUS_DIRECTION_NEGATIVE` (OUT, to the real device); any other is
 /// `MEDIUS_STATUS_ERR_RAW_DIRECTION` (`MEDIUS_STATUS_ERR_RELATIVE_DIRECTION` for the
-/// bearing-relative pair). Gated on `medius_device_allow_imperfect_clones`: with the opt-in off the
-/// box drops the frame with no reply, and this still returns `MEDIUS_STATUS_OK`;
+/// bearing-relative pair). Needs `medius_device_allow_imperfect_clones`: with the opt-in off the
+/// box drops the frame with no reply, and this still returns `MEDIUS_STATUS_OK`.
 /// `medius_device_query_imperfect` reports the state.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_device_raw(
@@ -622,9 +623,9 @@ pub unsafe extern "C" fn medius_device_raw(
 /// `TRANSFER` (§3.14): run one control transfer against the real device, writing the reply to
 /// `*out`. `ep` is 0 for EP0 or a control endpoint the real device declares; `out_data[0..out_len]`
 /// is the OUT data stage (empty for IN). A non-OK `out->status` is a protocol outcome, not a
-/// failure; the box replies `REFUSED` while the opt-in is off, and `NAK` while the game PC has the
-/// clone suspended (the real device is suspended with it). `MEDIUS_STATUS_OK` means only that the
-/// box replied.
+/// failure. The box replies `REFUSED` while the opt-in is off, and `NAK` while the game PC has the
+/// clone suspended (the real device is suspended too). `MEDIUS_STATUS_OK` means only that the box
+/// replied.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_device_transfer(
     dev: *mut MediusDevice,
@@ -655,10 +656,9 @@ pub unsafe extern "C" fn medius_device_transfer(
     })
 }
 
-/// [`medius_device_transfer`] with a reply timeout in milliseconds. The box abandons a control
-/// transfer after ~800 ms, so keep `timeout_ms` at or above
-/// `medius_default_transfer_timeout_ms()`; a shorter one stops waiting before a slow device
-/// replies.
+/// [`medius_device_transfer`] with a reply timeout in milliseconds. The box gives up on a control
+/// transfer after ~800 ms. A shorter `timeout_ms` can abandon the wait before a slow device
+/// replies, so keep it >= `medius_default_transfer_timeout_ms()`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_device_transfer_timeout(
     dev: *mut MediusDevice,
@@ -726,14 +726,16 @@ fn with_rewrite_rule(
 /// `REWRITE` (§3.14): add or overwrite one rewrite rule; gated on the imperfect-clone opt-in.
 /// `rule->class_` takes a `MEDIUS_REWRITE_CLASS_*` constant, `rule->action` a
 /// `MEDIUS_REWRITE_ACTION_*` one and `rule->direction` a `MEDIUS_DIRECTION_*` one; any other value is
-/// `MEDIUS_STATUS_ERR_INVALID_ARG`. `match_len` must equal `mask_len`
-/// (`MEDIUS_STATUS_ERR_REWRITE_MASK_LENGTH`) and be at most `MEDIUS_MAX_REWRITE_MATCH`
-/// (`..._REWRITE_MATCH_TOO_LONG`), the action must suit the class (`..._REWRITE_ACTION_CLASS`), the
-/// direction must not be bearing-relative (`..._RELATIVE_DIRECTION`), and the payload must fit the
-/// box's head (`..._REWRITE_PAYLOAD_TOO_LARGE`). A new rule past `MEDIUS_MAX_REWRITE_ENTRIES` is
-/// `..._REWRITE_TABLE_FULL`; a payload past what the held rules leave of
-/// `MEDIUS_REWRITE_PAYLOAD_POOL` is `..._REWRITE_POOL_FULL`. `medius_device_query_rewrite` confirms
-/// what the box holds.
+/// `MEDIUS_STATUS_ERR_INVALID_ARG`.
+///
+/// `match_len` must equal `mask_len` (`MEDIUS_STATUS_ERR_REWRITE_MASK_LENGTH`) and be
+/// <= `MEDIUS_MAX_REWRITE_MATCH` (`..._REWRITE_MATCH_TOO_LONG`). The action must suit the class
+/// (`..._REWRITE_ACTION_CLASS`), the direction must not be bearing-relative
+/// (`..._RELATIVE_DIRECTION`), and the payload must fit the box's head
+/// (`..._REWRITE_PAYLOAD_TOO_LARGE`). A new rule beyond `MEDIUS_MAX_REWRITE_ENTRIES` gives
+/// `..._REWRITE_TABLE_FULL`. A payload larger than what the other held rules leave of
+/// `MEDIUS_REWRITE_PAYLOAD_POOL` gives `..._REWRITE_POOL_FULL`. `medius_device_query_rewrite`
+/// confirms what the box holds.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_device_set_rewrite(
     dev: *mut MediusDevice,
@@ -798,10 +800,10 @@ fn with_patch(
 }
 
 /// `PATCH` (§3.14): store one descriptor patch, keyed by `(section, cfg, index, offset)`; `len` 0
-/// removes the patch at that key. The box stores it whatever the opt-in; the clone serves the set
-/// from its next presentation under the opt-in: `medius_device_apply_patch`, the opt-in turning on,
-/// or the real device attaching. `patch->section` takes a `MEDIUS_PATCH_SECTION_*` constant; any
-/// other value is `MEDIUS_STATUS_ERR_INVALID_ARG`.
+/// removes the patch at that key. The box stores a patch with the opt-in on or off. The clone
+/// serves it only with the opt-in on, from its next presentation: `medius_device_apply_patch`, the
+/// opt-in turning on, or the real device attaching. `patch->section` takes a
+/// `MEDIUS_PATCH_SECTION_*` constant; any other value is `MEDIUS_STATUS_ERR_INVALID_ARG`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_device_set_patch(
     dev: *mut MediusDevice,
@@ -812,18 +814,19 @@ pub unsafe extern "C" fn medius_device_set_patch(
 
 /// `PATCH` APPLY (§3.14): re-present the clone with the stored patch set (one replug to the game
 /// PC). With the imperfect-clone opt-in off this is `MEDIUS_STATUS_ERR_IMPERFECT_REQUIRED`. The box
-/// re-presents only while the stored set differs from the served one: applying an emptied set
-/// serves the descriptors unpatched, and a refused set unchanged since is left alone. Re-presenting
-/// releases the session like a device replug; the library re-sends its held state once the new
-/// clone is up, and `medius_clip_lost` reports a dropped clip.
+/// re-presents only if the stored set differs from the served one. Applying an emptied set serves
+/// the descriptors unpatched; an unchanged refused set stays as is. Re-presenting releases the
+/// session like a device replug: once the new clone is up the library re-sends its held state, and
+/// `medius_clip_lost` reports a dropped clip.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_device_apply_patch(dev: *mut MediusDevice) -> MediusStatus {
     with_device(dev, |d| d.apply_patch())
 }
 
-/// `PATCH` CLEAR (§3.14): erase the real device's stored set (the last attached one's when
-/// unplugged). A clone serving patches re-presents unpatched (one replug to the game PC), releasing
-/// the session and re-sending held state as `medius_device_apply_patch` does.
+/// `PATCH` CLEAR (§3.14): erase the real device's stored set (with no device attached, the last
+/// attached device's). A clone serving patches re-presents unpatched (one replug to the game PC).
+/// That releases the session as `medius_device_apply_patch` does, and the library re-sends held
+/// state the same way.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_device_clear_patch(dev: *mut MediusDevice) -> MediusStatus {
     with_device(dev, |d| d.clear_patch())
@@ -875,13 +878,12 @@ fn with_transform(
 
 /// `TRANSFORM` (§3.15): add or overwrite one field transform, fire-and-forget. It swaps or remaps a
 /// field the clone already declares, so it is faithful and needs no imperfect-clone opt-in. To
-/// weigh or reverse a field, use `medius_device_scale`, which runs first and passes the transform
-/// what it kept. Entries are keyed by `(source, dest)` and apply in installation order.
-/// `transform->op` takes a `MEDIUS_TRANSFORM_OP_*` constant, and `source`/`dest` a
-/// `MEDIUS_LOCK_TARGET_KIND_*` axis or usage. A combination the op cannot address, including one
-/// field as both ends, is `MEDIUS_STATUS_ERR_TRANSFORM_OP_FIELDS`; an entry past
-/// `MEDIUS_MAX_TRANSFORM_ENTRIES` is `..._TRANSFORM_TABLE_FULL`. `medius_device_query_transforms`
-/// confirms what the box holds.
+/// weigh or reverse a field, use `medius_device_scale`; it runs first and passes the transform what
+/// it kept. Entries are keyed by `(source, dest)` and apply in installation order. `transform->op`
+/// takes a `MEDIUS_TRANSFORM_OP_*` constant, and `source`/`dest` a `MEDIUS_LOCK_TARGET_KIND_*` axis
+/// or usage. A combination the op cannot address (including one field as both ends) gives
+/// `MEDIUS_STATUS_ERR_TRANSFORM_OP_FIELDS`. An entry beyond `MEDIUS_MAX_TRANSFORM_ENTRIES` gives
+/// `..._TRANSFORM_TABLE_FULL`. `medius_device_query_transforms` confirms what the box holds.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_device_transform(
     dev: *mut MediusDevice,
@@ -949,7 +951,7 @@ pub unsafe extern "C" fn medius_device_query_transforms(
     query(dev, out, |d| d.query_transforms())
 }
 
-/// Set movement riding; when `enabled`, injected motion rides a native cursor report seen within `window_ms`.
+/// Set movement riding. When `enabled`, injected motion rides a native cursor report within `window_ms`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_device_set_movement_riding(
     dev: *mut MediusDevice,
@@ -960,7 +962,7 @@ pub unsafe extern "C" fn medius_device_set_movement_riding(
     with_device(dev, |d| d.set_movement_riding(window))
 }
 
-/// Set injected-motion pacing and the clone's rate: `hz` is the `Fixed` target rate, ignored
+/// Set injected-motion pacing and the clone's poll rate. `hz` is the `Fixed` target rate, ignored
 /// otherwise; `force_hz` is the forced poll rate (0 = native interval). `mode` takes a
 /// `MEDIUS_EMIT_MODE_*` constant; any other value is `MEDIUS_STATUS_ERR_INVALID_ARG`.
 #[unsafe(no_mangle)]
@@ -1029,8 +1031,8 @@ pub unsafe extern "C" fn medius_device_set_bearing(
 
 /// Set the render texture, and whether the model renders native motion instead of relaying it.
 /// `mode` takes a `MEDIUS_RENDER_MODE_*` constant; any other value is
-/// `MEDIUS_STATUS_ERR_INVALID_ARG`. Rendering adds latency, which `full` puts on native motion
-/// too. `full` is off by default.
+/// `MEDIUS_STATUS_ERR_INVALID_ARG`. Rendering adds latency; `full` adds it to native motion too.
+/// `full` is off by default.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_device_set_render(
     dev: *mut MediusDevice,
@@ -1043,10 +1045,11 @@ pub unsafe extern "C" fn medius_device_set_render(
     with_device(dev, |d| d.set_render(mode, full))
 }
 
-/// Set the percent of the host's command interval an injected delta is released across: 0 puts it
-/// all on the box's next report, 100 spreads it across one command interval, above 100 overlaps. A
-/// loop at the native report rate keeps each command whole on one report. Until the box learns
-/// the host's command period from `MOVE` arrivals, each delta is emitted whole.
+/// Set the percent of the host's command interval an injected delta is released across. 0 puts
+/// the whole delta on the next emitted report, 100 spreads it across one command interval, and >100
+/// overlaps. A command loop at the native report rate keeps each command whole, on one report.
+/// Until the box learns the host's command period from `MOVE` arrivals, each delta is emitted
+/// whole.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_device_set_spread(
     dev: *mut MediusDevice,
@@ -1156,8 +1159,8 @@ pub unsafe extern "C" fn medius_device_update_firmware(
 }
 
 /// Block until neither chip is on probation and write both chips' firmware state to `*out`. Keeps
-/// asking while the box reboots after an activate. After 55 s it returns `ErrUpdate` if a chip is
-/// still on probation, or `ErrQueryTimeout` if the box has not replied.
+/// asking while the box reboots after an activate. After 55 s, returns `ErrUpdate` if a chip is
+/// still on probation, or `ErrQueryTimeout` if the box hasn't replied.
 ///
 /// # Safety
 /// `dev` must be a live device handle and `out` writable.

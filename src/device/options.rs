@@ -17,7 +17,7 @@ pub const NAME_MAX: usize = 32;
 /// [`EmitPace::Fixed`](crate::EmitPace::Fixed) rate to it.
 pub const EMIT_MAX_HZ: u16 = 1000;
 
-// `None` = 0 (off); a non-zero `Some` is at least 1 ms and saturates at `u16::MAX` ms.
+// `None` = 0 (off); a non-zero `Some` is >=1 ms and saturates at `u16::MAX` ms.
 pub(crate) fn ride_window_ms(window: Option<Duration>) -> u16 {
     match window {
         None => 0,
@@ -40,15 +40,15 @@ impl Device {
     /// `OPTION(IMPERFECT)`: allow cloning a device the box cannot clone faithfully, or return to
     /// faithful-only; persisted in NVS.
     ///
-    /// Turning the opt-in off clears the box's rewrite table, so the crate drops its held rules too
-    /// (restored if the frame is never sent); otherwise the keepalive would re-assert them once the
-    /// opt-in is back on. The box also removes every clip packet trigger that
-    /// [consumes](crate::ClipPacketTrigger::consume), and the crate drops those the same way.
-    /// Turning the opt-in off concurrently with a `set_rewrite` on another thread is unordered: the
-    /// rule may reach the box after the opt-off and be refused.
+    /// Turning the opt-in off clears the box's rewrite table. The crate drops its held rules too
+    /// (restored if the frame is never sent), or the keepalive would re-assert them once the opt-in
+    /// is back on. The box also removes every clip packet trigger that
+    /// [consumes](crate::ClipPacketTrigger::consume), and the crate drops those the same way. If
+    /// another thread calls `set_rewrite` while the opt-in turns off, the two are unordered: the
+    /// rule may reach the box after the opt-in is off and be refused.
     ///
-    /// A toggle that changes the served patch set presents the clone again, which releases the
-    /// session like a device replug; the crate re-sends what it holds once the new clone is up, and
+    /// If a toggle changes the served patch set, the clone is presented again. That releases the
+    /// session like a device replug: once the new clone is up the crate re-sends what it holds, and
     /// [`ClipHandle::lost`](crate::ClipHandle::lost) reports a dropped clip.
     pub fn allow_imperfect_clones(&self, allow: bool) -> Result<()> {
         self.link.restart_watch().expect_represent();
@@ -77,12 +77,14 @@ impl Device {
         self.link.send(FrameType::Option, &imperfect_payload(true))
     }
 
-    /// `OPTION(MOVE_RIDE)`: injected motion rides a native motion report seen within `window` (else
-    /// dropped), so its density matches native; `None` is off; persisted in NVS. A single move can
-    /// override it ([`MoveTiming::Now`](crate::MoveTiming), [`move_rel_now`](Self::move_rel_now)).
-    /// Clip playback bypasses it unless [`ClipHandle::set_ride`](crate::ClipHandle::set_ride) is on;
-    /// while rendering is on with a profile armed, a clip's cursor motion follows it like a rendered
-    /// move.
+    /// `OPTION(MOVE_RIDE)`: injected motion rides a native motion report within `window`, so its
+    /// density matches native; persisted in NVS.
+    ///
+    /// Motion with no native report within `window` is dropped. `None` turns riding off. A single
+    /// move can override riding ([`MoveTiming::Now`](crate::MoveTiming),
+    /// [`move_rel_now`](Self::move_rel_now)). Clip playback bypasses riding unless
+    /// [`ClipHandle::set_ride`](crate::ClipHandle::set_ride) is on. While rendering is on with a
+    /// profile armed, riding acts on a clip's cursor motion as on a rendered move.
     pub fn set_movement_riding(&self, window: Option<Duration>) -> Result<()> {
         self.link.send(
             FrameType::Option,
@@ -93,9 +95,11 @@ impl Device {
     /// `OPTION(EMIT)`: pace ([`EmitPace`], the rate ceiling) and forced poll rate (`force_hz`);
     /// persisted in NVS.
     ///
-    /// A non-zero `force_hz` re-clones with a `bInterval` the real device did not advertise: a power
-    /// of two, so the rate is never slower than asked, floored at 62 Hz on a low-speed clone (needs
-    /// [`allow_imperfect_clones`](Self::allow_imperfect_clones)). `Some(0)`/`None` is off.
+    /// A non-zero `force_hz` re-clones with a `bInterval` the real device didn't advertise (needs
+    /// [`allow_imperfect_clones`](Self::allow_imperfect_clones)). The interval is 1000/`force_hz` ms
+    /// rounded to the nearest millisecond, then down to a power of two (600 Hz gives 500 Hz); on a
+    /// low-speed clone it floors at 62 Hz.
+    /// `Some(0)`/`None` is off.
     pub fn set_emit_pace(&self, pace: EmitPace, force_hz: Option<u16>) -> Result<()> {
         let (mode, hz) = emit_pace_wire(pace);
         self.link.send(
@@ -122,7 +126,7 @@ impl Device {
     /// absolute ones are unaffected. The box boots at [`BEARING_WINDOW_DEFAULT`] with
     /// [`BearingMode::PerAxis`], so nothing engages until a scale is set.
     ///
-    /// The window rounds to whole milliseconds; a non-zero `Some` is at least 1 ms and saturates at
+    /// The window rounds to whole milliseconds; a non-zero `Some` is >=1 ms and saturates at
     /// 65535 ms.
     ///
     /// ```no_run
@@ -144,10 +148,10 @@ impl Device {
     /// `OPTION(RENDER)`: render texture, and whether the model renders native motion too instead of
     /// relaying it; persisted in NVS.
     ///
-    /// Rendering adds latency, which `full` puts on native motion too; `full` is off by default.
-    /// Nothing renders until the box learns a profile for the real device; until then
-    /// motion is relayed and injection takes the paced fill
-    /// ([`RenderStatus::ready`](crate::RenderStatus)).
+    /// Rendering adds latency; `full` adds it to native motion too. `full` is off by default.
+    /// Nothing renders until the box learns a profile for the real device
+    /// ([`RenderStatus::ready`](crate::RenderStatus)); until then motion is relayed and injection
+    /// takes the paced fill.
     ///
     /// Motion asking for exact timing skips the model: [`move_rel_now`](Self::move_rel_now),
     /// [`flush_motion`](Self::flush_motion) and [`discard_motion`](Self::discard_motion) take the paced
@@ -170,8 +174,8 @@ impl Device {
     /// across; persisted in NVS.
     ///
     /// 0 puts the whole delta on the next emitted report; 100 releases it evenly across one command
-    /// interval; above 100 overlaps and is allowed. A loop at the native report rate keeps each
-    /// command whole, on one report.
+    /// interval; values above 100 overlap and are allowed. A command loop at the native report rate
+    /// keeps each command whole, on one report.
     ///
     /// The box learns the interval from `MOVE` arrivals and spreads nothing until it has
     /// ([`SpreadStatus::span_us`](crate::SpreadStatus)). Motion asking for exact timing is released

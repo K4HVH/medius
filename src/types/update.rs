@@ -64,8 +64,8 @@ impl ImageState {
         }
     }
 
-    /// True until the chip confirms its booted image. Meanwhile it refuses another update, since
-    /// the running one might still be reverted.
+    /// True until the chip confirms its booted image. Until then the chip refuses another update,
+    /// since the running image might still be reverted.
     pub fn is_pending(self) -> bool {
         matches!(self, ImageState::PendingVerify)
     }
@@ -147,7 +147,7 @@ impl FirmwareInfo {
         })
     }
 
-    /// True while either chip is on probation, when updates are refused.
+    /// True while either chip is on probation (updates are refused).
     pub fn any_pending(&self) -> bool {
         self.device.state.is_pending() || self.host.is_some_and(|h| h.state.is_pending())
     }

@@ -12,16 +12,16 @@ use super::closer::{Close, StreamCloser};
 
 /// Receiver for the device `LOG` stream.
 ///
-/// Every `LogStream` from one [`Device`] reads one shared queue, so each line goes to one of them.
-/// A clone shares its stream's [`close`](Self::close).
+/// Every `LogStream` from one [`Device`] reads one shared queue, so each line goes to only one of
+/// them. Cloning a `LogStream` shares its [`close`](Self::close).
 #[derive(Clone, Debug)]
 pub struct LogStream {
     rx: flume::Receiver<LogLine>,
     close: Arc<LogClose>,
 }
 
-// The queue is shared with every other LogStream, so closing one cannot end the channel: a receive
-// waits on the queue and on this signal, which closing disconnects.
+// The queue is shared with every other LogStream, so closing one can't end the channel. Instead a
+// receive waits on the queue and on this signal, and closing disconnects the signal.
 #[derive(Debug)]
 struct LogClose {
     closed: AtomicBool,
@@ -110,8 +110,8 @@ impl LogStream {
         .await
     }
 
-    /// End this stream and every clone of it. Every receive blocked on it returns at once, and
-    /// every receive after it too. Other `LogStream`s go on reading the queue.
+    /// End this stream and every clone of it. Every blocked receive returns at once, as does every
+    /// later one. Other `LogStream`s keep reading the queue.
     ///
     /// For a thread that holds no handle to the stream, see [`Self::closer`].
     pub fn close(&self) {

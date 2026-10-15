@@ -13,19 +13,20 @@ const REMOVE: u8 = 0;
 impl Device {
     /// `TRANSFORM` (§3.15): add or overwrite one field transform.
     ///
-    /// Moves a field the clone's descriptor declares into another, by swapping two axes or remapping
-    /// a source onto a destination. To weigh a field, or reverse it, use [`scale`](Device::scale),
-    /// which runs first and passes the transform what it kept. Every emitted report stays one the real
-    /// device could produce, so no [`allow_imperfect_clones`](Device::allow_imperfect_clones) needed.
+    /// Moves one field the clone's descriptor declares into another: swap two axes, or remap a
+    /// source onto a destination. To weigh or reverse a field, use [`scale`](Device::scale); it
+    /// runs first and passes the transform what it kept. Every emitted report stays one the real
+    /// device could produce, so [`allow_imperfect_clones`](Device::allow_imperfect_clones) isn't
+    /// needed.
     ///
-    /// Keyed by `(source, dest)`; setting an existing key overwrites its op in place, keeping its
-    /// position. Position is state: entries apply in installation order, and two writing one field do
-    /// not commute.
+    /// Keyed by `(source, dest)`. Setting an existing key overwrites its op and keeps its position.
+    /// Position matters: entries apply in installation order, and two entries writing one field
+    /// don't commute.
     ///
-    /// Transforms are session state, re-asserted after a reconnect, a device-chip restart or any
-    /// session release the box counts, and kept by the keepalive like a [`lock`](Device::lock). The
-    /// box clears them on control-PC silence, [`reset`](Device::reset), a device detach, a link drop
-    /// or a re-clone.
+    /// Transforms are session state, kept by the keepalive like a [`lock`](Device::lock) and
+    /// re-asserted after a reconnect, a device-chip restart or any session release the box counts.
+    /// The box clears them on control-PC silence, [`reset`](Device::reset), a device detach, a link
+    /// drop or a re-clone.
     ///
     /// Fire-and-forget; [`query_transforms`](Device::query_transforms) confirms what the box holds,
     /// and omits an entry naming a field the clone does not declare.
@@ -151,8 +152,8 @@ pub(crate) fn to_stored(t: &Transform) -> StoredTransform {
     }
 }
 
-// Mirrors the box's `transform_tab_set`: an op a class pair cannot take, including one field as both
-// ends. Which fields the clone declares is for the box to check.
+// Mirrors the box's `transform_tab_set`: rejects an op the class pair can't take, including one
+// field as both ends. The box checks which fields the clone declares.
 pub(crate) fn validate_transform(t: &Transform) -> Result<()> {
     if !t.op.admits(t.source, t.dest) {
         return Err(Error::TransformOpFields {

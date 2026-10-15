@@ -197,8 +197,7 @@ fn a_zero_credit_falls_back_to_the_default() {
 
 #[test]
 fn update_status_names_every_value_the_box_can_answer() {
-    // Derived from name(): a hand-written list missed the very status it guarded, since adding one
-    // meant remembering a test in another file.
+    // Derived from name(), so a status added there can't be missed here.
     let named: Vec<u8> = (0u8..=0xFF)
         .filter(|&v| UpdateStatus(v).name() != "unknown")
         .collect();
@@ -415,7 +414,7 @@ mod correlation {
             acks.len()
         );
         // Starts at 0 and steps by one per acknowledgement, unlike the command SEQs (one per chunk,
-        // sixteen per window).
+        // 16 per window).
         let expected: Vec<u8> = (0..acks.len() as u8).collect();
         assert_eq!(acks, expected, "acks should roll 0,1,2..., got {acks:?}");
         assert_ne!(

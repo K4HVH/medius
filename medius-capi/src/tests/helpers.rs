@@ -154,7 +154,7 @@ fn scale_of_reports_the_percentage_and_is_locked_does_not() {
         scale_of(&locks, y, MediusDirection::Against),
         MEDIUS_LOCK_SCALE_PASS
     );
-    // Both takes the lowest of everything covering the target.
+    // Both reports the scale that keeps least across everything covering the target.
     assert_eq!(scale_of(&locks, x, MediusDirection::Both), 40);
     assert_eq!(
         scale_of(std::ptr::null(), x, MediusDirection::Both),
