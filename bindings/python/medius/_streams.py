@@ -167,9 +167,9 @@ class Timeline(Handle):
             for ev in events:
                 print(ev, time.observe(ev).host_ns)
 
-    Each domain is tracked separately, by a minimum of (elapsed here minus elapsed on the box): the
-    error is one-sided (an event can arrive late, never early), so the mapping improves as it runs
-    and never degrades.
+    Each domain is tracked separately, by a minimum of (elapsed here minus elapsed on the box) over
+    a bounded window: an event arrives late but never early, so the fastest recent delivery is
+    closest to true.
     """
 
     _free = "medius_timeline_free"

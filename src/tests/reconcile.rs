@@ -243,8 +243,8 @@ fn a_button_blanket_re_expands_when_the_declared_count_changes() {
 
 #[test]
 fn an_undone_button_release_restores_the_blanket() {
-    // A single-button write that bursts the blanket rolls back to the blanket if its frame never went
-    // out, not to the rows the burst created.
+    // A single-button write that bursts the blanket rolls back to the blanket if its frame was
+    // never sent, not to the rows the burst created.
     let mut d = DesiredState::default();
     d.note_declared_buttons(8);
     d.apply_lock((LOCK_CLS_BTN, LOCK_ID_ALL, LOCK_DIR_BOTH), LOCK_SCALE_BLOCK);
@@ -439,7 +439,7 @@ fn rewrite_remove_and_restore() {
     let key = stored(9, 1).key();
     let undo = d.remove_rewrite(key);
     assert!(d.held_rewrites().is_empty());
-    d.restore_rewrite(undo); // a send that never went out is rolled back
+    d.restore_rewrite(undo); // a frame never sent is rolled back
     assert_eq!(d.held_rewrites().len(), 1);
 }
 
@@ -511,7 +511,7 @@ fn transform_remove_and_restore() {
     let key = stored_xf(3, 1, 3, 1).key();
     let undo = d.remove_transform(key);
     assert!(d.held_transforms().is_empty());
-    d.restore_transform(undo); // a send that never went out is rolled back
+    d.restore_transform(undo); // a frame never sent is rolled back
     assert_eq!(d.held_transforms().len(), 1);
 }
 

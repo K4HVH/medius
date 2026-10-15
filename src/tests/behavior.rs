@@ -81,7 +81,7 @@ fn handshake_rejects_wrong_proto_ver() {
 
 #[test]
 fn handshake_refuses_a_v3_4_0_box() {
-    // v3.4.0 firmware answers protocol 7; this build speaks 9.
+    // v3.4.0 firmware reports protocol 7; this build speaks 9.
     let mock = MockBox::new().with_version(Version {
         proto_ver: 7,
         fw_major: 3,
@@ -201,8 +201,8 @@ fn reapply_re_emits_a_scale_at_its_own_value() {
         .filter(|f| f.ty == FrameType::Lock)
         .map(|f| f.payload.clone())
         .collect();
-    // A weighing replays as a weighing: as a blanket lock it would turn 40% into a dead axis across
-    // an unseen reconnect.
+    // A weighing replays as a weighing: as a blanket lock it would turn 40% into a block across a
+    // reconnect.
     assert_eq!(
         locks,
         vec![vec![3, 0, 0, 4, 40, 0], vec![3, 1, 0, 3, 130, 0]]
@@ -330,7 +330,7 @@ fn a_button_blanket_over_a_wide_mouse_reasserts_the_wide_buttons_on_reconnect() 
         .filter(|f| f.ty == FrameType::Lock)
         .map(|f| u16::from_le_bytes([f.payload[1], f.payload[2]]))
         .collect();
-    // Every declared button comes back, button 8 among them, not just the five named ones.
+    // Every declared button comes back, button 8 among them, not only the five named ones.
     assert_eq!(ids, (0..16).collect::<Vec<u16>>());
     drop(device);
 }
@@ -354,7 +354,8 @@ fn a_button_blanket_set_before_any_caps_call_reasserts_the_wide_buttons() {
     device.lock_all(Blanket::Buttons, Direction::Both).unwrap();
     mock.clear_recorded();
 
-    // A reconnect replays the held state; every declared button comes back, not just the named five.
+    // A reconnect replays the held state; every declared button comes back, not only the named
+    // five.
     device.reapply().unwrap();
     let ids: Vec<u16> = mock
         .recorded_frames()

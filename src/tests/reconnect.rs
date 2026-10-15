@@ -118,7 +118,7 @@ fn a_clip_reply_the_crate_cannot_read_ends_the_probe_at_once() {
     );
 }
 
-// Clip state is recorded once the frame is out, so a call that failed on a dropped link leaves
+// Clip state is recorded once the frame is sent, so a call that failed on a dropped link leaves
 // nothing for the keepalive.
 #[test]
 fn a_clip_call_that_never_went_out_records_nothing() {
@@ -159,7 +159,7 @@ fn a_clip_call_that_never_went_out_records_nothing() {
         "an unbind that never went out leaves the trigger bound"
     );
 
-    // The same for a packet trigger, and one clear that went out forgets both kinds.
+    // The same for a packet trigger, and one clear that was sent forgets both kinds.
     device.link.transport_slot().swap(mock.clone());
     clip.unbind(Button::SIDE1, Edge::Press).unwrap();
     clip.bind_packet(&packet).unwrap();
@@ -209,7 +209,7 @@ fn a_rescan_refuses_the_box_back_on_another_protocol() {
         .link
         .set_identity(crate::link::reconnect::BoxIdentity { serial: None, mac });
 
-    // v3.4.1 firmware answers protocol 8, and a later one 10. Neither is taken back.
+    // v3.4.1 firmware reports protocol 8, and a later one 10. Neither is taken back.
     for proto in [8, crate::PROTO_VER + 1] {
         let port = reflashed(proto, mac);
         let err = device

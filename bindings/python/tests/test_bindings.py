@@ -195,7 +195,7 @@ def test_configure_version_then_open_mock_matches():
 def test_set_name_and_clear_name():
     mock = MockBox()
     with mock.open() as d:
-        # No host-side validation (like the other setters): the box sanitises. These all just send.
+        # No host-side validation (like the other setters): the box sanitises. These all send.
         d.set_name("Left PC")
         d.set_name("x" * 40)  # over-length: the firmware caps it, the host does not error
         d.clear_name()
@@ -762,7 +762,7 @@ def test_spread_roundtrip():
         # ctypes chain fails here rather than round-tripping.
         d.set_spread(1000)
         assert d.query_spread() == SpreadStatus(1000, 80000)
-        # Off answers no interval even with a period learned.
+        # Off reports no interval even with a period learned.
         d.set_spread(0)
         assert d.query_spread() == SpreadStatus(0, 0)
 
@@ -780,8 +780,8 @@ def test_render_roundtrip():
                 d.set_render(mode, full)
                 status = d.query_render()
                 assert (status.mode, status.full) == (mode, full)
-        # The box gates the 1 ms tick on a profile having ARMED, not on the mode being set: a box told
-        # to render but still waiting for one runs the paced fill and reports the learnt cap.
+        # The box gates the 1 ms tick on a profile having armed, not on the mode being set: a box
+        # told to render but still waiting for one runs the paced fill and reports the learnt cap.
         d.set_render(RenderMode.STOCK, False)
         d.set_emit_pace(EmitPace.learned())
         assert d.query_emit_pace().resolved_hz == 0
@@ -809,7 +809,7 @@ def test_rate_force_roundtrip():
     with MockBox() as mock:
         mock.set_advertised_hz(125)
         mock.set_imperfect_status(ImperfectStatus(allowed=True, over_capacity=False, clone_imperfect=False))
-        # 400 resolves to bInterval 2, the interval a host would actually keep.
+        # 400 resolves to bInterval 2, the interval a host keeps.
         mock.set_emit_pace(EmitPace.fixed(500), 400)
         with Device.with_mock(mock) as d:
             status = d.query_emit_pace()
@@ -965,7 +965,7 @@ def test_traffic_event_control_accessors():
         with d.catch_events(CatchFilter.traffic_class(TrafficClass.CONTROL)) as stream:
             ev = _push_and_recv(mock, stream, stalled)
     assert ev.traffic.setup() == setup
-    assert ev.traffic.data() == b""  # a STALL answers with no data stage
+    assert ev.traffic.data() == b""  # a STALL carries no data stage
     assert ev.traffic.control_status() == ControlStatus.STALLED
     assert ev.traffic.rule_acted() is True
     assert ev.traffic.bus_event() is None
@@ -1299,7 +1299,7 @@ def test_clip_frame_transfers_take_a_pair_or_a_triple():
 
 @pytest.mark.parametrize("bad", [3, 0, True, "abc", None, 1.5, ["a"]])
 def test_a_byte_argument_that_is_not_bytes_is_refused(bad):
-    # bytes(3) is three zero bytes, which would go out as a report nobody wrote.
+    # bytes(3) is three zero bytes, which would be sent as a report nobody wrote.
     setup = Setup(0x21, 0x09, 0x0300, 0, 3)
     with MockBox() as mock:
         mock.set_imperfect_status(_allowed())
@@ -1714,7 +1714,7 @@ def test_a_packet_trigger_the_box_would_refuse_has_its_own_exception():
                 clip.bind_packet(base(direction=relative))
             with pytest.raises(RelativeDirectionError):
                 clip.unbind_packet(base(direction=relative))
-        # The removals of the seven sound keys are all that went out.
+        # The removals of the seven sound keys are all that was sent.
         sent = _clip_frames(d, mock, FrameType.CLIP_TRIGGER)
         assert len(sent) == sum(1 for r in refused if not r[2])
         assert all(p[4:7] == bytes(3) for p in sent)
@@ -1811,7 +1811,7 @@ def test_a_once_per_run_trigger_with_no_masked_bit_past_its_selector_is_refused(
         for shape in refused:
             _refused_for(lambda: clip.bind_packet(run(*shape)), reason)
         assert _clip_frames(d, mock, FrameType.CLIP_TRIGGER) == []
-        # The key is sound, so a removal goes out, and so does the same trigger bound on each packet.
+        # The key is sound, so a removal is sent, and so is the same trigger bound on each packet.
         for shape in refused:
             clip.unbind_packet(run(*shape))
             clip.bind_packet(run(*shape, once_per_run=False))
@@ -1868,7 +1868,7 @@ def test_a_consuming_packet_trigger_needs_the_imperfect_opt_in_and_goes_when_it_
     watching = ClipPacketTrigger(TrafficClass.HID_IN, 3, Direction.IN, ClipAction.START, b"\x07\x20", b"\xFF\x20")
     with MockBox() as mock, Device.with_mock(mock) as d:
         clip = d.clip()
-        # The bind goes out either way; the box holds the consuming one only under the opt-in.
+        # The bind is sent either way; the box holds the consuming one only under the opt-in.
         clip.bind_packet(consuming)
         clip.bind_packet(watching)
         assert clip.query_config().packet_triggers == [watching]
@@ -1973,7 +1973,7 @@ def test_ctypes_structs_match_the_c_header():
     This is not a decode concern, it is memory safety: `medius_event_stream_recv` writes
     `sizeof(MediusCatchEvent)` bytes into a buffer this module allocates, so a mirror short by one
     field lets the library write past the end of it on every event. A field added to the header and
-    missed here is silent until it corrupts the heap, which is exactly how it happened.
+    missed here is silent until it corrupts the heap.
     """
     import ctypes
     import re
@@ -2002,7 +2002,7 @@ def test_ctypes_structs_match_the_c_header():
     ):
         assert must in present, f"the header no longer declares {must}"
         assert hasattr(_native, must), f"{must} has no ctypes mirror to compare"
-    # sizeof alone lets a same-size field REORDER through, which is a silent misread of every event
+    # sizeof alone lets a same-size field reorder through, which is a silent misread of every event
     # rather than a crash. Compare each field's offset too.
     fields = {
         n: [f[0] for f in getattr(_native, n)._fields_]
@@ -2095,7 +2095,7 @@ def test_input_events_refuse_what_they_cannot_decode():
         with pytest.raises(medius.CaptureNotApplicableError):
             d.catch_events(CatchFilter.watch_class(Class.KEY).with_capture(8))
         # 0xFFFF is the every-id sentinel and a MediusCatchFilter cannot tell an exact id from the
-        # blanket, so across this ABI a media usage of 0xFFFF IS the class blanket. The native API
+        # blanket, so across this ABI a media usage of 0xFFFF is the class blanket. The native API
         # refuses it; here it must be the blanket, not something narrower.
         assert CatchFilter.watch(Usage.media(0xFFFF)).id is None
         assert CatchFilter.watch(Usage.media(0xFFFF)) == CatchFilter.watch_class(Class.MEDIA)
@@ -2104,7 +2104,7 @@ def test_input_events_refuse_what_they_cannot_decode():
 
 
 def test_the_filter_constructors_address_inputs_like_lock_does():
-    # A key enum goes straight into the input constructors, as it does for lock.
+    # A key enum goes straight into the input constructors.
     assert CatchFilter.watch(Key.A) == CatchFilter.watch(Usage.key(Key.A))
     assert CatchFilter.watch(Button.LEFT) == CatchFilter.watch(Usage.button(Button.LEFT))
     assert CatchFilter.watch(MediaKey.VOLUME_UP) == CatchFilter.watch(
@@ -2581,7 +2581,7 @@ def test_pan_frames_carry_the_motion_tag():
 
 
 def test_buttons_past_five_address_by_id():
-    # Button is an open id, not just the five named ones, so any u8 addresses one.
+    # Button is an open id, not only the five named ones, so any u8 addresses one.
     u = Usage.button(7)
     assert u.kind == Class.BUTTON
     assert u.id == 7
@@ -2666,7 +2666,7 @@ def test_transform_validation_errors_have_their_own_exception():
             d.transform(
                 Transform(TransformOp.REMAP, LockTarget.x(), LockTarget.button(Button.LEFT))
             )
-        # Both ops MOVE a value, so a field onto itself names no operation at all.
+        # Both ops move a value, so a field onto itself names no operation at all.
         with pytest.raises(TransformOpFieldsError):
             d.transform(Transform(TransformOp.SWAP, LockTarget.y(), LockTarget.y()))
         with pytest.raises(TransformOpFieldsError):
@@ -2728,7 +2728,7 @@ def test_a_mock_restart_is_recovered_and_the_clip_reports_its_loss():
         mock.restart()
         _await_restarts(d, 1)
         assert clip.lost() is True
-        # The held press and the retain setting went back to the restarted box.
+        # The held press and the retain setting were re-sent to the restarted box.
         assert _clip_frames(d, mock, FrameType.INJECT) == [bytes([0, 3, 0, 1])]
         assert _clip_frames(d, mock, FrameType.CLIP_SET) == [bytes([2, 1])]
         clip.append(ClipBuilder().move(1, 0))
@@ -2832,7 +2832,8 @@ def test_close_on_another_thread_ends_a_blocked_recv(open_stream):
 
 
 def _wait_for_a_call(handle):
-    # A call is running on the handle once its use count is up: a native call, not a sleep, decides.
+    # A call is running on the handle once its use count is up: the native call raises it, not a
+    # sleep.
     deadline = time.monotonic() + 2
     while handle._users == 0:
         assert time.monotonic() < deadline, "the call never started"

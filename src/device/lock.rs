@@ -24,8 +24,8 @@ impl Device {
         }
         let dir = lock_direction(class, direction)?.as_u8();
         // Serialised against recovery re-sends, or a stale lock can land after this one. Recorded
-        // before the write so a racing reconnect replays it; rolled back if the frame never went out,
-        // or the keepalive stays open for a lock nothing applies.
+        // before the write so a racing reconnect replays it; rolled back if the frame was never
+        // sent, or the keepalive stays open for a lock nothing applies.
         let _serial = self.link.reassert_guard();
         let undo = self
             .link
@@ -41,15 +41,15 @@ impl Device {
         sent
     }
 
-    /// `LOCK`: weigh physical input on a target while host injection still drives it; reverts on
+    /// `LOCK`: weigh native input on a target while host injection still drives it; reverts on
     /// control-PC silence.
     ///
-    /// `scale` is the percent of the physical value kept on that direction: [`LOCK_SCALE_BLOCK`]
+    /// `scale` is the percent of the native value kept on that direction: [`LOCK_SCALE_BLOCK`]
     /// blocks, [`LOCK_SCALE_PASS`] passes untouched, and above that amplifies, up to
     /// [`LOCK_SCALE_MAX`](crate::LOCK_SCALE_MAX) = 2.55x. [`lock`](Self::lock) and
     /// [`unlock`](Self::unlock) are its two ends.
     ///
-    /// Signed down to [`LOCK_SCALE_MIN`](crate::LOCK_SCALE_MIN): a negative scale weighs the physical
+    /// Signed down to [`LOCK_SCALE_MIN`](crate::LOCK_SCALE_MIN): a negative scale weighs the native
     /// value and reverses it, so `-100` inverts. The slot is picked by the delta's sign before the
     /// weigh, so a `Positive` of `-100` turns rightward motion leftward and leaves leftward motion
     /// alone. Axes only: [`Error::LockScaleUsage`](crate::Error::LockScaleUsage) otherwise, and
@@ -77,8 +77,8 @@ impl Device {
     /// # use medius::{Axis, Device, Direction, Result};
     /// # fn main() -> Result<()> {
     /// let device = Device::find()?;
-    /// device.scale(Axis::X, Direction::Against, 40)?;   // 40% of physical motion opposing the injection
-    /// device.scale(Axis::X, Direction::With, 130)?;     // 130% of physical motion along it
+    /// device.scale(Axis::X, Direction::Against, 40)?;   // 40% of native motion opposing the injection
+    /// device.scale(Axis::X, Direction::With, 130)?;     // 130% of native motion along it
     /// # Ok(()) }
     /// ```
     pub fn scale(
@@ -91,7 +91,7 @@ impl Device {
         self.send_lock(class, id, direction, scale)
     }
 
-    /// `LOCK`: block physical input on a target while host injection still drives it; reverts on
+    /// `LOCK`: block native input on a target while host injection still drives it; reverts on
     /// control-PC silence. [`scale`](Self::scale) at [`LOCK_SCALE_BLOCK`].
     pub fn lock(&self, target: impl Into<LockTarget>, direction: Direction) -> Result<()> {
         self.scale(target, direction, LOCK_SCALE_BLOCK)
@@ -100,7 +100,7 @@ impl Device {
     /// Release a lock, back to passing untouched: [`scale`](Self::scale) at [`LOCK_SCALE_PASS`].
     ///
     /// [`Direction::Both`] clears every direction of the target, the relative pair included, so no
-    /// bearing scale stays behind weighing unseen. Only a full pass reaches the relative pair this
+    /// bearing scale is left weighing motion. Only a full pass reaches the relative pair this
     /// way; a `Both` at any other scale does not.
     pub fn unlock(&self, target: impl Into<LockTarget>, direction: Direction) -> Result<()> {
         self.scale(target, direction, LOCK_SCALE_PASS)

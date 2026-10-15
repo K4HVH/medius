@@ -290,16 +290,16 @@ pub(crate) fn reapply_locked(
             &inject_payload(class, id, action.as_u8()),
         )?;
     }
-    // Scales: like injection, the firmware clears them after ~1 s of silence, so a longer blip leaves
-    // physical input untouched without this.
+    // Scales: like injection, the firmware clears them after ~1 s of silence, so a longer blip
+    // leaves native input untouched without this.
     for ((class, usage, direction), scale) in held_locks {
         send(
             FrameType::Lock,
             &lock_payload(class, usage, direction, scale),
         )?;
     }
-    // Catch table: a drop past the ~1 s silence window clears it, and the stream stays dead without
-    // this. Idempotent after a short drop.
+    // Catch table: a drop past the ~1 s silence window clears it, and the stream receives nothing
+    // without this. Idempotent after a short drop.
     for f in catch.values() {
         let (class, id) = f.wire();
         send(
@@ -324,8 +324,8 @@ pub(crate) fn reapply_locked(
             ),
         )?;
     }
-    // Transform table, likewise (§3.15): each goes out as state 1 (add/overwrite), idempotent after a
-    // short drop. An entry whose field the swapped-in device lacks is absent from the box.
+    // Transform table, likewise (§3.15): each is sent as state 1 (add/overwrite), idempotent after
+    // a short drop. An entry whose field the swapped-in device lacks is absent from the box.
     for t in transforms {
         send(
             FrameType::Transform,

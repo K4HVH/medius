@@ -77,7 +77,8 @@ pub const OPT_RENDER: u8 = 5;
 pub const OPT_SPREAD: u8 = 6;
 /// `OPTION(BEARING)` mode: each axis reads its sign against its bearing.
 pub const BEARING_PER_AXIS: u8 = 0;
-/// `OPTION(BEARING)` mode: the physical delta is projected onto the injected XY vector; motion across it is untouched.
+/// `OPTION(BEARING)` mode: the native delta is projected onto the injected XY vector; motion across
+/// it is unscaled.
 pub const BEARING_VECTOR: u8 = 1;
 
 /// Buffered-clip status selector: `QUERY [Q_CLIP]` → `RESP(CLIP)` (§4.15).
@@ -140,7 +141,7 @@ pub const CLIP_CFG_F_LOOP: u8 = 0x01;
 pub const CLIP_CFG_F_RETAIN: u8 = 0x02;
 pub const CLIP_CFG_F_FINALIZED: u8 = 0x04;
 pub const CLIP_CFG_F_RIDE: u8 = 0x08;
-/// Autolock scope bits (`CLIP_SET(AUTOLOCK)` value): physical-input classes the clip auto-locks
+/// Autolock scope bits (`CLIP_SET(AUTOLOCK)` value): native input classes the clip auto-locks
 /// (0 = none).
 pub const CLIP_LOCK_AIM: u8 = 0x01;
 pub const CLIP_LOCK_WHEEL: u8 = 0x02;
@@ -172,11 +173,11 @@ pub const BTN_COUNT: u8 = 5;
 /// run; a wider device caps here. Mirrors the firmware's `MAX_BUTTONS`.
 pub const MAX_BUTTONS: u8 = 16;
 
-/// Clear our injected press; defer to physical state.
+/// Clear the injected press; the native state applies.
 pub const ACT_SOFTREL: u8 = 0;
-/// Force the button down regardless of physical state.
+/// Force the button down regardless of native state.
 pub const ACT_PRESS: u8 = 1;
-/// Force the button up, masking a physical hold.
+/// Force the button up, masking a hold on the real device.
 pub const ACT_FORCEREL: u8 = 2;
 
 /// Inter-chip link to the host chip is up.
@@ -191,7 +192,7 @@ pub const H_INJECT_ON: u8 = 0x08;
 pub const H_RATE_CONFIDENT: u8 = 0x10;
 /// At least one lock is active (§4.2, v1.5.0).
 pub const H_LOCK_ON: u8 = 0x20;
-/// A catch subscription is active; physical-input events are streaming (§4.2, v1.6.0).
+/// A catch subscription is active; native input events are streaming (§4.2, v1.6.0).
 pub const H_CATCH_ON: u8 = 0x40;
 /// A keyboard is attached on the host chip, cloned and injectable (§4.2, v2.0.0).
 pub const H_KBD_ATT: u8 = 0x80;
@@ -201,7 +202,7 @@ pub const H_KBD_ATT: u8 = 0x80;
 pub const H_REWRITE_ON: u16 = 0x0100;
 /// The clone serves a patched descriptor set (§3.14) (v3.4.0).
 pub const H_PATCH_ON: u16 = 0x0200;
-/// A field transform is active (reserved; the transforms feature owns this bit) (v3.4.0).
+/// A field transform is active (v3.4.0).
 pub const H_TRANSFORM_ON: u16 = 0x0400;
 
 /// `CATCH` class: a mouse button (§3.9). Classes 0..3 are `LOCK`'s classes unchanged.
@@ -226,7 +227,7 @@ pub const CATCH_CLS_CONTROL: u8 = 8;
 pub const CATCH_CLS_EMIT: u8 = 9;
 /// `CATCH` class: bus lifecycle events (§3.9).
 pub const CATCH_CLS_BUS: u8 = 10;
-/// `CATCH` class: a control transfer a clip ran against the device (§3.9).
+/// `CATCH` class: a control transfer a clip ran against the real device (§3.9).
 pub const CATCH_CLS_CLIP_XFER: u8 = 11;
 /// `CATCH` class wildcard: every class (§3.9).
 pub const CATCH_CLS_ANY: u8 = 0xFF;
@@ -241,7 +242,7 @@ pub const CATCH_MAX_ENTRIES: usize = 32;
 pub const CATCH_CTRL_OK: u8 = 0x00;
 /// The PC got a STALL.
 pub const CATCH_CTRL_STALL: u8 = 0x01;
-/// NAKed until the host gave up (endpoint 0 only).
+/// NAKed until the PC gave up (endpoint 0 only).
 pub const CATCH_CTRL_NAK: u8 = 0x02;
 /// The bits of a `CATCH_CLS_CONTROL` event's flags that carry the handshake.
 pub const CATCH_CTRL_MASK: u8 = 0x03;
@@ -257,8 +258,7 @@ pub const CATCH_F_ZLP: u8 = 0x02;
 pub const CLK_RATE_NONE: i32 = i32::MIN;
 
 // `REWRITE` action byte (§3.14): what the top-ranked matching rule does to the packet. A report
-// class can `DROP`; only the control class may `ANSWER`/`STALL`/`NAK` or rewrite the device's
-// reply.
+// class can `DROP`; only the control class may `ANSWER`/`STALL`/`NAK` or rewrite the native reply.
 /// Leaves the matched packet untouched (shadows a broader rule).
 pub const RW_PASS: u8 = 0;
 /// Report class: the packet is not delivered.
@@ -269,15 +269,15 @@ pub const RW_PATCH: u8 = 2;
 /// The packet becomes the payload. On the control class, it overwrites the start of an OUT data stage
 /// and `wLength` is kept.
 pub const RW_REPLACE: u8 = 3;
-/// Control: answer from the payload without asking the device.
+/// Control: answer with the payload, without forwarding the request to the real device.
 pub const RW_ANSWER: u8 = 4;
 /// Control: protocol STALL.
 pub const RW_STALL: u8 = 5;
 /// Control: NAK on EP0 until the host times out; STALL on a control endpoint above 0.
 pub const RW_NAK: u8 = 6;
-/// Control IN: overwrite the device's reply at `off`.
+/// Control IN: overwrite the native reply at `off`.
 pub const RW_REPLY_PATCH: u8 = 7;
-/// Control IN: replace the device's reply with the payload.
+/// Control IN: replace the native reply with the payload.
 pub const RW_REPLY_REPLACE: u8 = 8;
 
 // `PATCH` section byte (§3.14). `APPLY`/`CLEAR` are engine verbs in the same byte, handled before the
@@ -294,7 +294,7 @@ pub const PATCH_SEC_STRING: u8 = 3;
 pub const PATCH_SEC_BOS: u8 = 4;
 /// `PATCH` engine verb: re-present the clone with the stored set (one replug to the game PC).
 pub const PATCH_APPLY: u8 = 0xFE;
-/// `PATCH` engine verb: erase this device's stored set, and re-present a patched clone unpatched.
+/// `PATCH` engine verb: erase the real device's stored set; a patched clone re-presents unpatched.
 pub const PATCH_CLEAR: u8 = 0xFF;
 
 /// Entries the box's rewrite table holds (`REWRITE_TAB_MAX`); past it a rule is refused, flagged in
@@ -350,14 +350,14 @@ pub const LOCK_DIR_POS: u8 = 1;
 pub const LOCK_DIR_NEG: u8 = 2;
 pub const LOCK_DIR_WITH: u8 = 3;
 pub const LOCK_DIR_AGAINST: u8 = 4;
-/// `LOCK` scale (§3.8), an `i16` on the wire: percent of the physical value kept. 0 blocks, 100
+/// `LOCK` scale (§3.8), an `i16` on the wire: percent of the native value kept. 0 blocks, 100
 /// passes untouched, above 100 amplifies, up to 255 (2.55x).
 pub const LOCK_SCALE_BLOCK: i16 = 0;
 pub const LOCK_SCALE_PASS: i16 = 100;
 pub const LOCK_SCALE_MAX: i16 = 255;
-/// Most negative `LOCK` scale. A negative scale weighs the physical value and reverses it: `-100`
-/// inverts, `-50` keeps half, reversed. The slot is picked by the delta's sign before the weigh, so a
-/// directional negative is well defined. A momentary usage carries one bit, so it takes
+/// Most negative `LOCK` scale. A negative scale weighs the native value and reverses it: `-100`
+/// inverts, `-50` keeps half, reversed. The slot is picked by the delta's sign before the weigh, so
+/// a directional negative is well defined. A momentary usage carries one bit, so it takes
 /// `0 ..= LOCK_SCALE_MAX`.
 pub const LOCK_SCALE_MIN: i16 = -LOCK_SCALE_MAX;
 
@@ -406,7 +406,7 @@ pub const LOG_VERBOSE: u8 = 4;
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum FrameType {
-    /// `MOVE`: relative-axis movement, motion-tagged (cursor dx/dy or wheel dz) (PC→box).
+    /// `MOVE`: relative-axis motion, motion-tagged (cursor dx/dy or wheel dz) (PC→box).
     Move = 0x01,
     /// `INJECT`: set a momentary-usage override (button/key/media), class-tagged (PC→box).
     Inject = 0x03,
@@ -424,7 +424,7 @@ pub enum FrameType {
     Led = 0x09,
     /// `LOCK`: lock/unlock an axis or button edge (PC→box).
     Lock = 0x0A,
-    /// `CATCH`: subscribe to the physical-input event stream (PC→box).
+    /// `CATCH`: subscribe to the native input event stream (PC→box).
     Catch = 0x0B,
     /// `MOTION_EVENT`: one unsolicited relative-axis catch event (dx/dy/dz/dpan); `SEQ` rolling (box→PC).
     MotionEvent = 0x0C,
@@ -435,7 +435,7 @@ pub enum FrameType {
     TrafficEvent = 0x16,
     /// `OPTION`: set a persistent box option by id (PC→box).
     Option = 0x11,
-    /// `CLIP_APPEND`: append buffered-clip entries to the device ring; `SEQ` = append seq (PC→box).
+    /// `CLIP_APPEND`: append buffered-clip entries to the box's ring; `SEQ` = append seq (PC→box).
     ClipAppend = 0x12,
     /// `CLIP_CTRL`: a clip engine verb (start/stop/pause/resume/restart/toggle/clear/finalize) (PC→box).
     ClipCtrl = 0x13,
@@ -454,7 +454,7 @@ pub enum FrameType {
     /// `TRANSFER`: one control transfer against the real device, replied to by `TransferResp`
     /// (PC→box, §3.14).
     Transfer = 0x1A,
-    /// `TRANSFER_RESP`: the device's reply to a `TRANSFER`; `SEQ` echoes the request (box→PC, §3.14).
+    /// `TRANSFER_RESP`: the native reply to a `TRANSFER`; `SEQ` echoes the request (box→PC, §3.14).
     TransferResp = 0x1B,
     /// `REWRITE`: add/overwrite/remove one on-box rewrite rule, fire-and-forget (PC→box, §3.14).
     Rewrite = 0x1C,

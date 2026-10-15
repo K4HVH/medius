@@ -74,12 +74,12 @@ class ClipBuilder(Handle):
         return self
 
     def release(self, usage: Usage) -> "ClipBuilder":
-        """A frame soft-releasing a usage, leaving a physical hold."""
+        """A frame soft-releasing a usage, leaving a hold on the real device."""
         check(self._call(_native.lib.medius_clip_builder_release, usage._c))
         return self
 
     def force_release(self, usage: Usage) -> "ClipBuilder":
-        """A frame force-releasing a usage, masking a physical hold too."""
+        """A frame force-releasing a usage, masking a hold on the real device too."""
         check(self._call(_native.lib.medius_clip_builder_force_release, usage._c))
         return self
 
@@ -168,7 +168,7 @@ class ClipHandle(Handle):
         """Append the builder's entries to the ring as whole-entry frames, each with the next append
         seq.
 
-        Every entry is checked before the first frame goes out, so a refusal sends nothing: a frame
+        Every entry is checked before the first frame is sent, so a refusal sends nothing: a frame
         past `CLIP_EDGES_MAX` edges or `CLIP_RAW_MAX` raw reports (`ClipFrameCountError`), one
         encoding past `CLIP_ENTRY_MAX` bytes (`ClipFrameTooLongError`), a raw report whose direction
         is neither `Direction.IN` nor `Direction.OUT` (`RawDirectionError`, or

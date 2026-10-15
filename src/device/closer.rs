@@ -9,9 +9,9 @@ pub(crate) trait Close: Send + Sync + Debug {
 /// Closes a stream from a thread that holds none of its handles, such as one whose stream was
 /// moved into the thread receiving on it.
 ///
-/// [`close`](Self::close) ends the stream as the stream's `close` method does: every receive blocked
-/// on it returns at once, and every receive after it too. It holds the stream weakly, so it keeps no
-/// subscription alive, and closing one whose every handle has dropped does nothing.
+/// [`close`](Self::close) ends the stream as the stream's `close` method does: every receive
+/// blocked on it returns at once, and every receive after it too. It holds the stream weakly, so it
+/// keeps no subscription open, and closing one whose every handle has dropped does nothing.
 #[derive(Clone, Debug)]
 pub struct StreamCloser(pub(crate) Weak<dyn Close>);
 

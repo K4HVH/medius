@@ -12,8 +12,8 @@ use super::closer::{Close, StreamCloser};
 
 /// Receiver for the device `LOG` stream.
 ///
-/// Every `LogStream` the device hands out reads one shared queue, so each line goes to one of
-/// them. A clone shares its stream's [`close`](Self::close).
+/// Every `LogStream` from one [`Device`] reads one shared queue, so each line goes to one of them.
+/// A clone shares its stream's [`close`](Self::close).
 #[derive(Clone, Debug)]
 pub struct LogStream {
     rx: flume::Receiver<LogLine>,
@@ -53,7 +53,7 @@ impl LogStream {
         self.close.closed.load(Ordering::Acquire)
     }
 
-    /// Block until the next `LOG` line; `Disconnected` once the box goes away or the stream is
+    /// Block until the next `LOG` line; `Disconnected` once the box disconnects or the stream is
     /// closed.
     pub fn recv(&self) -> Result<LogLine> {
         if self.closed() {

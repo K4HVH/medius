@@ -7,7 +7,7 @@ pub struct SpreadStatus {
     pub percent: u16,
     /// Release interval in microseconds. 0 until the box learns the host's command period, while
     /// `percent` is 0, and before the box settles where the motion is held; in each case the whole
-    /// delta goes out on the next report.
+    /// delta is emitted on the next report.
     pub span_us: u32,
 }
 

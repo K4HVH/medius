@@ -66,8 +66,8 @@ impl Device {
     }
 
     // No opt-in pre-check, so the async wrapper can gate on the async query path. The caller holds
-    // the re-assert guard, so a concurrent remove/clear cannot interleave. Recorded before the write
-    // so a racing reconnect replays it; rolled back if the frame never went out.
+    // the re-assert guard, so a concurrent remove/clear cannot interleave. Recorded before the
+    // write so a racing reconnect replays it; rolled back if the frame was never sent.
     fn set_rewrite_send_locked(&self, rule: &RewriteRule) -> Result<()> {
         let stored = to_stored(rule);
         let undo = self.link.desired().lock().apply_rewrite(stored);

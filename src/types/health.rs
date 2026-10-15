@@ -25,7 +25,7 @@ pub struct Health {
     pub rate_confident: bool,
     /// At least one lock is active.
     pub lock_on: bool,
-    /// A catch subscription is active; physical-input events are streaming.
+    /// A catch subscription is active; native input events are streaming.
     pub catch_on: bool,
     /// A keyboard is attached on the host chip, cloned and injectable.
     pub kbd_attached: bool,
@@ -33,7 +33,7 @@ pub struct Health {
     pub rewrite_on: bool,
     /// The clone serves a patched descriptor set (§3.14) (v3.4.0).
     pub patch_on: bool,
-    /// A field transform is active (reserved; the transforms feature owns this bit) (v3.4.0).
+    /// A field transform is active (v3.4.0).
     pub transform_on: bool,
 }
 

@@ -157,13 +157,13 @@ jobs:
     - name: Check if publishable
       run: cargo publish -p medius --dry-run --allow-dirty
 
-    - name: The C ABI packages against this medius
+    - name: Package the C ABI against this medius
       # Packaged together, the C ABI builds against the medius packaged beside it, not the one on crates.io,
       # which lacks whatever the C ABI calls that this release adds. Cargo never rebuilds a registry crate
       # it has built at that version, so a cached target would hold the medius an earlier push packaged.
       run: cargo package -p medius -p medius-capi --allow-dirty --target-dir "$RUNNER_TEMP/package"
 
-    - name: The crate, the C ABI and the Python binding carry one version
+    - name: Check the crate, the C ABI and the Python binding share one version
       # A release publishes all three. medius 3.4.0 shipped while the Python binding still said
       # 3.3.1, so PyPI never got that version at all.
       run: |
@@ -200,7 +200,7 @@ jobs:
         CRATE_VERSION=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name=="medius") | .version')
         echo "version=$CRATE_VERSION" >> $GITHUB_OUTPUT
 
-        # crates.io rejects requests without a User-Agent, so this MUST send one or the check never
+        # crates.io rejects requests without a User-Agent, so this must send one or the check never
         # matches and the job tries to re-publish every push. A 404 (curl exit 22) is a crate not there
         # yet; any other failure stops the job rather than read as "not published".
         published() {
@@ -217,7 +217,7 @@ jobs:
           echo "Version $CRATE_VERSION not found on crates.io, proceeding with publish"
           echo "should_publish=true" >> $GITHUB_OUTPUT
         fi
-        # The C ABI separately, so one that failed after medius went out is published on the next push.
+        # The C ABI separately, so the next push publishes one that failed after medius published.
         if published medius-capi; then
           echo "should_publish_capi=false" >> $GITHUB_OUTPUT
         else
@@ -234,7 +234,7 @@ jobs:
 
     - name: Publish the C ABI to crates.io
       # After medius: it depends on the version just published, and cargo waits for the index to have it.
-      # A failure here still lets the GitHub release, PyPI and the C archives go out; the next push
+      # A failure here still lets the GitHub release, PyPI and the C archives publish; the next push
       # publishes the C ABI.
       if: steps.check_version.outputs.should_publish_capi == 'true'
       continue-on-error: true
@@ -438,7 +438,7 @@ jobs:
       run: cargo build -p medius-capi --features mock --verbose
     - name: Test (mock)
       run: cargo test -p medius-capi --features mock --verbose
-    - name: The header compiles as C99, C23 and C++17 and links (Linux)
+    - name: Compile and link the header as C99, C23 and C++17 (Linux)
       if: runner.os == 'Linux'
       run: |
         printf '#include <medius.h>\nint main(void) { return medius_abi_version() == MEDIUS_ABI_VERSION ? 0 : 1; }\n' > abi.c

@@ -65,7 +65,7 @@ fn keepalive_loop(ctx: KeepaliveCtx) {
         let idle = ctx.desired.lock().is_idle();
         if now < tick_at {
             // After a command that can re-present the clone, check every slice, not every tick, so
-            // released state goes back as soon as the clone is up.
+            // released state is re-sent as soon as the clone is up.
             if pending.is_none()
                 && !idle
                 && ctx.restart.expecting_represent(now)

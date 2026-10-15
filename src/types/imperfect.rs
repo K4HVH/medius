@@ -1,15 +1,15 @@
 //! Decoded `RESP(IMPERFECT)`: the imperfect-clone opt-in and the clone's status against it (§4.14).
 
-/// Imperfect-clone opt-in and the attached device's status against it (§4.14).
+/// Imperfect-clone opt-in and the real device's status against it (§4.14).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct ImperfectStatus {
-    /// Opt-in: cloning a device the box cannot clone exactly is allowed.
+    /// Opt-in: cloning a device the box cannot clone faithfully is allowed.
     pub allowed: bool,
     /// The attached device has more IN endpoints live at once than the box has transmit FIFOs (four),
     /// or more than six HID interfaces, or runs at high speed.
     pub over_capacity: bool,
-    /// The live clone is inexact: an opted-in device the box can't clone exactly, a forced rate, or
-    /// a served descriptor-patch set.
+    /// The live clone is imperfect: an opted-in device the box can't clone faithfully, a forced
+    /// rate, or a served descriptor-patch set.
     pub clone_imperfect: bool,
 }
 

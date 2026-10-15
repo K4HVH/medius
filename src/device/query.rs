@@ -131,7 +131,7 @@ impl Device {
         }
     }
 
-    /// Render texture, whether native motion goes through it, and whether a profile has armed
+    /// Render texture, whether native motion is rendered, and whether a profile has armed
     /// (§4.14).
     pub fn query_render(&self) -> Result<RenderStatus> {
         let payload = self.link.query_option(OPT_RENDER)?;

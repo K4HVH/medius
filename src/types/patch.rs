@@ -180,11 +180,11 @@ pub struct PatchSet {
     /// The stored set differs from the served one in patches, bytes or order: not applied yet,
     /// changed or emptied since, refused, or held back with the opt-in off.
     pub pending: bool,
-    /// The stored set failed a check at the last presentation and is unchanged since, so the device
-    /// is served unpatched: a clone check, or a consistency check the unpatched descriptors pass (a
-    /// descriptor's length or type fields, `bcdUSB` 0x0201+ with no BOS, a HID `wDescriptorLength`,
-    /// an interrupt-IN `wMaxPacketSize` below the report). The box logs which. A set change, a clear,
-    /// a passing presentation or a detach resets it.
+    /// The stored set failed a check at the last presentation and is unchanged since, so the clone
+    /// serves the descriptors unpatched: a clone check, or a consistency check the unpatched
+    /// descriptors pass (a descriptor's length or type fields, `bcdUSB` 0x0201+ with no BOS, a HID
+    /// `wDescriptorLength`, an interrupt-IN `wMaxPacketSize` below the report). The box logs which.
+    /// A set change, a clear, a passing presentation or a detach resets it.
     pub refused: bool,
     /// The box refused the last new patch or overwrite for room: 16 entries in use, or the 1024-byte
     /// pool full. The next set change, or a clear, resets it.

@@ -296,10 +296,10 @@ impl ClipHandle {
     /// Append the builder's entries to the ring, in whole-entry frames each stamped with the next
     /// append-sequence number. Fire-and-forget.
     ///
-    /// Every entry is checked before the first frame goes out, so a refusal sends nothing: a
+    /// Every entry is checked before the first frame is sent, so a refusal sends nothing: a
     /// [`ClipFrame`](crate::ClipFrame) past its edge or raw-report count or encoding past
-    /// [`CLIP_ENTRY_MAX`](crate::CLIP_ENTRY_MAX), a raw report neither IN nor OUT, or a transfer whose
-    /// data does not match its setup packet.
+    /// [`CLIP_ENTRY_MAX`](crate::CLIP_ENTRY_MAX), a raw report neither IN nor OUT, or a transfer
+    /// whose data does not match its setup packet.
     pub fn append(&self, clip: &ClipBuilder) -> Result<()> {
         let chunks = encode_chunks(clip, MAX_PAYLOAD)?;
         let _serial = self.link.reassert_guard();
@@ -314,7 +314,7 @@ impl ClipHandle {
         self.link.send(FrameType::ClipCtrl, &clip_op_payload(op))
     }
 
-    // Recorded once the frame is out, under the guard a reconnect takes to read the clip back, so
+    // Recorded once the frame is sent, under the guard a reconnect takes to read the clip back, so
     // neither lands between the two.
     fn set(&self, id: u8, value: u8) -> Result<()> {
         let _serial = self.link.reassert_guard();
@@ -326,7 +326,7 @@ impl ClipHandle {
 
     // --- Scalar settings (`CLIP_SET`). Set `retain` before the first `append`. ---
 
-    /// Auto-lock these physical-input groups while the clip plays (clip-owned, released on stop).
+    /// Auto-lock these native input groups while the clip plays (clip-owned, released on stop).
     /// Fire-and-forget.
     pub fn set_autolock(&self, scope: &[Blanket]) -> Result<()> {
         self.set(CLIP_SET_AUTOLOCK, blanket_scope(scope))
@@ -396,8 +396,9 @@ impl ClipHandle {
     /// - `once_per_run` without one stream (a report class, a concrete id, and `IN` or `OUT`),
     ///   without match bytes past its selector, or with no masked bit in them.
     ///
-    /// A bearing-relative direction is [`Error::RelativeDirection`](crate::Error::RelativeDirection).
-    /// Match and mask go to the box as given, so the key named here is the key the box holds.
+    /// A bearing-relative direction is
+    /// [`Error::RelativeDirection`](crate::Error::RelativeDirection). Match and mask are sent as
+    /// given, so the key named here is the key the box holds.
     ///
     /// The box makes three checks this call cannot: a consuming trigger needs
     /// [`allow_imperfect_clones(true)`](crate::Device::allow_imperfect_clones), the set holds
@@ -406,8 +407,8 @@ impl ClipHandle {
     /// was: a new key is not held, and a held key keeps its trigger, action and flags. To confirm a
     /// bind, compare what [`query_config`](Self::query_config) reads back with what was bound.
     ///
-    /// The crate records a bind once its frame is out, taken or not, and the keepalive runs for what
-    /// it records. A refused bind stays recorded until [`unbind_packet`](Self::unbind_packet),
+    /// The crate records a bind once its frame is sent, held or not, and the keepalive runs for
+    /// what it records. A refused bind stays recorded until [`unbind_packet`](Self::unbind_packet),
     /// [`clear_triggers`](Self::clear_triggers), or a reconnect that adopts what the box holds.
     pub fn bind_packet(&self, trigger: &ClipPacketTrigger) -> Result<()> {
         validate_packet_trigger(trigger)?;

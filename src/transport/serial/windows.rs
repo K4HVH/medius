@@ -2,7 +2,7 @@
 //!
 //! Windows serialises every request on a synchronous file object, duplicated handles included: a
 //! reader parked in `ReadFile` holds the port for the read timeout and a concurrent `WriteFile`
-//! waits, so injection lands only between reads. `serial2` opens the port with
+//! waits, so commands are sent only between reads. `serial2` opens the port with
 //! `FILE_FLAG_OVERLAPPED` and completes each request through a separate `OVERLAPPED`, so a read and
 //! a write are in flight at once.
 
@@ -249,7 +249,7 @@ impl RxWait {
         }
         Self::interrupt(port);
         if !self.signalled(RETIRE_WAIT)? {
-            // SAFETY: the port's handle is open and `op` is the pending request's own.
+            // SAFETY: the port's handle is open and `op` belongs to the pending request.
             unsafe { CancelIoEx(handle(port), &raw const (*self.op.as_ptr()).overlapped) };
             if !self.signalled(RETIRE_WAIT)? {
                 return Err(io::Error::new(

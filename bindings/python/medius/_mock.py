@@ -228,8 +228,8 @@ class MockBox:
         _native.lib.medius_mock_detach(self._handle, bool(back_within_grace))
 
     def attach(self):
-        """Simulate the device attaching again: inside a detach's grace the clone stays as it is; after
-        teardown a fresh clone starts with nothing to release."""
+        """Simulate the real device attaching again: inside a detach's grace the clone stays as it
+        is; after teardown a fresh clone starts with nothing to release."""
         _native.lib.medius_mock_attach(self._handle)
 
     def silent(self):

@@ -119,7 +119,7 @@ impl InputStream {
         self.state.lock().pump(&self.filters, event);
     }
 
-    /// Block until the next input event; `Disconnected` once the box goes away or the stream is
+    /// Block until the next input event; `Disconnected` once the box disconnects or the stream is
     /// closed.
     pub fn recv(&self) -> Result<InputEvent> {
         let _turn = self.turn.lock();

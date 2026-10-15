@@ -70,7 +70,7 @@ impl Input {
 pub struct InputEvent {
     /// Report arrival stamp, in the stamping chip's microseconds.
     pub ts_us: u32,
-    /// Which chip's clock stamped it; always [`ClockDomain::HostChip`] for physical input.
+    /// Which chip's clock stamped it; always [`ClockDomain::HostChip`] for native input.
     pub clock: ClockDomain,
     /// What happened.
     pub input: Input,

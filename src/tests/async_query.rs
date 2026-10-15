@@ -51,7 +51,7 @@ fn async_movement_verbs_send_the_same_frames_as_the_sync_ones() {
             .map(|fr| fr.payload)
             .collect()
     };
-    // The async surface delegates; pin that each verb reaches the wire with its flags.
+    // The async surface delegates; pin that each verb is sent with its flags.
     assert_eq!(
         moves(&|d| {
             d.move_rel_now(7, -2).unwrap();

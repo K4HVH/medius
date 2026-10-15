@@ -12,8 +12,7 @@ use crate::types::{Axis, Class, ClockEstimate, Direction, Usage};
 /// Classes 0 to 3 are `LOCK`'s classes at the same byte values. Classes 4 to 11 are the
 /// byte-oriented traffic the box relays; [`TrafficClass`] is that half alone. After the real device
 /// STALLs an interrupt or bulk IN endpoint, its [`HidIn`](Self::HidIn) or vendor IN events stop
-/// until the game PC clears the halt: the box passes the STALL to the PC and does not clear it
-/// itself.
+/// until the game PC clears the halt: the box relays the STALL to the PC and does not clear it.
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum CatchClass {
@@ -41,7 +40,7 @@ pub enum CatchClass {
     /// Control transaction the game PC received, on any control endpoint; `id` is the endpoint
     /// number (0 = EP0). On EP0 only class and vendor requests raise one.
     Control = CATCH_CLS_CONTROL,
-    /// Bytes the clone put on the wire; `id` is the endpoint number, `direction`
+    /// Bytes the clone emitted; `id` is the endpoint number, `direction`
     /// [`IN`](Direction::IN).
     Emit = CATCH_CLS_EMIT,
     /// Bus lifecycle; no id.
@@ -130,7 +129,7 @@ pub enum TrafficClass {
     /// Control transaction the game PC received, on any control endpoint; `id` is the endpoint
     /// number (0 = EP0). On EP0 only class and vendor requests raise one.
     Control = CATCH_CLS_CONTROL,
-    /// Bytes the clone put on the wire; `id` is the endpoint number, `direction`
+    /// Bytes the clone emitted; `id` is the endpoint number, `direction`
     /// [`IN`](Direction::IN).
     Emit = CATCH_CLS_EMIT,
     /// Bus lifecycle; no id.

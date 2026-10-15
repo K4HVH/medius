@@ -338,8 +338,8 @@ mod mock_roundtrip {
         .with_payload(vec![0x5A; len])
     }
 
-    // The box counts payload bytes only, and an overwrite frees its old payload before the new one is
-    // costed. A rule past what is left never reaches the wire.
+    // The box counts payload bytes only, and an overwrite frees its old payload before the new one
+    // is costed. A rule past what is left is never sent.
     #[test]
     fn the_payload_pool_is_checked_before_the_wire() {
         use crate::REWRITE_PAYLOAD_POOL;
@@ -635,7 +635,7 @@ fn health_u16_high_bits_decode() {
     assert!(h.link_up && !h.mouse_attached);
     assert!(h.rewrite_on && h.patch_on && h.transform_on);
     assert_eq!(h.to_flags(), 0x0701);
-    // A box that answers only the low byte still decodes bits 0-7, high byte clear.
+    // A box that replies with only the low byte still decodes bits 0-7, high byte clear.
     let lo = Health::from_flags(0x80);
     assert!(lo.kbd_attached && !lo.rewrite_on && !lo.patch_on && !lo.transform_on);
 }

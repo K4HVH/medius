@@ -65,7 +65,7 @@ pub const MEDIUS_CATCH_CLASS_VENDOR_BULK: u8 = 7;
 /// A control transaction the game PC received, keyed by endpoint number (0 = EP0); on EP0, class
 /// and vendor requests only.
 pub const MEDIUS_CATCH_CLASS_CONTROL: u8 = 8;
-/// Bytes the clone put on the wire, keyed by endpoint number, direction IN.
+/// Bytes the clone emitted, keyed by endpoint number, direction IN.
 pub const MEDIUS_CATCH_CLASS_EMIT: u8 = 9;
 /// Bus lifecycle: reset, suspend, configuration and interface changes, attach and detach.
 pub const MEDIUS_CATCH_CLASS_BUS: u8 = 10;
@@ -128,8 +128,8 @@ pub enum MediusEmitMode {
     Fixed = 2,
 }
 
-/// Motion render texture: off is the paced fill; the rest render the device's learned texture and
-/// differ only in the onboard smoother.
+/// Motion render texture: off is the paced fill; the rest render the learned native report texture
+/// and differ only in the onboard smoother.
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MediusRenderMode {
@@ -174,16 +174,15 @@ pub enum MediusDirection {
     Against = 4,
 }
 
-/// How the box reads whether physical motion runs with or against its injection.
+/// How the box reads whether native motion runs with or against injected motion.
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MediusBearingMode {
     /// Each axis compares its sign against its bearing.
     PerAxis = 0,
-    /// Projects the physical delta onto the injected XY vector. One relative scale, the lower of
+    /// Projects the native delta onto the injected XY vector. One relative scale, the lower of
     /// X's and Y's, governs both axes and is what reads back. Each axis's absolute scale then
-    /// applies to what the projection left, not to the report's sign: it governs what reaches the
-    /// PC.
+    /// applies to what the projection left, not to the report's sign: it governs what is emitted.
     Vector = 1,
 }
 
@@ -197,7 +196,7 @@ pub struct MediusBearing {
     pub mode: MediusBearingMode,
 }
 
-/// `LOCK` scale: percent of the physical value kept. 0 blocks, 100 passes, above 100 amplifies up
+/// `LOCK` scale: percent of the native value kept. 0 blocks, 100 passes, above 100 amplifies up
 /// to 255 (2.55x), and a negative scale reverses what it keeps, down to `MEDIUS_LOCK_SCALE_MIN`.
 pub const MEDIUS_LOCK_SCALE_BLOCK: i16 = 0;
 pub const MEDIUS_LOCK_SCALE_PASS: i16 = 100;
@@ -311,7 +310,7 @@ pub enum MediusAxis {
     Pan = 3,
 }
 
-/// When a delta reaches the game PC, against movement riding.
+/// When a delta is emitted, against movement riding.
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MediusMoveTiming {
@@ -419,8 +418,8 @@ pub struct MediusLockTarget {
     pub usage: MediusUsage,
 }
 
-/// The cloned device's primary kind, from its HID report descriptors, with its Boot declarations deciding
-/// between a mouse and a keyboard.
+/// The cloned device's primary kind, from its HID report descriptors, with its Boot declarations
+/// selecting between a mouse and a keyboard.
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MediusDeviceKind {
@@ -567,17 +566,16 @@ pub struct MediusRate {
 /// Narrowed fields saturate rather than wrap. The three drop counters are full width and do not
 /// saturate, so a count keeps rising while loss continues.
 ///
-/// `tx_drops`, `link_rx_drops` and `host_rx_drops` are lost player input and should read 0.
+/// `tx_drops`, `link_rx_drops` and `host_rx_drops` count lost input and should read 0.
 /// `relay_drops` is relayed traffic and commands that went no further, none of it native input. A
-/// rise across a burst of your own commands can mean some never reached the box. A lost release can
+/// rise across a burst of commands can mean some never reached the box. A lost release can
 /// leave a key held, and `medius_device_reapply` re-sends only what is held, so send the releases
 /// again or call `medius_device_reset`.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MediusStats {
     pub inject_emits: u32,
-    /// Reports the clone's TX queue could not hold: player input the game PC never saw. Should
-    /// stay 0.
+    /// Reports the clone's TX queue could not hold, never emitted to the game PC. Should stay 0.
     pub tx_drops: u16,
     pub tx_merges: u16,
     pub tx_maxdepth: u8,
@@ -586,15 +584,15 @@ pub struct MediusStats {
     pub reset_count: u16,
     pub config_count: u16,
     /// Input-carrying frames the device chip could not take off the inter-chip link: a mouse report
-    /// or injected delta that never reached the wire. Should stay 0.
+    /// or injected delta never emitted. Should stay 0.
     pub link_rx_drops: u32,
     /// The same count for the host chip, relayed over the link.
     pub host_rx_drops: u32,
     /// Relayed traffic and commands that went no further: a vendor IN packet that found its
-    /// endpoint's queue full of the control PC's RAW packets, or a device's zero-length packet
-    /// answering a poll the PC did not make (the one poll the box runs ahead of a suspended PC); an
-    /// OUT packet the box could not queue, that failed three times on the device's bus, or that a
-    /// bus reset or SET_INTERFACE overtook; a RAW OUT packet with no room to wait; a relayed
+    /// endpoint's queue full of the control PC's RAW packets, or a native zero-length packet
+    /// replying to a poll the PC did not make (the one poll the box runs ahead of a suspended PC);
+    /// an OUT packet the box could not queue, that failed three times on the real device's bus, or
+    /// that a bus reset or SET_INTERFACE overtook; a RAW OUT packet with no room to wait; a relayed
     /// request or a flagged MOVE the box could not queue; any frame other than native input that
     /// either chip's link receive ring dropped; and a frame from the control PC the box's receive
     /// ring had no room for (one a frame), or an overrun of the control port's UART (one an
@@ -615,7 +613,7 @@ pub struct MediusLockEntry {
     /// `MediusDirection`, so the boundary can validate it; C++ (`enum : uint8_t`) needs a cast to
     /// assign it to one.
     pub direction: u8,
-    /// Percent of the physical value kept: 0 blocks, 100 passes, above 100 amplifies, negative
+    /// Percent of the native value kept: 0 blocks, 100 passes, above 100 amplifies, negative
     /// reverses what it keeps. A momentary usage carries one bit, so the box stores the block or
     /// pass it amounts to and reports nothing between.
     ///
@@ -919,8 +917,8 @@ pub struct MediusPatchSet {
     pub pending: u8,
     /// When last presented, the stored set failed a check the unpatched descriptors pass (a clone
     /// check, or a consistency check: descriptor length or type fields, `bcdUSB` with no BOS, a HID
-    /// `wDescriptorLength`, an interrupt-IN `wMaxPacketSize`) and is unchanged since, so the device
-    /// is served unpatched.
+    /// `wDescriptorLength`, an interrupt-IN `wMaxPacketSize`) and is unchanged since, so the clone
+    /// serves the descriptors unpatched.
     pub refused: u8,
     /// The box refused the last new patch or overwrite for room: 16 entries used, or the 1024-byte
     /// pool full. The next set change or clear resets it.
@@ -988,7 +986,7 @@ pub struct MediusEmitPaceStatus {
     pub mode: MediusEmitMode,
     pub fixed_hz: u16,
     pub resolved_hz: u16,
-    /// Requested forced wire rate, in Hz; 0 keeps the native interval.
+    /// Requested forced poll rate, in Hz; 0 keeps the native interval.
     pub force_hz: u16,
     /// What the clone's input endpoints advertise now, in Hz; 0 = no clone.
     pub advertised_hz: u16,
@@ -996,7 +994,7 @@ pub struct MediusEmitPaceStatus {
     pub force_active: u8,
 }
 
-/// Render mode, whether native motion goes through it, and whether the attached device's profile is
+/// Render mode, whether native motion is rendered, and whether the real device's profile is
 /// learned.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1004,7 +1002,7 @@ pub struct MediusRenderStatus {
     pub mode: MediusRenderMode,
     /// 1 when the model renders native motion, 0 when it is relayed.
     pub full: u8,
-    /// 1 once the box has learned the attached device's profile; nothing renders before that.
+    /// 1 once the box has learned the real device's profile; nothing renders before that.
     pub ready: u8,
 }
 
@@ -1015,12 +1013,12 @@ pub struct MediusSpreadStatus {
     /// Percent of the learned command interval. 0 is off; above 100 overlaps.
     pub percent: u16,
     /// Release span in microseconds. 0 until the box learns the host's command period, while
-    /// `percent` is 0, and before the box settles where motion is held; the whole delta then goes
-    /// out on the next report.
+    /// `percent` is 0, and before the box settles where motion is held; the whole delta is then
+    /// emitted on the next report.
     pub span_us: u32,
 }
 
-/// Device-side clip lifecycle state (`medius_clip_query_status`).
+/// Box-side clip lifecycle state (`medius_clip_query_status`).
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MediusClipState {
@@ -1034,7 +1032,7 @@ pub enum MediusClipState {
     Faulted = 3,
 }
 
-/// Device-side clip ring and playback counters (the `RESP(CLIP)` runtime view).
+/// Box-side clip ring and playback counters (the `RESP(CLIP)` runtime view).
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MediusClipStatus {
@@ -1049,10 +1047,10 @@ pub struct MediusClipStatus {
     pub underruns: u16,
     pub overruns: u16,
     pub seq_gaps: u16,
-    /// Clip transfers the device completed.
+    /// Clip transfers the real device completed.
     pub xfers: u16,
     /// Clip transfers that ended otherwise: refused, no reply, no room in the box's queue, or
-    /// dropped behind one the device did not reply to.
+    /// dropped behind one the real device did not reply to.
     pub xfer_errs: u16,
     /// Raw reports and transfers discarded with the imperfect-clone opt-in off.
     pub gated: u16,
@@ -1091,8 +1089,8 @@ const _: () = {
 /// `match_bytes[0..match_len]` and `mask[0..mask_len]` are the masked head compare, equal in
 /// length: a packet matches when `head[i] & mask[i] == match_bytes[i]` for each, and an empty match
 /// takes every packet on the address. For `MEDIUS_CATCH_CLASS_CONTROL` the head is the 8 setup
-/// bytes, then the first 8 bytes of OUT data. A `MEDIUS_CATCH_CLASS_EMIT` trigger sees the clip's
-/// frames as well as native and injected ones, but none of the clip's raw reports.
+/// bytes, then the first 8 bytes of OUT data. A `MEDIUS_CATCH_CLASS_EMIT` trigger matches the
+/// clip's frames as well as native and injected ones, but none of the clip's raw reports.
 ///
 /// `medius_clip_bind_packet` and the box refuse a trigger no packet can match: a match bit outside
 /// its mask (packet bytes are masked before the compare), or a direction the class never carries.
@@ -1120,8 +1118,8 @@ pub struct MediusClipPacketTrigger {
     pub direction: u8,
     /// A `MEDIUS_CLIP_ACTION_*` value.
     pub action: u8,
-    /// Drop each packet the trigger matches as the top-ranked trigger, before the rewrite table
-    /// sees it. Dropping alters the wire, so the box holds a consuming trigger only under
+    /// Drop each packet the trigger matches as the top-ranked trigger, ahead of the rewrite table.
+    /// Dropping makes the clone imperfect, so the box holds a consuming trigger only under
     /// `medius_device_allow_imperfect_clones`, on any class but `CONTROL`.
     pub consume: u8,
     /// Drive `action` on the first of a run of matching packets, so a device repeating a held state
@@ -1137,7 +1135,7 @@ pub struct MediusClipPacketTrigger {
     pub match_len: u16,
     /// Valid bytes in `mask` (must equal `match_len`).
     pub mask_len: u16,
-    /// Every set bit of `match_bytes[0..match_len]` is set in `mask`; both go to the box as given.
+    /// Every set bit of `match_bytes[0..match_len]` is set in `mask`; both are sent as given.
     pub match_bytes: [u8; MEDIUS_MAX_PKT_MATCH],
     pub mask: [u8; MEDIUS_MAX_PKT_MATCH],
     /// Packets matched as the top-ranked trigger since bind or overwrite; saturates. A
@@ -1204,7 +1202,7 @@ pub struct MediusBoxInfo {
     pub has_device: u8,
 }
 
-/// One relative-axis catch event: physical motion at the merge point, before lock suppression or
+/// One relative-axis catch event: native motion at the merge point, before lock suppression or
 /// injection.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1264,10 +1262,10 @@ pub struct MediusTrafficEvent {
 pub enum MediusControlStatus {
     /// The transaction completed.
     Ok = 0,
-    /// A STALL: from the device, from a rule that refused the request, or, above endpoint 0, for a
-    /// request that failed.
+    /// A STALL: from the real device, from a rule that refused the request, or, above endpoint 0,
+    /// for a request that failed.
     Stalled = 1,
-    /// NAKed until the host gave up, on endpoint 0 only.
+    /// NAKed until the PC gave up, on endpoint 0 only.
     Naked = 2,
     /// A handshake value this build does not know; `MediusTrafficEvent::flags` bits 0-1 hold it.
     Other = 3,
@@ -1348,7 +1346,7 @@ pub struct MediusInputEvent {
     pub kind: MediusInputKind,
     /// The report's arrival stamp, in the `clock` chip's microseconds.
     pub ts_us: u32,
-    /// Which chip's clock stamped it; always `HostChip` for physical input.
+    /// Which chip's clock stamped it; always `HostChip` for native input.
     pub clock: MediusClockDomain,
     /// The usage this is an edge on; unset for `Motion`.
     pub usage: MediusUsage,

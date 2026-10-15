@@ -27,7 +27,7 @@ with medius.Device.find() as dev:
             ...
 ```
 
-Calls are synchronous: a command returns once it is written, a query once its reply arrives. Failures raise
+Calls are synchronous: a command returns once it is sent, a query once its reply arrives. Failures raise
 `MediusError`.
 
 ## License

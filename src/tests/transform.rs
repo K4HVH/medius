@@ -342,8 +342,9 @@ mod mock_roundtrip {
 
     #[test]
     fn the_crate_refuses_a_set_past_the_ceiling_rather_than_holding_it_forever() {
-        // Otherwise the host keeps an entry the box refused: the keepalive re-sends it every tick, the
-        // state never reads idle, and after a reconnect the replay order decides which entries land.
+        // Otherwise the host keeps an entry the box refused: the keepalive re-sends it every tick,
+        // the state never reads idle, and after a reconnect the replay order sets which entries
+        // land.
         let mock = MockBox::new();
         let device = Device::with_mock(mock.clone());
         for i in 0..Transforms::CAPACITY {
@@ -370,8 +371,8 @@ mod mock_roundtrip {
 
     #[test]
     fn an_undeclared_field_is_refused_by_the_box_not_the_crate() {
-        // The default mock has no AC Pan or keyboard, so these structurally valid entries go out and
-        // the box refuses them: sent, but absent from the readback.
+        // The default mock has no AC Pan or keyboard, so these structurally valid entries are sent
+        // and the box refuses them: sent, but absent from the readback.
         let mock = MockBox::new();
         let device = Device::with_mock(mock.clone());
         device.transform_remap(Axis::X, Axis::Pan).unwrap(); // pan not declared
@@ -408,7 +409,7 @@ mod mock_roundtrip {
         let table = device.query_transforms().unwrap();
         assert_eq!(table.entries.len(), Transforms::CAPACITY);
         assert!(!table.table_full);
-        // One past is refused by the crate before it reaches the wire, so make the box say so itself.
+        // One past is refused by the crate before it is sent, so make the box say so itself.
         device
             .transform_send(&Transform::swap(Axis::X, Axis::Y), 1)
             .unwrap();
@@ -451,8 +452,8 @@ mod mock_roundtrip {
 
     #[test]
     fn a_reapply_re_sends_held_transforms_in_installation_order() {
-        // The box applies transforms in table order and two writing one field do not commute, so the
-        // replay must rebuild the order, not just the set.
+        // The box applies transforms in table order and two writing one field do not commute, so
+        // the replay must rebuild the order, not only the set.
         let mock = MockBox::new();
         let device = Device::with_mock(mock.clone());
         let swap_y_wheel = Transform::swap(Axis::Y, Axis::Wheel); // key (3,1,3,2)

@@ -23,8 +23,7 @@ pub enum MoveTiming {
     /// this delta; with it off (the box default), nothing waits.
     #[default]
     Ride = 0,
-    /// Leave on the next mouse report the box sends, native or one the box makes, whatever the
-    /// riding option.
+    /// Emit on the next mouse report, native or one the box makes, whatever the riding option.
     Now = MV_F_NOW,
 }
 

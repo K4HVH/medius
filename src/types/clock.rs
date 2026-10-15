@@ -16,7 +16,7 @@ pub enum ClockDomain {
     /// completes. Carried by everything the real device produced.
     HostChip,
     /// PC-facing chip, stamped at the tap. Carried by everything the PC produced and the clone
-    /// emitted; the host chip never sees those bytes.
+    /// emitted; the host chip never receives those bytes.
     DeviceChip,
 }
 

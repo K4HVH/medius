@@ -19,7 +19,7 @@ pub enum Blanket {
 }
 
 impl Blanket {
-    /// Every group, for a clip auto-lock over all physical input.
+    /// Every group, for a clip auto-lock over all native input.
     pub const ALL: &'static [Blanket] = &[
         Blanket::Aim,
         Blanket::Wheel,
@@ -122,9 +122,9 @@ pub struct LockEntry {
     pub scope: LockScope,
     /// Which direction of it.
     pub direction: Direction,
-    /// Percent of the physical value kept: 0 blocks, 100 passes, above 100 amplifies, and a negative
-    /// one reverses what it keeps. A momentary usage carries one bit, so the box stores the block or
-    /// pass it amounts to and never reports a value between.
+    /// Percent of the native value kept: 0 blocks, 100 passes, above 100 amplifies, and a negative
+    /// one reverses what it keeps. A momentary usage carries one bit, so the box stores the block
+    /// or pass it amounts to and never reports a value between.
     ///
     /// The figure the box applies, which can differ from the one sent: in
     /// [`BearingMode::Vector`](crate::BearingMode) one relative scale, the lower of X's and Y's,
@@ -195,17 +195,17 @@ impl Locks {
         }
     }
 
-    /// Scale in effect on one target and direction: percent of the physical value kept;
+    /// Scale in effect on one target and direction: percent of the native value kept;
     /// [`LOCK_SCALE_PASS`] when nothing weighs it.
     ///
-    /// [`Direction::Both`] reports the least that survives across any direction, ranked by magnitude
-    /// so a block outranks a reversal of any size: `Positive` blocked with `Against` at `-50` reports
-    /// `0`. A delta meets something else: one fixed-direction scale times one bearing-relative one,
-    /// so `Negative` 50 with `Against` 40 lands at 20% while this returns 40. For that figure, ask by
-    /// direction and multiply.
+    /// [`Direction::Both`] reports the least that survives across any direction, ranked by
+    /// magnitude so a block outranks a reversal of any size: `Positive` blocked with `Against` at
+    /// `-50` reports `0`. A delta is scaled by a product: one fixed-direction scale times one
+    /// bearing-relative one, so `Negative` 50 with `Against` 40 lands at 20% while this returns 40.
+    /// For that figure, ask by direction and multiply.
     ///
-    /// A covering blanket counts; where several entries cover one direction, the least that survives
-    /// wins.
+    /// A covering blanket counts; where several entries cover one direction, the least that
+    /// survives applies.
     pub fn scale_of(&self, target: impl Into<LockTarget>, dir: Direction) -> i16 {
         let target = target.into();
         let covers = |e: &LockEntry| match e.scope {
@@ -216,8 +216,8 @@ impl Locks {
             .iter()
             .filter(|e| covers(e) && (dir == Direction::Both || e.direction.admits(dir)))
             .map(|e| e.scale)
-            // By magnitude: a signed minimum ranks -50 below 0 and reports a reversal over the block
-            // the delta meets.
+            // By magnitude: a signed minimum ranks -50 below 0 and reports a reversal over the
+            // block applied to the delta.
             .min_by_key(|s| (s.unsigned_abs(), *s))
             .unwrap_or(LOCK_SCALE_PASS)
     }

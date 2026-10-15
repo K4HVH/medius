@@ -387,7 +387,7 @@ mod correlation {
     use super::*;
     use crate::protocol::FrameType;
 
-    // A DATA acknowledgement answers a window, so it carries a separate rolling SEQ.
+    // A DATA acknowledgement covers a window, so it carries a separate rolling SEQ.
     #[test]
     fn data_acks_carry_a_rolling_seq_not_the_command_seq() {
         let mock = crate::MockBox::new();
@@ -442,7 +442,7 @@ mod correlation {
             "an over-long chunk is malformed, and the answer names the chunk size"
         );
 
-        // An image overrun is the other answer, and must stay distinct from it.
+        // An image overrun is the other reply, and must stay distinct from it.
         let mut u2 = crate::mock::MockUpdate::default();
         let mut small = Vec::new();
         small.extend_from_slice(&10u32.to_le_bytes());

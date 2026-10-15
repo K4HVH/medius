@@ -61,8 +61,8 @@ impl Device {
         self.transform_send_locked(t, state)
     }
 
-    // Records the entry (or its removal) for replay before the write; rolled back if the frame never
-    // went out. The caller holds the re-assert guard.
+    // Records the entry (or its removal) for replay before the write; rolled back if the frame was
+    // never sent. The caller holds the re-assert guard.
     fn transform_send_locked(&self, t: &Transform, state: u8) -> Result<()> {
         let stored = to_stored(t);
         let undo = if state == SET {

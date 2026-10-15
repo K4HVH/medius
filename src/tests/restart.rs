@@ -232,8 +232,8 @@ fn a_device_chip_reboot_is_recovered_like_any_restart() {
     );
 }
 
-// A clone with no HID interface (a vendor-class pad) reads `n_hid` 0, as nothing cloned does; its identity
-// says it is up, so held state goes back to it.
+// A clone with no HID interface (a vendor-class pad) reads `n_hid` 0, as nothing cloned does; its
+// identity says it is up, so held state is re-sent to it.
 #[test]
 fn a_clone_with_no_hid_interface_is_up() {
     use crate::{Caps, DeviceInfo};
@@ -259,8 +259,8 @@ fn a_clone_with_no_hid_interface_is_up() {
     );
 }
 
-// A box power-cycled while the link was down answers the reconnect probe after its hello. Its clone
-// is not up yet, so held state waits for the recovery.
+// A box power-cycled while the link was down replies to the reconnect probe after its hello. Its
+// clone is not up yet, so held state waits for the recovery.
 #[test]
 fn a_reconnect_that_finds_the_chip_rebooted_runs_the_recovery() {
     let device = Device::from_transport_with_cadence(
@@ -308,7 +308,7 @@ fn a_reconnect_to_a_box_that_kept_running_is_no_restart() {
         .link
         .adopt_reopened(vec![("/dev/ttyACM0".into(), running.transport())])
         .unwrap();
-    // The held state goes straight back, with no wait for a clone.
+    // The held state is re-sent at once, with no wait for a clone.
     assert_eq!(sent(&running, FrameType::Lock).len(), 1);
     std::thread::sleep(Duration::from_millis(100));
     assert_eq!(device.counters().restarts, 0);
@@ -423,7 +423,8 @@ fn holding_everything(mock: &MockBox) -> (Device, crate::ClipHandle, RewriteRule
     (device, clip, rule, trigger)
 }
 
-// Everything held went back to the clone presented after `sent`, the ring included in what is lost.
+// Everything held was re-sent to the clone presented after `sent`, the ring included in what is
+// lost.
 fn assert_everything_back(
     mock: &MockBox,
     device: &Device,
@@ -467,9 +468,9 @@ fn at(mock: &MockBox, from: usize, ty: FrameType) -> usize {
         .expect("the frame went out")
 }
 
-// APPLY, CLEAR and the opt-in toggle re-present the clone, releasing the session like a replug, with
-// no hello. The crate sees the game PC enumerate the new clone and re-sends what it holds after the
-// frame that took the old clone down.
+// APPLY, CLEAR and the opt-in toggle re-present the clone, releasing the session like a replug,
+// with no hello. The crate detects the game PC enumerating the new clone and re-sends what it holds
+// after the frame that took the old clone down.
 #[test]
 fn a_clone_the_crate_presents_again_gets_back_what_it_held() {
     use crate::{Patch, PatchSection};
@@ -546,8 +547,8 @@ fn a_clone_left_alone_is_not_recovered() {
     assert!(looked >= 2, "the keepalive looked {looked} times");
 }
 
-// After a command that can re-present the clone, the keepalive checks every slice, so state returns
-// well before its next tick.
+// After a command that can re-present the clone, the keepalive checks every slice, so state is
+// re-sent well before its next tick.
 #[test]
 fn the_crate_watches_closely_after_a_command_that_presents_the_clone() {
     use crate::{Patch, PatchSection};
@@ -766,7 +767,7 @@ fn the_second_part_of_a_release_is_caught_by_the_close_watch() {
     await_that("the apply was never recovered", || {
         sent(&mock, FrameType::Lock).len() == 2
     });
-    // Past that recovery's check that its re-send stuck.
+    // Past that recovery's check that its re-send took.
     std::thread::sleep(Duration::from_millis(200));
     let presented = device.query_stats().unwrap().config_count;
     device.allow_imperfect_clones(false).unwrap();
@@ -865,7 +866,7 @@ fn a_re_send_rebuilds_the_tables_in_the_box_s_order() {
     assert_eq!(triggers(&clip), triggers_before);
 }
 
-// A recovery waiting on a box that no longer answers does not hold up dropping the device.
+// A recovery waiting on a box that no longer replies does not hold up dropping the device.
 #[test]
 fn dropping_the_device_does_not_wait_out_a_recovery() {
     let mock = MockBox::new();

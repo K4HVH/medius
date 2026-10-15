@@ -66,7 +66,7 @@ impl EventStream {
         self.guard.closed.load(Ordering::Acquire)
     }
 
-    /// Block until the next event; `Disconnected` once the box goes away or the stream is closed.
+    /// Block until the next event; `Disconnected` once the box disconnects or the stream is closed.
     pub fn recv(&self) -> Result<CatchEvent> {
         if self.closed() {
             return Err(Error::Disconnected);
@@ -84,8 +84,8 @@ impl EventStream {
 
     /// Block up to `timeout` for the next event; `None` on timeout or a closed channel.
     ///
-    /// A closed stream returns at once, so a poll loop that ignores [`Self::is_connected`] spins once
-    /// the box goes away.
+    /// A closed stream returns at once, so a poll loop that ignores [`Self::is_connected`] spins
+    /// once the box disconnects.
     pub fn recv_timeout(&self, timeout: Duration) -> Option<CatchEvent> {
         if self.closed() {
             return None;
@@ -207,7 +207,7 @@ pub(crate) fn prepare(filters: impl IntoIterator<Item = CatchFilter>) -> Result<
             class: f.class().expect("a meaningless capture names a class"),
         });
     }
-    // 0xFFFF is the every-id sentinel: an exact subscription to it reaches the wire as the class
+    // 0xFFFF is the every-id sentinel: an exact subscription to it is sent as the class
     // blanket, a much wider stream than asked for, with no error.
     if let Some((class, id)) = wanted.iter().find_map(|f| {
         let (_, id) = f.wire();

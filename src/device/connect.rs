@@ -67,7 +67,7 @@ impl Device {
             "connected",
         );
         // CAPS now, so a button blanket set before the caller's first caps() re-asserts every
-        // declared button across a reconnect, not just the five named ones. Best-effort, bounded
+        // declared button across a reconnect, not only the five named ones. Best-effort, bounded
         // like a handshake attempt; a box with no device reports zero, left uncached so the named
         // buttons apply until a real caps().
         if let Ok(payload) = self.link.query_timeout(Q_CAPS, HANDSHAKE_ATTEMPT_TIMEOUT)
