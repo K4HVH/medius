@@ -43,8 +43,8 @@ impl Device {
 
     /// Cloned device's capabilities (§4.4).
     ///
-    /// Caches the declared button count, so a later button blanket lock covers every declared button
-    /// and a reconnect re-asserts a lock on a button past the five named ones.
+    /// Caches the declared button count. A later button blanket lock then covers every declared
+    /// button, and a reconnect re-asserts locks on buttons past the five named ones.
     pub fn caps(&self) -> Result<Caps> {
         let payload = self.link.query(Q_CAPS)?;
         match parse_resp(&payload) {
@@ -122,7 +122,8 @@ impl Device {
         }
     }
 
-    /// Bearing (§4.14): the window `Direction::With`/`Against` are held over, and how it is read.
+    /// Bearing (§4.14): how long the last injected direction stays the reference for
+    /// `Direction::With`/`Against`, and whether it is read per axis or as one vector.
     pub fn query_bearing(&self) -> Result<Bearing> {
         let payload = self.link.query_option(OPT_BEARING)?;
         match parse_resp(&payload) {
@@ -131,7 +132,7 @@ impl Device {
         }
     }
 
-    /// Render texture, whether native motion is rendered, and whether a profile has armed
+    /// Render texture, whether native motion is rendered, and whether the box has learned a profile
     /// (§4.14).
     pub fn query_render(&self) -> Result<RenderStatus> {
         let payload = self.link.query_option(OPT_RENDER)?;
@@ -141,7 +142,7 @@ impl Device {
         }
     }
 
-    /// Spread percent and the interval the box releases across (§4.14).
+    /// Spread percent and release interval (§4.14).
     pub fn query_spread(&self) -> Result<SpreadStatus> {
         let payload = self.link.query_option(OPT_SPREAD)?;
         match parse_resp(&payload) {

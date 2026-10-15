@@ -2,16 +2,18 @@
 
 use crate::protocol::opcode::{RATE_CHANGE_DRIVEN, RATE_CONFIDENT};
 
-/// Live native report rate, tracked from the report stream, and the cloned poll period.
+/// Native report rate measured off the live report stream, and the clone's poll period.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Rate {
-    /// Realised native report period in µs (`0` = not learned yet, or N/A for a change-driven input).
+    /// Measured native report period in µs (`0` = not learned yet, or a change-driven input).
     pub native_period_us: u16,
-    /// Cloned inject-endpoint `bInterval` poll period in µs (the active input's endpoint).
+    /// Clone's poll period in µs: the `bInterval` of the active input's endpoint.
     pub poll_period_us: u16,
-    /// Estimator window is full, so the value is trustworthy (mirrors HEALTH `rate_confident`).
+    /// The estimator window is full, so `native_period_us` can be trusted (mirrors HEALTH
+    /// `rate_confident`).
     pub confident: bool,
-    /// The active input is change-driven (keyboard/media): no continuous cadence, poll floor only.
+    /// The active input is change-driven (keyboard/media): no continuous cadence, so only
+    /// `poll_period_us` applies.
     pub change_driven: bool,
 }
 

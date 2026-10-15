@@ -45,8 +45,8 @@ pub struct RenderStatus {
     pub mode: RenderMode,
     /// Whether the model renders native motion instead of relaying it.
     pub full: bool,
-    /// Whether the box has learned a profile for the real device. Nothing renders until then,
-    /// so this separates a box set to a mode from one rendering with it.
+    /// Whether the box has learned a profile for the real device. Until then a box set to any mode
+    /// renders nothing.
     pub ready: bool,
 }
 

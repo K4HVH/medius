@@ -373,16 +373,15 @@ def test_the_box_lock_table_answers_query_locks():
     with MockBox() as mock, Device.with_mock(mock) as d:
         d.scale(x, Direction.BOTH, 50)
         locks = d.query_locks()
-        # BOTH is the fixed pair only: the relative pair keeps passing, so a BOTH of 50 means 50%
-        # whether or not a bearing is live.
+        # BOTH writes the fixed pair only; the relative pair keeps passing.
         assert len(locks.entries) == 2
         assert locks.scale_of(x, Direction.POSITIVE) == 50
         assert locks.scale_of(x, Direction.NEGATIVE) == 50
         assert locks.scale_of(x, Direction.WITH) == LOCK_SCALE_PASS
         assert locks.scale_of(x, Direction.AGAINST) == LOCK_SCALE_PASS
 
-        # In vector mode one relative scale governs both axes, the lower of the two, and the box
-        # reports that number on both axes rather than each axis's stored byte.
+        # In vector mode one relative scale governs both axes: the lower of the two. The box reports
+        # that number on both axes, not each axis's stored byte.
         d.unlock(x, Direction.BOTH)
         d.scale(x, Direction.WITH, 130)
         d.scale(y, Direction.WITH, 60)
@@ -723,8 +722,8 @@ def test_movement_riding_roundtrip():
 
 def test_emit_pace_roundtrip():
     with MockBox() as mock:
-        # The box's factory texture is De-spiked, but nothing is rendered until a profile arms, so a
-        # Learned pace reports the learnt cap rather than the 1 ms tick.
+        # The box's factory texture is De-spiked, but nothing renders until the box learns a
+        # profile, so a Learned pace reports the learnt cap, not the 1 ms tick.
         mock.set_emit_pace(EmitPace.fixed(500))
         with Device.with_mock(mock) as d:
             status = d.query_emit_pace()
@@ -735,12 +734,12 @@ def test_emit_pace_roundtrip():
             status = d.query_emit_pace()
         assert status.mode == EmitPace.learned()
         assert status.resolved_hz == 0
-        # Armed, the rendered stream self-paces every millisecond and says so.
+        # With a profile learned, the rendered stream self-paces every millisecond and says so.
         mock.set_render(RenderMode.DESPIKED, False, True)
         with Device.with_mock(mock) as d:
             assert d.query_emit_pace().resolved_hz == 1000
-        # And disarming puts it back: without reading it again, `ready` could be latched on and the
-        # assertion above would pass on a mock that ignored the flag.
+        # And clearing `ready` puts it back. Without this check, a mock that latched `ready` on
+        # would pass the assertion above.
         mock.set_render(RenderMode.DESPIKED, False, False)
         with Device.with_mock(mock) as d:
             assert d.query_emit_pace().resolved_hz == 0
@@ -751,15 +750,15 @@ def test_emit_pace_roundtrip():
 
 def test_spread_roundtrip():
     with MockBox() as mock, Device.with_mock(mock) as d:
-        # A fresh box boots at the full percent with no command period learned, so it spreads nothing.
+        # A fresh box boots at 100% with no command period learned, so it spreads nothing.
         assert d.query_spread() == SpreadStatus(100, 0)
         # The period is box state, learned off MOVE arrivals, not something the host sets.
         mock.set_spread_learned(8000)
         assert d.query_spread() == SpreadStatus(100, 8000)
         d.set_spread(50)
         assert d.query_spread() == SpreadStatus(50, 4000)
-        # Above 100 overlaps rather than being clamped, and past a byte, so a u8 anywhere in the
-        # ctypes chain fails here rather than round-tripping.
+        # A percent above 100 overlaps, unclamped. 1000 also exceeds a byte, so a u8 anywhere in the
+        # ctypes chain fails here instead of round-tripping.
         d.set_spread(1000)
         assert d.query_spread() == SpreadStatus(1000, 80000)
         # Off reports no interval even with a period learned.
@@ -780,19 +779,19 @@ def test_render_roundtrip():
                 d.set_render(mode, full)
                 status = d.query_render()
                 assert (status.mode, status.full) == (mode, full)
-        # The box gates the 1 ms tick on a profile having armed, not on the mode being set: a box
-        # told to render but still waiting for one runs the paced fill and reports the learnt cap.
+        # The box gates the 1 ms tick on a learned profile, not on the mode being set. A box told to
+        # render but still waiting for a profile runs the paced fill and reports the learnt cap.
         d.set_render(RenderMode.STOCK, False)
         d.set_emit_pace(EmitPace.learned())
         assert d.query_emit_pace().resolved_hz == 0
-        # Onto a Fixed rate the snapped value stands whatever the texture is doing.
+        # With a Fixed rate, the snapped value stands whatever the texture.
         d.set_emit_pace(EmitPace.fixed(250))
         assert d.query_emit_pace().resolved_hz == 250
         d.set_render(RenderMode.OFF, False)
         d.set_emit_pace(EmitPace.learned())
         assert d.query_emit_pace().resolved_hz == 0
 
-    # Armed, a rendered stream on a learnt pace self-paces every millisecond.
+    # With a profile learned, a rendered stream on a learnt pace self-paces every millisecond.
     with MockBox() as mock, Device.with_mock(mock) as d:
         mock.set_render(RenderMode.STOCK, True, True)
         assert d.query_render() == RenderStatus(RenderMode.STOCK, True, True)
@@ -1970,7 +1969,7 @@ def test_clip_builder_gap_zero_is_noop():
 def test_ctypes_structs_match_the_c_header():
     """Every shared struct must be the size the library thinks it is.
 
-    This is not a decode concern, it is memory safety: `medius_event_stream_recv` writes
+    This is memory safety, not a decode concern: `medius_event_stream_recv` writes
     `sizeof(MediusCatchEvent)` bytes into a buffer this module allocates, so a mirror short by one
     field lets the library write past the end of it on every event. A field added to the header and
     missed here is silent until it corrupts the heap.
@@ -2157,7 +2156,7 @@ def test_timeline_unwraps_the_rollover_and_maps_onto_the_callers_clock():
     with MockBox() as mock, Device.with_mock(mock) as d:
         with d.catch_events(CatchFilter.watch_axes()) as s, medius.Timeline() as t:
             # 32 bits of microseconds is 71.6 minutes; a raw subtraction across the wrap comes out
-            # about 4295 seconds negative.
+            # ~4295 seconds negative.
             mock.push_motion(1, 0xFFFFFE0C, MotionEvent(dx=1, dy=0, dz=0))
             mock.push_motion(2, 500, MotionEvent(dx=1, dy=0, dz=0))
             a = t.observe(s.recv_timeout(2000), 50_000_000)

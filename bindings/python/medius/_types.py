@@ -170,7 +170,7 @@ class FirmwareInfo:
     host_staged: bool
 
     def any_pending(self) -> bool:
-        """True while either chip has not confirmed the image it booted, which is when an update is refused."""
+        """True while either chip has not confirmed the image it booted (updates are refused)."""
         pend = ImageState.PENDING_VERIFY
         return self.device.state == pend or (self.host is not None and self.host.state == pend)
 
@@ -285,14 +285,21 @@ class Stats:
 
     `tx_drops` (a report the clone's queue could not hold) and `link_rx_drops`/`host_rx_drops` (an
     input-carrying frame one chip could not take off the inter-chip link) count lost input and
-    should read 0. `relay_drops` is relayed traffic and commands that went no further: a vendor IN
-    packet behind a queue full of RAW packets, a zero-length packet replying to a poll a suspended
-    PC did not make, an OUT or RAW OUT packet the box could not queue or deliver, a relayed request
-    or flagged MOVE it could not queue, non-input frames either chip's link ring dropped, frames
-    from the control PC its receive ring had no room for, and control-port UART overruns. None of it
-    is native input. A rise across a burst of commands can mean some never reached the box; a lost
-    release can leave a key held, and `reapply()` re-sends only what is held, so send the releases
-    again or call `reset()`.
+    should read 0.
+
+    `relay_drops` counts relayed traffic and commands that went no further, never native input:
+
+    - a vendor IN packet behind a queue full of RAW packets
+    - a zero-length packet answering a poll a suspended PC did not make
+    - an OUT or RAW OUT packet the box could not queue or deliver
+    - a relayed request or flagged MOVE the box could not queue
+    - a non-input frame either chip's link ring dropped
+    - a frame from the control PC the receive ring had no room for
+    - a control-port UART overrun
+
+    A rise across a burst of commands can mean some never reached the box. A lost release can leave
+    a key held. `reapply()` re-sends only what is held, so send the releases again or call
+    `reset()`.
     """
 
     inject_emits: int
@@ -314,12 +321,13 @@ class Stats:
 class LockEntry:
     """One weighed direction: what it addresses, which way, and how much is kept.
 
-    `scale` is a percent of the native value: 0 blocks, 100 passes, above 100 amplifies, negative
-    reverses what it keeps. A momentary usage carries one bit, so the box stores the block or pass
-    it amounts to and reports nothing between.
+    `scale` is a percent of the native value: 0 blocks, 100 passes, >100 amplifies, and a negative
+    scale reverses what it keeps. A momentary usage carries one bit, so the box stores a block or a
+    pass and never reports a value between.
 
-    The scale the box applies, which can differ from the one sent: in `BearingMode.VECTOR` one
-    relative scale, the lower of X's and Y's, governs both axes and both relative entries carry it.
+    This is the figure the box applies, which can differ from the one sent. In
+    `BearingMode.VECTOR` one relative scale (the lower of X's and Y's) governs both axes, and both
+    relative entries carry it.
     """
 
     target: "LockTarget"
@@ -338,8 +346,9 @@ class Locks:
     entries: List[LockEntry] = field(default_factory=list)
 
     def is_locked(self, target: "LockTarget", direction) -> bool:
-        """Whether the target is blocked outright on that direction; a weighed direction is not
-        locked. `Direction.BOTH` asks about the two fixed signs; ask for a relative one by name.
+        """Whether the target is blocked outright on that direction; a direction weighed between
+        block and pass is not locked. `Direction.BOTH` asks about the two fixed signs only; ask
+        about a relative one by name.
         """
         c = locks_to_c(self)
         return bool(
@@ -349,10 +358,11 @@ class Locks:
         )
 
     def scale_of(self, target: "LockTarget", direction) -> int:
-        """The scale on that target and direction: of the covering entries, the one of smallest
-        magnitude (a negative one on a tie), or 100 when none covers; `Direction.BOTH` spans every
-        direction. A block outranks a reversal of any size, and a pass outranks a reversal past
-        -100. A delta is scaled by the product of its fixed and relative scales, which this does not
+        """The scale on that target and direction, or 100 when nothing covers it. Where several
+        entries cover it, the one that keeps least applies, ranked by magnitude (the negative one
+        wins a tie). So a block outranks a reversal of any size, and a pass outranks a reversal
+        below -100. `Direction.BOTH` reports the scale that keeps least across every direction. A
+        delta is scaled by the product of its fixed and relative scales, which this does not
         compute.
         """
         c = locks_to_c(self)
@@ -371,7 +381,7 @@ class ClockEstimate:
     # None when the box has fitted no rate.
     rate_ppb: int | None = 0
     delay_us: int = 0
-    # `None`: never measured, which a zero offset also looks like.
+    # `None` until the box has an estimate, so a missing estimate never reads as a zero offset.
     age_ms: Optional[int] = None
 
     @property
@@ -415,8 +425,8 @@ class ImperfectStatus:
 class Setup:
     """A USB setup packet (§9.3): the eight ``<BBHHH>`` little-endian bytes.
 
-    ``length`` is the data stage: bytes to read for IN, otherwise the length of the OUT data passed
-    to `Device.transfer`.
+    ``length`` is the data-stage length. IN: the bytes to read back. OUT: the length of the data
+    passed to `Device.transfer`.
     """
 
     request_type: int
@@ -446,9 +456,9 @@ class TransferOutcome:
 class RewriteRule:
     """A rewrite rule (§3.14), keyed by ``(rewrite_class, id, direction, match_bytes, mask)``.
 
-    ``match_bytes`` and ``mask`` are the masked head compare, equal in length; an empty match
-    matches every packet on the address. ``payload`` is the payload for actions that carry one;
-    ``offset`` is where a ``PATCH``/``REPLY_PATCH`` writes.
+    ``match_bytes`` and ``mask`` are one length; the box compares the packet head byte for byte
+    under ``mask``. An empty match takes every packet on the address. ``payload`` is the payload for
+    actions that carry one; ``offset`` is where a ``PATCH``/``REPLY_PATCH`` writes.
     """
 
     rewrite_class: RewriteClass
@@ -480,10 +490,10 @@ class RewriteEntry:
 class RewriteTable:
     """Decoded RESP(REWRITE) (§4.17): the rewrite table summary in installation order.
 
-    ``generation`` bumps on a table change; reset, detach, link loss, re-clone or opt-in off return
-    it to 0. The library ignores it, since its keepalive re-sends every held rule. ``table_full``:
-    the box refused the last new rule or overwrite for room, all 32 entries used or the 2048-byte
-    payload pool full; the next table change or clear resets it.
+    ``generation`` bumps on a table change. A reset, detach, link loss, re-clone or the opt-in going
+    off returns it to 0. The library ignores it: its keepalive re-sends every held rule.
+    ``table_full``: the box refused the last new rule or overwrite for lack of room (all 32 entries
+    in use, or the 2048-byte payload pool full). The next table change or a clear resets it.
     """
 
     table_full: bool = False
@@ -496,9 +506,10 @@ class Patch:
     """A descriptor patch (§3.14), keyed by ``(section, cfg, index, offset)``.
 
     ``bytes`` overwrites the descriptor from ``offset``; empty ``bytes`` removes the patch at that
-    key. An overwrite moves the patch to the end of the set unless it already holds those bytes.
-    Every section but ``STRING`` keeps the descriptor's length. ``cfg`` is the configuration index:
-    0 is the first configuration, not ``bConfigurationValue``.
+    key. Setting an existing key overwrites it and moves it to the end of the set; setting the bytes
+    it already holds changes nothing. Every section but ``STRING`` keeps the descriptor's byte
+    count. ``cfg`` is the configuration index: 0 is the first configuration, not
+    ``bConfigurationValue``.
     """
 
     section: PatchSection
@@ -523,15 +534,20 @@ class PatchEntry:
 class PatchSet:
     """Decoded RESP(PATCHES) (§4.17): the stored patch set plus its apply state.
 
-    ``applied``: the clone serves a non-empty patched set; a later store leaves it alone until the
-    next apply. ``pending``: the stored set differs from the served one in patches, bytes or order
-    (not applied yet, changed or emptied since, refused, or held back by the opt-in). ``refused``:
-    when last presented, the stored set failed a check the unpatched descriptors pass and is
-    unchanged since, so the clone serves the descriptors unpatched; the checks are the clone checks
-    and four consistency checks (descriptor length or type fields, ``bcdUSB`` with no BOS, a HID
-    ``wDescriptorLength``, an interrupt-IN ``wMaxPacketSize``). ``table_full``: the box refused the
-    last new patch or overwrite for room, 16 entries used or the 1024-byte pool full; the next set
-    change or clear resets it.
+    ``applied``: the clone serves a non-empty patched set, the one it was presented with. A later
+    store leaves it alone until the next presentation.
+
+    ``pending``: the stored set differs from the served one in patches, bytes or order (not applied
+    yet, changed or emptied since, refused, or held back by the opt-in).
+
+    ``refused``: the stored set failed a check at the last presentation and is unchanged since, so
+    the clone serves the descriptors unpatched. The failed check is a clone check, or one of four
+    consistency checks the unpatched descriptors pass (a descriptor's length or type fields,
+    ``bcdUSB`` >=0x0201 with no BOS, a HID ``wDescriptorLength``, an interrupt-IN
+    ``wMaxPacketSize`` smaller than the report).
+
+    ``table_full``: the box refused the last new patch or overwrite for lack of room (16 entries in
+    use, or the 1024-byte pool full). The next set change or a clear resets it.
     """
 
     applied: bool = False
@@ -546,12 +562,12 @@ class Transform:
     """One field transform (§3.15), keyed by ``(source, dest)``.
 
     Swaps or remaps a field the clone already declares, on the semantic path where locks, riding and
-    rendering run, so every emitted report is one the real device could produce. It is faithful and
-    needs no imperfect-clone opt-in. ``source`` and ``dest`` are `LockTarget`\\ s (an axis or a
-    momentary usage).
+    rendering run. Every emitted report stays one the real device could produce, so a transform is
+    faithful and needs no imperfect-clone opt-in. ``source`` and ``dest`` are `LockTarget`\\ s (an
+    axis or a momentary usage).
 
-    To weigh or reverse a field, use `Device.scale`, which runs first and passes the transform what
-    it kept.
+    To weigh or reverse a field, use `Device.scale`; it runs first and passes the transform what it
+    kept.
 
     Build with `swap`, `remap`, or the constructor.
     """
@@ -576,8 +592,8 @@ class Transform:
 class Transforms:
     """Decoded RESP(TRANSFORMS) (§4.18): the transform table in installation order.
 
-    Each entry replays as a `Device.transform`; ``table_full`` flags that the table's ceiling
-    refused a further entry.
+    Each entry replays as a `Device.transform`. ``table_full``: the table is full, so a further
+    entry was, or would be, refused.
     """
 
     table_full: bool = False
@@ -588,8 +604,8 @@ class Transforms:
 class Bearing:
     """The configured bearing: what `Direction.WITH` and `Direction.AGAINST` are measured against.
 
-    `window_ms` is how long the last injected delta's direction stays the bearing. `None` is off,
-    leaving the relative directions inert whatever their scale.
+    `window_ms` is how long the last injected delta's direction stays the bearing. `None` = off: the
+    relative directions are inert whatever their scale.
     """
 
     window_ms: Optional[int] = BEARING_WINDOW_DEFAULT_MS
@@ -597,7 +613,7 @@ class Bearing:
 
     @property
     def is_live(self) -> bool:
-        """Whether a bearing is held; without one the relative directions are inert."""
+        """Whether the bearing window is on; with it off the relative directions do nothing."""
         return self.window_ms is not None
 
 
@@ -688,8 +704,8 @@ class MotionEvent:
 class UsageSnapshot:
     """A held-usage snapshot for one class: every held usage (button, key, or media).
 
-    `cls` and `direction` come from the frame header, so the empty snapshot for the last held
-    usage's release still carries them.
+    `cls` and `direction` come from the frame header, so the empty snapshot (release of the last
+    held usage) still carries them.
     """
 
     usages: List["Usage"] = field(default_factory=list)
@@ -732,7 +748,7 @@ class TrafficEvent:
     bytes: bytes = b""
 
     def truncated(self) -> bool:
-        """Whether the capture cut this packet short, which `bytes` alone cannot tell from a short
+        """Whether the capture cut this packet short; `bytes` alone cannot tell that from a short
         packet."""
         c = traffic_event_to_c(self)
         return bool(_native.lib.medius_traffic_event_truncated(ctypes.byref(c)))
@@ -790,7 +806,10 @@ class TrafficEvent:
         return bool(_native.lib.medius_traffic_event_bulk_end_of_transfer(ctypes.byref(c)))
 
     def zlp(self) -> bool:
-        """Whether this event is a zero-length packet, or on a HID endpoint a HID_IN or EMIT report one ended."""
+        """Whether this event is a zero-length packet.
+
+        A HID_IN or EMIT event on a HID endpoint carries a whole report of <=64 bytes; if it has
+        bytes, a zero-length packet ended the report after them."""
         c = traffic_event_to_c(self)
         return bool(_native.lib.medius_traffic_event_zlp(ctypes.byref(c)))
 
@@ -800,10 +819,10 @@ class CatchEvent:
     """One catch-stream event.
 
     `ts_us` is in the `clock` chip's microseconds. The chips boot independently, so a stamp is
-    box-local, unrelated to any clock here, and comparable only within its domain; to cross domains
-    apply `CatchState.clock`. Each wraps every ~71.6 minutes and restarts at 0 when that chip
-    reboots: a value below the previous one is a wrap, reboot or domain change, and the delta is
-    meaningless.
+    box-local and unrelated to any clock here. Compare stamps only within one domain; to cross
+    domains, apply `CatchState.clock`. Each clock wraps every ~71.6 minutes and restarts at 0 when
+    its chip reboots. A value below the previous one is a wrap, reboot or domain change, and the
+    delta is meaningless.
     """
 
     kind: CatchEventKind
@@ -881,7 +900,7 @@ class Usage:
 
 
 class Motion:
-    """A relative axis drive. Build with `Motion.cursor` / `Motion.wheel`."""
+    """A relative axis drive. Build with `Motion.cursor` / `Motion.wheel` / `Motion.pan`."""
 
     def __init__(self, c):
         self._c = c
@@ -955,12 +974,12 @@ class LockTarget:
 
 
 class Capture:
-    """How much of each packet to keep. Traffic classes only: a capture on an input class, which
-    carries no packet, is refused.
+    """How much of each packet to keep. Traffic classes only: an input class carries no packet, so
+    a capture on one is refused.
 
-    The control link runs at 6 Mbaud, and a vendor bulk pipe at whole packets saturates it alone. A
-    capture is a ceiling request: the box holds one entry per address and cuts once, so another
-    subscriber naming it more widely raises yours too.
+    The control link runs at 6 Mbaud, and a vendor bulk pipe at whole packets saturates it by
+    itself. A capture is a ceiling request: the box holds one entry per address and cuts once.
+    Another subscriber asking for more of the same address raises yours too.
     """
 
     #: Keep the whole packet.
@@ -1048,8 +1067,8 @@ class CatchFilter:
     def everything(cls) -> "CatchFilter":
         """Every class, every id, both directions, whole packets, as one table entry.
 
-        Includes `TrafficClass.VENDOR_BULK`, which alone can saturate the control link; pair it with
-        `with_capture` unless tracing bulk in full.
+        Includes `TrafficClass.VENDOR_BULK`, which can saturate the control link by itself; pair it
+        with `with_capture` unless tracing bulk in full.
         """
         return cls(_native.lib.medius_catch_filter_everything())
 
@@ -1444,8 +1463,8 @@ def _fixed_bytes(dst, src: bytes, cap: int, what: str) -> int:
     return len(src)
 
 
-# A match or mask crosses with its whole length and as many bytes as the array holds, so one past
-# the array comes back as the library's status.
+# A match or mask crosses with its whole length but only as many bytes as the array holds, so one
+# longer than the array comes back as the library's status.
 def _match_field(dst, src: bytes, what: str) -> int:
     for i, byte in enumerate(src[: len(dst)]):
         dst[i] = byte
@@ -1689,7 +1708,7 @@ class ClipTrigger:
 
 @dataclass
 class ClipPacketTrigger:
-    """One clip packet trigger, keyed by ``(traffic_class, id, direction, match_bytes, mask)``: a
+    """One clip packet trigger, keyed by ``(traffic_class, id, direction, match_bytes, mask)``. A
     traffic packet whose head matches under the mask drives ``action`` on the box's next tick, with
     no host round trip. The other trigger kind is `ClipTrigger`.
 
@@ -1698,11 +1717,11 @@ class ClipPacketTrigger:
     rest, or `ANY_ID`. ``direction`` is `Direction.BOTH`, or whichever of `Direction.IN` and
     `Direction.OUT` the class carries.
 
-    ``match_bytes`` and ``mask`` are the masked head compare, equal in length and at most
-    `PKT_MATCH_MAX`: a packet matches when ``head[i] & mask[i] == match_bytes[i]`` for each, and an
-    empty match takes every packet on the address. For ``CONTROL`` the head is the 8 setup bytes,
-    then the first 8 bytes of OUT data. An ``EMIT`` trigger matches the clip's frames as well as
-    native and injected ones, but none of the clip's raw reports.
+    ``match_bytes`` and ``mask`` are one length, <= `PKT_MATCH_MAX`. A packet matches when
+    ``head[i] & mask[i] == match_bytes[i]`` for every match byte; an empty match takes every packet
+    on the address. For ``CONTROL`` the head is the 8 setup bytes, then the first 8 bytes of OUT
+    data. An ``EMIT`` trigger matches the clip's frames as well as native and injected ones, but not
+    the clip's raw reports.
 
     `ClipHandle.bind_packet` and the box refuse a trigger no packet can match: a match bit outside
     its mask (packet bytes are masked before the compare), or a direction the class never carries.
@@ -1722,9 +1741,9 @@ class ClipPacketTrigger:
     repeating a held state every poll fires once per hold; the release is a second trigger matching
     the released bytes. A run needs one stream: a class other than ``CONTROL``, a concrete ``id``,
     and ``IN`` or ``OUT``. The first ``selector_len`` match bytes select the stream within that
-    address (a report ID) and the rest are the condition, so ``selector_len`` is below the match
-    length and the mask past it has a bit set: a condition every packet of the stream meets is a run
-    that never ends.
+    address (a report ID); the rest are the condition. So ``selector_len`` is below the match
+    length, and the mask past it has >=1 bit set: a condition every packet of the stream meets
+    would make a run that never ends.
 
     ``hits`` counts packets matched as the top-ranked trigger since bind or overwrite (saturating),
     read back by `ClipHandle.query_config`. `ClipHandle.bind_packet` does not send it; a value

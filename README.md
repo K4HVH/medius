@@ -43,8 +43,8 @@ fn main() -> Result<()> {
 ```
 
 `Device` is `Send + Sync` and cheap to clone. A command returns as soon as its frame is sent; a query waits for the
-reply. The crate reconnects by itself, and restores held keys and buttons, locks, rules, transforms and subscriptions
-after a reconnect or a box restart.
+reply. The crate reconnects by itself. After a reconnect or a box restart, it restores held keys and buttons, locks,
+rules, transforms and subscriptions.
 
 ## Other languages
 

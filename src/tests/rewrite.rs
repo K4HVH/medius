@@ -245,7 +245,8 @@ mod mock_roundtrip {
         device.clear_rewrite().unwrap();
         let table = device.query_rewrite().unwrap();
         assert!(table.entries.is_empty());
-        // gen stays monotonic across the clear (1 set → 2 clear), never back to a value already seen.
+        // gen stays monotonic across the clear (1 set -> 2 clear), never back to a value already
+        // seen.
         assert_eq!(table.generation, 2);
         assert!(!device.query_health().unwrap().rewrite_on);
     }
@@ -339,7 +340,7 @@ mod mock_roundtrip {
     }
 
     // The box counts payload bytes only, and an overwrite frees its old payload before the new one
-    // is costed. A rule past what is left is never sent.
+    // is costed. A rule larger than what is left is never sent.
     #[test]
     fn the_payload_pool_is_checked_before_the_wire() {
         use crate::REWRITE_PAYLOAD_POOL;
@@ -650,7 +651,8 @@ fn resp_health_u16_roundtrips_through_parse() {
     assert!(h.rewrite_on && h.patch_on && !h.transform_on);
 }
 
-// The box refuses a match past its compare length and a rule its read-back reply cannot carry.
+// The box refuses a match longer than its compare length and a rule its read-back reply can't
+// carry.
 mod box_limits {
     use crate::device::rewrite::validate_rule;
     use crate::error::Error;

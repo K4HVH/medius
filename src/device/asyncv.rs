@@ -63,7 +63,7 @@ impl AsyncDevice {
         self.dev().move_rel(dx, dy)
     }
 
-    /// `WHEEL`: vertical scroll; see [`Device::wheel`].
+    /// `MOVE` (wheel): vertical scroll; see [`Device::wheel`].
     pub fn wheel(&self, delta: i16) -> Result<()> {
         self.dev().wheel(delta)
     }
@@ -326,8 +326,8 @@ impl AsyncDevice {
 
     /// Stage one image and activate it; a refused activate aborts the staged image.
     ///
-    /// Not cancellable: dropping the future stops the wait, not the transfer, which runs to completion
-    /// on a separate thread, and the box still reboots into the new image.
+    /// Not cancellable: dropping the future stops the wait, not the transfer. The transfer runs to
+    /// completion on a separate thread, and the box still reboots into the new image.
     pub async fn update_firmware(
         &self,
         target: UpdateTarget,
@@ -503,7 +503,7 @@ impl AsyncDevice {
         }
     }
 
-    /// Render texture and whether a profile has armed (§4.14).
+    /// Render texture and whether the box has learned a profile (§4.14).
     pub async fn query_render(&self) -> Result<RenderStatus> {
         let payload = self
             .link
@@ -515,7 +515,7 @@ impl AsyncDevice {
         }
     }
 
-    /// Spread percent and the interval in effect (§4.14).
+    /// Spread percent and release interval (§4.14).
     pub async fn query_spread(&self) -> Result<SpreadStatus> {
         let payload = self
             .link

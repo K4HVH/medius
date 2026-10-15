@@ -93,8 +93,8 @@ pub(crate) struct LockUndo {
     media_order: Vec<u16>,
 }
 
-/// A held rewrite rule in wire fields, so a reconnect re-sends it byte for byte. Session state, on
-/// the lifecycle of locks and catches (§3.14).
+/// A held rewrite rule in wire fields, so a reconnect re-sends it byte for byte. Session state,
+/// with the same lifecycle as locks and catches (§3.14).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct StoredRewrite {
     pub(crate) class: u8,
@@ -131,8 +131,8 @@ pub(crate) struct RewriteUndo {
     prior: Option<(usize, StoredRewrite)>,
 }
 
-/// A held field transform in wire fields, so a reconnect re-sends it byte for byte. Session state, on
-/// the lifecycle of locks and rewrites (§3.15).
+/// A held field transform in wire fields, so a reconnect re-sends it byte for byte. Session state,
+/// with the same lifecycle as locks and rewrites (§3.15).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct StoredTransform {
     pub(crate) op: u8,
@@ -165,8 +165,8 @@ pub(crate) struct TransformUndo {
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub(crate) struct DesiredState {
     overrides: BTreeMap<(u8, u16), Override>, // never sits at None in the map
-    // One entry per box lock-table row; a row whose every slot passes is dropped, so this is exactly
-    // what a reconnect re-sends.
+    // One entry per box lock-table row. A row with every slot at pass is dropped, so this is
+    // exactly what a reconnect re-sends.
     locks: BTreeMap<(u8, u16), Slots>,
     // Granular media rows in the order they were taken.
     media_order: Vec<u16>,
@@ -186,7 +186,7 @@ struct ClipHeld {
     // Appended since the last clear.
     loaded: bool,
     // Whether the ring held the clip when last known: set by an append, cleared by a clear or a
-    // reading of an empty idle ring. A release loses a clip only while it is set.
+    // reading of an empty idle ring. A release loses a clip only while this is set.
     ring: bool,
     // Moved by every append and clear, so a reading taken across one is not trusted.
     ring_gen: u64,
@@ -198,8 +198,8 @@ struct ClipHeld {
     packet_triggers: Vec<ClipPacketTrigger>,
 }
 
-// A ring with bytes in it, or an engine that is not idle (a streaming clip that ran dry stays
-// playing), is a loaded clip.
+// A ring with bytes in it, or a non-idle engine (a streaming clip that ran dry stays playing),
+// counts as a loaded clip.
 fn ring_holds(status: &ClipStatus) -> bool {
     status.total != 0 || status.state != ClipState::Idle
 }
@@ -242,8 +242,8 @@ impl DesiredState {
         self.clip.ring
     }
 
-    // A ring reading taken when `ring_gen` read `seen`. With `released`, the box released the session
-    // first, so a ring it held is lost.
+    // Notes a ring reading taken when `ring_gen` was `seen`. `released` means the box released the
+    // session first, so a clip the ring held is lost.
     pub(crate) fn clip_note_ring(&mut self, seen: u64, status: &ClipStatus, released: bool) {
         if seen != self.clip.ring_gen {
             return;
@@ -276,7 +276,7 @@ impl DesiredState {
         self.clip.triggers.remove(key);
     }
 
-    // An overwrite keeps its place, as clip_ptrig_set keeps it.
+    // An overwrite keeps its place, as the firmware's clip_ptrig_set does.
     pub(crate) fn clip_packet_bind(&mut self, trigger: &ClipPacketTrigger) {
         let key = clip_packet_key(trigger);
         match self
@@ -296,8 +296,8 @@ impl DesiredState {
             .retain(|t| clip_packet_key(t) != *key);
     }
 
-    // The opt-in went off, removing every consuming packet trigger. Returns what was dropped, for a
-    // caller whose frame was never sent to restore.
+    // The opt-in went off, removing every consuming packet trigger. Returns the dropped triggers,
+    // so a caller whose frame was never sent can restore them.
     pub(crate) fn clip_packet_drop_consuming(&mut self) -> Vec<ClipPacketTrigger> {
         let dropped: Vec<ClipPacketTrigger> = self
             .clip
@@ -375,10 +375,10 @@ impl DesiredState {
     }
 
     // Tracks a scale as the box's table holds it. A momentary usage carries one bit, so the box
-    // stores the block or pass it amounts to; recording the raw number would hold a scale above a full
-    // pass here as a lock the box released. A button blanket is one unexpanded row, expanded at
-    // reassert onto the declared count (see `held_locks`); touching one button while it is held
-    // materialises it first, so the replay does not undo a later single-button release.
+    // stores block or pass. Stored raw, a scale above full pass would stay here as a lock the box
+    // released. A button blanket is one unexpanded row, expanded onto the declared count at
+    // reassert (see `held_locks`). Writing one button while the blanket is held expands the blanket
+    // first, so the replay doesn't undo a later single-button release.
     pub(crate) fn apply_lock(&mut self, key: LockKey, scale: i16) -> LockUndo {
         let (class, id, dir) = key;
         let scale = if class == LOCK_CLS_AXIS {
@@ -393,8 +393,9 @@ impl DesiredState {
             media_order: self.media_order.clone(),
         };
         if class == LOCK_CLS_BTN && id == LOCK_ID_ALL {
-            // The blanket subsumes every button row, as the box's re-expansion of `LOCK[BTN][ID_ALL]`
-            // rewrites each, and stays unexpanded so a reconnect widens it to the count CAPS reports.
+            // The blanket replaces every button row, as the box's re-expansion of
+            // `LOCK[BTN][ID_ALL]` rewrites each one. It stays unexpanded, so a reconnect widens it
+            // to the count CAPS reports.
             self.clear_button_rows(&mut undo);
             self.write_lock_row(class, id, dir, scale, &mut undo);
         } else if class == LOCK_CLS_BTN && self.locks.contains_key(&(LOCK_CLS_BTN, LOCK_ID_ALL)) {
@@ -406,7 +407,7 @@ impl DesiredState {
         undo
     }
 
-    // Drops a row whose every slot passes; tracks the media slot order.
+    // Drops a row with every slot at pass; tracks the media slot order.
     fn write_lock_row(&mut self, class: u8, id: u16, dir: u8, scale: i16, undo: &mut LockUndo) {
         let key = (class, id);
         undo.rows.push((key, self.locks.get(&key).copied()));
@@ -483,7 +484,7 @@ impl DesiredState {
 
     /// Records a rewrite rule (add or overwrite) for replay, returning the prior state for rollback
     /// if the frame was never sent (as [`apply_lock`]). An overwrite that changes the rule moves it
-    /// to the end, as the box re-adds it; the same rule again keeps its place.
+    /// to the end, as the box re-adds it. Re-sending the same rule keeps its place.
     pub(crate) fn apply_rewrite(&mut self, rule: StoredRewrite) -> RewriteUndo {
         let key = rule.key();
         let at = self.rewrites.iter().position(|r| r.key() == key);
@@ -618,8 +619,8 @@ impl DesiredState {
     }
 
     pub(crate) fn clear(&mut self) {
-        // Link::catch_disconnect_all tears catch down (drops the EventStream senders); the firmware
-        // otherwise clears it with injection.
+        // Link::catch_disconnect_all_locked tears catch down (drops the EventStream senders); the
+        // firmware clears its catch table along with injection.
         self.overrides.clear();
         self.locks.clear();
         self.media_order.clear();
@@ -686,8 +687,8 @@ impl DesiredState {
             .collect()
     }
 
-    // A media row's slot; the media blanket holds none and goes last; other classes rank alike, by
-    // id.
+    // Rank of a media row's slot. The media blanket holds no slot and goes last; other classes all
+    // rank 0 and sort by id.
     fn media_rank(&self, class: u8, id: u16) -> usize {
         if class != LOCK_CLS_MEDIA {
             return 0;

@@ -33,7 +33,7 @@ use slot::TransportSlot;
 /// Default `RESP` wait before [`Error::QueryTimeout`](crate::Error::QueryTimeout).
 pub const DEFAULT_QUERY_TIMEOUT: Duration = Duration::from_secs(1);
 
-/// Replies parked for another caller. A window is 16 frames; this is slack on top.
+/// Cap on replies parked for another caller; a window is 16 frames, the rest is slack.
 const HELD_UPDATES_MAX: usize = 64;
 
 /// Default keepalive cadence for re-sending a held override.
@@ -53,8 +53,8 @@ pub(crate) struct LinkInner {
     desired: Arc<Mutex<DesiredState>>,
     events: Arc<Mutex<CatchReg>>,
     catch_gen: Arc<AtomicU64>,
-    // Serialises a subscribe/unsubscribe, or a rewrite-table mutation and its send, against
-    // re-asserts, so neither commits out of order and leaves the box holding what the host dropped.
+    // Serialises catch subscribe/unsubscribe and rewrite-table changes (each with its send) against
+    // re-asserts, so the box never ends up holding what the host dropped.
     catch_lock: Arc<Mutex<()>>,
     counters: Arc<Counters>,
     stop: Arc<AtomicBool>,
@@ -110,8 +110,8 @@ impl Link {
         let query_timeout = DEFAULT_QUERY_TIMEOUT;
         let pending: Arc<Mutex<HashMap<u8, PendingEntry>>> = Arc::new(Mutex::new(HashMap::new()));
         let (logs_tx, logs_rx) = flume::bounded(logs::LOGS_CAPACITY);
-        // Unbounded: a stalled reader must never drop an acknowledgement; the sender blocks on it
-        // before the next window.
+        // Unbounded: a stalled reader must never drop an acknowledgement. The sender waits for the
+        // acknowledgement before its next window.
         let (updates_tx, updates_rx) = flume::unbounded();
         let counters = Arc::new(Counters::default());
         let stop = Arc::new(AtomicBool::new(false));
@@ -231,8 +231,8 @@ impl Link {
         &self.inner.restart
     }
 
-    // Held across a rewrite-table mutation and its send, so a re-assert cannot strand the box holding
-    // a rule DesiredState dropped (the catch path's lock).
+    // Held across a rewrite-table change and its send, so a re-assert can't leave the box holding a
+    // rule DesiredState dropped. Same lock as the catch path.
     pub(crate) fn reassert_guard(&self) -> parking_lot::MutexGuard<'_, ()> {
         self.inner.catch_lock.lock()
     }

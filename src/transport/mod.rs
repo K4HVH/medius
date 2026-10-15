@@ -8,8 +8,8 @@ pub(crate) mod serial;
 pub(crate) trait Transport: Send + Sync + std::fmt::Debug {
     fn write_all(&self, buf: &[u8]) -> io::Result<()>;
 
-    // Waits a bounded time for data: `Ok(0)` is none yet and the reader retries at once; `Err` is a
-    // port that is gone.
+    // Waits a bounded time for data. `Ok(0)` means none yet (the reader retries at once); `Err`
+    // means the port is gone.
     fn read(&self, buf: &mut [u8]) -> io::Result<usize>;
 
     // Makes a parked read, or else the next one, return `Ok(0)` at once.

@@ -18,8 +18,8 @@ pub struct EmitPaceStatus {
     /// Selected mode (for [`EmitPace::Fixed`], the requested rate).
     pub mode: EmitPace,
     /// Ceiling in effect (Hz); 0 = learnt/adaptive, or no device yet in [`EmitPace::Interval`].
-    /// Reads 1000 once the renderer has a profile, since a rendered stream paces itself (see
-    /// [`set_render`](crate::Device::set_render)).
+    /// Once the renderer is on and has a profile, a 0 reads 1000 instead, since a rendered stream
+    /// paces itself (see [`set_render`](crate::Device::set_render)).
     pub resolved_hz: u16,
     /// Requested forced poll rate (Hz); `None` keeps the native interval.
     pub force_hz: Option<u16>,

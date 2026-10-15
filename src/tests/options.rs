@@ -143,7 +143,7 @@ fn decode_emit_pace_through_parse_resp() {
             force_active: false,
         }
     );
-    // An 11-byte value is short of the shape and is refused rather than read with a defaulted field.
+    // An 11-byte value is too short and is refused, not read with a defaulted field.
     assert!(parse_resp(&[9, 2, 2, 0xE8, 0x03, 0xFA, 0x00, 0x7D, 0x00, 0x64, 0x00]).is_none());
     // An unknown pace is refused rather than read as a default.
     assert!(parse_resp(&[9, 2, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0]).is_none());
@@ -183,7 +183,7 @@ fn decode_spread_through_parse_resp() {
 #[test]
 fn mock_spread_answers_zero_until_a_period_is_learned() {
     use crate::{Device, MockBox, SpreadStatus};
-    // A fresh box boots at 100 percent and has learned nothing, so it is spreading across nothing.
+    // A fresh box boots at 100% and has learned nothing, so it spreads across nothing.
     let mock = MockBox::new();
     let device = Device::with_mock(mock.clone());
     assert_eq!(
@@ -288,11 +288,11 @@ fn mock_emit_pace_matches_firmware_snap() {
             force_active: false,
         }
     );
-    // The texture is a separate command now, but it still governs the resolved rate.
+    // The texture is a separate command, but it still governs the resolved rate.
     device.set_render(RenderMode::Stock, false).unwrap();
     device.set_emit_pace(EmitPace::Learned, None).unwrap();
     assert_eq!(device.query_emit_pace().unwrap().resolved_hz, 0);
-    // Onto a Fixed rate the snapped value stands whatever the texture is doing.
+    // With a Fixed rate, the snapped value stands whatever the texture.
     device.set_emit_pace(EmitPace::Fixed(250), None).unwrap();
     assert_eq!(
         device.query_emit_pace().unwrap(),

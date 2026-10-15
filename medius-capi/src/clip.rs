@@ -115,8 +115,8 @@ fn frame_edge(f: *mut MediusClipFrame, usage: MediusUsage, action: medius::Actio
 }
 
 /// Add an edge on any usage with an explicit `action`. `action` takes a `MEDIUS_ACTION_*` constant;
-/// any other value is `MEDIUS_STATUS_ERR_INVALID_ARG`. `medius_clip_append` refuses a frame past
-/// `MEDIUS_CLIP_EDGES_MAX` edges with `MEDIUS_STATUS_ERR_CLIP_FRAME_COUNT`.
+/// any other value is `MEDIUS_STATUS_ERR_INVALID_ARG`. `medius_clip_append` refuses a frame with
+/// more than `MEDIUS_CLIP_EDGES_MAX` edges (`MEDIUS_STATUS_ERR_CLIP_FRAME_COUNT`).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_clip_frame_edge(
     f: *mut MediusClipFrame,
@@ -159,7 +159,7 @@ pub unsafe extern "C" fn medius_clip_frame_force_release(
 /// Add a raw report as `medius_device_raw` sends one: `bytes[0..len]` verbatim on endpoint number
 /// `ep_num` in `dir`. `dir` takes a `MEDIUS_DIRECTION_*` constant; any other value is
 /// `MEDIUS_STATUS_ERR_INVALID_ARG`. `medius_clip_append` checks the rest: a direction neither IN
-/// nor OUT, and a frame past `MEDIUS_CLIP_RAW_MAX` raw reports
+/// nor OUT, and a frame with more than `MEDIUS_CLIP_RAW_MAX` raw reports
 /// (`MEDIUS_STATUS_ERR_CLIP_FRAME_COUNT`). The box plays it only with the imperfect-clone opt-in
 /// on.
 #[unsafe(no_mangle)]
@@ -200,8 +200,8 @@ pub unsafe extern "C" fn medius_clip_frame_transfer(
     with_frame(f, |cf| cf.transfer(ep, setup_from_c(setup), data))
 }
 
-/// Ring bytes the frame takes; `medius_clip_append` accepts at most `MEDIUS_CLIP_ENTRY_MAX`. 0 for
-/// a null frame.
+/// Ring bytes the frame takes; `medius_clip_append` accepts <= `MEDIUS_CLIP_ENTRY_MAX`. 0 for a
+/// null frame.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_clip_frame_byte_len(f: *const MediusClipFrame) -> usize {
     guard(0, || {
@@ -321,7 +321,7 @@ pub unsafe extern "C" fn medius_clip_builder_press(
     builder_edge(b, usage, medius::Action::Press)
 }
 
-/// A frame soft-releasing a usage: clears the injected press, leaving a hold on the real device.
+/// A frame soft-releasing a usage: clears the injected press; a hold on the real device stays.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_clip_builder_release(
     b: *mut MediusClipBuilder,
@@ -437,13 +437,13 @@ pub unsafe extern "C" fn medius_clip_free(clip: *mut MediusClip) {
     });
 }
 
-/// Append the builder's entries to the ring as whole-entry frames, each with the next append
-/// sequence. Every entry is checked before the first frame is sent, so a refusal sends nothing: a
-/// frame past `MEDIUS_CLIP_EDGES_MAX` edges or `MEDIUS_CLIP_RAW_MAX` raw reports
-/// (`MEDIUS_STATUS_ERR_CLIP_FRAME_COUNT`), one encoding past `MEDIUS_CLIP_ENTRY_MAX` bytes
-/// (`..._CLIP_FRAME_TOO_LONG`), a raw report whose direction is neither IN nor OUT
-/// (`..._RAW_DIRECTION`, or `..._RELATIVE_DIRECTION` for the bearing-relative pair), or a transfer
-/// whose data disagrees with its setup packet (`..._CLIP_TRANSFER_DATA`).
+/// Append the builder's entries to the ring as whole-entry frames, each stamped with the next
+/// append-sequence number. Every entry is checked before the first frame is sent, so a refusal
+/// sends nothing. Refused: a frame with more than `MEDIUS_CLIP_EDGES_MAX` edges or
+/// `MEDIUS_CLIP_RAW_MAX` raw reports (`MEDIUS_STATUS_ERR_CLIP_FRAME_COUNT`); a frame encoding to
+/// more than `MEDIUS_CLIP_ENTRY_MAX` bytes (`..._CLIP_FRAME_TOO_LONG`); a raw report neither IN nor
+/// OUT (`..._RAW_DIRECTION`, or `..._RELATIVE_DIRECTION` for the bearing-relative pair); a transfer
+/// whose data doesn't match its setup packet (`..._CLIP_TRANSFER_DATA`).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_clip_append(
     clip: *mut MediusClip,
@@ -496,8 +496,8 @@ pub unsafe extern "C" fn medius_clip_set_retain(clip: *mut MediusClip, on: u8) -
     with_clip(clip, |c| c.set_retain(on != 0))
 }
 
-/// Make the clip's motion ride native reports; 0, the default, emits it at once. While rendering is on
-/// with a profile armed, this applies to wheel and pan only.
+/// Make clip motion ride native reports; with 0 (the default) it is emitted at once. While rendering is
+/// on with a profile armed, this applies to wheel and pan only.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_clip_set_ride(clip: *mut MediusClip, on: u8) -> MediusStatus {
     with_clip(clip, |c| c.set_ride(on != 0))
@@ -561,17 +561,17 @@ fn with_packet_trigger(
     })
 }
 
-/// Add or overwrite a packet trigger: a packet `trigger` matches fires its action on the box's next
-/// tick, with no host round trip. Binding a held key overwrites it. `trigger->class_` takes a
+/// Add or overwrite a packet trigger: a matching packet fires its action on the box's next tick,
+/// with no host round trip. Binding a held key overwrites it. `trigger->class_` takes a
 /// traffic `MEDIUS_CATCH_CLASS_*` constant, `trigger->direction` a `MEDIUS_DIRECTION_*` one and
 /// `trigger->action` a `MEDIUS_CLIP_ACTION_*` one; any other value is
 /// `MEDIUS_STATUS_ERR_INVALID_ARG`.
 ///
-/// A trigger the box would refuse is `MEDIUS_STATUS_ERR_CLIP_PACKET_TRIGGER` before anything is
+/// A trigger the box would refuse gives `MEDIUS_STATUS_ERR_CLIP_PACKET_TRIGGER` before anything is
 /// sent, and `medius_last_error_message` says why:
 ///
 /// - class `MEDIUS_CATCH_CLASS_BUS` or `_CLIP_TRANSFER`;
-/// - a `match_len` past `MEDIUS_MAX_PKT_MATCH`, or unlike `mask_len`;
+/// - a `match_len` over `MEDIUS_MAX_PKT_MATCH`, or not equal to `mask_len`;
 /// - a direction the class never carries: `NEGATIVE` (OUT) on `HID_IN` or `EMIT`, `POSITIVE` (IN) on
 ///   `HID_OUT`;
 /// - a match bit outside its mask, which no packet can equal;
@@ -580,14 +580,15 @@ fn with_packet_trigger(
 /// - `once_per_run` without one stream (a class other than `CONTROL`, a concrete `id`, and `POSITIVE`
 ///   or `NEGATIVE`), without match bytes past its selector, or with no masked bit in them.
 ///
-/// A bearing-relative direction is `MEDIUS_STATUS_ERR_RELATIVE_DIRECTION`. Match and mask are sent
-/// as given, so the key this trigger names is the key the box holds.
+/// A bearing-relative direction gives `MEDIUS_STATUS_ERR_RELATIVE_DIRECTION`. Match and mask are
+/// sent as given, so the key this trigger names is the key the box holds.
 ///
 /// Three checks happen only on the box: a consuming trigger needs
-/// `medius_device_allow_imperfect_clones`, the set holds `MEDIUS_CLIP_PKT_TRIG_MAX` triggers, and
-/// their match bytes share a `MEDIUS_CLIP_PKT_MATCH_POOL`-byte pool. A refused bind leaves the set
-/// as it was: a new key is not held, and a held key keeps its previous trigger, action and flags.
-/// To confirm a bind, compare what `medius_clip_query_config` reads back with what was bound.
+/// `medius_device_allow_imperfect_clones`, the set holds at most `MEDIUS_CLIP_PKT_TRIG_MAX`
+/// triggers, and their match bytes share a `MEDIUS_CLIP_PKT_MATCH_POOL`-byte pool. A refused bind
+/// leaves the set as it was: a new key is not held, and a held key keeps its previous trigger,
+/// action and flags. To confirm a bind, compare what `medius_clip_query_config` reads back with
+/// what was bound.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_clip_bind_packet(
     clip: *mut MediusClip,
@@ -665,9 +666,9 @@ pub unsafe extern "C" fn medius_clip_finalize(clip: *mut MediusClip) -> MediusSt
     with_clip(clip, |c| c.finalize())
 }
 
-/// Whether the box dropped the clip appended since the last `medius_clip_clear`: its device chip
-/// restarted, the box released the session, or a reconnect found it gone. Set once the box takes a
-/// reload again, and reset by the next append or clear.
+/// Whether the box dropped the clip appended since the last `medius_clip_clear` (the device chip
+/// restarted, the box released the session, or a reconnect found the clip gone). Goes true once the
+/// box can take a reload; the next append or clear resets it.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_clip_lost(clip: *const MediusClip) -> bool {
     guard(false, || {

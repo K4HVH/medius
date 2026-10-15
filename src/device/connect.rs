@@ -67,9 +67,9 @@ impl Device {
             "connected",
         );
         // CAPS now, so a button blanket set before the caller's first caps() re-asserts every
-        // declared button across a reconnect, not only the five named ones. Best-effort, bounded
-        // like a handshake attempt; a box with no device reports zero, left uncached so the named
-        // buttons apply until a real caps().
+        // declared button on reconnect, not only the five named ones. Best-effort, with one
+        // handshake attempt's timeout. A box with no device reports 0 buttons; that isn't cached,
+        // so the five named buttons apply until a real caps().
         if let Ok(payload) = self.link.query_timeout(Q_CAPS, HANDSHAKE_ATTEMPT_TIMEOUT)
             && let Some(Resp::Caps(caps)) = parse_resp(&payload)
             && caps.mouse.n_buttons > 0
@@ -79,7 +79,7 @@ impl Device {
                 .lock()
                 .note_declared_buttons(caps.mouse.n_buttons);
         }
-        // Baseline session counter, so any later release is noticed.
+        // Baseline the session counter, so a later session release is noticed.
         if let Ok(payload) = self.link.query_timeout(Q_STATS, HANDSHAKE_ATTEMPT_TIMEOUT)
             && let Some(Resp::Stats(stats)) = parse_resp(&payload)
         {
@@ -88,8 +88,8 @@ impl Device {
         Ok(version)
     }
 
-    // Whatever protocol the box reports: discovery lists a box this build cannot speak to; the
-    // handshake then checks the number.
+    // Accepts any protocol version: discovery lists boxes this build can't speak to, and the
+    // handshake checks the number.
     pub(crate) fn read_version(&self) -> Result<Version> {
         for _ in 0..HANDSHAKE_ATTEMPTS {
             match self

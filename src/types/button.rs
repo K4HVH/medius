@@ -6,10 +6,10 @@ use crate::protocol::opcode::{
 
 /// Mouse button by 0-based id (§3.3).
 ///
-/// The five standard buttons have constants ([`Button::LEFT`] .. [`Button::SIDE2`]). A gaming mouse
-/// often declares more than it wires, so any id is representable and the box drives it up to the
-/// clone's declared button count (`RESP(CAPS)`). Injecting a button the real device declares but
-/// never produces is descriptor-faithful; choosing a plausible button is the caller's job.
+/// The five standard buttons have constants ([`Button::LEFT`] .. [`Button::SIDE2`]). Any id is
+/// representable, since a gaming mouse often declares more buttons than it wires; the box drives ids up
+/// to the clone's declared button count (`RESP(CAPS)`). Injecting a button the real device declares
+/// but never produces is descriptor-faithful. Choosing a plausible button is the caller's job.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct Button(pub u8);
 

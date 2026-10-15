@@ -179,7 +179,7 @@ pub(crate) fn bind_packet_payload(t: &ClipPacketTrigger) -> Vec<u8> {
     )
 }
 
-// The key, checked as the box checks it on a bind and a removal (clip_ptrig_set in clip_ptrig.h).
+// Checks the key as the box does on a bind and a removal (clip_ptrig_set in clip_ptrig.h).
 pub(crate) fn validate_packet_key(t: &ClipPacketTrigger) -> Result<()> {
     let refuse = |reason| Err(Error::ClipPacketTrigger { reason });
     if !ClipPacketTrigger::is_surface(t.class) {
@@ -212,8 +212,8 @@ pub(crate) fn validate_packet_key(t: &ClipPacketTrigger) -> Result<()> {
     Ok(())
 }
 
-// What the box requires to hold a packet trigger; one it refuses would keep the link open for a
-// trigger the box lacks.
+// What the box requires to hold a packet trigger. Recording one the box refuses would keep the link
+// open for a trigger the box lacks.
 pub(crate) fn validate_packet_trigger(t: &ClipPacketTrigger) -> Result<()> {
     let refuse = |reason| Err(Error::ClipPacketTrigger { reason });
     validate_packet_key(t)?;
@@ -264,18 +264,18 @@ impl Device {
 /// Handle to one box's buffered-clip playback, from [`Device::clip`]. Clones share the
 /// append-sequence counter.
 ///
-/// A trigger runs a clip verb on the box, with no host round trip. One set holds two kinds: an input
-/// trigger ([`bind`](Self::bind)) fires on a button, key or media edge; a packet trigger
-/// ([`bind_packet`](Self::bind_packet)) on a packet crossing a traffic surface.
-/// [`clear_triggers`](Self::clear_triggers) removes both; [`query_config`](Self::query_config) reads
-/// both back.
+/// A trigger runs a clip verb on the box, with no host round trip. One set holds two kinds: an
+/// input trigger ([`bind`](Self::bind)) fires on a button, key or media edge; a packet trigger
+/// ([`bind_packet`](Self::bind_packet)) fires on a packet crossing a traffic surface.
+/// [`clear_triggers`](Self::clear_triggers) removes both; [`query_config`](Self::query_config)
+/// reads both back.
 ///
-/// The keepalive keeps a loaded clip, a setting off its default and a bound trigger past the box's
-/// silence window. A reconnect re-sends none of it and keeps what the box still holds: a link down
-/// longer than that window leaves nothing, so reload the clip and its config. A device-chip restart
-/// or a session release counted in [`Stats::session`](crate::Stats::session) (the opt-in going off
-/// keeps the clip) can empty the ring: the crate re-sends the settings and triggers, and
-/// [`lost`](Self::lost) says to reload the clip.
+/// The keepalive keeps a loaded clip, a non-default setting and a bound trigger past the box's
+/// silence window. A reconnect re-sends none of these; it keeps what the box still holds. After a
+/// link outage longer than that window the box holds nothing, so reload the clip and its config. A
+/// device-chip restart or a session release counted in [`Stats::session`](crate::Stats::session)
+/// can empty the ring (turning the opt-in off keeps the clip). The crate then re-sends the settings
+/// and triggers, and [`lost`](Self::lost) says to reload the clip.
 #[derive(Clone, Debug)]
 pub struct ClipHandle {
     link: Link,
@@ -296,10 +296,10 @@ impl ClipHandle {
     /// Append the builder's entries to the ring, in whole-entry frames each stamped with the next
     /// append-sequence number. Fire-and-forget.
     ///
-    /// Every entry is checked before the first frame is sent, so a refusal sends nothing: a
-    /// [`ClipFrame`](crate::ClipFrame) past its edge or raw-report count or encoding past
-    /// [`CLIP_ENTRY_MAX`](crate::CLIP_ENTRY_MAX), a raw report neither IN nor OUT, or a transfer
-    /// whose data does not match its setup packet.
+    /// Every entry is checked before the first frame is sent, so a refusal sends nothing. Refused:
+    /// a [`ClipFrame`](crate::ClipFrame) over its edge or raw-report count, or encoding to more
+    /// than [`CLIP_ENTRY_MAX`](crate::CLIP_ENTRY_MAX); a raw report neither IN nor OUT; a transfer
+    /// whose data doesn't match its setup packet.
     pub fn append(&self, clip: &ClipBuilder) -> Result<()> {
         let chunks = encode_chunks(clip, MAX_PAYLOAD)?;
         let _serial = self.link.reassert_guard();
@@ -314,8 +314,8 @@ impl ClipHandle {
         self.link.send(FrameType::ClipCtrl, &clip_op_payload(op))
     }
 
-    // Recorded once the frame is sent, under the guard a reconnect takes to read the clip back, so
-    // neither lands between the two.
+    // Recorded once the frame is sent, under the guard a reconnect holds while reading the clip
+    // back, so a set and a read-back never interleave.
     fn set(&self, id: u8, value: u8) -> Result<()> {
         let _serial = self.link.reassert_guard();
         self.link
@@ -344,9 +344,9 @@ impl ClipHandle {
     }
 
     /// Clip motion rides native reports under
-    /// [`set_movement_riding`](crate::Device::set_movement_riding); `false`, the default, emits it at
-    /// once. While rendering is on with a profile armed, this applies to wheel and pan only. Changeable
-    /// mid-playback. Fire-and-forget.
+    /// [`set_movement_riding`](crate::Device::set_movement_riding); with `false` (the default) it
+    /// is emitted at once. While rendering is on with a profile armed, this applies to wheel and
+    /// pan only. Changeable mid-playback. Fire-and-forget.
     pub fn set_ride(&self, on: bool) -> Result<()> {
         self.set(CLIP_SET_RIDE, on as u8)
     }
@@ -386,7 +386,8 @@ impl ClipHandle {
     /// [`Error::ClipPacketTrigger`](crate::Error::ClipPacketTrigger), as the box would refuse:
     ///
     /// - a class that is [`Bus`](TrafficClass::Bus) or [`ClipTransfer`](TrafficClass::ClipTransfer);
-    /// - a match past [`PKT_MATCH_MAX`](crate::PKT_MATCH_MAX) bytes, or unlike its mask in length;
+    /// - a match longer than [`PKT_MATCH_MAX`](crate::PKT_MATCH_MAX) bytes, or not the length of
+    ///   its mask;
     /// - a direction the class never carries: [`OUT`](Direction::OUT) on
     ///   [`HidIn`](TrafficClass::HidIn) or [`Emit`](TrafficClass::Emit), [`IN`](Direction::IN) on
     ///   [`HidOut`](TrafficClass::HidOut);
@@ -396,20 +397,22 @@ impl ClipHandle {
     /// - `once_per_run` without one stream (a report class, a concrete id, and `IN` or `OUT`),
     ///   without match bytes past its selector, or with no masked bit in them.
     ///
-    /// A bearing-relative direction is
+    /// A bearing-relative direction gives
     /// [`Error::RelativeDirection`](crate::Error::RelativeDirection). Match and mask are sent as
     /// given, so the key named here is the key the box holds.
     ///
     /// The box makes three checks this call cannot: a consuming trigger needs
-    /// [`allow_imperfect_clones(true)`](crate::Device::allow_imperfect_clones), the set holds
-    /// [`CLIP_PKT_TRIG_MAX`](crate::CLIP_PKT_TRIG_MAX) triggers, and their match bytes share a
-    /// [`CLIP_PKT_MATCH_POOL`](crate::CLIP_PKT_MATCH_POOL) pool. A refused bind leaves the set as it
-    /// was: a new key is not held, and a held key keeps its trigger, action and flags. To confirm a
-    /// bind, compare what [`query_config`](Self::query_config) reads back with what was bound.
+    /// [`allow_imperfect_clones(true)`](crate::Device::allow_imperfect_clones), the set holds at
+    /// most [`CLIP_PKT_TRIG_MAX`](crate::CLIP_PKT_TRIG_MAX) triggers, and their match bytes share a
+    /// [`CLIP_PKT_MATCH_POOL`](crate::CLIP_PKT_MATCH_POOL) pool. A refused bind leaves the set as
+    /// it was: a new key is not held, and a held key keeps its trigger, action and flags. To
+    /// confirm a bind, compare what [`query_config`](Self::query_config) reads back with what was
+    /// bound.
     ///
-    /// The crate records a bind once its frame is sent, held or not, and the keepalive runs for
-    /// what it records. A refused bind stays recorded until [`unbind_packet`](Self::unbind_packet),
-    /// [`clear_triggers`](Self::clear_triggers), or a reconnect that adopts what the box holds.
+    /// The crate records a bind once its frame is sent, whether the box holds it or not, and the
+    /// keepalive runs for what the crate records. A refused bind stays recorded until
+    /// [`unbind_packet`](Self::unbind_packet), [`clear_triggers`](Self::clear_triggers), or a
+    /// reconnect that adopts what the box holds.
     pub fn bind_packet(&self, trigger: &ClipPacketTrigger) -> Result<()> {
         validate_packet_trigger(trigger)?;
         let _serial = self.link.reassert_guard();
@@ -503,9 +506,9 @@ impl ClipHandle {
         self.ctrl(CLIP_OP_FINALIZE)
     }
 
-    /// Whether the box dropped the clip appended since the last [`clear`](Self::clear): the device
-    /// chip restarted, the box released the session, or a reconnect found it gone. Set once the box
-    /// accepts a reload, reset by the next `append` or `clear`.
+    /// Whether the box dropped the clip appended since the last [`clear`](Self::clear) (the device
+    /// chip restarted, the box released the session, or a reconnect found the clip gone). Goes true
+    /// once the box can take a reload; the next `append` or `clear` resets it.
     pub fn lost(&self) -> bool {
         self.link.desired().lock().clip_lost()
     }

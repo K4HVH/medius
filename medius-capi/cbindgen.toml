@@ -6,8 +6,8 @@ header = """/* medius C ABI. https://medius.k4tech.net/bindings/c. MIT.
  *
  * Threads: a device, event-stream, input-stream, LOG-stream, clip or mock handle may be used from
  * several threads at once. A stream may be closed (medius_*_stream_close) while another thread is
- * blocked receiving on it, and that receive returns at once. A clip builder, clip frame or timeline
- * is used by one thread at a time. Free a handle only when no other thread is using it: close a
+ * blocked receiving on it, and that receive returns at once. Use a clip builder, clip frame or
+ * timeline from one thread at a time. Free a handle only when no other thread is using it: close a
  * stream, let its receivers return, then free it.
  */"""
 cpp_compat = true

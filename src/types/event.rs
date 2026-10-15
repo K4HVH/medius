@@ -62,8 +62,8 @@ impl MotionEvent {
 ///
 /// Lists everything held in the class, so the release of usage U is the snapshot without U.
 ///
-/// It lists what the box's table matched: the union of every subscription in this process, so a
-/// stream watching one key receives others once unrelated code widens the table.
+/// It lists what the box's table matched: the union of every subscription in this process. A stream
+/// watching one key therefore receives other keys once unrelated code widens the table.
 /// [`Device::input_events`](crate::Device::input_events) filters to the requested addresses and
 /// yields press and release edges; decode snapshots directly only for the raw held set.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -288,12 +288,14 @@ impl TrafficEvent {
         self.class == CatchClass::VendorBulk && self.flags & 0x01 != 0
     }
 
-    /// Whether the event is a zero-length packet. An event is one packet, except a
-    /// [`CatchClass::HidIn`] or [`CatchClass::Emit`] event on a HID endpoint, which carries a
-    /// report of up to 64 bytes whole however many packets it took: there, with bytes, a
-    /// zero-length packet ended the report after them. With none it is the packet alone: on a HID
-    /// endpoint, the native reply to a poll with nothing to report; on a bulk endpoint, the end of
-    /// a transfer whose length is an exact multiple of the packet size.
+    /// Whether the event is a zero-length packet.
+    ///
+    /// An event is one packet, except a [`CatchClass::HidIn`] or [`CatchClass::Emit`] event on a HID
+    /// endpoint: that carries a whole report of <=64 bytes, however many packets it took. If such an
+    /// event has bytes, a zero-length packet ended the report after them. An event with no bytes is
+    /// the zero-length packet alone: on a HID endpoint, the native reply to a poll with nothing to
+    /// report; on a bulk endpoint, the end of a transfer whose length is an exact multiple of the
+    /// packet size.
     pub fn zlp(&self) -> bool {
         let packets = matches!(
             self.class,
@@ -317,7 +319,7 @@ impl TrafficEvent {
 /// when something subscribed changes.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum CatchEvent {
-    /// Relative-axis event: cursor motion and/or wheel.
+    /// Relative-axis event: cursor, wheel or pan motion.
     Motion(MotionEvent),
     /// Held-usage snapshot for one class (buttons, keys, or media).
     Usages(UsageSnapshot),
@@ -355,7 +357,7 @@ impl CatchEvent {
 
     /// Address within the class, when the event names one.
     ///
-    /// `None` for both input variants: a motion report can move three axes at once and a snapshot is
+    /// `None` for both input variants: a motion report can move four axes at once, and a snapshot is
     /// the class's whole held set. See [`MotionEvent::axes`] and [`UsageSnapshot::usages`].
     pub fn id(&self) -> Option<u16> {
         match self {

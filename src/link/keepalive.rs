@@ -28,7 +28,7 @@ pub(crate) struct KeepaliveCtx {
     pub(crate) catch_lock: Arc<Mutex<()>>,
     pub(crate) stop: Arc<AtomicBool>,
     pub(crate) cadence: Duration,
-    // The query path and the hello watch a restart recovery runs on.
+    // For restart recovery: the query path and the hello watch.
     pub(crate) pending: Arc<Mutex<HashMap<u8, PendingEntry>>>,
     pub(crate) query_gen: Arc<AtomicU64>,
     pub(crate) restart: Arc<RestartWatch>,
@@ -88,7 +88,8 @@ fn keepalive_loop(ctx: KeepaliveCtx) {
             pending = Some(Pending::new(Cause::Released, Instant::now()));
             continue;
         }
-        // Whether the ring holds the clip, so a later release marks lost only a clip the box had.
+        // Read whether the ring holds the clip, so a later release marks a clip lost only if the
+        // box had it.
         if ctx.desired.lock().clip_ring_held() {
             restart::read_ring(&ctx);
         }

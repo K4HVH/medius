@@ -542,8 +542,8 @@ fn reset_clears_transforms_too() {
     assert!(d.is_idle());
 }
 
-// A clip is not re-asserted, but a second of silence clears it, so any part of it keeps the
-// keepalive running.
+// A clip isn't re-asserted, but 1 s of silence clears it, so any part of it keeps the keepalive
+// running.
 #[test]
 fn a_loaded_clip_a_setting_or_a_trigger_is_not_idle() {
     let mut d = DesiredState::default();

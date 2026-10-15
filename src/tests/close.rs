@@ -47,7 +47,7 @@ fn a_closed_event_stream_unsubscribes_once() {
     s.close();
     s.close();
     assert_eq!(catch_frames(&mock), vec![1, 0]);
-    // The clones going later sends nothing more: the subscription already ended.
+    // Dropping the clones later sends nothing more: the subscription already ended.
     drop(s);
     drop(other);
     assert_eq!(catch_frames(&mock), vec![1, 0]);

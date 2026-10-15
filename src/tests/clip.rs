@@ -97,7 +97,7 @@ fn clip_frame_encodes_pan_raw_and_transfers_to_the_firmware_wire() {
             0x02, 0x00, 0x00,
         ]
     );
-    // The endpoint is a number, not an address: bit 7 is the direction's to carry.
+    // The endpoint is a number, not an address: bit 7 belongs to the direction.
     let mut masked = ClipBuilder::new();
     masked.raw(0x81, Direction::IN, [0x00]);
     assert_eq!(bytes(&masked)[2], 0x01);
@@ -640,7 +640,7 @@ fn a_clip_reply_of_another_shape_is_refused() {
     older[0] = 10;
     older.extend_from_slice(&[0, 0, 2]);
     older.extend_from_slice(&[0, 3, 0, 1, 0, 0, 1, 4, 0, 1, 0, 0]);
-    // A trigger count past the box's set.
+    // A trigger count larger than the box's set holds.
     let mut many = vec![0u8; 31];
     many[0] = 10;
     many.extend_from_slice(&[0, 0, 9]);
@@ -877,7 +877,7 @@ mod packet_trigger {
             with(4, 6), // CLEAR is a host verb
             nth(2).0,
         ]);
-        // Nine entries is past the set, so drop one that would have decoded.
+        // Nine entries are more than the set holds: refused. Drop one that would have decoded.
         assert!(ClipSettings::from_payload(&p).is_none());
         let p = reply(&[
             nth(0).0,
@@ -1296,7 +1296,8 @@ mod packet_trigger {
             onto_the_link(frame(4, 2, 1, 0, 0x05, 1, &[0x07, 0x00], &[0xFF, 0x00]));
             onto_the_link(frame(4, 2, 1, 0, 0x05, 0, &[0x00, 0x00], &[0x00, 0x00]));
             assert_eq!(held_on_the_wire(&device, &mock), 0);
-            // On every packet it is a trigger like any other, and a run refused onto its key leaves it.
+            // Without once_per_run, `blind` is a trigger like any other, and a refused run bound
+            // onto its key leaves it in place.
             clip.bind_packet(&blind).unwrap();
             onto_the_link(frame(4, 2, 1, 1, 0x05, 1, &[0x07, 0x00], &[0xFF, 0x00]));
             let read = triggers(&device);

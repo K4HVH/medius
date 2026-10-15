@@ -7,14 +7,14 @@ use crate::types::{Axis, Button, Class, Key, LockTarget, MediaKey, Transform, Tr
 
 #[test]
 fn transform_payload_bytes() {
-    // REMAP X (axis class 3, id 0) → Y (id 1), state add.
+    // REMAP X (axis class 3, id 0) -> Y (id 1), state add.
     let p = transform_payload(0, 3, 0, 3, 1, 1);
     assert_eq!(p, [0, 3, 0x00, 0x00, 3, 0x01, 0x00, 1]);
 }
 
 #[test]
 fn transform_payload_high_ids() {
-    // REMAP Button 6 (class 0) → Media 0x0233 (class 2): a u8 truncation of `did` fails here.
+    // REMAP Button 6 (class 0) -> Media 0x0233 (class 2): a u8 truncation of `did` fails here.
     let p = transform_payload(0, 0, 6, 2, 0x0233, 1);
     assert_eq!(p, [0, 0, 0x06, 0x00, 2, 0x33, 0x02, 1]);
 }
@@ -28,7 +28,7 @@ fn transform_clear_sentinel_bytes() {
 
 #[test]
 fn resp_transforms_decode() {
-    // [16][flags 0][n 1] then one entry: Swap, X ↔ Y. No state byte and no scale per entry.
+    // [16][flags 0][n 1] then one entry: Swap, X <-> Y. No state byte and no scale per entry.
     let p = [16, 0, 1, 1, 3, 0x00, 0x00, 3, 0x01, 0x00];
     let Some(Resp::Transforms(t)) = parse_resp(&p) else {
         panic!("not a RESP(TRANSFORMS)");
@@ -43,8 +43,8 @@ fn resp_transforms_decode() {
 
 #[test]
 fn resp_transforms_high_bytes_and_full_flag() {
-    // Hand-computed: table-full flag set, one cross-class remap Button(6) → Media(0x0233). A u8
-    // truncation of `did` (0x0233 → 0x33) fails here.
+    // Hand-computed: table-full flag set, one cross-class remap Button(6) -> Media(0x0233). A u8
+    // truncation of `did` (0x0233 -> 0x33) fails here.
     let p = [16, 0x01, 1, 0, 0x00, 0x06, 0x00, 2, 0x33, 0x02];
     let Some(Resp::Transforms(t)) = parse_resp(&p) else {
         panic!("not a RESP(TRANSFORMS)");
@@ -143,7 +143,7 @@ fn transform_op_admits_mirrors_the_box() {
     // Swap: two different axes.
     assert!(TransformOp::Swap.admits(x, y));
     assert!(!TransformOp::Swap.admits(x, btn));
-    // Remap: axis→axis, button→button, button→key, button→media; nothing else.
+    // Remap: axis->axis, button->button, button->key, button->media; nothing else.
     assert!(TransformOp::Remap.admits(x, y));
     assert!(TransformOp::Remap.admits(btn, LockTarget::from(Button::new(7))));
     assert!(TransformOp::Remap.admits(btn, key));
@@ -257,7 +257,7 @@ mod mock_roundtrip {
 
     #[test]
     fn same_key_overwrites_the_op() {
-        // remap(X → Y) and swap(X, Y) share the key (X, Y): the second overwrites, not appends.
+        // remap(X -> Y) and swap(X, Y) share the key (X, Y): the second overwrites, not appends.
         let device = Device::with_mock(MockBox::new());
         device.transform_remap(Axis::X, Axis::Y).unwrap();
         device.transform_swap(Axis::X, Axis::Y).unwrap();
@@ -400,7 +400,7 @@ mod mock_roundtrip {
             n_hid: 1,
         };
         let device = Device::with_mock(MockBox::new().with_mouse_caps(caps));
-        // Distinct button→button remaps fill the table.
+        // Distinct button->button remaps fill the table.
         for i in 0..Transforms::CAPACITY {
             let src = Button::new((i % 16) as u8);
             let dst = Button::new(((i + 1 + i / 16) % 16) as u8);
@@ -474,7 +474,7 @@ mod mock_roundtrip {
 
     #[test]
     fn the_readback_comes_back_in_apply_order() {
-        // The box→host half of ordering; the replay tests cover host→box.
+        // The box->host half of ordering; the replay tests cover host->box.
         let device = Device::with_mock(MockBox::new());
         let first = Transform::swap(Axis::Y, Axis::Wheel); // key (3,1,3,2)
         let second = Transform::remap(Axis::X, Axis::Y); // key (3,0,3,1), sorts BELOW the first

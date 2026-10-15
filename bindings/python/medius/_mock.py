@@ -153,12 +153,13 @@ class MockBox:
 
     def set_spread_learned(self, period_us: int):
         """The mock's learned command period, in microseconds. A real box learns it from MOVE
-        arrivals, so a mock left at 0 replies with a span of 0 whatever the percent."""
+        arrivals; at 0 the mock replies with a span of 0 whatever the percent."""
         _native.lib.medius_mock_set_spread_learned(self._handle, int(period_us))
 
     def set_render(self, mode: RenderMode, full: bool, ready: bool):
-        """The mock's `Device.query_render` reply. `ready` is whether a profile is armed, which
-        gates rendering on a real box; an unarmed mock is every box's state after a power cut."""
+        """The mock's `Device.query_render` reply. `ready` is whether the box has learned a profile,
+        which gates rendering on a real box. A mock with `ready` False matches every box after a
+        power cut."""
         _native.lib.medius_mock_set_render(
             self._handle, int(_enum(mode, RenderMode, "mode")), bool(full), bool(ready)
         )
@@ -171,12 +172,12 @@ class MockBox:
         """Set the mock's `ClipHandle.query_config` reply.
 
         Its packet triggers are bound in order, as `ClipHandle.bind_packet` binds them, under the
-        opt-in the mock holds at scripting time. The mock keeps those the box would, each with its
-        scripted ``hits``, and drops the rest as the box's reply would: a direction the class never
-        carries, a match bit outside the mask, a run with no condition, ``consume`` on ``CONTROL``
-        or with the opt-in off, and entries past the match pool. Script the opt-in with
-        `set_imperfect_status` before a consuming trigger. `ClipHandle.bind_packet` adds to the held
-        set and `clip_packet` runs packets through it."""
+        opt-in in force at scripting time. The mock keeps the ones the box would take, each with its
+        scripted ``hits``, and drops the rest as the box would: a direction the class never carries,
+        a match bit outside the mask, a run with no condition, ``consume`` on ``CONTROL`` or with
+        the opt-in off, and entries beyond the match pool. Script the opt-in with
+        `set_imperfect_status` before a consuming trigger. `ClipHandle.bind_packet` adds to the kept
+        set, and `clip_packet` runs packets through it."""
         _native.lib.medius_mock_set_clip_settings(self._handle, clip_settings_to_c(settings))
 
     def clip_packet(
@@ -184,7 +185,7 @@ class MockBox:
     ) -> Tuple[Optional[ClipAction], bool]:
         """Run one packet through the packet triggers, as the box does for a packet crossing
         `traffic_class` at `id` in `direction` with first bytes `head`. The most specific matching
-        trigger counts it in ``hits``.
+        trigger counts the packet in ``hits``.
 
         Returns the action that trigger drives on this packet, and whether it consumes the packet.
         The action is `None` when no trigger matches, or when a ``once_per_run`` trigger's run
@@ -222,14 +223,14 @@ class MockBox:
 
     def detach(self, back_within_grace: bool = False):
         """Simulate the real device detaching: the mock releases host-set session state. With
-        `back_within_grace` the same device re-attaches inside the 250 ms grace and the clone stays
-        up; otherwise the clone is torn down when the grace ends (counted again only if a command
-        arrived during it) and stays down until `attach`."""
+        `back_within_grace`, the same device re-attaches inside the 250 ms grace and the clone stays
+        up. Otherwise the clone is torn down when the grace ends (counted again only if a command
+        arrived during the grace) and stays down until `attach`."""
         _native.lib.medius_mock_detach(self._handle, bool(back_within_grace))
 
     def attach(self):
-        """Simulate the real device attaching again: inside a detach's grace the clone stays as it
-        is; after teardown a fresh clone starts with nothing to release."""
+        """Simulate the real device re-attaching. Inside a detach's grace the clone is unchanged;
+        after the teardown a fresh clone starts, with nothing to release."""
         _native.lib.medius_mock_attach(self._handle)
 
     def silent(self):

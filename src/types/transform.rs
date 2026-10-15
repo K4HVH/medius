@@ -3,8 +3,8 @@
 use crate::protocol::opcode::{TF_F_FULL, TF_OP_COUNT, TF_REMAP, TF_SWAP, TRANSFORM_MAX_ENTRIES};
 use crate::types::{Class, LockTarget};
 
-/// Operation a [`Transform`] performs (§3.15); both move a value between fields. To weigh a field, or
-/// reverse it, use [`scale`](crate::Device::scale).
+/// Operation a [`Transform`] performs (§3.15); each moves a value between fields. To weigh or reverse
+/// a field, use [`scale`](crate::Device::scale).
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TransformOp {
@@ -14,8 +14,8 @@ pub enum TransformOp {
     Swap = TF_SWAP,
 }
 
-// `Swap` tops the dense op space. A box op with no variant decodes as `None`, and its readback row
-// is dropped with nothing marking it.
+// `Swap` is the last op in the dense op space. A box op with no variant decodes as `None`, and its
+// readback row is dropped unmarked.
 const _: () = assert!(TF_SWAP + 1 == TF_OP_COUNT);
 
 impl TransformOp {
@@ -33,8 +33,8 @@ impl TransformOp {
         })
     }
 
-    /// Whether this op admits `source`/`dest`, mirroring the box's check; one field as both ends is
-    /// refused. Whether the fields are declared is for the box to check.
+    /// Whether this op admits `source`/`dest`, as the box checks it; one field as both ends is
+    /// refused. Only the box checks that the fields are declared.
     pub fn admits(self, source: LockTarget, dest: LockTarget) -> bool {
         use LockTarget::{Axis, Usage};
         if source == dest {
@@ -108,8 +108,8 @@ impl Transform {
         }
     }
 
-    /// Move a source field's value into a destination, clearing the source. Same-report for axis to
-    /// axis and button to button; a button to key or media remap holds the destination on the
+    /// Move a source field's value into a destination, clearing the source. Axis to axis and button
+    /// to button stay in one report. A button to key or media remap holds the destination on the
     /// keyboard or media interface while the button is down.
     pub fn remap(source: impl Into<LockTarget>, dest: impl Into<LockTarget>) -> Transform {
         Transform {
@@ -134,7 +134,7 @@ impl Transform {
 pub struct Transforms {
     /// The table is full: a further entry was, or would be, refused.
     pub table_full: bool,
-    /// One entry per installed transform, in installation order, which the box applies them in.
+    /// One entry per installed transform, in installation order (the order the box applies them).
     /// Transforms writing one field do not commute, so the order is part of the state.
     pub entries: Vec<Transform>,
 }

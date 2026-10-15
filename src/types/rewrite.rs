@@ -1,10 +1,10 @@
 //! `REWRITE` (§3.14) vocabulary: rules, actions, classes, and decoded `RESP(REWRITE)` /
 //! `RESP(REWRITE_ENTRY)`.
 //!
-//! The box's rewrite table matches traffic in flight and rewrites, answers, refuses or drops it. It
-//! is gated on [`allow_imperfect_clones`](crate::Device::allow_imperfect_clones) and addressed in
-//! `CATCH`'s `(class, id, direction)` space, in the write direction. A rule is session state,
-//! re-asserted on reconnect like a lock or a catch subscription.
+//! The box's rewrite table matches traffic in flight and rewrites, answers, refuses or drops it. The
+//! table works only under [`allow_imperfect_clones`](crate::Device::allow_imperfect_clones). Rules
+//! are addressed in `CATCH`'s `(class, id, direction)` space, in the write direction. A rule is
+//! session state, re-sent on reconnect like a lock or a catch subscription.
 
 use crate::protocol::opcode::{
     CATCH_CLS_CONTROL, CATCH_CLS_EMIT, CATCH_CLS_HID_IN, CATCH_CLS_HID_OUT, CATCH_CLS_VEND_BULK,
@@ -15,14 +15,14 @@ use crate::types::Direction;
 
 /// Traffic class a rewrite rule may address (§3.14).
 ///
-/// `CATCH`'s traffic classes in the write direction, exactly the set the box rewrites; the
+/// `CATCH`'s traffic classes in the write direction: exactly the set the box rewrites. The
 /// parsed-input classes (button, key, media, axis) and the bus class have no variant.
 /// [`Any`](RewriteClass::Any) acts at every surface a packet crosses.
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum RewriteClass {
-    /// Native HID input report as it arrived; `id` is the interface number. On the bound mouse a
-    /// motion rewrite here survives only on reports the host chip leaves alone; rewrite motion at
+    /// Native HID input report as it arrived; `id` is the interface number. On the bound mouse, a
+    /// motion rewrite here survives only on reports the host chip leaves alone, so rewrite motion at
     /// `Emit`.
     HidIn = CATCH_CLS_HID_IN,
     /// Interrupt-OUT report the game PC wrote, relayed to the real device; `id` is the endpoint
@@ -38,10 +38,11 @@ pub enum RewriteClass {
     /// requests reach a rule (change descriptors with `PATCH`); above EP0 every request does.
     Control = CATCH_CLS_CONTROL,
     /// Emitted bytes, after the renderer; `id` is the endpoint number, `direction`
-    /// [`IN`](crate::Direction::IN). Matches injected and rendered frames besides relayed ones.
+    /// [`IN`](crate::Direction::IN). Matches injected and rendered frames as well as relayed ones.
     Emit = CATCH_CLS_EMIT,
-    /// Wire wildcard `0xFF`: ranked below every other rule, `id` not compared, `Pass`, `Patch` and
-    /// `Replace` only. It acts at each surface, so a native report can hit it at `HidIn` and `Emit`.
+    /// Wire wildcard `0xFF`: ranked below every other rule, `id` not compared, and `Pass`, `Patch`
+    /// and `Replace` only. It acts at each surface, so a native report can hit it at both `HidIn` and
+    /// `Emit`.
     Any = 0xFF,
 }
 
@@ -161,11 +162,11 @@ impl RewriteAction {
 /// Rewrite rule the host installs on the box.
 ///
 /// Keyed by `(class, id, direction, match, mask)`: rules differing in any of those are separate
-/// entries; setting an existing key overwrites it. `match` and `mask` are one length (the box compares
-/// the packet head byte for byte under `mask`); an empty match takes every packet on the address.
-/// `offset` is where [`Patch`](RewriteAction::Patch) and [`ReplyPatch`](RewriteAction::ReplyPatch)
-/// write; other actions ignore it. `payload` is the bytes an action that
-/// [carries one](RewriteAction::carries_payload) supplies.
+/// entries, and setting an existing key overwrites it. `match` and `mask` are one length; the box
+/// compares the packet head byte for byte under `mask`. An empty match takes every packet on the
+/// address. `offset` is where [`Patch`](RewriteAction::Patch) and
+/// [`ReplyPatch`](RewriteAction::ReplyPatch) write; other actions ignore it. `payload` is the bytes
+/// for an action that [carries one](RewriteAction::carries_payload).
 ///
 /// ```no_run
 /// # use medius::{Device, Direction, Result};
@@ -289,25 +290,25 @@ pub struct RewriteEntry {
     pub offset: u16,
     /// Payload bytes carried.
     pub payload_len: u16,
-    /// Packets matched as the top-ranked rule since install or last overwrite, a
-    /// [`Pass`](RewriteAction::Pass) rule included (saturating).
+    /// Packets matched as the top-ranked rule since install or last overwrite (saturating). A
+    /// [`Pass`](RewriteAction::Pass) rule counts too.
     pub hits: u16,
 }
 
 /// Decoded `RESP(REWRITE)` (§4.17): the rewrite table summary.
 ///
 /// `generation` bumps on a table change and on a clear of a non-empty table. A reset, detach, link
-/// loss, re-clone or the opt-in going off empties the table and returns it to 0. The crate ignores
-/// it: its keepalive re-sends every held rule.
+/// loss, re-clone or the opt-in going off empties the table and returns `generation` to 0. The crate
+/// ignores `generation`: its keepalive re-sends every held rule.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct RewriteTable {
-    /// The box refused the last new rule or overwrite for room: all 32 entries in use, or the
-    /// 2048-byte payload pool full. The next table change, or a clear, resets it.
+    /// The box refused the last new rule or overwrite for lack of room (all 32 entries in use, or the
+    /// 2048-byte payload pool full). The next table change or a clear resets it.
     pub table_full: bool,
     /// Generation counter (see the type docs).
     pub generation: u8,
-    /// One row per installed rule, in installation order (the box's order). The box selects a match
-    /// most specific first, whatever its order here.
+    /// One row per installed rule, in installation order (the box's order). The box picks the most
+    /// specific matching rule, whatever its order here.
     pub entries: Vec<RewriteEntry>,
 }
 
