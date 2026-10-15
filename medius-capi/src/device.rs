@@ -25,6 +25,12 @@ impl MediusDevice {
     pub(crate) fn boxed(inner: Device) -> *mut MediusDevice {
         Box::into_raw(Box::new(MediusDevice { inner }))
     }
+
+    /// wraps a `Device` you already opened in a C handle, for when your own library links medius-capi. pass
+    /// `device.clone()` to keep using it from Rust, both share the connection. free it with `medius_device_free`
+    pub fn into_raw(device: Device) -> *mut MediusDevice {
+        Self::boxed(device)
+    }
 }
 
 fn with_device(
