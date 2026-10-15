@@ -23,7 +23,8 @@ pub enum MoveTiming {
     /// this delta; with it off (the box default), nothing waits.
     #[default]
     Ride = 0,
-    /// Leave on the next mouse report the box sends, native or its own, whatever the riding option.
+    /// Leave on the next mouse report the box sends, native or one the box makes, whatever the
+    /// riding option.
     Now = MV_F_NOW,
 }
 
@@ -32,12 +33,12 @@ pub enum MoveTiming {
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum PendingMotion {
-    /// Leave it held.
+    /// Leave held motion for its ride.
     #[default]
     Keep = 0,
-    /// Emit it now, ignoring the ride window.
+    /// Emit held motion now, ignoring the ride window.
     Flush = MV_F_FLUSH,
-    /// Drop it. Motion sent with [`MoveTiming::Now`] is untouched.
+    /// Drop held motion. Motion sent with [`MoveTiming::Now`] is untouched.
     Discard = MV_F_DISCARD,
 }
 

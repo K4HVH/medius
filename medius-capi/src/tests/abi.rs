@@ -666,7 +666,7 @@ fn the_bearing_reads_back_what_was_set_through_the_boundary() {
     );
     assert_eq!(bearing.window_ms, 0);
     assert_eq!(bearing.mode, MediusBearingMode::PerAxis);
-    // And the mock's own setter puts one there without a frame, for a decode test that never writes.
+    // And the mock's setter puts one there without a frame, for a decode test that never writes.
     unsafe { medius_mock_set_bearing(mock, 250, MediusBearingMode::Vector as u8) };
     assert_eq!(
         unsafe { medius_device_query_bearing(dev, &mut bearing) },
@@ -911,7 +911,7 @@ fn a_byte_no_constant_names_is_refused_at_every_entry_point() {
         (bearing.window_ms, bearing.mode),
         (MEDIUS_BEARING_WINDOW_DEFAULT_MS, MediusBearingMode::PerAxis)
     );
-    // The two readers answer with a status of their own: an unnamed direction names no entry, so
+    // The two readers answer with a separate status: an unnamed direction names no entry, so
     // nothing weighs the target and nothing is locked.
     unsafe {
         assert_eq!(medius_device_lock(dev, x, both), MediusStatus::Ok);
@@ -1904,7 +1904,7 @@ fn c_packet(
     t
 }
 
-// The protocol's own example: HID_IN interface 2, IN, START, consume and once per run, selector 1,
+// The protocol doc's example: HID_IN interface 2, IN, START, consume and once per run, selector 1,
 // match `07 20` under mask `FF 20`.
 fn spec_trigger() -> MediusClipPacketTrigger {
     MediusClipPacketTrigger {
@@ -2208,7 +2208,7 @@ fn packet_triggers_the_box_holds_read_back_field_for_field() {
         let clip = unsafe { clip_of(dev) };
         let out = unsafe { query_config(clip) };
         assert_eq!(out.packet_n as usize, n);
-        assert_eq!(out.n, 1, "the input triggers keep their own count");
+        assert_eq!(out.n, 1, "the input triggers keep a separate count");
         for (i, (_, want)) in rows[..n].iter().enumerate() {
             assert_eq!(&out.packet_triggers[i], want, "packet trigger {i} of {n}");
         }
@@ -4920,8 +4920,8 @@ fn raw_rejects_a_non_flow_direction_with_its_own_status() {
         MediusStatus::Ok
     );
     let bytes = [0u8, 1];
-    // Both names two flows and the bearing-relative pair has none here; each carries its own status,
-    // ahead of the opt-in, and an unknown direction byte is refused as an invalid argument.
+    // Both names two flows and the bearing-relative pair has none here; each carries a separate
+    // status, ahead of the opt-in, and an unknown direction byte is refused as an invalid argument.
     assert_eq!(
         unsafe {
             medius_device_raw(
@@ -5387,4 +5387,113 @@ fn update_and_confirm_run_whole_through_the_abi() {
         medius_device_free(dev);
         medius_mock_free(mock);
     }
+}
+
+// A raw handle crosses to the receiving thread as an address: the C API documents these handles as
+// shareable between threads.
+struct Shared<T>(*mut T);
+unsafe impl<T> Send for Shared<T> {}
+
+fn mock_device() -> *mut MediusDevice {
+    let mock = medius_mock_new();
+    let mut dev = ptr::null_mut();
+    assert_eq!(
+        unsafe { medius_device_with_mock(mock, &mut dev) },
+        MediusStatus::Ok
+    );
+    unsafe { medius_mock_free(mock) };
+    dev
+}
+
+// Runs `recv` on another thread, closes with `close` while it blocks, and returns how long the
+// close took to wake it.
+fn woken<T: 'static>(
+    stream: *mut T,
+    recv: fn(*mut T) -> bool,
+    close: unsafe extern "C" fn(*mut T),
+) -> Duration {
+    let shared = Shared(stream);
+    let (tx, rx) = std::sync::mpsc::channel();
+    let t = std::thread::spawn(move || {
+        let s = shared;
+        tx.send(recv(s.0)).unwrap();
+    });
+    std::thread::sleep(Duration::from_millis(50));
+    let at = std::time::Instant::now();
+    unsafe { close(stream) };
+    let got = rx
+        .recv_timeout(Duration::from_secs(2))
+        .expect("the blocked receive woke");
+    assert!(!got, "a closed stream yields nothing");
+    t.join().unwrap();
+    at.elapsed()
+}
+
+#[test]
+fn closing_an_event_stream_wakes_a_receive_on_another_thread() {
+    let dev = mock_device();
+    let filters = [medius_catch_filter_everything()];
+    let mut stream = ptr::null_mut();
+    assert_eq!(
+        unsafe { medius_device_catch_events(dev, filters.as_ptr(), 1, &mut stream) },
+        MediusStatus::Ok
+    );
+    let took = woken(
+        stream,
+        |s| {
+            let mut ev = std::mem::MaybeUninit::<MediusCatchEvent>::uninit();
+            unsafe { medius_event_stream_recv(s, ev.as_mut_ptr()) == MediusStatus::Ok }
+        },
+        medius_event_stream_close,
+    );
+    assert!(took < Duration::from_millis(500));
+    assert!(!unsafe { medius_event_stream_is_connected(stream) });
+    unsafe { medius_event_stream_free(stream) };
+    unsafe { medius_device_free(dev) };
+}
+
+#[test]
+fn closing_an_input_stream_wakes_a_receive_on_another_thread() {
+    let dev = mock_device();
+    let filters = [medius_catch_filter_watch_class(MediusClass::Button as u8)];
+    let mut stream = ptr::null_mut();
+    assert_eq!(
+        unsafe { medius_device_input_events(dev, filters.as_ptr(), 1, &mut stream) },
+        MediusStatus::Ok
+    );
+    let took = woken(
+        stream,
+        |s| {
+            let mut ev = std::mem::MaybeUninit::<MediusInputEvent>::uninit();
+            unsafe { medius_input_stream_recv(s, ev.as_mut_ptr()) == MediusStatus::Ok }
+        },
+        medius_input_stream_close,
+    );
+    assert!(took < Duration::from_millis(500));
+    assert!(!unsafe { medius_input_stream_is_connected(stream) });
+    unsafe { medius_input_stream_free(stream) };
+    unsafe { medius_device_free(dev) };
+}
+
+#[test]
+fn closing_a_log_stream_wakes_a_receive_on_another_thread() {
+    let dev = mock_device();
+    let mut stream = ptr::null_mut();
+    assert_eq!(
+        unsafe { medius_device_logs(dev, &mut stream) },
+        MediusStatus::Ok
+    );
+    assert!(unsafe { medius_log_stream_is_connected(stream) });
+    let took = woken(
+        stream,
+        |s| {
+            let mut line = std::mem::MaybeUninit::<MediusLogLine>::uninit();
+            unsafe { medius_log_stream_recv(s, line.as_mut_ptr()) == MediusStatus::Ok }
+        },
+        medius_log_stream_close,
+    );
+    assert!(took < Duration::from_millis(500));
+    assert!(!unsafe { medius_log_stream_is_connected(stream) });
+    unsafe { medius_log_stream_free(stream) };
+    unsafe { medius_device_free(dev) };
 }

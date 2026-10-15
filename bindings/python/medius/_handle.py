@@ -1,4 +1,4 @@
-"""keeps a native handle alive while calls on it run"""
+"""Keeps a native handle alive while calls on it run."""
 
 from __future__ import annotations
 
@@ -8,9 +8,12 @@ from . import _native
 
 
 class Handle:
-    # ctypes lets go of the GIL during a call, so the last call still running frees the handle
+    # ctypes releases the GIL during a call, so the handle is freed when the last running call on it
+    # returns, never under one.
     _free = ""
-    # medius-capi takes these mutably, so their calls also run one at a time
+    # A stream's native close: ends the stream and wakes a receive blocked on it.
+    _end = ""
+    # medius-capi takes these mutably, so their calls also run one at a time.
     _exclusive = False
 
     def __init__(self, handle):
@@ -21,34 +24,44 @@ class Handle:
         self._turn = threading.Lock() if self._exclusive else None
 
     def _call(self, fn, *args):
-        with self._lock:
-            if self._closing:
-                handle = None
-            else:
-                handle = self._handle
-                self._users += 1
-        if handle is None:
-            return fn(None, *args)
+        counted = False
         try:
-            if self._turn is None:
+            with self._lock:
+                if not self._closing:
+                    self._users += 1
+                    counted = True
+            handle = self._handle if counted else None
+            if self._turn is None or handle is None:
                 return fn(handle, *args)
             with self._turn:
                 return fn(handle, *args)
         finally:
-            with self._lock:
-                self._users -= 1
-                last = self._closing and self._users == 0
-            if last:
-                self._release()
+            if counted:
+                self._leave()
 
-    def close(self):
+    def _leave(self):
+        with self._lock:
+            self._users -= 1
+            last = self._closing and self._users == 0
+        if last:
+            self._release()
+
+    def _shut(self, end):
         with self._lock:
             if self._closing:
                 return
             self._closing = True
-            last = self._users == 0
-        if last:
-            self._release()
+            # Held through the native close, so a receive it wakes cannot free the handle under it.
+            self._users += 1
+        try:
+            if end and self._end and self._handle:
+                getattr(_native.lib, self._end)(self._handle)
+        finally:
+            self._leave()
+
+    def close(self):
+        """Free the handle once no call on it is running; a call in another thread ends first."""
+        self._shut(end=True)
 
     def _release(self):
         handle, self._handle = self._handle, None
@@ -62,7 +75,8 @@ class Handle:
         self.close()
 
     def __del__(self):
+        # Collected, a stream's clone frees its handle and leaves the stream open for the others.
         try:
-            self.close()
+            self._shut(end=False)
         except Exception:
             pass

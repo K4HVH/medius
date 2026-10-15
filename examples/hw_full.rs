@@ -1228,7 +1228,7 @@ mod linux {
             let (mut presses, mut releases, mut motions) = (0usize, 0usize, 0usize);
             let mut consistent = true;
             let mut held: Vec<medius::Usage> = Vec::new();
-            if let Ok(mut input) = dev.input_events(CatchFilter::all_input()) {
+            if let Ok(input) = dev.input_events(CatchFilter::all_input()) {
                 let deadline = std::time::Instant::now() + Duration::from_secs(3);
                 while std::time::Instant::now() < deadline {
                     let Some(ev) = input.recv_timeout(Duration::from_millis(100)) else {
@@ -1270,6 +1270,82 @@ mod linux {
                 format!(
                     "{presses} press, {releases} release, {motions} motion; refusals_ok={refuses} \
                      (move and click the mouse if all three are 0)"
+                ),
+            );
+        }
+
+        {
+            // Each stream closed from another thread: the receiver, reading until its stream ends, wakes
+            // at once; the box's catch table loses both subscriptions; a new one still receives.
+            let dev = device.as_ref().unwrap();
+            let entries = || dev.query_catch().map_or(usize::MAX, |c| c.entries.len());
+            let before = entries();
+            let woke = |close: Box<dyn FnOnce() + Send>, recv: Box<dyn FnOnce() -> bool + Send>| {
+                let (tx, rx) = std::sync::mpsc::channel();
+                let t = std::thread::spawn(move || tx.send(recv()).unwrap());
+                std::thread::sleep(Duration::from_millis(50));
+                let at = std::time::Instant::now();
+                close();
+                let ended = rx.recv_timeout(Duration::from_secs(2)).unwrap_or(false);
+                // A receiver the close never woke is left behind rather than joined, so the check fails
+                // instead of hanging.
+                if ended {
+                    let _ = t.join();
+                }
+                ended && at.elapsed() < Duration::from_millis(500)
+            };
+            let events_ok = dev
+                .catch_events([CatchFilter::traffic_class(TrafficClass::Emit)])
+                .is_ok_and(|s| {
+                    let blocked = s.clone();
+                    woke(
+                        Box::new(move || s.close()),
+                        Box::new(move || {
+                            while blocked.recv().is_ok() {}
+                            !blocked.is_connected()
+                        }),
+                    )
+                });
+            let input_ok = dev
+                .input_events(CatchFilter::all_input())
+                .is_ok_and(|input| {
+                    let closer = input.closer();
+                    woke(
+                        Box::new(move || closer.close()),
+                        Box::new(move || {
+                            while input.recv().is_ok() {}
+                            !input.is_connected()
+                        }),
+                    )
+                });
+            let unsubscribed = entries() == before;
+            let (closing, other) = (dev.logs(), dev.logs());
+            let blocked = closing.clone();
+            let logs_ok = woke(
+                Box::new(move || closing.close()),
+                Box::new(move || {
+                    while blocked.recv().is_ok() {}
+                    !blocked.is_connected()
+                }),
+            ) && other.is_connected();
+            let mut fresh = 0usize;
+            if let Ok(stream) = dev.catch_events([CatchFilter::traffic_class(TrafficClass::Emit)]) {
+                for _ in 0..20 {
+                    let _ = dev.move_rel(1, 0);
+                    let _ = dev.move_rel(-1, 0);
+                    std::thread::sleep(Duration::from_millis(4));
+                }
+                fresh = stream
+                    .recv_timeout(Duration::from_millis(500))
+                    .map_or(0, |_| 1 + stream.try_iter().count());
+            }
+            let _ = dev.reset();
+            check(
+                "streams: close",
+                events_ok && input_ok && unsubscribed && logs_ok && fresh > 0,
+                format!(
+                    "events={events_ok} input={input_ok} table_back={unsubscribed} logs={logs_ok} \
+                     (other log stream open) fresh_emits={fresh}"
                 ),
             );
         }
@@ -1470,7 +1546,7 @@ mod linux {
 
         {
             // Clip playback: 200 mouse moves and a KEY_A hold drive both interfaces; the grabbed node
-            // reports its own. Also covers auto-lock and counters.
+            // reads them back. Also covers auto-lock and counters.
             let dev = device.as_ref().unwrap();
             let _ = dev.reset();
             reset_motion(&acc);
@@ -2483,8 +2559,9 @@ mod linux {
 
         {
             // Erases the box's name, options and everything learned about every device seen, then
-            // restarts it, so it runs only when named. It reopens its own handle (the crash-safe check
-            // took the suite's). medius-fw's tools/validate_factory_reset.py covers the behaviour.
+            // restarts it, so it runs only when named. It opens a separate handle (the crash-safe
+            // check took the suite's). medius-fw's tools/validate_factory_reset.py covers the
+            // behaviour.
             if std::env::var("MEDIUS_HW_FACTORY_RESET").as_deref() == Ok("1") {
                 let reopened = match args.get(2) {
                     Some(p) => Device::open(p),

@@ -405,7 +405,7 @@ mod mock_roundtrip {
             device.set_rewrite(&answer(id, 1)).unwrap();
         }
         assert!(!full(), "a table at the count is no refusal");
-        // Past the crate's own check, the way a second host would reach the box.
+        // Past the crate's check, the way a second host would reach the box.
         device
             .link
             .send(FrameType::Rewrite, &raw(&answer(99, 1)))
@@ -720,14 +720,14 @@ mod box_limits {
         let rule = patch();
         device.set_rewrite(&rule).unwrap();
 
-        // Past the crate's own check, straight onto the link, where the mock refuses what the box does.
+        // Past the crate's check, straight onto the link, where the mock refuses what the box does.
         let gen_before = device.query_rewrite().unwrap().generation;
         for bad in [
             rewrite_payload(4, 3, 1, 1, 9, 0, &M, &K, &[0, 0, 0]), // nine actions, 0 to 8
             rewrite_payload(4, 3, 1, 1, 10, 0, &M, &K, &[]),
             rewrite_payload(11, 0, 1, 1, 0, 0, &[], &[], &[]), // a class that is never rewritten
             rewrite_payload(4, 3, 3, 1, 0, 0, &M, &K, &[]),    // a relative direction
-            rewrite_payload(8, 0, 1, 1, 4, 0, &[], &[], &[0u8; 502]), // past its own read-back
+            rewrite_payload(8, 0, 1, 1, 4, 0, &[], &[], &[0u8; 502]), // past the read-back
             rewrite_payload(4, 3, 1, 1, 2, 60, &M, &K, &[0u8; 5]), // a patch past the report head
             rewrite_payload(4, 2, 1, 1, 2, 60, &M, &K, &[0u8; 5]), // onto the held key: it stays
         ] {

@@ -38,9 +38,9 @@ impl Device {
         self.set_rewrite_checked(rule)
     }
 
-    // Capacity check and send under one re-assert guard, so two threads at the last slot cannot both
-    // pass, and the async wrapper (with its own opt-in check) gets the check too. The guard is not
-    // reentrant: taking it again in `set_rewrite_send_locked` would deadlock.
+    // Capacity check and send under one re-assert guard, so two threads at the last slot cannot
+    // both pass, and the async wrapper, which checks the opt-in first, gets the check too. The
+    // guard is not reentrant: taking it again in `set_rewrite_send_locked` would deadlock.
     pub(crate) fn set_rewrite_checked(&self, rule: &RewriteRule) -> Result<()> {
         let _serial = self.link.reassert_guard();
         {

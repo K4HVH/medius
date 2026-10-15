@@ -2,6 +2,7 @@ mod async_query;
 mod behavior;
 mod catch;
 mod clip;
+mod close;
 mod concurrency;
 mod device_info;
 mod discover;

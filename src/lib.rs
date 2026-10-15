@@ -1,4 +1,4 @@
-//! Host control library for the medius transparent mouse passthrough box.
+//! Rust library for Medius, replacement firmware for the MAKCU box.
 
 #![cfg_attr(not(windows), forbid(unsafe_code))]
 #![cfg_attr(windows, deny(unsafe_code))]
@@ -23,6 +23,7 @@ mod tests;
 pub use device::Device;
 pub use device::catch::EventStream;
 pub use device::clip::ClipHandle;
+pub use device::closer::StreamCloser;
 pub use device::discover::BoxInfo;
 pub use device::input::InputStream;
 pub use device::logs::LogStream;

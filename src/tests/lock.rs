@@ -422,7 +422,7 @@ fn ac_pan_is_a_lockable_axis_peer_of_the_wheel() {
     let l = dev.query_locks().unwrap();
     assert!(l.is_locked(Axis::Pan, Direction::Positive));
     assert_eq!(l.scale_of(Axis::Pan, Direction::Against), 40);
-    // Pan is its own axis row: the wheel it neighbours is untouched.
+    // Pan is a separate axis row: the wheel it neighbours is untouched.
     assert_eq!(
         l.scale_of(Axis::Wheel, Direction::Positive),
         LOCK_SCALE_PASS

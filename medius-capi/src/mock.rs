@@ -384,6 +384,26 @@ pub unsafe extern "C" fn medius_mock_attach(mock: *mut MediusMockBox) {
     with_mock(mock, |m| m.attach());
 }
 
+/// Refuse the next `ACTIVATE` with update status `status` (protocol §4.16), keeping whatever is
+/// staged.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn medius_mock_refuse_next_activate(mock: *mut MediusMockBox, status: u8) {
+    with_mock(mock, |m| {
+        m.refuse_next_activate(medius::UpdateStatus(status))
+    });
+}
+
+/// After each accepted `ACTIVATE`, leave the next `unanswered` FIRMWARE queries unanswered, as a
+/// rebooting box does, then report the device chip on probation for the next `pending`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn medius_mock_reboot_after_activate(
+    mock: *mut MediusMockBox,
+    unanswered: u32,
+    pending: u32,
+) {
+    with_mock(mock, |m| m.reboot_after_activate(unanswered, pending));
+}
+
 /// Make the mock unresponsive to queries (it still records commands). One-way, for testing timeouts.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_mock_silent(mock: *mut MediusMockBox) {

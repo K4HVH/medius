@@ -75,7 +75,7 @@ pub const OPT_RENDER: u8 = 5;
 /// `OPTION` id: spread of an injected delta across the host's command interval. Value
 /// `[percent u16 LE]`.
 pub const OPT_SPREAD: u8 = 6;
-/// `OPTION(BEARING)` mode: each axis reads its sign against its own bearing.
+/// `OPTION(BEARING)` mode: each axis reads its sign against its bearing.
 pub const BEARING_PER_AXIS: u8 = 0;
 /// `OPTION(BEARING)` mode: the physical delta is projected onto the injected XY vector; motion across it is untouched.
 pub const BEARING_VECTOR: u8 = 1;

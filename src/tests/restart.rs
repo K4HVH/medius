@@ -634,7 +634,8 @@ fn a_detach_waits_for_the_next_clone() {
     assert_eq!(scale_x(&device), 40);
 }
 
-// The crate's own RESET is counted by the box like any release, and what it released stays released.
+// A RESET the crate sends is counted by the box like any release, and what it released stays
+// released.
 #[test]
 fn the_crates_own_reset_is_not_undone() {
     let mock = MockBox::new();
@@ -693,7 +694,7 @@ fn the_mock_counts_a_release_only_after_a_command() {
     std::thread::sleep(Duration::from_millis(300));
     assert_eq!(session(), 5);
     // A RESET counts what an earlier command set and leaves nothing marked. Sent bare, since
-    // `reset()` first clears the catch table with its own command.
+    // `reset()` first clears the catch table with a separate command.
     let reset = || device.link.send(FrameType::Reset, &[0]).unwrap();
     reset();
     assert_eq!(session(), 5, "nothing set since the last count");

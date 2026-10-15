@@ -328,7 +328,7 @@ fn the_rule_bit_is_read_only_where_a_rule_acts() {
     assert!(!xfer.rule_acted());
     assert_eq!(xfer.transfer_status(), Some(TransferStatus::Stall));
     assert!(!event(CatchClass::Bus.as_u8(), 0x80).rule_acted());
-    // A bulk event keeps its own two bits beside it.
+    // A bulk event keeps two separate bits beside it.
     let bulk = event(CatchClass::VendorBulk.as_u8(), 0x81);
     assert!(bulk.rule_acted() && bulk.bulk_end_of_transfer() && !bulk.zlp());
 }
@@ -1206,7 +1206,7 @@ mod with_mock {
 
         let mock = MockBox::new();
         let dev = Device::with_mock(mock.clone());
-        let mut s = dev
+        let s = dev
             .input_events([CatchFilter::watch(Button::new(8))])
             .unwrap();
         mock.push_usages(
@@ -1356,8 +1356,8 @@ mod with_mock {
         for i in 0..TOTAL {
             mock.push_motion(i as u8, 0, i as i16, 0, 0, 0);
         }
-        // The reader delivers on its own thread, so wait for the count; asserting at once depends on
-        // scheduling.
+        // The reader delivers on a separate thread, so wait for the count; asserting at once
+        // depends on scheduling.
         let want = (TOTAL as usize - KEPT) as u64;
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
         while s.dropped() < want && std::time::Instant::now() < deadline {
@@ -1443,7 +1443,7 @@ mod with_mock {
         let dev = Device::with_mock(mock.clone());
         let f = Usage::from(Key::new(0x09));
         let g = Usage::from(Key::new(0x0A));
-        let mut narrow = dev
+        let narrow = dev
             .input_events([CatchFilter::watch(Key::new(0x09))])
             .unwrap();
         let _wide = dev
@@ -1472,7 +1472,7 @@ mod with_mock {
         // release and left `held` a multiset.
         let mock = MockBox::new();
         let dev = Device::with_mock(mock.clone());
-        let mut s = dev.input_events(CatchFilter::all_input()).unwrap();
+        let s = dev.input_events(CatchFilter::all_input()).unwrap();
         let a = Usage::from(Key::new(0x04));
         let button = Usage::from(Button::LEFT);
 
@@ -1499,7 +1499,7 @@ mod with_mock {
         // The routing fallback delivers an unaddressable motion report to every axis subscriber.
         let mock = MockBox::new();
         let dev = Device::with_mock(mock.clone());
-        let mut s = dev.input_events(CatchFilter::all_input()).unwrap();
+        let s = dev.input_events(CatchFilter::all_input()).unwrap();
         mock.push_motion(0, 1_000, 0, 0, 0, 0);
         assert!(s.recv_timeout(Duration::from_millis(150)).is_none());
         mock.push_motion(1, 2_000, 0, 0, -2, 0);
@@ -1520,7 +1520,7 @@ mod with_mock {
         // report that decoded to no edge.
         let mock = MockBox::new();
         let dev = Device::with_mock(mock.clone());
-        let mut s = dev.input_events(CatchFilter::all_input()).unwrap();
+        let s = dev.input_events(CatchFilter::all_input()).unwrap();
         mock.push_usages(0, 1_000, Class::Key, Direction::RELEASE, &[]);
         mock.push_usages(1, 2_000, Class::Media, Direction::RELEASE, &[]);
         // Recomputing the full timeout per loop turned a 200 ms budget into 700 ms under a stream of
@@ -1708,7 +1708,7 @@ mod timeline {
         assert_eq!(
             s.host.duration_since(origin),
             Duration::from_millis(20),
-            "the first sample maps to its own arrival"
+            "the first sample maps to its arrival"
         );
     }
 
@@ -1793,7 +1793,7 @@ mod timeline {
             1,
             "the other chip is untouched"
         );
-        // The rebooted chip's first event maps to its own arrival, not to the stale 500 ms floor.
+        // The rebooted chip's first event maps to its arrival, not to the stale 500 ms floor.
         let after = t.observe_at(&motion_at(7), origin + Duration::from_millis(600));
         assert_eq!(
             after.host.duration_since(origin),

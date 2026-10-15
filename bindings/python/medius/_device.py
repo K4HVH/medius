@@ -370,7 +370,7 @@ class Device(Handle):
     def set_spread(self, percent: int):
         """Set the percent of the host's command interval an injected delta is released across: 0
         puts it all on the box's next report, 100 spreads it across one command interval, above 100
-        overlaps. A loop at the native report rate keeps each command whole on its own report. Until
+        overlaps. A loop at the native report rate keeps each command whole on one report. Until
         the box learns the host's command period from MOVE arrivals (`SpreadStatus.span_us`), each
         delta goes out whole."""
         check(self._call(_native.lib.medius_device_set_spread, _u16(percent, "percent")))
@@ -387,7 +387,11 @@ class Device(Handle):
         return firmware_info_from_c(out)
 
     def wait_firmware_confirmed(self) -> FirmwareInfo:
-        """Block until neither chip is still on probation; a chip on probation refuses an update."""
+        """Block until neither chip is still on probation; a chip on probation refuses an update.
+
+        Keeps asking while the box reboots after an activate. After 55 s it raises `UpdateError` if
+        a chip is still on probation, or `QueryTimeoutError` if the box has not answered.
+        """
         out = _native.MediusFirmwareInfo()
         check(self._call(_native.lib.medius_device_wait_firmware_confirmed, ctypes.byref(out)))
         return firmware_info_from_c(out)
@@ -418,7 +422,7 @@ class Device(Handle):
         check(self._call(_native.lib.medius_device_activate_firmware))
 
     def update_firmware(self, target: UpdateTarget, image: bytes, progress=None) -> None:
-        """Stage one image and activate it."""
+        """Stage one image and activate it; a refused activate aborts the staged image."""
         if not image:
             raise ValueError("image is empty")
         buf = (ctypes.c_uint8 * len(image)).from_buffer_copy(image)
@@ -539,7 +543,7 @@ class Device(Handle):
         (empty for IN). A non-OK `TransferOutcome.status` is a protocol outcome, returned, not
         raised; the box replies `REFUSED` while the opt-in is off, and `NAK` while the game PC has
         the clone suspended (the real device is suspended with it). `timeout_ms` is the reply wait,
-        default `default_transfer_timeout_ms()`; the box abandons a transfer after its own ~800 ms,
+        default `default_transfer_timeout_ms()`; the box abandons a transfer after ~800 ms,
         so a shorter wait gives up before a slow device replies.
         """
         buf, n = _bytes_buf(out, "out")

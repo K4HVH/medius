@@ -21,7 +21,7 @@ impl Device {
     }
 
     /// `MOVE` (cursor) bypassing movement riding: leaves on the next mouse report the box sends,
-    /// native or its own, and motion already held for a ride stays held.
+    /// native or one the box makes, and motion already held for a ride stays held.
     pub fn move_rel_now(&self, dx: i16, dy: i16) -> Result<()> {
         self.move_axis(
             Motion::Cursor { dx, dy },

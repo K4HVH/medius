@@ -126,7 +126,7 @@ impl ClipTrigger {
 /// every id) and a `direction` ([`Both`](Direction::Both) for either flow). A packet matches when
 /// `head[i] & mask[i] == match_bytes[i]` for every match byte; an empty match takes every packet on
 /// the address. For [`Control`](TrafficClass::Control) the head is the 8 setup bytes, then the first 8
-/// bytes of OUT data. An [`Emit`](TrafficClass::Emit) trigger sees the clip's own frames besides
+/// bytes of OUT data. An [`Emit`](TrafficClass::Emit) trigger sees the clip's frames as well as
 /// native and injected ones, and none of the clip's raw reports.
 ///
 /// [`bind_packet`](crate::ClipHandle::bind_packet) and the box refuse a trigger no packet can match:
@@ -456,8 +456,7 @@ pub struct ClipSettings {
     pub retain: bool,
     /// Whether a retained clip is finalized (its end fixed).
     pub finalized: bool,
-    /// Whether clip motion waits to ride a native report (`false` = the box's own clock, the
-    /// default).
+    /// Whether clip motion rides native reports; `false`, the default, emits it at once.
     pub ride: bool,
     /// Input triggers.
     pub triggers: Vec<ClipTrigger>,

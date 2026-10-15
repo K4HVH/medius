@@ -213,7 +213,7 @@ Direction.OUT = Direction.NEGATIVE
 class BearingMode(IntEnum):
     """How the box reads whether physical motion runs with or against its injection."""
 
-    #: Each axis compares its sign against its own bearing.
+    #: Each axis compares its sign against its bearing.
     PER_AXIS = 0
     #: Projects the physical delta onto the injected XY vector. One relative scale, the lower of X's
     #: and Y's, governs both axes and is what reads back.

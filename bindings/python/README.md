@@ -1,10 +1,9 @@
 # medius
 
-Python bindings for [medius](https://github.com/K4HVH/medius), custom firmware and a control library for MAKCU mouse-passthrough boxes.
+Python bindings for [Medius](https://medius.k4tech.net), replacement firmware for the MAKCU box. A `ctypes` wrapper
+over the Medius C ABI with no runtime dependencies; the wheel bundles the native library.
 
-A MAKCU box sits between a mouse and a PC: the mouse passes through while your program injects movement, buttons, scroll and keystrokes over USB-serial. This package is a `ctypes` wrapper over the medius C ABI with no runtime dependencies; the wheel bundles the native library, so `pip install` needs no Rust toolchain.
-
-Documentation: [medius.k4tech.net](https://medius.k4tech.net).
+[Docs](https://medius.k4tech.net/bindings/python) · [Install Medius on a box](https://medius.k4tech.net/dashboard/setup) · [Discord](https://discord.gg/ArRqcA84pB)
 
 ## Install
 
@@ -12,7 +11,7 @@ Documentation: [medius.k4tech.net](https://medius.k4tech.net).
 pip install medius
 ```
 
-Platforms without a prebuilt wheel fall back to the source distribution, which builds the library and needs a Rust toolchain.
+Platforms without a prebuilt wheel build from the source distribution, which needs a Rust toolchain.
 
 ## Usage
 
@@ -21,14 +20,15 @@ import medius
 
 with medius.Device.find() as dev:
     print(dev.query_version())
-    dev.move_rel(100, -50)                          # relative move
-    dev.press(medius.Usage.button(medius.Button.LEFT))  # force a usage down
+    dev.move_rel(100, -50)
+    dev.press(medius.Usage.button(medius.Button.LEFT))
     with dev.input_events(medius.CatchFilter.all_input()) as events:
-        for event in events:                        # physical input, live
+        for event in events:                        # native input, live
             ...
 ```
 
-Calls are synchronous, one firmware frame each; failures raise `MediusError`. The API covers mouse, keyboard and media control, and catching physical input.
+Calls are synchronous: a command returns once it is written, a query once its reply arrives. Failures raise
+`MediusError`.
 
 ## License
 

@@ -10,8 +10,8 @@
 /// [`host_rx_drops`](Self::host_rx_drops): each counts the player's input going missing and should
 /// read 0. [`relay_drops`](Self::relay_drops) is relayed traffic and commands that went no further,
 /// none of it native input. A rise across a burst of your own commands can mean some never reached
-/// the box. A lost release can leave a key held, and [`reapply`](crate::Device::reapply) re-sends only
-/// what is held, so send the releases again or call [`reset`](crate::Device::reset).
+/// the box. A lost release can leave a key held, and [`reapply`](crate::Device::reapply) re-sends
+/// only what is held, so send the releases again or call [`reset`](crate::Device::reset).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Stats {
     /// Pure-injection reports emitted (the no-halving / 1 kHz path).

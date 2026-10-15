@@ -169,7 +169,9 @@ pub enum Error {
     HalfEdgeInputFilter,
 
     /// Firmware update op refused (§4.16). `arg`: the slot size for `TOO_BIG`, the expected chunk for
-    /// `SEQ_GAP`, an `esp_err_t` for a write or image failure.
+    /// `SEQ_GAP`, an `esp_err_t` for a write or image failure. A
+    /// [`wait_firmware_confirmed`](crate::Device::wait_firmware_confirmed) that ran out of time gives
+    /// op 0 (begin) and `ON_PROBATION`, the refusal the next update would meet.
     #[error("{} failed: {}", crate::types::update_doing(*op), crate::types::update_reason(*op, *status, *arg))]
     Update {
         op: u8,

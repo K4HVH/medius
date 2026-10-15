@@ -179,7 +179,7 @@ impl Locks {
         &self.entries
     }
 
-    /// Whether `target` is blocked outright on `dir`, by its own entry or a covering blanket. A
+    /// Whether `target` is blocked outright on `dir`, by an entry for it or a covering blanket. A
     /// direction weighed between block and pass is not locked.
     ///
     /// [`Direction::Both`] asks about the two absolute signs. Ask for a relative direction by name: a

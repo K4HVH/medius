@@ -456,7 +456,7 @@ fn clip_append_never_splits_an_entry_and_sends_nothing_when_one_is_refused() {
     device.clip().append(&b).unwrap();
     let frames = appends();
     assert_eq!(frames.concat(), bytes(&b));
-    // A limit of one byte puts every entry in a piece of its own, which is where the boundaries are.
+    // A limit of one byte puts each entry in a separate piece, which is where the boundaries are.
     let mut ends = std::collections::BTreeSet::new();
     let mut at = 0;
     for entry in encode_chunks(&b, 1).unwrap() {
@@ -1390,7 +1390,7 @@ mod packet_trigger {
             assert_eq!(read, surfaces);
         }
 
-        // Past the crate's own check, straight onto the link, where the mock refuses what the box does.
+        // Past the crate's check, straight onto the link, where the mock refuses what the box does.
         #[test]
         fn the_mock_refuses_what_the_box_does() {
             let mock = MockBox::new().with_imperfect(true);

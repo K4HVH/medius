@@ -225,6 +225,7 @@ fn update_targets_round_trip() {
 mod against_the_mock {
     use super::*;
     use crate::protocol::FrameType;
+    use crate::protocol::opcode::OTA_OP_BEGIN;
 
     fn image(n: usize) -> Vec<u8> {
         (0..n).map(|i| (i * 31 + 7) as u8).collect()
@@ -247,6 +248,52 @@ mod against_the_mock {
         assert!(dev.firmware_info().expect("info").device_staged);
         dev.activate_firmware().expect("activated");
         assert!(!dev.firmware_info().expect("info").device_staged);
+    }
+
+    // The firmware keeps one session per chip: each chip's image stages, reads and aborts apart.
+    #[test]
+    fn each_chip_stages_and_aborts_apart() {
+        let mock = crate::MockBox::new();
+        let dev = crate::Device::with_mock(mock.clone());
+        dev.stage_firmware(UpdateTarget::Host, &image(OTA_CHUNK + 1), &mut |_| {})
+            .expect("host staged");
+        dev.stage_firmware(UpdateTarget::Device, &image(OTA_CHUNK + 2), &mut |_| {})
+            .expect("device staged");
+        let info = dev.firmware_info().expect("info");
+        assert!(info.host_staged && info.device_staged);
+        dev.abort_update(UpdateTarget::Host).expect("abort");
+        let info = dev.firmware_info().expect("info");
+        assert!(!info.host_staged && info.device_staged);
+    }
+
+    #[test]
+    fn a_begin_for_one_chip_is_not_busy_behind_the_other() {
+        let mock = crate::MockBox::new();
+        let begin = |target: UpdateTarget| {
+            let mut p = vec![OTA_OP_BEGIN, target.as_u8()];
+            p.extend_from_slice(&10u32.to_le_bytes());
+            p.extend_from_slice(&[0u8; 32]);
+            mock.update_op_for_test(&p).map(|(_, status, _)| status)
+        };
+        assert_eq!(begin(UpdateTarget::Host), Some(0x01));
+        assert_eq!(begin(UpdateTarget::Device), Some(0x01));
+        // A second BEGIN on an open session is BUSY, as on the box.
+        assert_eq!(begin(UpdateTarget::Host), Some(0x10));
+        // A target byte naming neither chip gets no reply.
+        assert_eq!(
+            mock.update_op_for_test(&[OTA_OP_BEGIN, 2, 10, 0, 0, 0]),
+            None
+        );
+    }
+
+    #[test]
+    fn a_staged_image_reads_on_its_own_chip() {
+        let mock = crate::MockBox::new();
+        let dev = crate::Device::with_mock(mock.clone());
+        dev.stage_firmware(UpdateTarget::Host, &image(OTA_CHUNK + 1), &mut |_| {})
+            .expect("staged");
+        let info = dev.firmware_info().expect("info");
+        assert!(info.host_staged && !info.device_staged);
     }
 
     #[test]
@@ -340,7 +387,7 @@ mod correlation {
     use super::*;
     use crate::protocol::FrameType;
 
-    // A DATA acknowledgement answers a window, so it carries its own rolling SEQ.
+    // A DATA acknowledgement answers a window, so it carries a separate rolling SEQ.
     #[test]
     fn data_acks_carry_a_rolling_seq_not_the_command_seq() {
         let mock = crate::MockBox::new();
@@ -474,7 +521,8 @@ mod refused_and_rebooting {
                 .unwrap_err(),
         );
         assert_eq!(aborts(&mock), vec![UpdateTarget::Host.as_u8()]);
-        assert!(!dev.firmware_info().expect("info").device_staged);
+        let info = dev.firmware_info().expect("info");
+        assert!(!info.host_staged && !info.device_staged);
     }
 
     #[cfg(feature = "async")]

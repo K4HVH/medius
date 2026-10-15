@@ -1,8 +1,8 @@
-//! `TRANSFER` (§3.14) vocabulary: the setup packet a host sends, and the device's reply.
+//! `TRANSFER` (§3.14) vocabulary: the setup packet a host sends, and the native reply.
 //!
-//! [`Device::transfer`](crate::Device::transfer) runs one control transfer against the real device on
-//! the host chip and returns its reply, over its own inter-chip link pair, apart from the game PC's
-//! EP0 proxy. One at a time: issue one and wait for the reply.
+//! [`Device::transfer`](crate::Device::transfer) runs one control transfer against the real device,
+//! through the host chip, and returns the native reply. Its request and reply cross the inter-chip
+//! link apart from the game PC's EP0 proxy. One at a time: issue one and wait for the reply.
 
 /// USB control-transfer setup packet: `bmRequestType`, `bRequest`, `wValue`, `wIndex`, `wLength`
 /// (USB spec §9.3), eight bytes little-endian on the wire.

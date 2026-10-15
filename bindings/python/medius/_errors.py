@@ -48,6 +48,14 @@ class FrameTooLongError(MediusError):
 
 
 class UpdateError(MediusError):
+    """An update op the box refused, or a confirm that ran out of time.
+
+    `op` is the op (0 begin, 1 data, 2 end, 3 abort, 4 activate), `update_status` the box's status
+    byte for it (0x1B: a chip on probation) and `arg` its argument. A confirm that ran out of time
+    gives op 0 and 0x1B, the refusal the next update would meet. All three are `None` when the
+    library raised it without a detail.
+    """
+
     def __init__(self, status, message="", proto_ver=0, op=None, update_status=None, arg=None):
         super().__init__(status, message, proto_ver)
         self.op = op

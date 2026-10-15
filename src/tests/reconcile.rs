@@ -333,7 +333,7 @@ fn a_released_media_lock_leaves_the_order_of_the_rest() {
 
 #[test]
 fn a_media_blanket_does_not_take_a_slot() {
-    // The blanket is its own flag on the box (lock_all_media), not an entry in the slot array.
+    // The blanket is a separate flag on the box (lock_all_media), not an entry in the slot array.
     let mut d = DesiredState::default();
     d.apply_lock((LOCK_CLS_MEDIA, 0xEA, LOCK_DIR_BOTH), LOCK_SCALE_BLOCK);
     d.apply_lock(
@@ -739,7 +739,8 @@ fn a_reconnect_adopts_what_the_box_still_holds_of_a_clip() {
         }
     ));
 
-    // Each adopted scalar lands on its own `CLIP_SET` id, where the next `set` of it overwrites it.
+    // Each adopted scalar lands on a separate `CLIP_SET` id, where the next `set` of it overwrites
+    // it.
     for (id, only) in [
         (
             0u8,

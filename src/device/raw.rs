@@ -28,23 +28,24 @@ impl Device {
     /// `RAW` (§3.14): put `bytes` verbatim on cloned endpoint `ep` in `direction`; fire-and-forget.
     ///
     /// `ep` is the bare endpoint number (0 to 15). [`Direction::IN`] emits to the game PC;
-    /// [`Direction::OUT`] relays to the real device. [`Direction::Both`] gives [`Error::RawDirection`]
-    /// and the bearing-relative pair [`Error::RelativeDirection`], before any frame goes out. The
-    /// write is stateless and one-shot: the next native report on that endpoint carries native state,
-    /// and `RAW` bypasses the [rewrite rules](Device::set_rewrite). A raw IN report never rides a
-    /// native one, so on an endpoint the device reports on every poll it takes its own poll, within
-    /// two device reports.
+    /// [`Direction::OUT`] relays to the real device. [`Direction::Both`] gives
+    /// [`Error::RawDirection`] and the bearing-relative pair [`Error::RelativeDirection`], before
+    /// any frame goes out. The write is stateless and one-shot: the next native report on that
+    /// endpoint carries native state, and `RAW` bypasses the [rewrite rules](Device::set_rewrite).
+    /// A raw IN report never rides a native one, so on an endpoint the device reports on every poll
+    /// it takes a separate poll, within two device reports.
     ///
-    /// `bytes` is at most 510 long, else [`Error::FrameTooLong`]. The box drops an interrupt payload
-    /// past the endpoint's `wMaxPacketSize`, in either direction. On a HID IN endpoint, a payload of
-    /// exactly `wMaxPacketSize` ends with a zero-length packet when the endpoint's largest Input report
-    /// is longer, as a native report of that length does. A bulk payload splits at
-    /// `wMaxPacketSize` on the wire and ends with a short packet, or a zero-length one on an exact
-    /// multiple. An OUT packet waits its turn behind the device's two-packet hold, as the game PC's
-    /// writes do, and theirs wait behind it; up to 16 wait across all endpoints, and one past that is
-    /// dropped and counted in [`relay_drops`](crate::Stats::relay_drops). A vendor IN endpoint's
-    /// queue in the box holds 8 packets: when it is full, an interrupt endpoint loses its oldest and a
-    /// bulk endpoint drops the raw packet sent into it, and either counts in `relay_drops`.
+    /// `bytes` is at most 510 long, else [`Error::FrameTooLong`]. The box drops an interrupt
+    /// payload past the endpoint's `wMaxPacketSize`, in either direction. On a HID IN endpoint, a
+    /// payload of exactly `wMaxPacketSize` ends with a zero-length packet when the endpoint's
+    /// largest Input report is longer, as a native report of that length does. A bulk payload
+    /// splits at `wMaxPacketSize` on the wire and ends with a short packet, or a zero-length one on
+    /// an exact multiple. An OUT packet waits its turn behind the device's two-packet hold, as the
+    /// game PC's writes do, and theirs wait behind it; up to 16 wait across all endpoints, and one
+    /// past that is dropped and counted in [`relay_drops`](crate::Stats::relay_drops). A vendor IN
+    /// endpoint's queue in the box holds 8 packets: when it is full, an interrupt endpoint loses
+    /// its oldest and a bulk endpoint drops the raw packet sent into it, and either counts in
+    /// `relay_drops`.
     ///
     /// Admitted by [`allow_imperfect_clones`](Device::allow_imperfect_clones): with the opt-in off the
     /// box drops the frame with no reply, and this still returns `Ok`.
@@ -73,11 +74,11 @@ impl Device {
     /// [`Ok`](TransferStatus::Ok) is a protocol result, not a link error, so it is returned, not
     /// raised; the surrounding `Ok` means the box replied.
     ///
-    /// Admitted by [`allow_imperfect_clones`](Device::allow_imperfect_clones): with the opt-in off the
-    /// box replies [`Refused`](TransferStatus::Refused) without reaching the device. While the game
-    /// PC has the clone suspended, the real device is suspended with it and the box replies
-    /// [`Nak`](TransferStatus::Nak). Runs over its own inter-chip link pair, apart from the game PC's
-    /// EP0 proxy, one at a time. Uses [`DEFAULT_TRANSFER_TIMEOUT`];
+    /// Admitted by [`allow_imperfect_clones`](Device::allow_imperfect_clones): with the opt-in off
+    /// the box replies [`Refused`](TransferStatus::Refused) without reaching the device. While the
+    /// game PC has the clone suspended, the real device is suspended with it and the box replies
+    /// [`Nak`](TransferStatus::Nak). Crosses the inter-chip link as a request and reply separate from
+    /// the game PC's EP0 proxy, one at a time. Uses [`DEFAULT_TRANSFER_TIMEOUT`];
     /// [`transfer_timeout`](Device::transfer_timeout) sets another.
     ///
     /// ```no_run

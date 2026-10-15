@@ -46,7 +46,9 @@ use crate::types::{
 
 #[derive(Debug)]
 struct State {
-    update: MockUpdate,
+    // One session per chip, indexed by the target byte, as ctrl_update.c keeps them.
+    update: [MockUpdate; 2],
+    update_data_seq: u8,
     replied: Vec<Vec<u8>>,
     version: Version,
     health: Health,
@@ -105,7 +107,7 @@ struct State {
     session_dirty: bool,
     // Whether a clone is up: a device is attached and cloned.
     clone_up: bool,
-    // What the box does later on its own, each run by the first frame at or past its time.
+    // What the box does later unprompted, each run by the first frame at or past its time.
     clone_up_at: Option<std::time::Instant>,
     // A detach's grace: when it ends, whether the device came back inside it, and a presentation
     // asked for during it, which waits to see.
@@ -118,7 +120,7 @@ struct State {
     teardown_before_command: bool,
     #[cfg(test)]
     link_lost_before_clip_query: bool,
-    // Frames the box sends on its own, drained into the next reply or pushed by `MockBox::restart`.
+    // Frames the box sends unprompted, drained into the next reply or pushed by `MockBox::restart`.
     unsolicited: Vec<u8>,
 }
 
@@ -367,7 +369,8 @@ impl MockPatch {
 impl Default for State {
     fn default() -> Self {
         State {
-            update: MockUpdate::default(),
+            update: Default::default(),
+            update_data_seq: 0,
             replied: Vec::new(),
             version: Version {
                 proto_ver: crate::protocol::PROTO_VER,
@@ -380,7 +383,7 @@ impl Default for State {
             health: Health::from_flags(0),
             device_info: DeviceInfo::default(),
             // A five-button mouse, so the lock table's button cap agrees with `RESP(CAPS)`; a test
-            // wanting more buttons or AC Pan sets its own caps.
+            // wanting more buttons or AC Pan sets the caps it needs.
             caps: Caps {
                 mouse: MouseCaps {
                     n_buttons: 5,
@@ -693,6 +696,39 @@ impl LockTable {
 }
 
 impl State {
+    // One UPDATE op as ctrl_update.c runs it: `(target, status, arg)` for the reply, `None` when the box
+    // owes none. ACTIVATE is box-wide and answered against the device chip; the other ops name their
+    // chip, and a target byte naming neither is ignored.
+    fn update_op(&mut self, payload: &[u8]) -> Option<(u8, u8, u32)> {
+        let [op, target, ref body @ ..] = *payload else {
+            return None;
+        };
+        if op == 4 {
+            let (status, arg) = if let Some(status) = self.refuse_activate.take() {
+                (status, 0)
+            } else if self.update.iter().any(|u| u.staged) {
+                self.update = Default::default();
+                (self.firmware_unanswered, self.firmware_pending) = self.reboot;
+                (0x00, 0)
+            } else {
+                (0x19, 0)
+            };
+            return Some((0, status, arg));
+        }
+        let session = self.update.get_mut(usize::from(target))?;
+        let (status, arg) = match op {
+            0 => session.begin(body),
+            1 => session.data(body)?,
+            2 => session.end(),
+            3 => {
+                *session = MockUpdate::default();
+                (0x00, 0)
+            }
+            _ => return None,
+        };
+        Some((target, status, arg))
+    }
+
     fn apply_lock_frame(&mut self, p: &[u8]) {
         // A lock needs the clone's targets, which exist only while a clone is up.
         if p.len() < 6 || !self.clone_up {
@@ -716,7 +752,7 @@ impl State {
         }
         let framed = p[8] as usize;
         if p.len() < 9 + 2 * framed || 11 + p.len() - 9 > crate::protocol::opcode::MAX_PAYLOAD {
-            return; // a truncated match, or a rule its own read-back reply cannot carry
+            return; // a truncated match, or a rule the read-back reply cannot carry
         }
         let clear_all = p[4] == 0 && p[0] == 0xFF && p[1] == 0xFF && p[2] == 0xFF;
         if !self.imperfect.allowed && !clear_all {
@@ -896,7 +932,7 @@ impl State {
         self.unsolicited.extend(hello);
     }
 
-    // What the box has done on its own by `now`.
+    // What the box has done unprompted by `now`.
     fn advance(&mut self, now: std::time::Instant) {
         if self.clone_up_at.is_some_and(|t| now >= t) {
             self.clone_up_at = None;
@@ -1381,7 +1417,7 @@ fn catch_resp_payload(c: &CatchState) -> Vec<u8> {
         .age
         .map_or(u16::MAX, |d| d.as_millis().min(u16::MAX as u128 - 1) as u16);
     p.extend_from_slice(&age.to_le_bytes());
-    // ctrl_catch_append stops at CTRL_CATCH_MAXN, which is the table's own size.
+    // ctrl_catch_append stops at CTRL_CATCH_MAXN, the table's size.
     let entries = &c.entries[..c.entries.len().min(CATCH_MAXN)];
     p.push(entries.len() as u8);
     for e in entries {
@@ -1426,7 +1462,7 @@ fn options_emit_payload(
     native_hz: u16,
     allowed: bool,
 ) -> Vec<u8> {
-    // Rendering has its own option, but its gate still sets the resolved rate in the pace reply.
+    // Rendering has a separate option, but its gate still sets the resolved rate in the pace reply.
     let (mode, fixed_hz, mut resolved) = match pace {
         EmitPace::Learned => (0u8, 0u16, 0u16),
         EmitPace::Interval => (1, 0, 0),
@@ -1436,7 +1472,7 @@ fn options_emit_payload(
             (2, hz, (1000 / n) as u16)
         }
     };
-    // The texture forces resolved to 1 kHz only when the pace resolved to no period of its own; a
+    // The texture forces resolved to 1 kHz only when the pace resolved to no period; a
     // Fixed rate keeps its snapped value.
     if render != RenderMode::Off && render_ready && resolved == 0 {
         resolved = 1000;
@@ -1730,7 +1766,6 @@ pub(crate) struct MockUpdate {
     pub(crate) sha: [u8; 32],
     pub(crate) hasher: Vec<u8>,
     pub(crate) staged: bool,
-    pub(crate) data_seq: u8,
 }
 
 impl MockUpdate {
@@ -1827,8 +1862,8 @@ impl MockUpdate {
 
 pub(crate) const MOCK_SLOT_SIZE: u32 = 0xF_0000;
 
-fn firmware_payload(dev: &Version, staged: bool, pending: bool) -> Vec<u8> {
-    // image state 1 is pending verify, 2 valid
+fn firmware_payload(dev: &Version, update: &[MockUpdate; 2], pending: bool) -> Vec<u8> {
+    // Image state 1 is pending verify, 2 valid.
     let state = if pending { 1 } else { 2 };
     let mut p = vec![
         Q_FIRMWARE,
@@ -1840,7 +1875,7 @@ fn firmware_payload(dev: &Version, staged: bool, pending: bool) -> Vec<u8> {
     ];
     p.extend_from_slice(&[1, dev.fw_major, dev.fw_minor, dev.fw_patch, 0, 2]);
     p.extend_from_slice(&MOCK_SLOT_SIZE.to_le_bytes());
-    p.push(u8::from(staged));
+    p.push(u8::from(update[0].staged) | u8::from(update[1].staged) << 1);
     p
 }
 
@@ -1936,48 +1971,16 @@ impl MockBox {
             }
             let out: Vec<u8> = 'reply: {
                 if ty == FrameType::Update && st.respond {
-                    let Some(&op) = payload.first() else {
-                        return Vec::new();
-                    };
-                    let body = if payload.len() > 2 {
-                        &payload[2..]
-                    } else {
-                        &[][..]
-                    };
-                    let answer = match op {
-                        0 => Some(st.update.begin(body)),
-                        1 => st.update.data(body),
-                        2 => Some(st.update.end()),
-                        3 => {
-                            let seq = st.update.data_seq;
-                            st.update = MockUpdate::default();
-                            st.update.data_seq = seq;
-                            Some((0x00, 0))
-                        }
-                        4 => {
-                            if let Some(status) = st.refuse_activate.take() {
-                                Some((status, 0))
-                            } else if st.update.staged {
-                                let seq = st.update.data_seq;
-                                st.update = MockUpdate::default();
-                                st.update.data_seq = seq;
-                                (st.firmware_unanswered, st.firmware_pending) = st.reboot;
-                                Some((0x00, 0))
-                            } else {
-                                Some((0x19, 0))
-                            }
-                        }
-                        _ => None,
-                    };
-                    break 'reply match answer {
-                        Some((status, arg)) => {
-                            let mut p = vec![op, payload.get(1).copied().unwrap_or(0), status];
+                    break 'reply match st.update_op(payload) {
+                        Some((target, status, arg)) => {
+                            let op = payload[0];
+                            let mut p = vec![op, target, status];
                             p.extend_from_slice(&arg.to_le_bytes());
                             // A DATA acknowledgement answers a whole window, so the firmware gives
-                            // it a rolling SEQ of its own rather than echoing the command's.
+                            // it a separate rolling SEQ rather than echoing the command's.
                             let rseq = if op == 1 {
-                                let v = st.update.data_seq;
-                                st.update.data_seq = st.update.data_seq.wrapping_add(1);
+                                let v = st.update_data_seq;
+                                st.update_data_seq = v.wrapping_add(1);
                                 v
                             } else {
                                 seq
@@ -2109,7 +2112,7 @@ impl MockBox {
                             encode(
                                 FrameType::Resp,
                                 seq,
-                                &firmware_payload(&st.version, st.update.staged, pending),
+                                &firmware_payload(&st.version, &st.update, pending),
                             )
                             .expect("resp fits")
                         }
@@ -2530,12 +2533,18 @@ impl MockBox {
         st.teardown_before_command = true;
     }
 
-    /// refuses the next activate with this status and keeps whatever is staged
+    #[cfg(test)]
+    pub(crate) fn update_op_for_test(&self, payload: &[u8]) -> Option<(u8, u8, u32)> {
+        self.state.lock().update_op(payload)
+    }
+
+    /// Refuse the next `ACTIVATE` with `status`, keeping whatever is staged.
     pub fn refuse_next_activate(&self, status: UpdateStatus) {
         self.state.lock().refuse_activate = Some(status.0);
     }
 
-    /// a reboot after each accepted activate, FIRMWARE queries go unanswered then report probation
+    /// After each accepted `ACTIVATE`, leave the next `unanswered` FIRMWARE queries unanswered, as
+    /// a rebooting box does, then report the device chip on probation for the next `pending`.
     pub fn reboot_after_activate(&self, unanswered: u32, pending: u32) {
         self.state.lock().reboot = (unanswered, pending);
     }

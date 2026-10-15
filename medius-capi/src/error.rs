@@ -214,7 +214,11 @@ pub unsafe extern "C" fn medius_last_error_proto_ver() -> u8 {
     guard(0, || LAST_ERROR.with(|e| e.borrow().proto_ver))
 }
 
-/// why the box refused the last update, false if the last error wasn't an update refusal
+/// Write the last error's update detail to `*out` and return true; false, `*out` untouched, if the
+/// last error on this thread was not an update error.
+///
+/// # Safety
+/// `out` must be writable, or null.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_last_error_update(out: *mut MediusUpdateError) -> bool {
     guard(false, || {

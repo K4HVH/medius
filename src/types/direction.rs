@@ -25,7 +25,7 @@ use crate::protocol::opcode::{
 pub enum Direction {
     /// Both edges, signs or flows. On a `LOCK` scale, the scale goes to the two fixed signs and a full
     /// pass to the relative pair, since the two multiply and writing both would square it; only an
-    /// unlock, a full pass, reaches the relative pair with its own value.
+    /// unlock, a full pass, reaches the relative pair as sent.
     #[default]
     Both = LOCK_DIR_BOTH,
     /// Press edge, positive sign or IN flow.

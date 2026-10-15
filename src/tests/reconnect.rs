@@ -97,7 +97,7 @@ fn the_clip_probe_reads_a_packet_trigger_the_reconnect_adopts() {
     let idle = || device.link.desired().lock().is_idle();
     device.link.desired().lock().clip_adopt(&status, &settings);
     assert!(!idle(), "the adopted trigger is held");
-    // The adopted key is the one the caller's own trigger names, so its unbind lets the keepalive idle.
+    // The adopted key is the one the caller's trigger names, so its unbind lets the keepalive idle.
     device.clip().unbind_packet(&held).unwrap();
     assert!(idle());
 }
