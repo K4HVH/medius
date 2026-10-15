@@ -32,7 +32,7 @@ use crate::protocol::opcode::{
     Q_REWRITE, Q_REWRITE_ENTRY, REWRITE_MATCH_MAX, REWRITE_MAX_ENTRIES, REWRITE_PAYLOAD_POOL,
 };
 use crate::protocol::{DecodedFrame, FrameType, encode};
-use crate::types::PatchSection;
+use crate::types::{PatchSection, UpdateStatus};
 use sha2::{Digest, Sha256};
 
 use crate::transport::mock::MockTransport;
@@ -95,6 +95,10 @@ struct State {
     transfer_reply: (u8, Vec<u8>),
     recorded: Vec<DecodedFrame>,
     respond: bool,
+    refuse_activate: Option<u8>,
+    reboot: (u32, u32),
+    firmware_unanswered: u32,
+    firmware_pending: u32,
     // Whether a frame has arrived since the device chip booted: the first one gets a hello first.
     pc_seen: bool,
     // session_ctr.h: a command other than a QUERY since the session counter last counted.
@@ -427,6 +431,10 @@ impl Default for State {
             transfer_reply: (0x00, Vec::new()),
             recorded: Vec::new(),
             respond: true,
+            refuse_activate: None,
+            reboot: (0, 0),
+            firmware_unanswered: 0,
+            firmware_pending: 0,
             pc_seen: true,
             session_dirty: false,
             clone_up: true,
@@ -1819,8 +1827,17 @@ impl MockUpdate {
 
 pub(crate) const MOCK_SLOT_SIZE: u32 = 0xF_0000;
 
-fn firmware_payload(dev: &Version, staged: bool) -> Vec<u8> {
-    let mut p = vec![Q_FIRMWARE, dev.fw_major, dev.fw_minor, dev.fw_patch, 0, 2];
+fn firmware_payload(dev: &Version, staged: bool, pending: bool) -> Vec<u8> {
+    // image state 1 is pending verify, 2 valid
+    let state = if pending { 1 } else { 2 };
+    let mut p = vec![
+        Q_FIRMWARE,
+        dev.fw_major,
+        dev.fw_minor,
+        dev.fw_patch,
+        0,
+        state,
+    ];
     p.extend_from_slice(&[1, dev.fw_major, dev.fw_minor, dev.fw_patch, 0, 2]);
     p.extend_from_slice(&MOCK_SLOT_SIZE.to_le_bytes());
     p.push(u8::from(staged));
@@ -1938,10 +1955,13 @@ impl MockBox {
                             Some((0x00, 0))
                         }
                         4 => {
-                            if st.update.staged {
+                            if let Some(status) = st.refuse_activate.take() {
+                                Some((status, 0))
+                            } else if st.update.staged {
                                 let seq = st.update.data_seq;
                                 st.update = MockUpdate::default();
                                 st.update.data_seq = seq;
+                                (st.firmware_unanswered, st.firmware_pending) = st.reboot;
                                 Some((0x00, 0))
                             } else {
                                 Some((0x19, 0))
@@ -2079,12 +2099,20 @@ impl MockBox {
                             .expect("resp fits"),
                             _ => Vec::new(),
                         },
-                        Some(11) => encode(
-                            FrameType::Resp,
-                            seq,
-                            &firmware_payload(&st.version, st.update.staged),
-                        )
-                        .expect("resp fits"),
+                        Some(11) if st.firmware_unanswered > 0 => {
+                            st.firmware_unanswered -= 1;
+                            Vec::new()
+                        }
+                        Some(11) => {
+                            let pending = st.firmware_pending > 0;
+                            st.firmware_pending = st.firmware_pending.saturating_sub(1);
+                            encode(
+                                FrameType::Resp,
+                                seq,
+                                &firmware_payload(&st.version, st.update.staged, pending),
+                            )
+                            .expect("resp fits")
+                        }
                         Some(10) => encode(
                             FrameType::Resp,
                             seq,
@@ -2500,6 +2528,16 @@ impl MockBox {
         st.count_release();
         st.release_session();
         st.teardown_before_command = true;
+    }
+
+    /// refuses the next activate with this status and keeps whatever is staged
+    pub fn refuse_next_activate(&self, status: UpdateStatus) {
+        self.state.lock().refuse_activate = Some(status.0);
+    }
+
+    /// a reboot after each accepted activate, FIRMWARE queries go unanswered then report probation
+    pub fn reboot_after_activate(&self, unanswered: u32, pending: u32) {
+        self.state.lock().reboot = (unanswered, pending);
     }
 
     /// Unresponsive box (builder style): records commands, never replies to a `QUERY`.
