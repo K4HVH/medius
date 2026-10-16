@@ -58,12 +58,12 @@ impl AsyncDevice {
         Device { link: self.link }
     }
 
-    /// `MOVE`: relative cursor movement; see [`Device::move_rel`].
+    /// `MOVE`: relative cursor motion; see [`Device::move_rel`].
     pub fn move_rel(&self, dx: i16, dy: i16) -> Result<()> {
         self.dev().move_rel(dx, dy)
     }
 
-    /// `WHEEL`: vertical scroll; see [`Device::wheel`].
+    /// `MOVE` (wheel): vertical scroll; see [`Device::wheel`].
     pub fn wheel(&self, delta: i16) -> Result<()> {
         self.dev().wheel(delta)
     }
@@ -169,7 +169,7 @@ impl AsyncDevice {
         self.dev().led(target, mode, level)
     }
 
-    /// `LOCK`: weigh physical input on a target; see [`Device::scale`].
+    /// `LOCK`: weigh native input on a target; see [`Device::scale`].
     pub fn scale(
         &self,
         target: impl Into<LockTarget>,
@@ -235,7 +235,7 @@ impl AsyncDevice {
         self.dev().input_events(filters)
     }
 
-    /// `OPTION(IMPERFECT)`: allow cloning a device the box cannot clone exactly; see
+    /// `OPTION(IMPERFECT)`: allow cloning a device the box cannot clone faithfully; see
     /// [`Device::allow_imperfect_clones`].
     pub fn allow_imperfect_clones(&self, allow: bool) -> Result<()> {
         self.dev().allow_imperfect_clones(allow)
@@ -246,7 +246,7 @@ impl AsyncDevice {
         self.dev().set_movement_riding(window)
     }
 
-    /// `OPTION(EMIT)`: emit pacing and forced wire rate; see [`Device::set_emit_pace`].
+    /// `OPTION(EMIT)`: emit pacing and forced poll rate; see [`Device::set_emit_pace`].
     pub fn set_emit_pace(&self, pace: EmitPace, force_hz: Option<u16>) -> Result<()> {
         self.dev().set_emit_pace(pace, force_hz)
     }
@@ -266,7 +266,7 @@ impl AsyncDevice {
         self.dev().set_bearing(window, mode)
     }
 
-    /// `OPTION(RENDER)`: render texture, and whether native motion goes through it; see
+    /// `OPTION(RENDER)`: render texture, and whether native motion is rendered; see
     /// [`Device::set_render`].
     pub fn set_render(&self, mode: RenderMode, full: bool) -> Result<()> {
         self.dev().set_render(mode, full)
@@ -324,21 +324,18 @@ impl AsyncDevice {
         self.offload(|d| d.activate_firmware()).await
     }
 
-    /// Stage one image and activate it.
+    /// Stage one image and activate it; a refused activate aborts the staged image.
     ///
-    /// Not cancellable: dropping the future stops the wait, not the transfer, which runs to completion
-    /// on its own thread, and the box still reboots into the new image.
+    /// Not cancellable: dropping the future stops the wait, not the transfer. The transfer runs to
+    /// completion on a separate thread, and the box still reboots into the new image.
     pub async fn update_firmware(
         &self,
         target: UpdateTarget,
         image: Vec<u8>,
         mut progress: impl FnMut(UpdateProgress) + Send + 'static,
     ) -> Result<()> {
-        self.offload(move |d| {
-            d.stage_firmware(target, &image, &mut progress)?;
-            d.activate_firmware()
-        })
-        .await
+        self.offload(move |d| d.update_firmware(target, &image, &mut progress))
+            .await
     }
 
     /// Wait until neither chip is on probation.
@@ -506,7 +503,7 @@ impl AsyncDevice {
         }
     }
 
-    /// Render texture and whether a profile has armed (§4.14).
+    /// Render texture and whether the box has learned a profile (§4.14).
     pub async fn query_render(&self) -> Result<RenderStatus> {
         let payload = self
             .link
@@ -518,7 +515,7 @@ impl AsyncDevice {
         }
     }
 
-    /// Spread percent and the interval in effect (§4.14).
+    /// Spread percent and release interval (§4.14).
     pub async fn query_spread(&self) -> Result<SpreadStatus> {
         let payload = self
             .link
@@ -545,7 +542,7 @@ impl AsyncDevice {
         self.dev().raw(ep, direction, bytes)
     }
 
-    /// `TRANSFER`: one control transfer against the device; see [`Device::transfer`].
+    /// `TRANSFER`: one control transfer against the real device; see [`Device::transfer`].
     pub async fn transfer(&self, ep: u8, setup: Setup, out: &[u8]) -> Result<TransferOutcome> {
         self.transfer_timeout(ep, setup, out, DEFAULT_TRANSFER_TIMEOUT)
             .await
@@ -615,7 +612,7 @@ impl AsyncDevice {
         self.dev().apply_patch_send()
     }
 
-    /// `PATCH` CLEAR: erase this device's stored set; see [`Device::clear_patch`].
+    /// `PATCH` CLEAR: erase the real device's stored set; see [`Device::clear_patch`].
     pub fn clear_patch(&self) -> Result<()> {
         self.dev().clear_patch()
     }
@@ -704,7 +701,7 @@ impl AsyncDevice {
         Device::list()
     }
 
-    /// Open the box whose device MAC or CH343 serial matches `id`; see [`Device::open_by_id`].
+    /// Open the box whose device-chip MAC or CH343 serial matches `id`; see [`Device::open_by_id`].
     pub fn open_by_id(id: &str) -> Result<AsyncDevice> {
         Ok(Device::open_by_id(id)?.into_async())
     }

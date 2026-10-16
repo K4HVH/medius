@@ -32,7 +32,7 @@ fn catch_payload_bytes() {
 
 #[test]
 fn catch_classes_match_the_wire() {
-    // Classes 0..3 must equal LOCK's and INJECT's, or one vocabulary silently becomes two.
+    // Classes 0..3 must equal LOCK's and INJECT's, or one vocabulary becomes two with no error.
     assert_eq!(CatchClass::Button.as_u8(), 0);
     assert_eq!(CatchClass::Key.as_u8(), 1);
     assert_eq!(CatchClass::Media.as_u8(), 2);
@@ -69,7 +69,7 @@ fn the_two_class_vocabularies_agree() {
         assert!(c.is_traffic() && !c.is_input());
         assert_eq!(TrafficClass::try_from(c), Ok(t));
     }
-    // The input half refuses to become a traffic class, and hands itself back to say which.
+    // The input half refuses to become a traffic class, returning itself as the error.
     assert_eq!(
         TrafficClass::try_from(CatchClass::Key),
         Err(CatchClass::Key)
@@ -116,9 +116,9 @@ fn capture_normalises_and_widens() {
 
 #[test]
 fn equality_covers_the_capture_and_addressing_does_not() {
-    // Filters differing only in capture are one box entry (it dedups on class, id, direction) but
-    // behave differently, so PartialEq covers capture or assert_eq! passes on both. same_address() is
-    // addressing.
+    // Filters differing only in capture are one box entry (the box dedups on class, id, direction)
+    // but behave differently. So PartialEq covers capture; otherwise assert_eq! passes on both.
+    // same_address() compares the address alone.
     let a = CatchFilter::traffic(TrafficClass::VendorBulk, 3);
     let b = a.with_capture(Capture::First(16));
     assert_ne!(a, b);
@@ -294,7 +294,7 @@ fn control_status_covers_every_handshake_the_pc_can_get() {
     // The handshake is bits 0-1 alone: the rule bit beside it changes nothing.
     assert_eq!(with_flags(0x81), Some(ControlStatus::Stalled));
     assert_eq!(with_flags(0x80), Some(ControlStatus::Ok));
-    // An unknown value stays unknown; a catch-all arm reported a newer firmware's value as a
+    // An unknown value stays unknown: a catch-all arm would read a newer firmware's value as a
     // timeout, a device fault that never happened.
     assert_eq!(with_flags(0x03), Some(ControlStatus::Other(0x03)));
     // A class that is not Control has no control status at all, whatever its flags say.
@@ -328,7 +328,7 @@ fn the_rule_bit_is_read_only_where_a_rule_acts() {
     assert!(!xfer.rule_acted());
     assert_eq!(xfer.transfer_status(), Some(TransferStatus::Stall));
     assert!(!event(CatchClass::Bus.as_u8(), 0x80).rule_acted());
-    // A bulk event keeps its own two bits beside it.
+    // A bulk event keeps two separate bits beside it.
     let bulk = event(CatchClass::VendorBulk.as_u8(), 0x81);
     assert!(bulk.rule_acted() && bulk.bulk_end_of_transfer() && !bulk.zlp());
 }
@@ -445,7 +445,7 @@ fn clip_transfer_event_splits_like_a_control_event_and_carries_a_transfer_status
             Some(want)
         );
     }
-    // A control event's flags are the device's answer to the game PC, not a transfer's status.
+    // A control event's flags are the handshake the game PC received, not a transfer's status.
     let mut ctl = p.clone();
     ctl[5] = 8;
     assert!(
@@ -561,8 +561,8 @@ fn one_unrecognised_entry_does_not_discard_the_whole_reply() {
 
 #[test]
 fn a_device_stamp_translates_into_the_host_domain() {
-    // Only the None path was covered, so a sign inversion shipped green. The box reports
-    // host-minus-device, so a positive offset moves a device stamp forward.
+    // The box reports host-minus-device, so a positive offset moves a device stamp forward. Testing
+    // only the None path let a sign inversion pass.
     let build = |offset: i32, age: u16| {
         let mut p = vec![7u8, 0];
         p.extend_from_slice(&0u32.to_le_bytes());
@@ -585,7 +585,7 @@ fn a_device_stamp_translates_into_the_host_domain() {
 
 #[test]
 fn an_unfitted_rate_is_distinct_from_a_measured_zero() {
-    // Two different answers over the same wire field.
+    // Two different values over the same wire field.
     let build = |rate: i32| {
         let mut p = vec![7u8, 0];
         p.extend_from_slice(&0u32.to_le_bytes());
@@ -613,7 +613,7 @@ fn an_unfitted_rate_is_distinct_from_a_measured_zero() {
 
 #[test]
 fn no_clock_estimate_is_distinct_from_a_zero_offset() {
-    // 0xFFFF age means no estimate; read as zero ms old, a caller would trust an unmeasured offset.
+    // 0xFFFF age means no estimate; read as 0 ms old, a caller would trust an unmeasured offset.
     let mut p = vec![7u8, 0];
     p.extend_from_slice(&0u32.to_le_bytes());
     p.extend_from_slice(&0i32.to_le_bytes());
@@ -698,7 +698,7 @@ mod with_mock {
     #[test]
     fn a_capture_on_an_input_class_is_refused_not_ignored() {
         // The firmware's input taps ignore the capture (NULL where the traffic tap passes
-        // &snaplen), so accepting one would be a knob wired to nothing.
+        // &snaplen), so accepting one would be a setting with no effect.
         let dev = Device::with_mock(MockBox::new());
         let err = dev
             .catch_events([CatchFilter::watch_class(Class::Key).with_capture(Capture::First(8))])
@@ -707,7 +707,7 @@ mod with_mock {
             matches!(err, Error::CaptureNotApplicable { class } if class == CatchClass::Key),
             "got {err:?}"
         );
-        // The wildcard covers traffic, so capping it is exactly right and must still be allowed.
+        // The wildcard covers traffic, so capping it is correct and must still be allowed.
         let _ok = dev
             .catch_events([CatchFilter::everything().with_capture(Capture::First(16))])
             .expect("everything() may be capped");
@@ -728,7 +728,7 @@ mod with_mock {
         let _ok = dev
             .catch_events([CatchFilter::watch_class(Class::Media)])
             .expect("a blanket is not an exact id");
-        // And one below the sentinel is a perfectly good usage.
+        // And one below the sentinel is a valid usage.
         let _fine = dev
             .catch_events([CatchFilter::watch(Usage::new(Class::Media, 0xFFFE))])
             .expect("0xFFFE addresses one usage");
@@ -748,8 +748,8 @@ mod with_mock {
             dev.input_events([CatchFilter::everything()]).unwrap_err(),
             Error::WildcardNotInput
         ));
-        // A press-only subscription never sees the release, so the next press looks like a chord and
-        // the decoder stops reporting the key after its first press.
+        // A press-only subscription never receives the release, so the next press looks like a
+        // chord and the decoder stops reporting the key after its first press.
         assert!(matches!(
             dev.input_events([CatchFilter::watch(Key::new(0x04)).on_press()])
                 .unwrap_err(),
@@ -892,9 +892,9 @@ mod with_mock {
 
     #[test]
     fn a_more_specific_entry_does_not_widen_a_broader_one() {
-        // The reverse must not happen: an exact endpoint asking for whole packets leaves the blanket
-        // (serving every other endpoint) capped. Folding on any overlap put the blanket at whole
-        // packets and sent every byte of every bulk pipe down the link.
+        // The reverse must not happen: an exact endpoint asking for whole packets leaves the
+        // blanket (serving every other endpoint) capped. Folding on any overlap would put the
+        // blanket at whole packets and send every byte of every bulk pipe down the link.
         let mock = MockBox::new();
         let dev = Device::with_mock(mock.clone());
         let _capped = dev
@@ -962,7 +962,7 @@ mod with_mock {
     #[test]
     fn a_subscription_past_the_box_s_table_is_refused_not_truncated() {
         // The box holds 32 entries and drops the rest, flagged only in `table_full`, so the stream
-        // missed whatever did not fit.
+        // would miss whatever didn't fit.
         use crate::protocol::opcode::CATCH_MAX_ENTRIES;
         let mock = MockBox::new();
         let dev = Device::with_mock(mock.clone());
@@ -1016,7 +1016,7 @@ mod with_mock {
             .skip(before)
             .map(|f| f.payload.clone())
             .collect();
-        // One frame: the unsubscribe for B's own entry. A's three entries stay unwritten.
+        // One frame: the unsubscribe for B's entry. A's three entries stay unwritten.
         assert_eq!(sent.len(), 1, "sent {sent:?}");
         assert_eq!(sent[0][4], 0, "the one frame is an unsubscribe");
         assert_eq!(sent[0][0], CatchClass::VendorInterrupt.as_u8());
@@ -1053,8 +1053,8 @@ mod with_mock {
 
     #[test]
     fn duplicate_addresses_in_one_call_take_the_widest() {
-        // Same rule within one subscribe: collecting into a set kept the last-listed duplicate, so
-        // the two orderings of one pair disagreed.
+        // Same rule within one subscribe: both orderings of one pair must agree (collecting into a
+        // set would keep the last-listed duplicate).
         let sent = |filters: [CatchFilter; 2]| {
             let mock = MockBox::new();
             let dev = Device::with_mock(mock.clone());
@@ -1083,13 +1083,13 @@ mod with_mock {
     #[test]
     fn an_exact_input_filter_receives_its_class_and_diffs_it() {
         // Input frames carry content, not an address, so routing reads the address from the
-        // content. Routing on the wire's wildcard id made every exact-id input subscription match
-        // nothing: the box accepted and listed the entry, counted no drops, and the stream stayed
+        // content. Routed on the wire's wildcard id, every exact-id input subscription would match
+        // nothing: the box accepts and lists the entry, counts no drops, and the stream stays
         // empty.
         //
         // A snapshot lists what is held, so Left's release is the snapshot without Left. Delivering
-        // only snapshots containing the subscriber's usage drops that edge, and only while another
-        // subscriber's usage is held, so a single-subscriber test cannot see it.
+        // only snapshots that contain the subscriber's usage would drop that edge, but only while
+        // another subscriber's usage is held, so a single-subscriber test can't see it.
         let mock = MockBox::new();
         let dev = Device::with_mock(mock.clone());
         let s = dev
@@ -1135,7 +1135,7 @@ mod with_mock {
     #[test]
     fn an_input_filter_direction_selects_the_edge() {
         // The box emits both edges once another subscriber holds a wider entry, so without the edge
-        // on the wire a press-only subscription received releases too.
+        // on the wire, a press-only subscription would receive releases too.
         let mock = MockBox::new();
         let dev = Device::with_mock(mock.clone());
         let press = dev
@@ -1201,12 +1201,12 @@ mod with_mock {
 
     #[test]
     fn a_button_past_five_is_a_catchable_address() {
-        // The subscription wire is (class=button, id=8) unchanged; the id is no longer capped.
+        // The subscription wire is (class=button, id=8) unchanged: the id isn't capped.
         assert_eq!(CatchFilter::watch(Button::new(8)).wire(), (0, 8));
 
         let mock = MockBox::new();
         let dev = Device::with_mock(mock.clone());
-        let mut s = dev
+        let s = dev
             .input_events([CatchFilter::watch(Button::new(8))])
             .unwrap();
         mock.push_usages(
@@ -1356,8 +1356,8 @@ mod with_mock {
         for i in 0..TOTAL {
             mock.push_motion(i as u8, 0, i as i16, 0, 0, 0);
         }
-        // The reader delivers on its own thread, so wait for the count; asserting at once depends on
-        // scheduling.
+        // The reader delivers on a separate thread, so wait for the count; asserting at once
+        // depends on scheduling.
         let want = (TOTAL as usize - KEPT) as u64;
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
         while s.dropped() < want && std::time::Instant::now() < deadline {
@@ -1443,7 +1443,7 @@ mod with_mock {
         let dev = Device::with_mock(mock.clone());
         let f = Usage::from(Key::new(0x09));
         let g = Usage::from(Key::new(0x0A));
-        let mut narrow = dev
+        let narrow = dev
             .input_events([CatchFilter::watch(Key::new(0x09))])
             .unwrap();
         let _wide = dev
@@ -1468,11 +1468,11 @@ mod with_mock {
 
     #[test]
     fn a_malformed_snapshot_cannot_wedge_the_held_set() {
-        // Defences against malformed snapshots: a usage listed twice fired two presses with no
-        // release and left `held` a multiset.
+        // Defences against malformed snapshots: a usage listed twice must not fire two presses with
+        // no release, or leave `held` a multiset.
         let mock = MockBox::new();
         let dev = Device::with_mock(mock.clone());
-        let mut s = dev.input_events(CatchFilter::all_input()).unwrap();
+        let s = dev.input_events(CatchFilter::all_input()).unwrap();
         let a = Usage::from(Key::new(0x04));
         let button = Usage::from(Button::LEFT);
 
@@ -1499,7 +1499,7 @@ mod with_mock {
         // The routing fallback delivers an unaddressable motion report to every axis subscriber.
         let mock = MockBox::new();
         let dev = Device::with_mock(mock.clone());
-        let mut s = dev.input_events(CatchFilter::all_input()).unwrap();
+        let s = dev.input_events(CatchFilter::all_input()).unwrap();
         mock.push_motion(0, 1_000, 0, 0, 0, 0);
         assert!(s.recv_timeout(Duration::from_millis(150)).is_none());
         mock.push_motion(1, 2_000, 0, 0, -2, 0);
@@ -1520,11 +1520,11 @@ mod with_mock {
         // report that decoded to no edge.
         let mock = MockBox::new();
         let dev = Device::with_mock(mock.clone());
-        let mut s = dev.input_events(CatchFilter::all_input()).unwrap();
+        let s = dev.input_events(CatchFilter::all_input()).unwrap();
         mock.push_usages(0, 1_000, Class::Key, Direction::RELEASE, &[]);
         mock.push_usages(1, 2_000, Class::Media, Direction::RELEASE, &[]);
-        // Recomputing the full timeout per loop turned a 200 ms budget into 700 ms under a stream of
-        // empties.
+        // Recomputing the full timeout per loop would turn a 200 ms budget into 700 ms under a
+        // stream of empties.
         let began = std::time::Instant::now();
         assert!(s.recv_timeout(Duration::from_millis(150)).is_none());
         let waited = began.elapsed();
@@ -1537,7 +1537,7 @@ mod with_mock {
 
     #[test]
     fn the_input_stream_tracks_each_class_separately() {
-        // One held-set per class. Sharing one made a key press look like a button release.
+        // One held-set per class. Sharing one would make a key press look like a button release.
         let mock = MockBox::new();
         let dev = Device::with_mock(mock.clone());
         let mut s = dev.input_events(CatchFilter::all_input()).unwrap();
@@ -1593,8 +1593,8 @@ mod timeline {
 
     #[test]
     fn box_microseconds_unwrap_past_the_rollover() {
-        // 32 bits of microseconds is 71.6 minutes; subtracting raw stamps across the wrap is about
-        // 4295 s wrong, negative.
+        // 32 bits of microseconds is 71.6 minutes; subtracting raw stamps across the wrap is
+        // ~4295 s wrong (negative).
         let mut t = Timeline::new();
         assert_eq!(
             t.box_us(&motion_at(u32::MAX - 500)),
@@ -1698,7 +1698,7 @@ mod timeline {
 
     #[test]
     fn the_host_mapping_is_anchored_to_the_arrival_not_to_the_box_stamp() {
-        // Deleting the floor entirely (host = box_us alone) left every other timeline test green.
+        // Every other timeline test passes with the floor deleted (host = box_us alone).
         let origin = Instant::now();
         let mut t = Timeline::new();
         // A box that booted an hour before this process: stamps are huge, arrivals are not.
@@ -1708,7 +1708,7 @@ mod timeline {
         assert_eq!(
             s.host.duration_since(origin),
             Duration::from_millis(20),
-            "the first sample maps to its own arrival"
+            "the first sample maps to its arrival"
         );
     }
 
@@ -1761,8 +1761,8 @@ mod timeline {
 
     #[test]
     fn each_domain_keeps_its_own_floor() {
-        // A floor shared across the chips put device-chip stamps wherever the host chip's offset
-        // landed them; the clocks are unrelated, so floors are per domain.
+        // Floors are per domain: the chips' clocks are unrelated, and a shared floor would put
+        // device-chip stamps wherever the host chip's offset landed them.
         let origin = Instant::now();
         let mut t = Timeline::new();
         // Host chip: stamps near zero, arriving at 10 ms.
@@ -1780,8 +1780,8 @@ mod timeline {
 
     #[test]
     fn a_reset_clears_one_domains_floor_and_leaves_the_other_alone() {
-        // Keeping the old boot's floor put every post-reboot event an epoch away; clearing both
-        // domains discarded a good estimate for the chip that did not restart.
+        // Keeping the old boot's floor would put every post-reboot event an epoch away; clearing
+        // both domains would discard a good estimate for the chip that didn't restart.
         let origin = Instant::now();
         let mut t = Timeline::new();
         t.observe_at(&motion_at(1_000), origin + Duration::from_millis(500));
@@ -1793,7 +1793,7 @@ mod timeline {
             1,
             "the other chip is untouched"
         );
-        // The rebooted chip's first event maps to its own arrival, not to the stale 500 ms floor.
+        // The rebooted chip's first event maps to its arrival, not to the stale 500 ms floor.
         let after = t.observe_at(&motion_at(7), origin + Duration::from_millis(600));
         assert_eq!(
             after.host.duration_since(origin),
@@ -1831,7 +1831,7 @@ mod timeline {
     #[test]
     fn a_steady_stream_maps_onto_the_boxs_own_spacing() {
         // With the floor found, host instants are spaced as the box stamped them, whatever the
-        // jitter; here the jitter never beats the first sample, so the floor holds.
+        // jitter; here no delivery is faster than the first sample, so the floor holds.
         let origin = Instant::now();
         let mut t = Timeline::new();
         let mut out = Vec::new();

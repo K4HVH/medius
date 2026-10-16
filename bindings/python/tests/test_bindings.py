@@ -125,8 +125,8 @@ def test_mock_feature_present():
 
 def test_meta_functions():
     # The ctypes structs hand-mirror the C header, so a bumped ABI leaves them stale: pin it.
-    assert medius.abi_version() == 9
-    assert medius._native.ABI_VERSION == 9
+    assert medius.abi_version() == 10
+    assert medius._native.ABI_VERSION == 10
     assert medius.version_string()
     assert medius.default_query_timeout_ms() > 0
     assert medius.default_keepalive_cadence_ms() > 0
@@ -195,7 +195,7 @@ def test_configure_version_then_open_mock_matches():
 def test_set_name_and_clear_name():
     mock = MockBox()
     with mock.open() as d:
-        # No host-side validation (like the other setters): the box sanitises. These all just send.
+        # No host-side validation (like the other setters): the box sanitises. These all send.
         d.set_name("Left PC")
         d.set_name("x" * 40)  # over-length: the firmware caps it, the host does not error
         d.clear_name()
@@ -373,16 +373,15 @@ def test_the_box_lock_table_answers_query_locks():
     with MockBox() as mock, Device.with_mock(mock) as d:
         d.scale(x, Direction.BOTH, 50)
         locks = d.query_locks()
-        # BOTH is the fixed pair only: the relative pair keeps passing, so a BOTH of 50 means 50%
-        # whether or not a bearing is live.
+        # BOTH writes the fixed pair only; the relative pair keeps passing.
         assert len(locks.entries) == 2
         assert locks.scale_of(x, Direction.POSITIVE) == 50
         assert locks.scale_of(x, Direction.NEGATIVE) == 50
         assert locks.scale_of(x, Direction.WITH) == LOCK_SCALE_PASS
         assert locks.scale_of(x, Direction.AGAINST) == LOCK_SCALE_PASS
 
-        # In vector mode one relative scale governs both axes, the lower of the two, and the box
-        # reports that number on both axes rather than each axis's stored byte.
+        # In vector mode one relative scale governs both axes: the lower of the two. The box reports
+        # that number on both axes, not each axis's stored byte.
         d.unlock(x, Direction.BOTH)
         d.scale(x, Direction.WITH, 130)
         d.scale(y, Direction.WITH, 60)
@@ -723,8 +722,8 @@ def test_movement_riding_roundtrip():
 
 def test_emit_pace_roundtrip():
     with MockBox() as mock:
-        # The box's factory texture is De-spiked, but nothing is rendered until a profile arms, so a
-        # Learned pace reports the learnt cap rather than the 1 ms tick.
+        # The box's factory texture is De-spiked, but nothing renders until the box learns a
+        # profile, so a Learned pace reports the learnt cap, not the 1 ms tick.
         mock.set_emit_pace(EmitPace.fixed(500))
         with Device.with_mock(mock) as d:
             status = d.query_emit_pace()
@@ -735,12 +734,12 @@ def test_emit_pace_roundtrip():
             status = d.query_emit_pace()
         assert status.mode == EmitPace.learned()
         assert status.resolved_hz == 0
-        # Armed, the rendered stream self-paces every millisecond and says so.
+        # With a profile learned, the rendered stream self-paces every millisecond and says so.
         mock.set_render(RenderMode.DESPIKED, False, True)
         with Device.with_mock(mock) as d:
             assert d.query_emit_pace().resolved_hz == 1000
-        # And disarming puts it back: without reading it again, `ready` could be latched on and the
-        # assertion above would pass on a mock that ignored the flag.
+        # And clearing `ready` puts it back. Without this check, a mock that latched `ready` on
+        # would pass the assertion above.
         mock.set_render(RenderMode.DESPIKED, False, False)
         with Device.with_mock(mock) as d:
             assert d.query_emit_pace().resolved_hz == 0
@@ -751,24 +750,24 @@ def test_emit_pace_roundtrip():
 
 def test_spread_roundtrip():
     with MockBox() as mock, Device.with_mock(mock) as d:
-        # A fresh box boots at the full percent with no command period learned, so it spreads nothing.
+        # A fresh box boots at 100% with no command period learned, so it spreads nothing.
         assert d.query_spread() == SpreadStatus(100, 0)
-        # The period is the box's own state, learned off MOVE arrivals, not something the host sets.
+        # The period is box state, learned off MOVE arrivals, not something the host sets.
         mock.set_spread_learned(8000)
         assert d.query_spread() == SpreadStatus(100, 8000)
         d.set_spread(50)
         assert d.query_spread() == SpreadStatus(50, 4000)
-        # Above 100 overlaps rather than being clamped, and past a byte, so a u8 anywhere in the
-        # ctypes chain fails here rather than round-tripping.
+        # A percent above 100 overlaps, unclamped. 1000 also exceeds a byte, so a u8 anywhere in the
+        # ctypes chain fails here instead of round-tripping.
         d.set_spread(1000)
         assert d.query_spread() == SpreadStatus(1000, 80000)
-        # Off answers no interval even with a period learned.
+        # Off reports no interval even with a period learned.
         d.set_spread(0)
         assert d.query_spread() == SpreadStatus(0, 0)
 
 
 def test_render_roundtrip():
-    # The texture is its own command; the pace still reports the gate it implies.
+    # The texture is a separate command; the pace still reports the gate it implies.
     with MockBox() as mock, Device.with_mock(mock) as d:
         # The box's factory setting: de-spiked, native motion relayed, nothing learned yet.
         status = d.query_render()
@@ -780,19 +779,19 @@ def test_render_roundtrip():
                 d.set_render(mode, full)
                 status = d.query_render()
                 assert (status.mode, status.full) == (mode, full)
-        # The box gates the 1 ms tick on a profile having ARMED, not on the mode being set: a box told
-        # to render but still waiting for one runs the paced fill and reports the learnt cap.
+        # The box gates the 1 ms tick on a learned profile, not on the mode being set. A box told to
+        # render but still waiting for a profile runs the paced fill and reports the learnt cap.
         d.set_render(RenderMode.STOCK, False)
         d.set_emit_pace(EmitPace.learned())
         assert d.query_emit_pace().resolved_hz == 0
-        # Onto a Fixed rate the snapped value stands whatever the texture is doing.
+        # With a Fixed rate, the snapped value stands whatever the texture.
         d.set_emit_pace(EmitPace.fixed(250))
         assert d.query_emit_pace().resolved_hz == 250
         d.set_render(RenderMode.OFF, False)
         d.set_emit_pace(EmitPace.learned())
         assert d.query_emit_pace().resolved_hz == 0
 
-    # Armed, a rendered stream on a learnt pace self-paces every millisecond.
+    # With a profile learned, a rendered stream on a learnt pace self-paces every millisecond.
     with MockBox() as mock, Device.with_mock(mock) as d:
         mock.set_render(RenderMode.STOCK, True, True)
         assert d.query_render() == RenderStatus(RenderMode.STOCK, True, True)
@@ -809,7 +808,7 @@ def test_rate_force_roundtrip():
     with MockBox() as mock:
         mock.set_advertised_hz(125)
         mock.set_imperfect_status(ImperfectStatus(allowed=True, over_capacity=False, clone_imperfect=False))
-        # 400 resolves to bInterval 2, the interval a host would actually keep.
+        # 400 resolves to bInterval 2, the interval a host keeps.
         mock.set_emit_pace(EmitPace.fixed(500), 400)
         with Device.with_mock(mock) as d:
             status = d.query_emit_pace()
@@ -844,7 +843,7 @@ def test_rate_force_needs_the_imperfect_opt_in():
 
 
 def test_rate_force_through_the_setter():
-    # Drives OPTION(EMIT) out of the setter and reads the box's own state back, so a setter that drops
+    # Drives OPTION(EMIT) out of the setter and reads the box's state back, so a setter that drops
     # the force on the wire fails here rather than passing on a mock nobody sent anything to.
     with MockBox() as mock, Device.with_mock(mock) as d:
         d.allow_imperfect_clones(True)
@@ -965,7 +964,7 @@ def test_traffic_event_control_accessors():
         with d.catch_events(CatchFilter.traffic_class(TrafficClass.CONTROL)) as stream:
             ev = _push_and_recv(mock, stream, stalled)
     assert ev.traffic.setup() == setup
-    assert ev.traffic.data() == b""  # a STALL answers with no data stage
+    assert ev.traffic.data() == b""  # a STALL carries no data stage
     assert ev.traffic.control_status() == ControlStatus.STALLED
     assert ev.traffic.rule_acted() is True
     assert ev.traffic.bus_event() is None
@@ -1054,8 +1053,10 @@ def test_traffic_event_surfaces_on_every_receive_path():
 
 def test_catch_events_needs_at_least_one_filter():
     with MockBox() as mock, Device.with_mock(mock) as d:
-        with pytest.raises(InvalidArgError):
+        with pytest.raises(medius.EmptySubscriptionError):
             d.catch_events([])
+        with pytest.raises(medius.EmptySubscriptionError):
+            d.input_events([])
 
 
 def test_try_recv_returns_none_when_empty():
@@ -1297,7 +1298,7 @@ def test_clip_frame_transfers_take_a_pair_or_a_triple():
 
 @pytest.mark.parametrize("bad", [3, 0, True, "abc", None, 1.5, ["a"]])
 def test_a_byte_argument_that_is_not_bytes_is_refused(bad):
-    # bytes(3) is three zero bytes, which would go out as a report nobody wrote.
+    # bytes(3) is three zero bytes, which would be sent as a report nobody wrote.
     setup = Setup(0x21, 0x09, 0x0300, 0, 3)
     with MockBox() as mock:
         mock.set_imperfect_status(_allowed())
@@ -1451,7 +1452,7 @@ def test_clip_status_and_config_roundtrip():
     assert cfg == settings
 
 
-# The protocol's own example: HID_IN interface 2, IN, START, consume and once per run, selector 1,
+# The protocol doc's example: HID_IN interface 2, IN, START, consume and once per run, selector 1,
 # match 07 20 under mask FF 20.
 _HELD = (TrafficClass.HID_IN, 2, Direction.IN, ClipAction.START, b"\x07\x20", b"\xFF\x20", True, True, 1)
 
@@ -1534,7 +1535,7 @@ def test_packet_triggers_read_back_field_for_field():
             with Device.with_mock(mock) as d:
                 cfg = d.clip().query_config()
         assert cfg.packet_triggers == rows[:n]
-        assert cfg.triggers == inputs, "the input triggers keep their own count"
+        assert cfg.triggers == inputs, "the input triggers keep a separate count"
 
     # The protocol's read-back example: HID_IN id 0x0102, IN, TOGGLE, consume and once per run,
     # selector 1, hits saturated.
@@ -1603,7 +1604,7 @@ def test_a_bound_packet_trigger_reads_back_as_it_was_bound():
             for t in rows:
                 clip.bind_packet(t)
             cfg = clip.query_config()
-            # Each flag reads back on its own: row 0 consumes, row 1 is once per run.
+            # Each flag reads back separately: row 0 consumes, row 1 is once per run.
             assert [(t.consume, t.once_per_run) for t in cfg.packet_triggers[:2]] == [(True, False), (False, True)]
             # A bind starts its count at zero, whatever hits the trigger held.
             assert [t.hits for t in cfg.packet_triggers] == [0] * 8
@@ -1712,7 +1713,7 @@ def test_a_packet_trigger_the_box_would_refuse_has_its_own_exception():
                 clip.bind_packet(base(direction=relative))
             with pytest.raises(RelativeDirectionError):
                 clip.unbind_packet(base(direction=relative))
-        # The removals of the seven sound keys are all that went out.
+        # The removals of the seven sound keys are all that was sent.
         sent = _clip_frames(d, mock, FrameType.CLIP_TRIGGER)
         assert len(sent) == sum(1 for r in refused if not r[2])
         assert all(p[4:7] == bytes(3) for p in sent)
@@ -1809,7 +1810,7 @@ def test_a_once_per_run_trigger_with_no_masked_bit_past_its_selector_is_refused(
         for shape in refused:
             _refused_for(lambda: clip.bind_packet(run(*shape)), reason)
         assert _clip_frames(d, mock, FrameType.CLIP_TRIGGER) == []
-        # The key is sound, so a removal goes out, and so does the same trigger bound on each packet.
+        # The key is sound, so a removal is sent, and so is the same trigger bound on each packet.
         for shape in refused:
             clip.unbind_packet(run(*shape))
             clip.bind_packet(run(*shape, once_per_run=False))
@@ -1866,7 +1867,7 @@ def test_a_consuming_packet_trigger_needs_the_imperfect_opt_in_and_goes_when_it_
     watching = ClipPacketTrigger(TrafficClass.HID_IN, 3, Direction.IN, ClipAction.START, b"\x07\x20", b"\xFF\x20")
     with MockBox() as mock, Device.with_mock(mock) as d:
         clip = d.clip()
-        # The bind goes out either way; the box holds the consuming one only under the opt-in.
+        # The bind is sent either way; the box holds the consuming one only under the opt-in.
         clip.bind_packet(consuming)
         clip.bind_packet(watching)
         assert clip.query_config().packet_triggers == [watching]
@@ -1968,10 +1969,10 @@ def test_clip_builder_gap_zero_is_noop():
 def test_ctypes_structs_match_the_c_header():
     """Every shared struct must be the size the library thinks it is.
 
-    This is not a decode concern, it is memory safety: `medius_event_stream_recv` writes
+    This is memory safety, not a decode concern: `medius_event_stream_recv` writes
     `sizeof(MediusCatchEvent)` bytes into a buffer this module allocates, so a mirror short by one
     field lets the library write past the end of it on every event. A field added to the header and
-    missed here is silent until it corrupts the heap, which is exactly how it happened.
+    missed here is silent until it corrupts the heap.
     """
     import ctypes
     import re
@@ -2000,7 +2001,7 @@ def test_ctypes_structs_match_the_c_header():
     ):
         assert must in present, f"the header no longer declares {must}"
         assert hasattr(_native, must), f"{must} has no ctypes mirror to compare"
-    # sizeof alone lets a same-size field REORDER through, which is a silent misread of every event
+    # sizeof alone lets a same-size field reorder through, which is a silent misread of every event
     # rather than a crash. Compare each field's offset too.
     fields = {
         n: [f[0] for f in getattr(_native, n)._fields_]
@@ -2081,7 +2082,7 @@ def test_input_events_decode_snapshots_into_edges():
 
 
 def test_input_events_refuse_what_they_cannot_decode():
-    # Each refusal has its own status across the ABI, so a caller can tell a wrong filter from a
+    # Each refusal has a distinct status across the ABI, so a caller can tell a wrong filter from a
     # dead link.
     with MockBox() as mock, Device.with_mock(mock) as d:
         with pytest.raises(medius.NotAnInputFilterError):
@@ -2093,7 +2094,7 @@ def test_input_events_refuse_what_they_cannot_decode():
         with pytest.raises(medius.CaptureNotApplicableError):
             d.catch_events(CatchFilter.watch_class(Class.KEY).with_capture(8))
         # 0xFFFF is the every-id sentinel and a MediusCatchFilter cannot tell an exact id from the
-        # blanket, so across this ABI a media usage of 0xFFFF IS the class blanket. The native API
+        # blanket, so across this ABI a media usage of 0xFFFF is the class blanket. The native API
         # refuses it; here it must be the blanket, not something narrower.
         assert CatchFilter.watch(Usage.media(0xFFFF)).id is None
         assert CatchFilter.watch(Usage.media(0xFFFF)) == CatchFilter.watch_class(Class.MEDIA)
@@ -2102,7 +2103,7 @@ def test_input_events_refuse_what_they_cannot_decode():
 
 
 def test_the_filter_constructors_address_inputs_like_lock_does():
-    # A key enum goes straight into the input constructors, as it does for lock.
+    # A key enum goes straight into the input constructors.
     assert CatchFilter.watch(Key.A) == CatchFilter.watch(Usage.key(Key.A))
     assert CatchFilter.watch(Button.LEFT) == CatchFilter.watch(Usage.button(Button.LEFT))
     assert CatchFilter.watch(MediaKey.VOLUME_UP) == CatchFilter.watch(
@@ -2155,7 +2156,7 @@ def test_timeline_unwraps_the_rollover_and_maps_onto_the_callers_clock():
     with MockBox() as mock, Device.with_mock(mock) as d:
         with d.catch_events(CatchFilter.watch_axes()) as s, medius.Timeline() as t:
             # 32 bits of microseconds is 71.6 minutes; a raw subtraction across the wrap comes out
-            # about 4295 seconds negative.
+            # ~4295 seconds negative.
             mock.push_motion(1, 0xFFFFFE0C, MotionEvent(dx=1, dy=0, dz=0))
             mock.push_motion(2, 500, MotionEvent(dx=1, dy=0, dz=0))
             a = t.observe(s.recv_timeout(2000), 50_000_000)
@@ -2579,7 +2580,7 @@ def test_pan_frames_carry_the_motion_tag():
 
 
 def test_buttons_past_five_address_by_id():
-    # Button is an open id, not just the five named ones, so any u8 addresses one.
+    # Button is an open id, not only the five named ones, so any u8 addresses one.
     u = Usage.button(7)
     assert u.kind == Class.BUTTON
     assert u.id == 7
@@ -2664,7 +2665,7 @@ def test_transform_validation_errors_have_their_own_exception():
             d.transform(
                 Transform(TransformOp.REMAP, LockTarget.x(), LockTarget.button(Button.LEFT))
             )
-        # Both ops MOVE a value, so a field onto itself names no operation at all.
+        # Both ops move a value, so a field onto itself names no operation at all.
         with pytest.raises(TransformOpFieldsError):
             d.transform(Transform(TransformOp.SWAP, LockTarget.y(), LockTarget.y()))
         with pytest.raises(TransformOpFieldsError):
@@ -2726,7 +2727,7 @@ def test_a_mock_restart_is_recovered_and_the_clip_reports_its_loss():
         mock.restart()
         _await_restarts(d, 1)
         assert clip.lost() is True
-        # The held press and the retain setting went back to the restarted box.
+        # The held press and the retain setting were re-sent to the restarted box.
         assert _clip_frames(d, mock, FrameType.INJECT) == [bytes([0, 3, 0, 1])]
         assert _clip_frames(d, mock, FrameType.CLIP_SET) == [bytes([2, 1])]
         clip.append(ClipBuilder().move(1, 0))
@@ -2788,3 +2789,132 @@ def test_a_release_the_box_counts_is_recovered():
                 assert time.monotonic() < deadline, "the scale never went back after a replug"
                 time.sleep(0.01)
             assert d.counters().restarts == 0
+
+
+@pytest.mark.parametrize("open_stream", ["catch", "input", "logs"])
+def test_close_on_another_thread_ends_a_blocked_recv(open_stream):
+    import threading
+
+    with MockBox() as mock, Device.with_mock(mock) as d:
+        if open_stream == "catch":
+            stream = d.catch_events(CatchFilter.everything())
+        elif open_stream == "input":
+            stream = d.input_events(CatchFilter.all_input())
+        else:
+            stream = d.logs()
+        got = []
+
+        def read():
+            try:
+                stream.recv()
+            except MediusError as e:
+                got.append(e)
+
+        reader = threading.Thread(target=read, daemon=True)
+        reader.start()
+        _wait_for_a_call(stream)
+        # Nothing on the stream waits behind the blocked receive.
+        start = time.monotonic()
+        assert stream.is_connected
+        if open_stream != "logs":
+            assert stream.dropped == 0
+        if open_stream == "input":
+            assert stream.held(Class.BUTTON) == []
+        assert time.monotonic() - start < 0.05
+        start = time.monotonic()
+        stream.close()
+        reader.join(2)
+        assert not reader.is_alive()
+        assert time.monotonic() - start < 0.2
+        assert isinstance(got[0], medius.DisconnectedError)
+        assert stream.try_recv() is None and not stream.is_connected
+
+
+def _wait_for_a_call(handle):
+    # A call is running on the handle once its use count is up: the native call raises it, not a
+    # sleep.
+    deadline = time.monotonic() + 2
+    while handle._users == 0:
+        assert time.monotonic() < deadline, "the call never started"
+        time.sleep(0.001)
+    time.sleep(0.02)
+
+
+def test_closing_one_clone_ends_the_stream_and_collecting_one_does_not():
+    import gc
+
+    with MockBox() as mock, Device.with_mock(mock) as d:
+        stream = d.catch_events(CatchFilter.everything())
+        spare = stream.clone()
+        del spare
+        gc.collect()
+        assert stream.is_connected
+        other = stream.clone()
+        other.close()
+        assert not stream.is_connected
+        with pytest.raises(medius.DisconnectedError):
+            stream.recv()
+
+
+def test_set_spread_refuses_a_percent_past_u16():
+    with MockBox() as mock, Device.with_mock(mock) as d:
+        for bad in (70000, -1):
+            with pytest.raises(ValueError):
+                d.set_spread(bad)
+
+
+def test_an_update_refusal_carries_the_box_status():
+    with MockBox() as mock, Device.with_mock(mock) as d:
+        with pytest.raises(medius.UpdateError) as e:
+            d.activate_firmware()
+        assert (e.value.op, e.value.update_status) == (4, 0x19)
+
+
+def test_update_and_confirm_run_through_the_library():
+    with MockBox() as mock, Device.with_mock(mock) as d:
+        mock.reboot_after_activate(1, 2)
+        seen = []
+        d.update_firmware(medius.UpdateTarget.DEVICE, bytes(range(256)) * 8, lambda s, t: seen.append(s))
+        assert seen and seen[-1] == 2048
+        mock.clear_recorded()
+        info = d.wait_firmware_confirmed()
+        assert not info.any_pending()
+        # Asked through the reboot: one unanswered, two on probation, then confirmed.
+        assert len(_clip_frames(d, mock, FrameType.QUERY)) == 4
+
+
+def test_a_refused_activate_aborts_the_staged_image():
+    with MockBox() as mock, Device.with_mock(mock) as d:
+        mock.refuse_next_activate(0x1B)
+        with pytest.raises(medius.UpdateError) as e:
+            d.update_firmware(medius.UpdateTarget.HOST, bytes(range(256)) * 8)
+        assert (e.value.op, e.value.update_status) == (4, 0x1B)
+        aborts = [p for p in _clip_frames(d, mock, FrameType.UPDATE) if p[0] == 3]
+        assert [p[1] for p in aborts] == [int(medius.UpdateTarget.HOST)]
+
+
+def test_device_close_on_another_thread_waits_for_a_running_query():
+    import threading
+
+    with MockBox() as mock:
+        mock.silent()
+        d = Device.with_mock(mock)
+        got = []
+
+        def query():
+            try:
+                d.query_version()
+            except MediusError as e:
+                got.append(e)
+
+        caller = threading.Thread(target=query, daemon=True)
+        caller.start()
+        _wait_for_a_call(d)
+        start = time.monotonic()
+        d.close()
+        assert time.monotonic() - start < 0.05
+        caller.join(10)
+        assert not caller.is_alive()
+        assert isinstance(got[0], medius.QueryTimeoutError)
+        with pytest.raises(MediusError):
+            d.query_version()

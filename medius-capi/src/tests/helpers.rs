@@ -154,7 +154,7 @@ fn scale_of_reports_the_percentage_and_is_locked_does_not() {
         scale_of(&locks, y, MediusDirection::Against),
         MEDIUS_LOCK_SCALE_PASS
     );
-    // Both takes the lowest of everything covering the target.
+    // Both reports the scale that keeps least across everything covering the target.
     assert_eq!(scale_of(&locks, x, MediusDirection::Both), 40);
     assert_eq!(
         scale_of(std::ptr::null(), x, MediusDirection::Both),
@@ -456,7 +456,7 @@ fn the_filter_setters_narrow_without_moving_the_address() {
         medius_catch_filter_outbound(f).direction,
         MediusDirection::Negative as u8
     );
-    // Direction IS part of the address; capture is not.
+    // Direction is part of the address; capture is not.
     assert!(!medius_catch_filter_same_address(
         f,
         medius_catch_filter_outbound(f)
@@ -516,7 +516,7 @@ fn traffic_event_splits_setup_from_the_data_stage() {
     );
     assert!(!unsafe { medius_traffic_event_truncated(&e) });
 
-    // A packet shorter than the setup stage has no setup AND no data stage: the bytes that survived
+    // A packet shorter than the setup stage has no setup and no data stage: the bytes that survived
     // snaplen are the request, and returning them as data labels a GET_DESCRIPTOR request as the
     // descriptor.
     let short = control_event(&[0x80, 0x06], 0x00);
@@ -651,7 +651,7 @@ fn a_listed_box_on_another_protocol_carries_no_device() {
         pid: 0x55D3,
         serial: None,
     };
-    // v3.4.0 firmware answers protocol 7.
+    // v3.4.0 firmware reports protocol 7.
     let version = medius::Version {
         proto_ver: 7,
         fw_major: 3,

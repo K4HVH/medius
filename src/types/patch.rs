@@ -1,10 +1,10 @@
 //! `PATCH` (§3.14) vocabulary: descriptor patches, their sections, and decoded `RESP(PATCHES)` /
 //! `RESP(PATCH_ENTRY)`.
 //!
-//! A patch overwrites bytes the clone presents at enumeration, persisted per device (VID:PID) in the
-//! box's NVS. It is configuration: it survives a reconnect and clears on
-//! [`clear_patch`](crate::Device::clear_patch) or [`factory_reset`](crate::Device::factory_reset).
-//! The box stores a patch whatever the opt-in, and applies the set only under
+//! A patch overwrites bytes the clone presents at enumeration. The box stores it per device (VID:PID)
+//! in NVS, so it survives a reconnect; [`clear_patch`](crate::Device::clear_patch) or
+//! [`factory_reset`](crate::Device::factory_reset) clears it. The box stores a patch whatever the
+//! opt-in, but applies the set only under
 //! [`allow_imperfect_clones`](crate::Device::allow_imperfect_clones).
 
 use crate::protocol::opcode::{
@@ -22,8 +22,8 @@ pub enum PatchSection {
     Config = PATCH_SEC_CONFIG,
     /// Interface report descriptor; `cfg` is the configuration index, `index` the interface number.
     Report = PATCH_SEC_REPORT,
-    /// String descriptor; `index` is the string index (not 0). Replaces the whole string: at most 126
-    /// bytes, one UTF-16 code unit each, `offset` ignored.
+    /// String descriptor; `index` is the string index (not 0). Replaces the whole string: <=126 bytes,
+    /// one UTF-16 code unit each; `offset` ignored.
     String = PATCH_SEC_STRING,
     /// BOS descriptor; `cfg`/`index` ignored.
     Bos = PATCH_SEC_BOS,
@@ -50,11 +50,11 @@ impl PatchSection {
 
 /// Descriptor patch the host installs on the box.
 ///
-/// Keyed by `(section, cfg, index, offset)`: setting an existing key overwrites it and moves it to the
-/// end of the set (setting the bytes it already holds changes nothing); empty
-/// [`bytes`](Patch::bytes) removes the patch at that key. Every section but
-/// [`String`](PatchSection::String) keeps the descriptor's byte count; a set failing the box's checks
-/// is served unpatched ([`PatchSet::refused`]).
+/// Keyed by `(section, cfg, index, offset)`. Setting an existing key overwrites it and moves it to the
+/// end of the set; setting the bytes it already holds changes nothing. Empty [`bytes`](Patch::bytes)
+/// removes the patch at that key. Every section but [`String`](PatchSection::String) keeps the
+/// descriptor's byte count. A set that fails the box's checks is served unpatched
+/// ([`PatchSet::refused`]).
 ///
 /// ```no_run
 /// # use medius::{Device, Result};
@@ -174,20 +174,20 @@ pub struct PatchEntry {
 /// Decoded `RESP(PATCHES)` (§4.17): the stored patch set and its apply state.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct PatchSet {
-    /// The clone serves a non-empty patched set: the one it was presented with, which a later store
-    /// leaves alone until the next presentation.
+    /// The clone serves a non-empty patched set: the one it was presented with. A later store leaves
+    /// it alone until the next presentation.
     pub applied: bool,
     /// The stored set differs from the served one in patches, bytes or order: not applied yet,
     /// changed or emptied since, refused, or held back with the opt-in off.
     pub pending: bool,
-    /// The stored set failed a check at the last presentation and is unchanged since, so the device
-    /// is served unpatched: a clone check, or a consistency check the unpatched descriptors pass (a
-    /// descriptor's length or type fields, `bcdUSB` 0x0201+ with no BOS, a HID `wDescriptorLength`,
-    /// an interrupt-IN `wMaxPacketSize` below the report). The box logs which. A set change, a clear,
-    /// a passing presentation or a detach resets it.
+    /// The stored set failed a check at the last presentation and is unchanged since, so the clone
+    /// serves the descriptors unpatched. The failed check is a clone check, or a consistency check the
+    /// unpatched descriptors pass (a descriptor's length or type fields, `bcdUSB` >=0x0201 with no
+    /// BOS, a HID `wDescriptorLength`, an interrupt-IN `wMaxPacketSize` smaller than the report); the
+    /// box logs which. A set change, a clear, a passing presentation or a detach resets it.
     pub refused: bool,
-    /// The box refused the last new patch or overwrite for room: 16 entries in use, or the 1024-byte
-    /// pool full. The next set change, or a clear, resets it.
+    /// The box refused the last new patch or overwrite for lack of room (16 entries in use, or the
+    /// 1024-byte pool full). The next set change or a clear resets it.
     pub table_full: bool,
     /// One row per stored patch.
     pub entries: Vec<PatchEntry>,

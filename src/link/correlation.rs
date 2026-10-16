@@ -14,8 +14,8 @@ use super::{Link, LinkInner};
 
 pub(crate) struct PendingEntry {
     gen_id: u64,
-    // Type and first byte must both match, so a stale `RESP` reusing a waiting `TRANSFER`'s `SEQ`
-    // is never taken as its reply, even when a selector and an endpoint byte collide.
+    // Type and first byte must both match: a stale `RESP` on a waiting `TRANSFER`'s `SEQ` is never
+    // taken as its reply, even if its selector equals the endpoint byte.
     expected_ty: FrameType,
     expected_what: u8,
     tx: flume::Sender<Vec<u8>>,
@@ -114,8 +114,8 @@ impl Link {
         self.register_query_with(what, &query_payload(what))
     }
 
-    // The reply leads with the Q_OPTIONS selector, not the id, so correlation matches on
-    // `expected_what` and SEQ separates concurrent reads.
+    // An option reply leads with the Q_OPTIONS selector, not the id, so correlation matches on
+    // `expected_what` and `SEQ` separates concurrent reads.
     pub(crate) fn register_query_with(
         &self,
         expected_what: u8,
@@ -279,7 +279,7 @@ impl Link {
     }
 }
 
-// `[ep][status][in-data…]` → `(status, in-data)`. A reply too short for a status reads as
+// `[ep][status][in-data...]` -> `(status, in-data)`. A reply too short for a status reads as
 // `Refused` (0xFC), the byte the box sends when it declines.
 fn split_transfer_resp(payload: &[u8]) -> (u8, Vec<u8>) {
     let status = payload.get(1).copied().unwrap_or(0xFC);

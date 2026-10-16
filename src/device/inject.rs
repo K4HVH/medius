@@ -24,12 +24,12 @@ impl Device {
         self.inject(usage, Action::Press)
     }
 
-    /// Soft-release: clear the injected press, leaving a physical hold intact.
+    /// Soft-release: clear the injected press, leaving a hold on the real device intact.
     pub fn release(&self, usage: impl Into<Usage>) -> Result<()> {
         self.inject(usage, Action::SoftRelease)
     }
 
-    /// Force-release: force the usage inactive, masking a physical hold too.
+    /// Force-release: force the usage inactive, masking a hold on the real device too.
     pub fn force_release(&self, usage: impl Into<Usage>) -> Result<()> {
         self.inject(usage, Action::ForceRelease)
     }
@@ -39,16 +39,17 @@ impl Device {
         self.reset_frame(&[0])
     }
 
-    /// `RESET` with its NVS flag: [`reset`](Self::reset), then the box erases its persistent store and
-    /// reboots at its defaults under its MAC-derived name. Erases the name, every option and
-    /// everything learned about devices seen, including descriptor patch sets. While it reboots the
-    /// control port stays enumerated, so queries time out with the link up; poll one until it replies.
+    /// `RESET` with its NVS flag: [`reset`](Self::reset), then the box erases its persistent store
+    /// and reboots with defaults and its MAC-derived name. Erases the name, every option and
+    /// everything learned about devices seen, descriptor patch sets included. The control port
+    /// stays enumerated during the reboot, so queries time out with the link up: poll one until it
+    /// replies.
     pub fn factory_reset(&self) -> Result<()> {
         self.reset_frame(&[RST_F_NVS])
     }
 
-    // Both resets release the same session state here; the flag adds only the box's side. The payload
-    // byte is always sent: the box requires it, as it does every command's payload.
+    // Both resets clear the same session state here; the NVS flag changes only what the box does.
+    // The payload byte is always sent: the box requires a payload on every command.
     fn reset_frame(&self, payload: &[u8]) -> Result<()> {
         let _serial = self.link.reassert_guard();
         self.link.desired().lock().clear();

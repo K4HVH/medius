@@ -12,16 +12,16 @@ pub enum EmitPace {
     Fixed(u16),
 }
 
-/// Configured [`EmitPace`], emit-rate ceiling, and wire rate in effect (§4.14).
+/// Configured [`EmitPace`], emit-rate ceiling, and poll rate in effect (§4.14).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct EmitPaceStatus {
     /// Selected mode (for [`EmitPace::Fixed`], the requested rate).
     pub mode: EmitPace,
     /// Ceiling in effect (Hz); 0 = learnt/adaptive, or no device yet in [`EmitPace::Interval`].
-    /// Reads 1000 once the renderer has a profile, since a rendered stream paces itself (see
-    /// [`set_render`](crate::Device::set_render)).
+    /// Once the renderer is on and has a profile, a 0 reads 1000 instead, since a rendered stream
+    /// paces itself (see [`set_render`](crate::Device::set_render)).
     pub resolved_hz: u16,
-    /// Requested forced wire rate (Hz); `None` keeps the native interval.
+    /// Requested forced poll rate (Hz); `None` keeps the native interval.
     pub force_hz: Option<u16>,
     /// Rate the clone's input endpoints advertise now (Hz), forced or native; 0 = no clone.
     pub advertised_hz: u16,

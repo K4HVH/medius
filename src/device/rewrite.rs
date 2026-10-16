@@ -15,32 +15,33 @@ impl Device {
     /// `REWRITE` (§3.14): add or overwrite one rewrite rule.
     ///
     /// The box's rewrite table matches traffic in flight and rewrites, answers, refuses or drops it
-    /// per the rule's [`action`](RewriteRule::action). Keyed by `(class, id, direction, match, mask)`;
-    /// setting an existing key overwrites it. Rules are session state, re-asserted after a reconnect,
-    /// a device-chip restart or any session release the box counts, and kept by the keepalive like a
-    /// [`lock`](Device::lock). The box clears them on control-PC silence, [`reset`](Device::reset), a
-    /// device detach, a link drop, a re-clone, or the opt-in going off.
+    /// per the rule's [`action`](RewriteRule::action). Keyed by `(class, id, direction, match,
+    /// mask)`; setting an existing key overwrites it. Rules are session state, kept by the
+    /// keepalive like a [`lock`](Device::lock) and re-asserted after a reconnect, a device-chip
+    /// restart or any session release the box counts. The box clears them on control-PC silence,
+    /// [`reset`](Device::reset), a device detach, a link drop, a re-clone, or the opt-in going off.
     ///
-    /// A new rule past [`REWRITE_MAX_ENTRIES`](crate::REWRITE_MAX_ENTRIES) is
-    /// [`Error::RewriteTableFull`](crate::Error::RewriteTableFull); a payload past what the other held
-    /// rules leave of [`REWRITE_PAYLOAD_POOL`](crate::REWRITE_PAYLOAD_POOL) is
+    /// A new rule beyond [`REWRITE_MAX_ENTRIES`](crate::REWRITE_MAX_ENTRIES) gives
+    /// [`Error::RewriteTableFull`](crate::Error::RewriteTableFull). A payload larger than what the
+    /// other held rules leave of [`REWRITE_PAYLOAD_POOL`](crate::REWRITE_PAYLOAD_POOL) gives
     /// [`Error::RewritePoolFull`](crate::Error::RewritePoolFull).
     ///
     /// Gated on [`allow_imperfect_clones`](Device::allow_imperfect_clones): with the opt-in off,
-    /// [`Error::ImperfectRequired`](crate::Error::ImperfectRequired). `match` and `mask` must be one
-    /// length ([`Error::RewriteMaskLength`](crate::Error::RewriteMaskLength)), `action` valid for
-    /// `class` ([`Error::RewriteActionClass`](crate::Error::RewriteActionClass)), and `direction` not
-    /// bearing-relative ([`Error::RelativeDirection`](crate::Error::RelativeDirection)).
-    /// Fire-and-forget: [`query_rewrite`](Device::query_rewrite) confirms what the box holds.
+    /// [`Error::ImperfectRequired`](crate::Error::ImperfectRequired). `match` and `mask` must be
+    /// the same length ([`Error::RewriteMaskLength`](crate::Error::RewriteMaskLength)), `action`
+    /// valid for `class` ([`Error::RewriteActionClass`](crate::Error::RewriteActionClass)), and
+    /// `direction` not bearing-relative
+    /// ([`Error::RelativeDirection`](crate::Error::RelativeDirection)). Fire-and-forget:
+    /// [`query_rewrite`](Device::query_rewrite) confirms what the box holds.
     pub fn set_rewrite(&self, rule: &RewriteRule) -> Result<()> {
         validate_rule(rule)?;
         self.require_imperfect()?;
         self.set_rewrite_checked(rule)
     }
 
-    // Capacity check and send under one re-assert guard, so two threads at the last slot cannot both
-    // pass, and the async wrapper (with its own opt-in check) gets the check too. The guard is not
-    // reentrant: taking it again in `set_rewrite_send_locked` would deadlock.
+    // Capacity check and send run under one re-assert guard, so two threads can't both take the
+    // last slot. The async wrapper, which checks the opt-in first, gets the check too. The guard
+    // isn't reentrant: taking it again in `set_rewrite_send_locked` would deadlock.
     pub(crate) fn set_rewrite_checked(&self, rule: &RewriteRule) -> Result<()> {
         let _serial = self.link.reassert_guard();
         {
@@ -66,8 +67,8 @@ impl Device {
     }
 
     // No opt-in pre-check, so the async wrapper can gate on the async query path. The caller holds
-    // the re-assert guard, so a concurrent remove/clear cannot interleave. Recorded before the write
-    // so a racing reconnect replays it; rolled back if the frame never went out.
+    // the re-assert guard, so a concurrent remove/clear cannot interleave. Recorded before the
+    // write so a racing reconnect replays it; rolled back if the frame was never sent.
     fn set_rewrite_send_locked(&self, rule: &RewriteRule) -> Result<()> {
         let stored = to_stored(rule);
         let undo = self.link.desired().lock().apply_rewrite(stored);
@@ -219,8 +220,8 @@ pub(crate) fn validate_rule(rule: &RewriteRule) -> Result<()> {
             class: rule.class,
         });
     }
-    // The box refuses a rule its read-back reply cannot carry; that header is two bytes wider than
-    // the command's, so a rule can fit its frame and still be refused.
+    // The box refuses a rule its read-back reply can't carry. The reply's header is two bytes wider
+    // than the command's, so a rule can fit its frame and still be refused.
     const ENTRY_HDR: usize = 11;
     let room = MAX_PAYLOAD - ENTRY_HDR - 2 * rule.match_bytes.len();
     if rule.payload.len() > room {

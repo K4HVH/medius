@@ -68,6 +68,25 @@ fn move_rel_parity() {
 }
 
 #[test]
+fn into_raw_shares_the_open_device() {
+    let want = native_frames(|d| {
+        d.move_rel(100, -50).unwrap();
+        d.move_rel(1, 1).unwrap();
+    });
+    let mock = MockBox::new();
+    let native = Device::with_mock(mock.clone());
+    let dev = MediusDevice::into_raw(native.clone());
+    assert_eq!(
+        unsafe { medius_device_move_rel(dev, 100, -50) },
+        MediusStatus::Ok
+    );
+    unsafe { medius_device_free(dev) };
+    // freeing the handle leaves the Rust side's clone open
+    native.move_rel(1, 1).unwrap();
+    assert_eq!(want, mock.recorded_frames());
+}
+
+#[test]
 fn wheel_parity() {
     assert_parity(
         |d| {
@@ -540,7 +559,8 @@ fn the_render_option_reads_back_what_was_set_through_the_boundary() {
         MediusStatus::Ok
     );
     let mut st: MediusRenderStatus = unsafe { std::mem::zeroed() };
-    // The mock boots holding what a real box boots holding: de-spiked, relayed, and unarmed.
+    // The mock boots holding what a real box boots holding: de-spiked, relayed, and no profile
+    // learned.
     assert_eq!(
         unsafe { medius_device_query_render(dev, &mut st) },
         MediusStatus::Ok
@@ -580,7 +600,7 @@ fn the_spread_option_reads_back_what_was_set_through_the_boundary() {
         MediusStatus::Ok
     );
     let mut st: MediusSpreadStatus = unsafe { std::mem::zeroed() };
-    // A fresh box boots at the full percent with no command period learned, so it spreads nothing.
+    // A fresh box boots at 100% with no command period learned, so it spreads nothing.
     assert_eq!(
         unsafe { medius_device_query_spread(dev, &mut st) },
         MediusStatus::Ok
@@ -594,7 +614,7 @@ fn the_spread_option_reads_back_what_was_set_through_the_boundary() {
         MediusStatus::Ok
     );
     assert_eq!(st.span_us, 8000);
-    // A percent past 100 overlaps, unclamped, and both fields survive the trip. Past 255 too: 250
+    // A percent >100 overlaps, unclamped, and both fields survive the trip. So does one >255: 250
     // fits a u8 and proves nothing about the width.
     assert_eq!(
         unsafe { medius_device_set_spread(dev, 1000) },
@@ -647,7 +667,7 @@ fn the_bearing_reads_back_what_was_set_through_the_boundary() {
     );
     assert_eq!(bearing.window_ms, 0);
     assert_eq!(bearing.mode, MediusBearingMode::PerAxis);
-    // And the mock's own setter puts one there without a frame, for a decode test that never writes.
+    // And the mock's setter puts one there without a frame, for a decode test that never writes.
     unsafe { medius_mock_set_bearing(mock, 250, MediusBearingMode::Vector as u8) };
     assert_eq!(
         unsafe { medius_device_query_bearing(dev, &mut bearing) },
@@ -690,8 +710,8 @@ fn a_scale_reaches_the_box_lock_table_through_the_boundary() {
         unsafe { medius_locks_scale_of(&locks, x, MediusDirection::With as u8) },
         130
     );
-    // In vector mode one relative scale governs both axes, the lower of the two, and the box reports
-    // that number on both axes rather than each axis's stored byte.
+    // In vector mode one relative scale governs both axes: the lower of the two. The box reports
+    // that number on both axes, not each axis's stored byte.
     assert_eq!(
         unsafe { medius_device_set_bearing(dev, 20, MediusBearingMode::Vector as u8) },
         MediusStatus::Ok
@@ -892,7 +912,7 @@ fn a_byte_no_constant_names_is_refused_at_every_entry_point() {
         (bearing.window_ms, bearing.mode),
         (MEDIUS_BEARING_WINDOW_DEFAULT_MS, MediusBearingMode::PerAxis)
     );
-    // The two readers answer with a status of their own: an unnamed direction names no entry, so
+    // The two readers return a separate status: an unnamed direction names no entry, so
     // nothing weighs the target and nothing is locked.
     unsafe {
         assert_eq!(medius_device_lock(dev, x, both), MediusStatus::Ok);
@@ -1162,10 +1182,10 @@ fn a_clip_transfer_event_reads_through_the_helpers() {
     stalled.flags = 0x42;
     assert!(unsafe { medius_traffic_event_transfer_status(&stalled, &mut status) });
     assert_eq!(status, 0x42);
-    // The out is optional: a null one is skipped and the answer still comes back.
+    // The out is optional: a null one is skipped and the return value still holds.
     assert!(unsafe { medius_traffic_event_transfer_status(&stalled, ptr::null_mut()) });
 
-    // Any other class answers false and leaves the out alone.
+    // Any other class returns false and leaves the out alone.
     let mut other = t;
     other.class = MEDIUS_CATCH_CLASS_CONTROL;
     status = 0xEE;
@@ -1197,8 +1217,18 @@ fn catch_events_rejects_an_empty_or_unknown_filter_list() {
     let all = [medius_catch_filter_everything()];
     assert_eq!(
         unsafe { medius_device_catch_events(dev, all.as_ptr(), 0, &mut stream) },
-        MediusStatus::ErrInvalidArg
+        MediusStatus::ErrEmptySubscription
     );
+    assert_eq!(
+        unsafe { medius_device_catch_events(dev, ptr::null(), 0, &mut stream) },
+        MediusStatus::ErrEmptySubscription
+    );
+    let mut input: *mut MediusInputStream = ptr::null_mut();
+    assert_eq!(
+        unsafe { medius_device_input_events(dev, ptr::null(), 0, &mut input) },
+        MediusStatus::ErrEmptySubscription
+    );
+    assert!(input.is_null());
     assert_eq!(
         unsafe { medius_device_catch_events(dev, ptr::null(), 1, &mut stream) },
         MediusStatus::ErrInvalidArg
@@ -1461,7 +1491,7 @@ fn the_timeline_unwraps_and_maps_onto_the_callers_clock() {
     assert_eq!(a.excess_ns, 0);
 
     // Past the rollover: 32 bits of microseconds is 71.6 minutes, and a raw subtraction here would
-    // come out about 4295 seconds negative.
+    // come out ~4295 seconds negative.
     let mut b: MediusStamped = unsafe { std::mem::zeroed() };
     ev.ts_us = 500;
     assert!(unsafe { medius_timeline_observe(t, &ev, 51_001_000, &mut b) });
@@ -1875,7 +1905,7 @@ fn c_packet(
     t
 }
 
-// The protocol's own example: HID_IN interface 2, IN, START, consume and once per run, selector 1,
+// The protocol doc's example: HID_IN interface 2, IN, START, consume and once per run, selector 1,
 // match `07 20` under mask `FF 20`.
 fn spec_trigger() -> MediusClipPacketTrigger {
     MediusClipPacketTrigger {
@@ -2179,7 +2209,7 @@ fn packet_triggers_the_box_holds_read_back_field_for_field() {
         let clip = unsafe { clip_of(dev) };
         let out = unsafe { query_config(clip) };
         assert_eq!(out.packet_n as usize, n);
-        assert_eq!(out.n, 1, "the input triggers keep their own count");
+        assert_eq!(out.n, 1, "the input triggers keep a separate count");
         for (i, (_, want)) in rows[..n].iter().enumerate() {
             assert_eq!(&out.packet_triggers[i], want, "packet trigger {i} of {n}");
         }
@@ -2248,7 +2278,7 @@ fn packet_triggers_the_box_holds_read_back_field_for_field() {
     }
 }
 
-// `clip_settings_to_c` on settings the test builds by hand, for a state the box never answers with.
+// `clip_settings_to_c` on settings the test builds by hand, for a state the box never replies with.
 fn settings_to_c(s: &medius::ClipSettings) -> MediusClipSettings {
     let mut c: MediusClipSettings = unsafe { std::mem::zeroed() };
     unsafe { crate::convert::clip_settings_to_c(s, &mut c) };
@@ -2257,7 +2287,7 @@ fn settings_to_c(s: &medius::ClipSettings) -> MediusClipSettings {
 
 #[test]
 fn a_read_back_past_the_arrays_is_clamped_to_them() {
-    // The box holds eight of each kind and sixteen match bytes, so only a hand-built state has more.
+    // The box holds 8 of each kind and 16 match bytes, so only a hand-built state has more.
     let mut trigger = medius::ClipPacketTrigger::new(
         medius::TrafficClass::HidIn,
         2,
@@ -2719,7 +2749,7 @@ fn a_packet_trigger_the_crate_refuses_has_its_own_status_and_sends_nothing() {
     ] {
         assert_eq!(status, MediusStatus::ErrInvalidArg, "{what}");
     }
-    // The removals of the seven sound keys are all that went out.
+    // The removals of the seven sound keys are all that was sent.
     let sent = clip_trigger_payloads(&unsafe { (*mock).inner.recorded_frames() });
     assert_eq!(sent.len(), refused.iter().filter(|r| !r.3).count());
     assert!(sent.iter().all(|p| p[4..7] == [0, 0, 0]), "{sent:?}");
@@ -2922,7 +2952,7 @@ fn a_once_per_run_trigger_with_no_masked_bit_past_its_selector_is_refused() {
         clip_trigger_payloads(&unsafe { (*mock).inner.recorded_frames() }),
         Vec::<Vec<u8>>::new()
     );
-    // The key is sound, so a removal goes out, and so does the same trigger bound on each packet.
+    // The key is sound, so a removal is sent, and so is the same trigger bound on each packet.
     for (what, t) in &refused {
         assert_eq!(
             unsafe { medius_clip_unbind_packet(clip, t) },
@@ -3238,7 +3268,7 @@ fn the_mock_runs_a_packet_through_its_triggers() {
             ptr::null_mut(),
             ptr::null_mut()
         ));
-        // Each out is optional: the packet still runs and the answer still comes back.
+        // Each out is optional: the packet still runs and the return value still holds.
         assert!(medius_mock_clip_packet(
             mock,
             hid_in,
@@ -3284,7 +3314,7 @@ fn a_consuming_packet_trigger_needs_the_imperfect_opt_in_and_goes_when_it_is_tur
         id: 3,
         ..spec_trigger()
     };
-    // The bind goes out either way; the box holds the consuming one only under the opt-in.
+    // The bind is sent either way; the box holds the consuming one only under the opt-in.
     for t in [&consuming, &watching] {
         assert_eq!(
             unsafe { medius_clip_bind_packet(clip, t) },
@@ -3924,8 +3954,8 @@ fn clip_status_query_returns_configured_value() {
 #[test]
 fn every_enum_byte_on_the_boundary_is_refused_rather_than_materialized() {
     // A byte a caller chose, read as a `#[repr(u8)]` enum, is undefined before any check can run:
-    // the value falls outside the match's jump table and the process dies, or lands on a constant it
-    // never named and the wrong command goes out. Each of these takes the byte and refuses it.
+    // the value falls outside the match's jump table and the process dies, or lands on a constant
+    // it never named and the wrong command is sent. Each of these takes the byte and refuses it.
     const BAD: u8 = 200;
     let mock = medius_mock_new();
     let mut dev: *mut MediusDevice = ptr::null_mut();
@@ -4122,7 +4152,7 @@ fn every_enum_byte_on_the_boundary_is_refused_rather_than_materialized() {
     fresh.frame(medius::ClipFrame::new());
     assert_eq!(unsafe { &(*builder).inner }, &fresh);
 
-    // The no-status surfaces answer their fallback rather than acting on the byte.
+    // The no-status surfaces return their fallback rather than acting on the byte.
     assert!(!unsafe { medius_mock_saw(mock, BAD) });
     let timeline = medius_timeline_new();
     unsafe { medius_timeline_reset(timeline, BAD) };
@@ -4891,8 +4921,9 @@ fn raw_rejects_a_non_flow_direction_with_its_own_status() {
         MediusStatus::Ok
     );
     let bytes = [0u8, 1];
-    // Both names two flows and the bearing-relative pair has none here; each carries its own status,
-    // ahead of the opt-in, and an unknown direction byte is refused as an invalid argument.
+    // Both names two flows, and the bearing-relative pair names none here. Each gets its own
+    // status, checked ahead of the opt-in; an unknown direction byte is refused as an invalid
+    // argument.
     assert_eq!(
         unsafe {
             medius_device_raw(
@@ -5278,4 +5309,193 @@ fn the_session_counter_reads_through_and_the_mock_moves_it() {
         medius_device_free(dev);
         medius_mock_free(mock);
     }
+}
+
+#[test]
+fn an_update_refusal_keeps_its_detail_across_the_abi() {
+    let mock = medius_mock_new();
+    let mut dev: *mut MediusDevice = ptr::null_mut();
+    assert_eq!(
+        unsafe { medius_device_with_mock(mock, &mut dev) },
+        MediusStatus::Ok
+    );
+    let mut detail = MediusUpdateError {
+        op: 0xFF,
+        status: 0xFF,
+        arg: 0xFFFF_FFFF,
+    };
+    assert_eq!(
+        unsafe { medius_device_activate_firmware(dev) },
+        MediusStatus::ErrUpdate
+    );
+    assert!(unsafe { medius_last_error_update(&mut detail) });
+    assert_eq!(
+        (detail.op, detail.status),
+        (4, medius::UpdateStatus::NOTHING_STAGED.0)
+    );
+    assert_eq!(
+        unsafe { medius_device_catch_events(dev, ptr::null(), 0, &mut ptr::null_mut()) },
+        MediusStatus::ErrEmptySubscription
+    );
+    assert!(!unsafe { medius_last_error_update(&mut detail) });
+    unsafe {
+        medius_device_free(dev);
+        medius_mock_free(mock);
+    }
+}
+
+#[test]
+fn update_and_confirm_run_whole_through_the_abi() {
+    let mock = medius_mock_new();
+    let mut dev: *mut MediusDevice = ptr::null_mut();
+    assert_eq!(
+        unsafe { medius_device_with_mock(mock, &mut dev) },
+        MediusStatus::Ok
+    );
+    let image: Vec<u8> = (0..2000).map(|i| (i * 31 + 7) as u8).collect();
+    assert_eq!(
+        unsafe {
+            medius_device_update_firmware(
+                dev,
+                0,
+                image.as_ptr(),
+                image.len(),
+                None,
+                ptr::null_mut(),
+            )
+        },
+        MediusStatus::Ok
+    );
+    let mut info: MediusFirmwareInfo = unsafe { std::mem::zeroed() };
+    assert_eq!(
+        unsafe { medius_device_wait_firmware_confirmed(dev, &mut info) },
+        MediusStatus::Ok
+    );
+    assert_eq!(info.device_staged, 0);
+    assert_eq!(
+        unsafe {
+            medius_device_update_firmware(
+                dev,
+                2,
+                image.as_ptr(),
+                image.len(),
+                None,
+                ptr::null_mut(),
+            )
+        },
+        MediusStatus::ErrInvalidArg
+    );
+    unsafe {
+        medius_device_free(dev);
+        medius_mock_free(mock);
+    }
+}
+
+// A raw handle crosses to the receiving thread as an address: the C API documents these handles as
+// shareable between threads.
+struct Shared<T>(*mut T);
+unsafe impl<T> Send for Shared<T> {}
+
+fn mock_device() -> *mut MediusDevice {
+    let mock = medius_mock_new();
+    let mut dev = ptr::null_mut();
+    assert_eq!(
+        unsafe { medius_device_with_mock(mock, &mut dev) },
+        MediusStatus::Ok
+    );
+    unsafe { medius_mock_free(mock) };
+    dev
+}
+
+// Runs `recv` on another thread, closes with `close` while it blocks, and returns how long the
+// close took to wake it.
+fn woken<T: 'static>(
+    stream: *mut T,
+    recv: fn(*mut T) -> bool,
+    close: unsafe extern "C" fn(*mut T),
+) -> Duration {
+    let shared = Shared(stream);
+    let (tx, rx) = std::sync::mpsc::channel();
+    let t = std::thread::spawn(move || {
+        let s = shared;
+        tx.send(recv(s.0)).unwrap();
+    });
+    std::thread::sleep(Duration::from_millis(50));
+    let at = std::time::Instant::now();
+    unsafe { close(stream) };
+    let got = rx
+        .recv_timeout(Duration::from_secs(2))
+        .expect("the blocked receive woke");
+    assert!(!got, "a closed stream yields nothing");
+    t.join().unwrap();
+    at.elapsed()
+}
+
+#[test]
+fn closing_an_event_stream_wakes_a_receive_on_another_thread() {
+    let dev = mock_device();
+    let filters = [medius_catch_filter_everything()];
+    let mut stream = ptr::null_mut();
+    assert_eq!(
+        unsafe { medius_device_catch_events(dev, filters.as_ptr(), 1, &mut stream) },
+        MediusStatus::Ok
+    );
+    let took = woken(
+        stream,
+        |s| {
+            let mut ev = std::mem::MaybeUninit::<MediusCatchEvent>::uninit();
+            unsafe { medius_event_stream_recv(s, ev.as_mut_ptr()) == MediusStatus::Ok }
+        },
+        medius_event_stream_close,
+    );
+    assert!(took < Duration::from_millis(500));
+    assert!(!unsafe { medius_event_stream_is_connected(stream) });
+    unsafe { medius_event_stream_free(stream) };
+    unsafe { medius_device_free(dev) };
+}
+
+#[test]
+fn closing_an_input_stream_wakes_a_receive_on_another_thread() {
+    let dev = mock_device();
+    let filters = [medius_catch_filter_watch_class(MediusClass::Button as u8)];
+    let mut stream = ptr::null_mut();
+    assert_eq!(
+        unsafe { medius_device_input_events(dev, filters.as_ptr(), 1, &mut stream) },
+        MediusStatus::Ok
+    );
+    let took = woken(
+        stream,
+        |s| {
+            let mut ev = std::mem::MaybeUninit::<MediusInputEvent>::uninit();
+            unsafe { medius_input_stream_recv(s, ev.as_mut_ptr()) == MediusStatus::Ok }
+        },
+        medius_input_stream_close,
+    );
+    assert!(took < Duration::from_millis(500));
+    assert!(!unsafe { medius_input_stream_is_connected(stream) });
+    unsafe { medius_input_stream_free(stream) };
+    unsafe { medius_device_free(dev) };
+}
+
+#[test]
+fn closing_a_log_stream_wakes_a_receive_on_another_thread() {
+    let dev = mock_device();
+    let mut stream = ptr::null_mut();
+    assert_eq!(
+        unsafe { medius_device_logs(dev, &mut stream) },
+        MediusStatus::Ok
+    );
+    assert!(unsafe { medius_log_stream_is_connected(stream) });
+    let took = woken(
+        stream,
+        |s| {
+            let mut line = std::mem::MaybeUninit::<MediusLogLine>::uninit();
+            unsafe { medius_log_stream_recv(s, line.as_mut_ptr()) == MediusStatus::Ok }
+        },
+        medius_log_stream_close,
+    );
+    assert!(took < Duration::from_millis(500));
+    assert!(!unsafe { medius_log_stream_is_connected(stream) });
+    unsafe { medius_log_stream_free(stream) };
+    unsafe { medius_device_free(dev) };
 }

@@ -117,7 +117,8 @@ mod mock_roundtrip {
 
     #[test]
     fn transfer_refused_when_opt_in_off() {
-        // No pre-check: the box itself answers 0xFC (refused), which is more faithful than a local error.
+        // No pre-check: the box itself replies 0xFC (refused), which is more faithful than a local
+        // error.
         let device = Device::with_mock(MockBox::new());
         let reply = device
             .transfer(0, Setup::new(0x80, 0x06, 0x0100, 0x0000, 18), &[])

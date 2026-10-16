@@ -32,7 +32,7 @@ use crate::protocol::opcode::{
     Q_REWRITE, Q_REWRITE_ENTRY, REWRITE_MATCH_MAX, REWRITE_MAX_ENTRIES, REWRITE_PAYLOAD_POOL,
 };
 use crate::protocol::{DecodedFrame, FrameType, encode};
-use crate::types::PatchSection;
+use crate::types::{PatchSection, UpdateStatus};
 use sha2::{Digest, Sha256};
 
 use crate::transport::mock::MockTransport;
@@ -46,7 +46,9 @@ use crate::types::{
 
 #[derive(Debug)]
 struct State {
-    update: MockUpdate,
+    // One session per chip, indexed by the target byte, as ctrl_update.c keeps them.
+    update: [MockUpdate; 2],
+    update_data_seq: u8,
     replied: Vec<Vec<u8>>,
     version: Version,
     health: Health,
@@ -54,7 +56,7 @@ struct State {
     caps: Caps,
     rate: Rate,
     stats: Stats,
-    // The table the LOCK frames build, and a pinned reply that wins over it when a test scripts one.
+    // The table the LOCK frames build, and a pinned reply overriding it when a test scripts one.
     table: LockTable,
     locks: Option<Locks>,
     catch: CatchState,
@@ -77,7 +79,7 @@ struct State {
     clip_settings: ClipSettings,
     packet_triggers: PacketTriggers,
     // The rewrite table the REWRITE frames build, modelled the way the box holds it (keyed rows, a
-    // monotonic gen, a full flag) so the mock answers RESP(REWRITE)/RESP(REWRITE_ENTRY) like a box.
+    // monotonic gen, a full flag) so the mock replies RESP(REWRITE)/RESP(REWRITE_ENTRY) like a box.
     rewrites: Vec<MockRewrite>,
     rewrite_gen: u8,
     rewrite_full: bool,
@@ -91,20 +93,24 @@ struct State {
     // (keyed rows in installation order, a full flag).
     transforms: Vec<MockTransform>,
     transform_full: bool,
-    // The canned answer to a TRANSFER (status, IN data). The box answers 0xFC when the opt-in is off.
+    // The canned reply to a TRANSFER (status, IN data). The box replies 0xFC with the opt-in off.
     transfer_reply: (u8, Vec<u8>),
     recorded: Vec<DecodedFrame>,
     respond: bool,
+    refuse_activate: Option<u8>,
+    reboot: (u32, u32),
+    firmware_unanswered: u32,
+    firmware_pending: u32,
     // Whether a frame has arrived since the device chip booted: the first one gets a hello first.
     pc_seen: bool,
     // session_ctr.h: a command other than a QUERY since the session counter last counted.
     session_dirty: bool,
     // Whether a clone is up: a device is attached and cloned.
     clone_up: bool,
-    // What the box does later on its own, each run by the first frame at or past its time.
+    // What the box does later unprompted; each runs on the first frame at or past its time.
     clone_up_at: Option<std::time::Instant>,
     // A detach's grace: when it ends, whether the device came back inside it, and a presentation
-    // asked for during it, which waits to see.
+    // asked for during it, which waits for the grace to end.
     grace_until: Option<std::time::Instant>,
     device_back: bool,
     represent_held: bool,
@@ -114,7 +120,7 @@ struct State {
     teardown_before_command: bool,
     #[cfg(test)]
     link_lost_before_clip_query: bool,
-    // Frames the box sends on its own, drained into the next reply or pushed by `MockBox::restart`.
+    // Frames the box sends unprompted, drained into the next reply or pushed by `MockBox::restart`.
     unsolicited: Vec<u8>,
 }
 
@@ -246,8 +252,8 @@ impl PacketTriggers {
             return None;
         }
         if flags & CLIP_TRIG_F_RUN != 0 {
-            // The condition is the mask past the selector. With no byte there, or no masked bit in
-            // them, every packet of the stream meets it.
+            // The condition is the mask past the selector. With no byte past the selector, or no
+            // masked bit in those bytes, every packet of the stream meets it.
             let condition = mask.get(slen as usize..).unwrap_or(&[]);
             if ctl
                 || id == CATCH_ID_ANY
@@ -363,7 +369,8 @@ impl MockPatch {
 impl Default for State {
     fn default() -> Self {
         State {
-            update: MockUpdate::default(),
+            update: Default::default(),
+            update_data_seq: 0,
             replied: Vec::new(),
             version: Version {
                 proto_ver: crate::protocol::PROTO_VER,
@@ -376,7 +383,7 @@ impl Default for State {
             health: Health::from_flags(0),
             device_info: DeviceInfo::default(),
             // A five-button mouse, so the lock table's button cap agrees with `RESP(CAPS)`; a test
-            // wanting more buttons or AC Pan sets its own caps.
+            // wanting more buttons or AC Pan sets the caps it needs.
             caps: Caps {
                 mouse: MouseCaps {
                     n_buttons: 5,
@@ -427,6 +434,10 @@ impl Default for State {
             transfer_reply: (0x00, Vec::new()),
             recorded: Vec::new(),
             respond: true,
+            refuse_activate: None,
+            reboot: (0, 0),
+            firmware_unanswered: 0,
+            firmware_pending: 0,
             pc_seen: true,
             session_dirty: false,
             clone_up: true,
@@ -450,7 +461,7 @@ const LOCK_TGT_BTN_BASE: usize = 4; // CTRL_LOCK_TGT_BTN_BASE: 4 axes (X, Y, whe
 const LOCK_TGT_COUNT: usize = LOCK_TGT_BTN_BASE + MAX_BUTTONS as usize; // 4 axes + 16 buttons
 const LOCK_SLOT_WITH: usize = 2;
 const SLOT_DIRS: [u8; 4] = [LOCK_DIR_POS, LOCK_DIR_NEG, LOCK_DIR_WITH, LOCK_DIR_AGAINST];
-// CTRL_RESP_LOCKS_MAXN and INPUT_MEDIA_MAX: past either the box drops silently.
+// CTRL_RESP_LOCKS_MAXN and INPUT_MEDIA_MAX: past either the box drops entries with no signal.
 const RESP_LOCKS_MAXN: usize = 85;
 const MEDIA_LOCK_MAX: usize = 8;
 // The rest of ctrl_proto.h's reply bounds.
@@ -465,7 +476,8 @@ const PATCH_POOL: usize = 1024; // PATCH_POOL, the bytes every stored patch shar
 const BOOT_CLONE_DELAY: std::time::Duration = std::time::Duration::from_millis(100);
 // main.c's DETACH_GRACE_US: a detached device that comes back inside it keeps the clone.
 const DETACH_GRACE: std::time::Duration = std::time::Duration::from_millis(250);
-// The main loop's tick at its longest, which presents a clone the opt-in toggled after the command.
+// The main loop's longest tick: an opt-in toggle re-presents the clone up to this long after the
+// command.
 const REPRESENT_DELAY: std::time::Duration = std::time::Duration::from_millis(50);
 
 #[derive(Debug, Clone)]
@@ -509,7 +521,7 @@ impl LockTable {
             if slots & (1 << i) == 0 {
                 continue;
             }
-            // One bit is all a button carries, so the box stores the block or pass it amounts to.
+            // A button carries one bit, so the box stores the scale as a block or a pass.
             let mut v = scale;
             if target >= LOCK_TGT_BTN_BASE {
                 v = if v < LOCK_SCALE_PASS {
@@ -685,6 +697,39 @@ impl LockTable {
 }
 
 impl State {
+    // One UPDATE op as ctrl_update.c runs it: `(target, status, arg)` for the reply, `None` when
+    // the box owes none. ACTIVATE is box-wide and replied to as the device chip; the other ops name
+    // their chip, and a target byte naming neither is ignored.
+    fn update_op(&mut self, payload: &[u8]) -> Option<(u8, u8, u32)> {
+        let [op, target, ref body @ ..] = *payload else {
+            return None;
+        };
+        if op == 4 {
+            let (status, arg) = if let Some(status) = self.refuse_activate.take() {
+                (status, 0)
+            } else if self.update.iter().any(|u| u.staged) {
+                self.update = Default::default();
+                (self.firmware_unanswered, self.firmware_pending) = self.reboot;
+                (0x00, 0)
+            } else {
+                (0x19, 0)
+            };
+            return Some((0, status, arg));
+        }
+        let session = self.update.get_mut(usize::from(target))?;
+        let (status, arg) = match op {
+            0 => session.begin(body),
+            1 => session.data(body)?,
+            2 => session.end(),
+            3 => {
+                *session = MockUpdate::default();
+                (0x00, 0)
+            }
+            _ => return None,
+        };
+        Some((target, status, arg))
+    }
+
     fn apply_lock_frame(&mut self, p: &[u8]) {
         // A lock needs the clone's targets, which exist only while a clone is up.
         if p.len() < 6 || !self.clone_up {
@@ -708,7 +753,7 @@ impl State {
         }
         let framed = p[8] as usize;
         if p.len() < 9 + 2 * framed || 11 + p.len() - 9 > crate::protocol::opcode::MAX_PAYLOAD {
-            return; // a truncated match, or a rule its own read-back reply cannot carry
+            return; // a truncated match, or a rule the read-back reply cannot carry
         }
         let clear_all = p[4] == 0 && p[0] == 0xFF && p[1] == 0xFF && p[2] == 0xFF;
         if !self.imperfect.allowed && !clear_all {
@@ -770,8 +815,8 @@ impl State {
                 return;
             }
         }
-        // rewrite_tab_set costs the payload against the pool less what an overwrite frees, then the
-        // entry count; either refusal for room sets full.
+        // rewrite_tab_set checks the payload against the pool (less what an overwrite frees), then
+        // the entry count. Either refusal for room sets full.
         let used: usize = self
             .rewrites
             .iter()
@@ -845,8 +890,8 @@ impl State {
         }
     }
 
-    // The clip config goes with the rest of the box's soft state (clip_lifecycle_reset_locked).
     // RST_F_NVS wipes everything in NVS, back to `State::default`'s values, where a wiped box boots.
+    // The clip config is soft state and goes with the rest of it (clip_lifecycle_reset_locked).
     fn reset_persistent(&mut self) {
         self.version.name = String::new();
         // Only `allowed` is stored; the box re-derives over_capacity and clone_imperfect when it
@@ -888,7 +933,7 @@ impl State {
         self.unsolicited.extend(hello);
     }
 
-    // What the box has done on its own by `now`.
+    // What the box has done unprompted by `now`.
     fn advance(&mut self, now: std::time::Instant) {
         if self.clone_up_at.is_some_and(|t| now >= t) {
             self.clone_up_at = None;
@@ -946,8 +991,8 @@ impl State {
         }
     }
 
-    // APPLY, CLEAR and an opt-in toggle re-present the clone when what it serves changes: a re-clone,
-    // so the session goes and the game PC enumerates the clone again.
+    // APPLY, CLEAR and an opt-in toggle re-present the clone when what it serves changes. That is a
+    // re-clone: the session goes and the game PC enumerates the clone again.
     fn present_patches(&mut self) {
         // Inside a detach's grace the snapshot may be of a device that has gone: the request waits.
         if self.grace_until.is_some() {
@@ -1003,7 +1048,7 @@ impl State {
         self.clip_settings = settings;
     }
 
-    // A scripted opt-in, which goes off as OPTION(IMPERFECT) takes it off: the consuming packet
+    // A scripted opt-in. Turning it off works as OPTION(IMPERFECT) does: the consuming packet
     // triggers go with it.
     fn script_imperfect(&mut self, imperfect: ImperfectStatus) {
         self.imperfect = imperfect;
@@ -1125,12 +1170,13 @@ impl State {
             }
             return;
         }
-        // The bytes already held under the key change nothing: the patch keeps its place and full stays.
+        // Re-storing the bytes a key already holds changes nothing: the patch keeps its place and
+        // full stays.
         if pos.is_some_and(|i| self.patches[i].bytes == bytes) {
             return;
         }
-        // patch_set_put costs the bytes against the pool less what an overwrite frees, then the entry
-        // count; either refusal for room sets full and keeps what was stored.
+        // patch_set_put checks the bytes against the pool (less what an overwrite frees), then the
+        // entry count. Either refusal for room sets full and keeps what was stored.
         let used: usize = self
             .patches
             .iter()
@@ -1166,8 +1212,8 @@ impl State {
                 let changed = self.imperfect.allowed != (*allow != 0);
                 self.imperfect.allowed = *allow != 0;
                 if !self.imperfect.allowed {
-                    // Opt-off clears the rewrite table (usbdev_set_imperfect_allowed); gen stays
-                    // monotonic across the clear.
+                    // Opt-off drops the consuming packet triggers and clears the rewrite table
+                    // (usbdev_set_imperfect_allowed).
                     let held = self.packet_triggers.rows.len();
                     self.packet_triggers.drop_consuming();
                     let dropped =
@@ -1176,7 +1222,7 @@ impl State {
                     self.rewrites.clear();
                     self.rewrite_gen = 0;
                     self.rewrite_full = false;
-                    // Some of what a host set went and the rest stands: counted whatever came before.
+                    // A partial release (some host-set state went, the rest stands) always counts.
                     if changed && dropped {
                         self.stats.session = self.stats.session.wrapping_add(1);
                     }
@@ -1205,7 +1251,7 @@ impl State {
                 }
             }
             (Some(OPT_RENDER), [mode, full, ..]) => {
-                // Same rule: an unknown mode, or a `full` past 1, discards the whole command.
+                // Same rule: an unknown mode, or a `full` >1, discards the whole command.
                 if let (Some(m), true) = (RenderMode::from_u8(*mode), *full <= 1) {
                     self.render_mode = m;
                     self.render_full = *full != 0;
@@ -1218,7 +1264,7 @@ impl State {
                 self.version.name = String::from_utf8_lossy(name).into_owned()
             }
             (Some(OPT_BEARING), [lo, hi, mode, ..]) => {
-                // An unknown mode is ignored whole, as the firmware ignores it, window and all.
+                // The firmware ignores an unknown mode whole, window and all.
                 let Some(mode) = BearingMode::from_u8(*mode) else {
                     return;
                 };
@@ -1343,7 +1389,7 @@ fn stats_payload(s: Stats) -> Vec<u8> {
 fn locks_payload(l: &Locks) -> Vec<u8> {
     use crate::protocol::opcode::{LOCK_CLS_AXIS, LOCK_ID_ALL};
     use crate::types::{LockScope, LockTarget};
-    // The box stops appending at RESP_LOCKS_MAXN and answers with what fit (ctrl_locks_append), so
+    // The box stops appending at RESP_LOCKS_MAXN and replies with what fit (ctrl_locks_append), so
     // a longer `Locks` truncates here.
     let entries = &l.entries()[..l.entries().len().min(RESP_LOCKS_MAXN)];
     let mut p = vec![6u8, entries.len() as u8];
@@ -1373,7 +1419,7 @@ fn catch_resp_payload(c: &CatchState) -> Vec<u8> {
         .age
         .map_or(u16::MAX, |d| d.as_millis().min(u16::MAX as u128 - 1) as u16);
     p.extend_from_slice(&age.to_le_bytes());
-    // ctrl_catch_append stops at CTRL_CATCH_MAXN, which is the table's own size.
+    // ctrl_catch_append stops at CTRL_CATCH_MAXN, the table's size.
     let entries = &c.entries[..c.entries.len().min(CATCH_MAXN)];
     p.push(entries.len() as u8);
     for e in entries {
@@ -1418,7 +1464,7 @@ fn options_emit_payload(
     native_hz: u16,
     allowed: bool,
 ) -> Vec<u8> {
-    // Rendering has its own option, but its gate still sets the resolved rate in the pace reply.
+    // Rendering has a separate option, but its gate still sets the resolved rate in the pace reply.
     let (mode, fixed_hz, mut resolved) = match pace {
         EmitPace::Learned => (0u8, 0u16, 0u16),
         EmitPace::Interval => (1, 0, 0),
@@ -1428,7 +1474,7 @@ fn options_emit_payload(
             (2, hz, (1000 / n) as u16)
         }
     };
-    // The texture forces resolved to 1 kHz only when the pace resolved to no period of its own; a
+    // A render texture forces `resolved` to 1 kHz only when the pace resolved to no period; a
     // Fixed rate keeps its snapped value.
     if render != RenderMode::Off && render_ready && resolved == 0 {
         resolved = 1000;
@@ -1575,7 +1621,7 @@ fn transform_pair_ok(op: u8, sc: u8, si: u16, dc: u8, di: u16) -> bool {
 }
 
 // RESP(TRANSFORMS): [16][flags][n] then n × [op][sclass][sid u16][dclass][did u16]. No state
-// byte per entry: a readback row is always a live one, hardcoded state 1 when it rebuilds.
+// byte per entry: a readback row is always live, and rebuilds with state 1.
 fn transforms_resp_payload(st: &State) -> Vec<u8> {
     let mut p = vec![
         Q_TRANSFORMS,
@@ -1722,7 +1768,6 @@ pub(crate) struct MockUpdate {
     pub(crate) sha: [u8; 32],
     pub(crate) hasher: Vec<u8>,
     pub(crate) staged: bool,
-    pub(crate) data_seq: u8,
 }
 
 impl MockUpdate {
@@ -1819,11 +1864,20 @@ impl MockUpdate {
 
 pub(crate) const MOCK_SLOT_SIZE: u32 = 0xF_0000;
 
-fn firmware_payload(dev: &Version, staged: bool) -> Vec<u8> {
-    let mut p = vec![Q_FIRMWARE, dev.fw_major, dev.fw_minor, dev.fw_patch, 0, 2];
+fn firmware_payload(dev: &Version, update: &[MockUpdate; 2], pending: bool) -> Vec<u8> {
+    // Image state 1 is pending verify, 2 valid.
+    let state = if pending { 1 } else { 2 };
+    let mut p = vec![
+        Q_FIRMWARE,
+        dev.fw_major,
+        dev.fw_minor,
+        dev.fw_patch,
+        0,
+        state,
+    ];
     p.extend_from_slice(&[1, dev.fw_major, dev.fw_minor, dev.fw_patch, 0, 2]);
     p.extend_from_slice(&MOCK_SLOT_SIZE.to_le_bytes());
-    p.push(u8::from(staged));
+    p.push(u8::from(update[0].staged) | u8::from(update[1].staged) << 1);
     p
 }
 
@@ -1846,7 +1900,7 @@ impl MockBox {
                 seq,
                 payload: payload.to_vec(),
             });
-            // The first frame after a boot is answered after a hello, as ctrl_link's first contact.
+            // The first frame after a boot is replied to after a hello (ctrl_link's first contact).
             let mut lead = Vec::new();
             if !st.pc_seen {
                 st.pc_seen = true;
@@ -1919,45 +1973,16 @@ impl MockBox {
             }
             let out: Vec<u8> = 'reply: {
                 if ty == FrameType::Update && st.respond {
-                    let Some(&op) = payload.first() else {
-                        return Vec::new();
-                    };
-                    let body = if payload.len() > 2 {
-                        &payload[2..]
-                    } else {
-                        &[][..]
-                    };
-                    let answer = match op {
-                        0 => Some(st.update.begin(body)),
-                        1 => st.update.data(body),
-                        2 => Some(st.update.end()),
-                        3 => {
-                            let seq = st.update.data_seq;
-                            st.update = MockUpdate::default();
-                            st.update.data_seq = seq;
-                            Some((0x00, 0))
-                        }
-                        4 => {
-                            if st.update.staged {
-                                let seq = st.update.data_seq;
-                                st.update = MockUpdate::default();
-                                st.update.data_seq = seq;
-                                Some((0x00, 0))
-                            } else {
-                                Some((0x19, 0))
-                            }
-                        }
-                        _ => None,
-                    };
-                    break 'reply match answer {
-                        Some((status, arg)) => {
-                            let mut p = vec![op, payload.get(1).copied().unwrap_or(0), status];
+                    break 'reply match st.update_op(payload) {
+                        Some((target, status, arg)) => {
+                            let op = payload[0];
+                            let mut p = vec![op, target, status];
                             p.extend_from_slice(&arg.to_le_bytes());
-                            // A DATA acknowledgement answers a whole window, so the firmware gives
-                            // it a rolling SEQ of its own rather than echoing the command's.
+                            // A DATA acknowledgement covers a whole window, so the firmware gives
+                            // it a separate rolling SEQ rather than echoing the command's.
                             let rseq = if op == 1 {
-                                let v = st.update.data_seq;
-                                st.update.data_seq = st.update.data_seq.wrapping_add(1);
+                                let v = st.update_data_seq;
+                                st.update_data_seq = v.wrapping_add(1);
                                 v
                             } else {
                                 seq
@@ -1968,15 +1993,16 @@ impl MockBox {
                     };
                 }
                 if ty == FrameType::Transfer && st.respond {
-                    // TRANSFER_RESP [ep][status][IN data], SEQ echoes. The box answers 0xFC (refused)
-                    // while the opt-in is off; otherwise the canned reply the test scripted.
+                    // TRANSFER_RESP [ep][status][IN data], SEQ echoes. The box replies 0xFC
+                    // (refused) while the opt-in is off; otherwise the canned reply the test
+                    // scripted.
                     let ep = payload.first().copied().unwrap_or(0);
                     let (status, mut data) = if st.imperfect.allowed {
                         st.transfer_reply.clone()
                     } else {
                         (0xFC, Vec::new())
                     };
-                    // The box sets in_len = 0 unless status == 0 (usbdev_transfer): a non-OK answer
+                    // The box sets in_len = 0 unless status == 0 (usbdev_transfer): a non-OK reply
                     // carries no IN data, so drop any the test scripted alongside a failing status.
                     if status != 0 {
                         data.clear();
@@ -2079,12 +2105,20 @@ impl MockBox {
                             .expect("resp fits"),
                             _ => Vec::new(),
                         },
-                        Some(11) => encode(
-                            FrameType::Resp,
-                            seq,
-                            &firmware_payload(&st.version, st.update.staged),
-                        )
-                        .expect("resp fits"),
+                        Some(11) if st.firmware_unanswered > 0 => {
+                            st.firmware_unanswered -= 1;
+                            Vec::new()
+                        }
+                        Some(11) => {
+                            let pending = st.firmware_pending > 0;
+                            st.firmware_pending = st.firmware_pending.saturating_sub(1);
+                            encode(
+                                FrameType::Resp,
+                                seq,
+                                &firmware_payload(&st.version, &st.update, pending),
+                            )
+                            .expect("resp fits")
+                        }
                         Some(10) => encode(
                             FrameType::Resp,
                             seq,
@@ -2115,13 +2149,13 @@ impl MockBox {
                     Vec::new()
                 }
             };
-            // A frame that rebooted the chip leaves it booted clean.
+            // Marked again after the command, unless it rebooted the chip, which boots clean.
             if command && st.pc_seen {
                 st.session_dirty = true;
             }
             let unsolicited = std::mem::take(&mut st.unsolicited);
             let out = [lead, out, unsolicited].concat();
-            // Kept so a test can assert the box's replies, not just the host's requests.
+            // Kept so a test can assert the box's replies, not only the host's requests.
             if !out.is_empty() {
                 st.replied.push(out.clone());
             }
@@ -2131,42 +2165,42 @@ impl MockBox {
         MockBox { state, transport }
     }
 
-    /// Set the [`Version`] answered to `QUERY(VERSION)` (builder style).
+    /// Set the [`Version`] reply to `QUERY(VERSION)` (builder style).
     #[must_use]
     pub fn with_version(self, version: Version) -> Self {
         self.state.lock().version = version;
         self
     }
 
-    /// Set the [`Health`] answered to `QUERY(HEALTH)` (builder style).
+    /// Set the [`Health`] reply to `QUERY(HEALTH)` (builder style).
     #[must_use]
     pub fn with_health(self, health: Health) -> Self {
         self.state.lock().health = health;
         self
     }
 
-    /// Set the [`DeviceInfo`] answered to `QUERY(DEVICE_INFO)` (builder style).
+    /// Set the [`DeviceInfo`] reply to `QUERY(DEVICE_INFO)` (builder style).
     #[must_use]
     pub fn with_device_info(self, device_info: DeviceInfo) -> Self {
         self.state.lock().device_info = device_info;
         self
     }
 
-    /// Set the whole [`Caps`] answered to `QUERY(CAPS)` (builder style).
+    /// Set the whole [`Caps`] reply to `QUERY(CAPS)` (builder style).
     #[must_use]
     pub fn with_caps(self, caps: Caps) -> Self {
         self.state.lock().caps = caps;
         self
     }
 
-    /// Set just the mouse half of the [`Caps`] answered to `QUERY(CAPS)` (builder style).
+    /// Set the mouse half of the [`Caps`] reply to `QUERY(CAPS)` (builder style).
     #[must_use]
     pub fn with_mouse_caps(self, mouse: MouseCaps) -> Self {
         self.state.lock().caps.mouse = mouse;
         self
     }
 
-    /// Set the keyboard half of the [`Caps`] answered to `QUERY(CAPS)`, marking the keyboard class
+    /// Set the keyboard half of the [`Caps`] reply to `QUERY(CAPS)`, marking the keyboard class
     /// change-driven.
     #[must_use]
     pub fn with_kbd_caps(self, keyboard: KbdCaps) -> Self {
@@ -2177,42 +2211,42 @@ impl MockBox {
         self
     }
 
-    /// Set the [`Rate`] answered to `QUERY(RATE)` (builder style).
+    /// Set the [`Rate`] reply to `QUERY(RATE)` (builder style).
     #[must_use]
     pub fn with_rate(self, rate: Rate) -> Self {
         self.state.lock().rate = rate;
         self
     }
 
-    /// Set the [`Stats`] answered to `QUERY(STATS)` (builder style).
+    /// Set the [`Stats`] reply to `QUERY(STATS)` (builder style).
     #[must_use]
     pub fn with_stats(self, stats: Stats) -> Self {
         self.state.lock().stats = stats;
         self
     }
 
-    /// Pin the [`Locks`] answered to `QUERY(LOCKS)` (builder style), for a reply the mock's lock
-    /// table would never build. Otherwise it answers from that table, which `LOCK` frames maintain as
-    /// on the box.
+    /// Pin the [`Locks`] reply to `QUERY(LOCKS)` (builder style), for a reply the mock's lock table
+    /// would never build. Unpinned, the mock replies from that table, which `LOCK` frames maintain
+    /// as on the box.
     #[must_use]
     pub fn with_locks(self, locks: Locks) -> Self {
         self.state.lock().locks = Some(locks);
         self
     }
 
-    /// Pin the [`Locks`] answered to `QUERY(LOCKS)` in place; see [`with_locks`](Self::with_locks).
+    /// Pin the [`Locks`] reply to `QUERY(LOCKS)` in place; see [`with_locks`](Self::with_locks).
     pub fn set_locks(&self, locks: Locks) {
         self.state.lock().locks = Some(locks);
     }
 
-    /// Set the [`CatchState`] answered to `QUERY(CATCH)` (builder style).
+    /// Set the [`CatchState`] reply to `QUERY(CATCH)` (builder style).
     #[must_use]
     pub fn with_catch_state(self, catch: CatchState) -> Self {
         self.state.lock().catch = catch;
         self
     }
 
-    /// Set the [`ImperfectStatus`] answered to `QUERY(OPTIONS, IMPERFECT)` (builder style).
+    /// Set the [`ImperfectStatus`] reply to `QUERY(OPTIONS, IMPERFECT)` (builder style).
     /// With the opt-in off the mock drops its consuming clip packet triggers, as the box does when
     /// `OPTION(IMPERFECT)` goes off.
     #[must_use]
@@ -2221,7 +2255,7 @@ impl MockBox {
         self
     }
 
-    /// Set the movement-riding window answered to `QUERY(OPTIONS, MOVE_RIDE)` (builder style);
+    /// Set the movement-riding window reply to `QUERY(OPTIONS, MOVE_RIDE)` (builder style);
     /// `None` = off.
     #[must_use]
     pub fn with_movement_riding(self, window: Option<std::time::Duration>) -> Self {
@@ -2282,31 +2316,31 @@ impl MockBox {
         self.state.lock().move_ride_ms = crate::device::options::ride_window_ms(window);
     }
 
-    /// Set the [`Bearing`] answered to `QUERY(OPTIONS, BEARING)` (builder style).
+    /// Set the [`Bearing`] reply to `QUERY(OPTIONS, BEARING)` (builder style).
     #[must_use]
     pub fn with_bearing(self, bearing: Bearing) -> Self {
         self.state.lock().bearing = bearing;
         self
     }
 
-    /// Update the configured [`Bearing`] answered to `QUERY(OPTIONS, BEARING)` in place.
+    /// Update the configured [`Bearing`] reply to `QUERY(OPTIONS, BEARING)` in place.
     pub fn set_bearing(&self, bearing: Bearing) {
         self.state.lock().bearing = bearing;
     }
 
-    /// Set the [`EmitPace`] answered to `QUERY(OPTIONS, EMIT)` (builder style).
+    /// Set the [`EmitPace`] reply to `QUERY(OPTIONS, EMIT)` (builder style).
     #[must_use]
     pub fn with_emit_pace(self, pace: EmitPace) -> Self {
         self.state.lock().emit_pace = pace;
         self
     }
 
-    /// Update the configured [`EmitPace`] answered to `QUERY(OPTIONS, EMIT)` in place.
+    /// Update the configured [`EmitPace`] reply to `QUERY(OPTIONS, EMIT)` in place.
     pub fn set_emit_pace(&self, pace: EmitPace) {
         self.state.lock().emit_pace = pace;
     }
 
-    /// Set what `QUERY(OPTIONS, RENDER)` answers (builder style).
+    /// Set the `QUERY(OPTIONS, RENDER)` reply (builder style).
     #[must_use]
     pub fn with_render(self, mode: RenderMode, full: bool) -> Self {
         self.set_render(mode, full);
@@ -2320,7 +2354,7 @@ impl MockBox {
         self
     }
 
-    /// Update what `QUERY(OPTIONS, RENDER)` answers in place.
+    /// Update the `QUERY(OPTIONS, RENDER)` reply in place.
     pub fn set_render(&self, mode: RenderMode, full: bool) {
         let mut st = self.state.lock();
         st.render_mode = mode;
@@ -2332,8 +2366,8 @@ impl MockBox {
         self.state.lock().render_ready = ready;
     }
 
-    /// Learned command period in microseconds (builder style). 0 is a box that has not seen enough
-    /// `MOVE`s, which answers a span of 0 whatever the percent.
+    /// Learned command period in microseconds (builder style). 0 models a box that has not seen
+    /// enough `MOVE`s: it reports a span of 0 whatever the percent.
     #[must_use]
     pub fn with_spread_learned(self, period_us: u32) -> Self {
         self.set_spread_learned(period_us);
@@ -2345,14 +2379,14 @@ impl MockBox {
         self.state.lock().spread_learned_us = period_us;
     }
 
-    /// Set the forced wire rate answered to `QUERY(OPTIONS, EMIT)` (builder style); `Some(0)` is off.
+    /// Set the forced poll rate reply to `QUERY(OPTIONS, EMIT)` (builder style); `Some(0)` is off.
     #[must_use]
     pub fn with_rate_force(self, force_hz: Option<u16>) -> Self {
         self.set_rate_force(force_hz);
         self
     }
 
-    /// Update the forced wire rate answered to `QUERY(OPTIONS, EMIT)` in place; `Some(0)` is off.
+    /// Update the forced poll rate reply to `QUERY(OPTIONS, EMIT)` in place; `Some(0)` is off.
     pub fn set_rate_force(&self, force_hz: Option<u16>) {
         self.state.lock().emit_force_hz = force_hz.filter(|hz| *hz != 0);
     }
@@ -2364,43 +2398,43 @@ impl MockBox {
         self
     }
 
-    /// Set the [`ClipStatus`] answered to `QUERY(CLIP)` (builder style).
+    /// Set the [`ClipStatus`] reply to `QUERY(CLIP)` (builder style).
     #[must_use]
     pub fn with_clip_status(self, clip: ClipStatus) -> Self {
         self.state.lock().clip = clip;
         self
     }
 
-    /// Update the [`ClipStatus`] answered to `QUERY(CLIP)` in place (e.g. the ring draining).
+    /// Update the [`ClipStatus`] reply to `QUERY(CLIP)` in place (e.g. the ring draining).
     pub fn set_clip_status(&self, clip: ClipStatus) {
         self.state.lock().clip = clip;
     }
 
-    /// Set the [`ClipSettings`] answered to `QUERY(CLIP)` (builder style).
+    /// Set the [`ClipSettings`] reply to `QUERY(CLIP)` (builder style).
     ///
     /// Packet triggers are bound in order, as [`bind_packet`](crate::ClipHandle::bind_packet) binds
-    /// them, under the opt-in held when scripted. The mock keeps those the box would take, each with
-    /// its scripted `hits`, and omits the rest as the box would: a direction the class never
-    /// carries, a match bit outside the mask, a run with no condition,
+    /// them, under the opt-in in force when scripted. The mock keeps the ones the box would take,
+    /// each with its scripted `hits`, and omits the rest as the box would: a direction the class
+    /// never carries, a match bit outside the mask, a run with no condition,
     /// [`consume`](crate::ClipPacketTrigger::consume) on `Control` or with the opt-in off, and entries
-    /// past the count or the match pool. Script the opt-in before a consuming trigger. The held
-    /// triggers are the set `bind_packet` adds to and [`clip_packet`](Self::clip_packet) runs.
+    /// past the count or the match pool. Script the opt-in before a consuming trigger. `bind_packet`
+    /// adds to the kept set, and [`clip_packet`](Self::clip_packet) runs it.
     #[must_use]
     pub fn with_clip_settings(self, settings: ClipSettings) -> Self {
         self.state.lock().script_clip_settings(settings);
         self
     }
 
-    /// Update the [`ClipSettings`] answered to `QUERY(CLIP)` in place, as
+    /// Update the [`ClipSettings`] reply to `QUERY(CLIP)` in place, as
     /// [`with_clip_settings`](Self::with_clip_settings) scripts them.
     pub fn set_clip_settings(&self, settings: ClipSettings) {
         self.state.lock().script_clip_settings(settings);
     }
 
     /// Run one packet through the packet triggers, as the box does for a packet crossing `class` at
-    /// `id` in `direction`. The most specific trigger `head` matches counts it in `hits`. Returns
-    /// that trigger's action on this packet and whether it consumes the packet; the action is `None`
-    /// when no trigger matches, or the trigger is
+    /// `id` in `direction`. The most specific trigger that `head` matches counts the packet in
+    /// `hits`. Returns that trigger's action and whether it consumes the packet. The action is `None`
+    /// when no trigger matches, or when the trigger is
     /// [`once_per_run`](crate::ClipPacketTrigger::once_per_run) and the packet continues a run.
     ///
     /// A packet travels [`IN`](Direction::IN) or [`OUT`](Direction::OUT) on a surface carrying that
@@ -2428,8 +2462,8 @@ impl MockBox {
 
     /// Simulate a device-chip restart: session state goes (locks, rules, transforms, the clip),
     /// stored state stays, the box says hello now and on the next frame, and the clone is back 100 ms
-    /// later. `RESET` with its store flag and
-    /// [`RebootTarget::DeviceRun`](crate::RebootTarget::DeviceRun) restart it too.
+    /// later. `RESET` with its store flag, and
+    /// [`RebootTarget::DeviceRun`](crate::RebootTarget::DeviceRun), also restart the device chip.
     pub fn restart(&self) {
         let hello = {
             let mut st = self.state.lock();
@@ -2451,9 +2485,9 @@ impl MockBox {
     }
 
     /// Simulate the real device detaching: the box releases host-set session state at once. With
-    /// `back_within_grace` the device re-attaches inside the 250 ms grace and the clone stays up;
-    /// otherwise the clone is torn down when the grace ends (counted again only if a command arrived
-    /// during it) and stays down until [`attach`](Self::attach).
+    /// `back_within_grace`, the device re-attaches inside the 250 ms grace and the clone stays up.
+    /// Otherwise the clone is torn down when the grace ends (counted again only if a command arrived
+    /// during the grace) and stays down until [`attach`](Self::attach).
     pub fn detach(&self, back_within_grace: bool) {
         let mut st = self.state.lock();
         st.advance(std::time::Instant::now());
@@ -2465,8 +2499,8 @@ impl MockBox {
         }
     }
 
-    /// Simulate the device re-attaching. Inside a detach's grace the clone is unchanged; after the
-    /// teardown a fresh clone starts, with nothing to release.
+    /// Simulate the real device re-attaching. Inside a detach's grace the clone is unchanged; after
+    /// the teardown a fresh clone starts, with nothing to release.
     pub fn attach(&self) {
         let mut st = self.state.lock();
         st.advance(std::time::Instant::now());
@@ -2479,27 +2513,43 @@ impl MockBox {
         }
     }
 
-    // A slower main loop presenting the clone after an opt-in toggle, so a test can separate the
-    // release's second part from the first one's recovery.
+    // How long the main loop takes to re-present the clone after an opt-in toggle, so a test can
+    // keep the release's second part (the clone) apart from recovery from its first (the rules).
     #[cfg(test)]
     pub(crate) fn set_represent_delay(&self, delay: std::time::Duration) {
         self.state.lock().represent_delay = delay;
     }
 
-    // The inter-chip link lost just before the next `QUERY(CLIP)` is answered.
+    // The inter-chip link lost just before the next `QUERY(CLIP)` is replied to.
     #[cfg(test)]
     pub(crate) fn link_lost_before_next_clip_query(&self) {
         self.state.lock().link_lost_before_clip_query = true;
     }
 
-    // A detach whose teardown lands just before the next command, nothing marked since the detach
-    // counted: the window a re-send can fall into.
+    // A detach whose teardown lands just before the next command, with nothing marked since the
+    // detach was counted: the window a re-send can fall into.
     #[cfg(test)]
     pub(crate) fn detach_torn_down_before_next_command(&self) {
         let mut st = self.state.lock();
         st.count_release();
         st.release_session();
         st.teardown_before_command = true;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn update_op_for_test(&self, payload: &[u8]) -> Option<(u8, u8, u32)> {
+        self.state.lock().update_op(payload)
+    }
+
+    /// Refuse the next `ACTIVATE` with `status`, keeping whatever is staged.
+    pub fn refuse_next_activate(&self, status: UpdateStatus) {
+        self.state.lock().refuse_activate = Some(status.0);
+    }
+
+    /// After each accepted `ACTIVATE`, leave the next `unanswered` FIRMWARE queries unanswered, as
+    /// a rebooting box does, then report the device chip on probation for the next `pending`.
+    pub fn reboot_after_activate(&self, unanswered: u32, pending: u32) {
+        self.state.lock().reboot = (unanswered, pending);
     }
 
     /// Unresponsive box (builder style): records commands, never replies to a `QUERY`.

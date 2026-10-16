@@ -3,7 +3,7 @@
 use crate::device::discover::{BoxInfo, may_clone, pick_by_id, pick_where, probe_transport};
 use crate::{DeviceInfo, DeviceKind, Error, MockBox, PROTO_VER, PortInfo, Version};
 
-// v3.4.0 firmware answers protocol 7.
+// v3.4.0 firmware reports protocol 7.
 const V3_4_0: u8 = 7;
 
 fn port(n: u8) -> PortInfo {
@@ -15,7 +15,8 @@ fn port(n: u8) -> PortInfo {
     }
 }
 
-// What discovery lists for a box on `port(n)` answering `proto`, with MAC 5a4e000000nn, cloning `kind`.
+// What discovery lists for a box on `port(n)` reporting `proto`, with MAC 5a4e000000nn, cloning
+// `kind`.
 fn listed(n: u8, proto: u8, kind: DeviceKind) -> BoxInfo {
     let mock = MockBox::new()
         .with_version(Version {

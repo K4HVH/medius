@@ -97,7 +97,7 @@ fn clip_frame_encodes_pan_raw_and_transfers_to_the_firmware_wire() {
             0x02, 0x00, 0x00,
         ]
     );
-    // The endpoint is a number, not an address: bit 7 is the direction's to carry.
+    // The endpoint is a number, not an address: bit 7 belongs to the direction.
     let mut masked = ClipBuilder::new();
     masked.raw(0x81, Direction::IN, [0x00]);
     assert_eq!(bytes(&masked)[2], 0x01);
@@ -456,7 +456,7 @@ fn clip_append_never_splits_an_entry_and_sends_nothing_when_one_is_refused() {
     device.clip().append(&b).unwrap();
     let frames = appends();
     assert_eq!(frames.concat(), bytes(&b));
-    // A limit of one byte puts every entry in a piece of its own, which is where the boundaries are.
+    // A limit of one byte puts each entry in a separate piece, which is where the boundaries are.
     let mut ends = std::collections::BTreeSet::new();
     let mut at = 0;
     for entry in encode_chunks(&b, 1).unwrap() {
@@ -479,7 +479,7 @@ fn clip_append_never_splits_an_entry_and_sends_nothing_when_one_is_refused() {
         "two 306-byte raw entries never share a piece"
     );
 
-    // A bad entry at the END of a long clip: nothing at all goes out, not the good pieces before it.
+    // A bad entry at the end of a long clip: nothing is sent, not the good pieces before it.
     let sent = appends().len();
     let mut bad = ClipBuilder::new();
     for _ in 0..200 {
@@ -640,7 +640,7 @@ fn a_clip_reply_of_another_shape_is_refused() {
     older[0] = 10;
     older.extend_from_slice(&[0, 0, 2]);
     older.extend_from_slice(&[0, 3, 0, 1, 0, 0, 1, 4, 0, 1, 0, 0]);
-    // A trigger count past the box's set.
+    // A trigger count larger than the box's set holds.
     let mut many = vec![0u8; 31];
     many[0] = 10;
     many.extend_from_slice(&[0, 0, 9]);
@@ -819,7 +819,7 @@ mod packet_trigger {
     }
 
     // The list is part of the shape: a reply is read only when its length is the one its counts and
-    // each entry's own match length describe.
+    // each entry's match length describe.
     #[test]
     fn a_packet_trigger_list_of_another_shape_is_refused() {
         let refused = |p: &[u8], why: &str| {
@@ -877,7 +877,7 @@ mod packet_trigger {
             with(4, 6), // CLEAR is a host verb
             nth(2).0,
         ]);
-        // Nine entries is past the set, so drop one that would have decoded.
+        // Nine entries are more than the set holds: refused. Drop one that would have decoded.
         assert!(ClipSettings::from_payload(&p).is_none());
         let p = reply(&[
             nth(0).0,
@@ -1296,7 +1296,8 @@ mod packet_trigger {
             onto_the_link(frame(4, 2, 1, 0, 0x05, 1, &[0x07, 0x00], &[0xFF, 0x00]));
             onto_the_link(frame(4, 2, 1, 0, 0x05, 0, &[0x00, 0x00], &[0x00, 0x00]));
             assert_eq!(held_on_the_wire(&device, &mock), 0);
-            // On every packet it is a trigger like any other, and a run refused onto its key leaves it.
+            // Without once_per_run, `blind` is a trigger like any other, and a refused run bound
+            // onto its key leaves it in place.
             clip.bind_packet(&blind).unwrap();
             onto_the_link(frame(4, 2, 1, 1, 0x05, 1, &[0x07, 0x00], &[0xFF, 0x00]));
             let read = triggers(&device);
@@ -1390,7 +1391,7 @@ mod packet_trigger {
             assert_eq!(read, surfaces);
         }
 
-        // Past the crate's own check, straight onto the link, where the mock refuses what the box does.
+        // Past the crate's check, straight onto the link, where the mock refuses what the box does.
         #[test]
         fn the_mock_refuses_what_the_box_does() {
             let mock = MockBox::new().with_imperfect(true);
@@ -1468,7 +1469,7 @@ mod packet_trigger {
         }
 
         // The crate drops what the box drops when the opt-in goes off, and restores it if the frame
-        // never went out.
+        // was never sent.
         #[test]
         fn the_opt_in_going_off_leaves_only_the_watching_triggers_held() {
             use crate::transport::Disconnected;

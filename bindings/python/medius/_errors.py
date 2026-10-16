@@ -48,7 +48,19 @@ class FrameTooLongError(MediusError):
 
 
 class UpdateError(MediusError):
-    pass
+    """An update op the box refused, or a confirm that ran out of time.
+
+    `op` is the op (0 begin, 1 data, 2 end, 3 abort, 4 activate), `update_status` the box's status
+    byte for it (0x1B: a chip on probation) and `arg` its argument. A confirm that runs out of time
+    gives op 0 and 0x1B: the refusal the next update would meet. All three are `None` when the
+    library raised it without a detail.
+    """
+
+    def __init__(self, status, message="", proto_ver=0, op=None, update_status=None, arg=None):
+        super().__init__(status, message, proto_ver)
+        self.op = op
+        self.update_status = update_status
+        self.arg = arg
 
 
 class InvalidArgError(MediusError):
@@ -120,7 +132,8 @@ class RewriteTableFullError(MediusError):
 
 
 class RewritePoolFullError(MediusError):
-    """A rewrite payload past what the held rules leave of the box's 2048-byte payload pool."""
+    """A rewrite payload larger than what the other held rules leave of the box's 2048-byte payload
+    pool."""
 
 
 class TransformOpFieldsError(MediusError):
@@ -215,4 +228,8 @@ def check(status):
         return
     message = last_error_message()
     proto = int(_native.lib.medius_last_error_proto_ver())
+    if st == Status.ERR_UPDATE:
+        u = _native.MediusUpdateError()
+        if _native.lib.medius_last_error_update(ctypes.byref(u)):
+            raise UpdateError(st, message, proto, int(u.op), int(u.status), int(u.arg))
     raise _STATUS_EXC.get(st, MediusError)(st, message, proto)

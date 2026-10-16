@@ -24,8 +24,8 @@ const AUTO_RECONNECT_MIN: Duration = Duration::from_millis(100);
 const AUTO_RECONNECT_MAX: Duration = Duration::from_secs(2);
 
 const PROBE_DEADLINE: Duration = Duration::from_millis(1200);
-// The box drops PC-owned state on a fresh control-link open and can miss the first query while it
-// settles, so the probe repeats this often within the deadline.
+// On a fresh control-link open the box drops PC-owned state and can miss the first query while it
+// settles, so the probe repeats at this gap until the deadline.
 const PROBE_QUERY_GAP: Duration = Duration::from_millis(300);
 // Any `SEQ` but the hello's, so a probe's `RESP(VERSION)` never reads as one.
 const PROBE_SEQ: u8 = 0x80;
@@ -53,8 +53,8 @@ pub(crate) struct ReconnectCtx {
     pub(crate) restart: Arc<RestartWatch>,
 }
 
-// Reads the reply off the local handle before it is swapped in, so the read never races the reader
-// thread (on the disconnected slot here).
+// Reads the reply off the local handle before the handle is swapped in, so the read never races the
+// reader thread (which is on the disconnected slot meanwhile).
 pub(crate) fn probe<T>(
     transport: &dyn Transport,
     what: u8,
@@ -63,7 +63,7 @@ pub(crate) fn probe<T>(
     probe_seeing_hello(transport, what, read).0
 }
 
-// Also says whether the box's hello went past, which after a blip means the chip booted during it.
+// Also says whether the box's hello went past; after a blip, that means the chip booted during it.
 fn probe_seeing_hello<T>(
     transport: &dyn Transport,
     what: u8,
@@ -163,8 +163,8 @@ fn reconnect(ctx: &ReconnectCtx) -> Result<()> {
     adopt_first(ctx, identity.as_ref(), opened)
 }
 
-// Adopts the first reopened port that is this box on this build's protocol; a box on another
-// protocol is refused with it, as the handshake refuses one.
+// Adopts the first reopened port that is this box on this build's protocol. A box on another
+// protocol is refused with `BadProtoVer`, as in the handshake.
 #[cfg_attr(not(feature = "tracing"), allow(unused_variables))] // `path` is only read by trace_event!
 fn adopt_first(
     ctx: &ReconnectCtx,
@@ -181,8 +181,8 @@ fn adopt_first(
         {
             continue;
         }
-        // A box reflashed while held comes back on its new protocol, whose replies this build would
-        // misread from the clip probe on.
+        // A box reflashed while held comes back on its new protocol; this build would misread its
+        // replies, starting with the clip probe.
         if let Some(got) = version
             .as_ref()
             .map(|v| v.proto_ver)
@@ -199,13 +199,13 @@ fn adopt_first(
             refused = Some(got);
             continue;
         }
-        // Button count refreshed before the replay, so a wide-button blanket re-asserts onto the
-        // current count, including a device swapped in during the blip.
+        // Refresh the button count before the replay, so a wide-button blanket re-asserts onto the
+        // current count (even for a device swapped in during the blip).
         if let Some(n) = probe_caps(&*port) {
             ctx.desired.lock().note_declared_buttons(n);
         }
-        // Held from the clip read to the end of the replay; a clip call sends and records under it,
-        // so it lands wholly before or after the read and its adoption.
+        // Held from the clip read to the end of the replay. A clip call sends and records under
+        // this lock, so the call lands wholly before or after the read and its adoption.
         let _reassert = ctx.catch_lock.lock();
         let clip = if restarted { None } else { probe_clip(&*port) };
         ctx.transport.swap(port);
@@ -219,14 +219,14 @@ fn adopt_first(
             reason = "rescan",
             "reconnected",
         );
-        // A chip that booted during the blip has no clone yet: the restart recovery re-sends what
-        // is held, the clip's settings and triggers with it, once it has one.
+        // A chip that booted during the blip has no clone yet. Once the clone is up, the restart
+        // recovery re-sends everything held, the clip's settings and triggers included.
         if restarted {
             ctx.restart.begin();
             return Ok(());
         }
-        // The caller reloads a clip, so the replay sends none; the keepalive keeps what the box still
-        // has.
+        // The replay sends no clip (the caller reloads one). Adopting what the box still holds lets
+        // the keepalive keep it.
         if let Some((status, settings)) = clip {
             ctx.desired.lock().clip_adopt(&status, &settings);
         }
@@ -290,16 +290,16 @@ pub(crate) fn reapply_locked(
             &inject_payload(class, id, action.as_u8()),
         )?;
     }
-    // Scales: like injection, the firmware clears them after ~1 s of silence, so a longer blip leaves
-    // physical input untouched without this.
+    // Scales: like injection, the firmware clears them after ~1 s of silence. Without this re-send,
+    // native input runs unscaled after a longer blip.
     for ((class, usage, direction), scale) in held_locks {
         send(
             FrameType::Lock,
             &lock_payload(class, usage, direction, scale),
         )?;
     }
-    // Catch table: a drop past the ~1 s silence window clears it, and the stream stays dead without
-    // this. Idempotent after a short drop.
+    // Catch table: a drop past the ~1 s silence window clears it, and without this the stream
+    // receives nothing. Idempotent after a short drop.
     for f in catch.values() {
         let (class, id) = f.wire();
         send(
@@ -324,8 +324,8 @@ pub(crate) fn reapply_locked(
             ),
         )?;
     }
-    // Transform table, likewise (§3.15): each goes out as state 1 (add/overwrite), idempotent after a
-    // short drop. An entry whose field the swapped-in device lacks is absent from the box.
+    // Transform table, likewise (§3.15): each is sent as state 1 (add/overwrite), idempotent after
+    // a short drop. If a swapped-in device lacks an entry's field, the box doesn't hold that entry.
     for t in transforms {
         send(
             FrameType::Transform,

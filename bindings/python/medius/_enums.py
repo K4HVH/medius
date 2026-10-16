@@ -63,7 +63,8 @@ class Status(IntEnum):
 
 
 class DeviceKind(IntEnum):
-    """The cloned device's primary kind, from its HID report descriptors (UNKNOWN also with nothing cloned)."""
+    """The cloned device's primary kind, from its HID report descriptors and Boot declarations
+    (UNKNOWN also with nothing cloned)."""
 
     UNKNOWN = 0
     KEYBOARD = 1
@@ -85,7 +86,7 @@ class Action(IntEnum):
 
 
 class MoveTiming(IntEnum):
-    """When a delta reaches the game PC, against movement riding."""
+    """Whether a delta obeys movement riding or bypasses it."""
 
     RIDE = 0
     NOW = 1
@@ -100,7 +101,7 @@ class PendingMotion(IntEnum):
 
 
 class ClipState(IntEnum):
-    """Device-side clip lifecycle state (`ClipStatus.state`)."""
+    """Box-side clip lifecycle state (`ClipStatus.state`)."""
 
     IDLE = 0
     PLAYING = 1
@@ -155,8 +156,8 @@ class EmitMode(IntEnum):
 
 
 class RenderMode(IntEnum):
-    """Motion render texture: OFF is the paced fill; the rest render the device's learned texture
-    and differ only in the onboard smoother."""
+    """Motion render texture: OFF is the paced fill; the others render the learned native report
+    texture and differ only in the path smoother."""
 
     OFF = 0
     STOCK = 1
@@ -181,10 +182,10 @@ class Direction(IntEnum):
     """The direction byte LOCK, CLIP and CATCH all carry.
 
     Members are named for axes; `PRESS`/`RELEASE` and `IN`/`OUT` alias the same two values for
-    momentary usages and traffic. The class selects which reading applies.
+    momentary usages and traffic. The class picks the reading.
 
-    `WITH` and `AGAINST` name a sign relative to the bearing, the direction the box is injecting, so
-    the sign they cover follows the injection. Axes only, and inert until a bearing is live
+    `WITH` and `AGAINST` name a sign relative to the bearing (the direction the box is injecting):
+    their sign follows the injection, not the axis. Axes only, and inert until a bearing is live
     (`Device.set_bearing`).
     """
 
@@ -211,23 +212,23 @@ Direction.OUT = Direction.NEGATIVE
 
 
 class BearingMode(IntEnum):
-    """How the box reads whether physical motion runs with or against its injection."""
+    """How the box reads whether native motion runs with or against injected motion."""
 
-    #: Each axis compares its sign against its own bearing.
+    #: Each axis compares its sign against its bearing.
     PER_AXIS = 0
-    #: Projects the physical delta onto the injected XY vector. One relative scale, the lower of X's
-    #: and Y's, governs both axes and is what reads back.
+    #: Projects the native delta onto the injected XY vector. One relative scale governs both axes:
+    #: the lower of X's and Y's, which is also what reads back.
     VECTOR = 1
 
 
-#: LOCK scale: keep none of the physical value.
+#: LOCK scale: keep none of the native value.
 LOCK_SCALE_BLOCK = 0
 #: LOCK scale: keep all of it, the unweighed default.
 LOCK_SCALE_PASS = 100
 #: LOCK scale ceiling: 2.55x.
 LOCK_SCALE_MAX = 255
-#: LOCK scale floor. A negative scale weighs the physical value and reverses what it keeps: -100
-#: inverts. Axes only.
+#: LOCK scale floor. A negative scale weighs the native value and reverses what it keeps (-100
+#: inverts). Axes only.
 LOCK_SCALE_MIN = -255
 #: Bearing window before any host sets one, in ms.
 BEARING_WINDOW_DEFAULT_MS = 20
@@ -330,8 +331,9 @@ class ClockDomain(IntEnum):
 
 
 class ControlStatus(IntEnum):
-    """The handshake the game PC received for a control transaction. `STALLED` covers a device STALL,
-    a request a rule refused, and above endpoint 0 a request that failed; `NAKED` is endpoint 0 only."""
+    """The handshake the game PC received for a control transaction. `STALLED` covers a STALL from
+    the real device, a request a rule refused, and above endpoint 0 a request that failed; `NAKED`
+    is endpoint 0 only."""
 
     OK = 0
     STALLED = 1
