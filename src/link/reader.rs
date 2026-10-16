@@ -122,8 +122,8 @@ fn route_frame(
         FrameType::Resp if frame.seq == HELLO_SEQ && frame.payload.first() == Some(&Q_VERSION) => {
             restart.note_hello(&frame.payload, transport);
         }
-        // Shares the `RESP` pending map by `SEQ`; its opcode and echoed endpoint separate it from a
-        // same-`SEQ` query reply.
+        // `TRANSFER_RESP` shares the `RESP` pending map by `SEQ`; its opcode and echoed endpoint
+        // tell it apart from a query reply on the same `SEQ`.
         FrameType::Resp | FrameType::TransferResp => {
             restart.note_reply();
             correlation::deliver(pending, frame.ty, frame.seq, frame.payload)
@@ -137,7 +137,7 @@ fn route_frame(
         FrameType::MotionEvent | FrameType::UsageEvent | FrameType::TrafficEvent => {
             catch::deliver_event(events, frame.ty, &frame.payload)
         }
-        // One acknowledgement answers a window of DATA frames with a rolling SEQ, so the caller
+        // One acknowledgement covers a window of DATA frames with a rolling SEQ, so the caller
         // matches on the op byte.
         FrameType::UpdateResp => {
             restart.note_reply();

@@ -157,7 +157,14 @@ jobs:
     - name: Check if publishable
       run: cargo publish -p medius --dry-run --allow-dirty
 
-    - name: The crate, the C ABI and the Python binding carry one version
+    - name: Package the C ABI against this medius
+      # Packaged together, the C ABI builds against this medius, not the crates.io one, which
+      # lacks anything new this release adds for the C ABI to call. Cargo never rebuilds a registry
+      # crate it has built at that version, so a cached target would hold the medius an earlier
+      # push packaged.
+      run: cargo package -p medius -p medius-capi --allow-dirty --target-dir "$RUNNER_TEMP/package"
+
+    - name: Check the crate, the C ABI and the Python binding share one version
       # A release publishes all three. medius 3.4.0 shipped while the Python binding still said
       # 3.3.1, so PyPI never got that version at all.
       run: |
@@ -165,9 +172,10 @@ jobs:
         crate=$(grep -m1 '^version = ' Cargo.toml | cut -d'"' -f2)
         capi=$(grep -m1 '^version = ' medius-capi/Cargo.toml | cut -d'"' -f2)
         py=$(grep -m1 '^version = ' bindings/python/pyproject.toml | cut -d'"' -f2)
-        echo "crate=$crate capi=$capi python=$py"
-        if [ "$crate" != "$capi" ] || [ "$crate" != "$py" ]; then
-          echo "::error::versions disagree (crate $crate, C ABI $capi, Python $py)"; exit 1
+        pin=$(grep -m1 '^medius = ' medius-capi/Cargo.toml | sed -n 's/.*version = "=\([^"]*\)".*/\1/p')
+        echo "crate=$crate capi=$capi python=$py capi-pins-medius=$pin"
+        if [ "$crate" != "$capi" ] || [ "$crate" != "$py" ] || [ "$crate" != "$pin" ]; then
+          echo "::error::versions disagree (crate $crate, C ABI $capi, Python $py, C ABI's medius pin $pin)"; exit 1
         fi
 
   publish:
@@ -193,23 +201,46 @@ jobs:
         CRATE_VERSION=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name=="medius") | .version')
         echo "version=$CRATE_VERSION" >> $GITHUB_OUTPUT
 
-        # crates.io rejects requests without a User-Agent, so this MUST send one
-        # or the check never matches and the job tries to re-publish every push.
-        if curl -s -H "User-Agent: medius-ci (github.com/K4HVH/medius)" "https://crates.io/api/v1/crates/medius" | jq -e ".versions[] | select(.num == \"$CRATE_VERSION\")" > /dev/null 2>&1; then
+        # crates.io rejects requests without a User-Agent. Without one the check never matches,
+        # and the job tries to re-publish on every push. A 404 (curl exit 22) means the crate
+        # isn't there yet; any other failure stops the job instead of reading as "not published".
+        published() {
+          local body rc=0
+          body=$(curl -sf -H "User-Agent: medius-ci (github.com/K4HVH/medius)" "https://crates.io/api/v1/crates/$1") || rc=$?
+          if [ "$rc" -eq 22 ]; then return 1; fi
+          if [ "$rc" -ne 0 ]; then echo "::error::crates.io lookup for $1 failed (curl $rc)"; exit 1; fi
+          jq -e --arg v "$CRATE_VERSION" '.versions[] | select(.num == $v)' <<<"$body" > /dev/null
+        }
+        if published medius; then
           echo "Version $CRATE_VERSION already exists on crates.io"
           echo "should_publish=false" >> $GITHUB_OUTPUT
         else
           echo "Version $CRATE_VERSION not found on crates.io, proceeding with publish"
           echo "should_publish=true" >> $GITHUB_OUTPUT
         fi
+        # The C ABI is checked separately: if it failed to publish after medius did, the next push
+        # publishes it.
+        if published medius-capi; then
+          echo "should_publish_capi=false" >> $GITHUB_OUTPUT
+        else
+          echo "should_publish_capi=true" >> $GITHUB_OUTPUT
+        fi
 
     - name: Login to crates.io
-      if: steps.check_version.outputs.should_publish == 'true'
+      if: steps.check_version.outputs.should_publish == 'true' || steps.check_version.outputs.should_publish_capi == 'true'
       run: cargo login ${{ secrets.CRATES_IO_TOKEN }}
 
     - name: Publish to crates.io
       if: steps.check_version.outputs.should_publish == 'true'
       run: cargo publish -p medius
+
+    - name: Publish the C ABI to crates.io
+      # After medius: it depends on the version just published, and cargo waits for the index to have it.
+      # A failure here still lets the GitHub release, PyPI and the C archives publish; the next push
+      # publishes the C ABI.
+      if: steps.check_version.outputs.should_publish_capi == 'true'
+      continue-on-error: true
+      run: cargo publish -p medius-capi
 
     - name: Create GitHub Release
       if: steps.check_version.outputs.should_publish == 'true'
@@ -218,16 +249,10 @@ jobs:
         tag_name: v${{ steps.check_version.outputs.version }}
         name: Release v${{ steps.check_version.outputs.version }}
         body: |
-          ## medius v${{ steps.check_version.outputs.version }}
-
-          This release passed all CI checks:
-          - Tests across all feature combinations
-          - Build on Linux, macOS, and Windows
-          - Code formatting and linting
-          - Security audit
-          - Documentation
-
-          Published to [crates.io](https://crates.io/crates/medius)
+          Rust: [medius](https://crates.io/crates/medius) and [medius-capi](https://crates.io/crates/medius-capi) on crates.io.
+          Python: [medius](https://pypi.org/project/medius/) on PyPI.
+          C and C++: the `medius-capi-<target>.tar.gz` archives below, each with `include/medius.h` and the library.
+          Docs: https://medius.k4tech.net/library
         draft: false
         prerelease: false
         generate_release_notes: true
@@ -415,6 +440,16 @@ jobs:
       run: cargo build -p medius-capi --features mock --verbose
     - name: Test (mock)
       run: cargo test -p medius-capi --features mock --verbose
+    - name: Compile and link the header as C99, C23 and C++17 (Linux)
+      if: runner.os == 'Linux'
+      run: |
+        printf '#include <medius.h>\nint main(void) { return medius_abi_version() == MEDIUS_ABI_VERSION ? 0 : 1; }\n' > abi.c
+        cp abi.c abi.cpp
+        flags="-Wall -Wextra -pedantic -Werror -DMEDIUS_FEATURE_MOCK -Imedius-capi/include -Ltarget/debug"
+        for std in c99 c2x; do
+          gcc -std=$std $flags abi.c -lmedius_capi -o abi && LD_LIBRARY_PATH=target/debug ./abi
+        done
+        g++ -std=c++17 $flags abi.cpp -lmedius_capi -o abi && LD_LIBRARY_PATH=target/debug ./abi
 
   capi-lint:
     name: C ABI clippy + fmt

@@ -245,7 +245,8 @@ mod mock_roundtrip {
         device.clear_rewrite().unwrap();
         let table = device.query_rewrite().unwrap();
         assert!(table.entries.is_empty());
-        // gen stays monotonic across the clear (1 set → 2 clear), never back to a value already seen.
+        // gen stays monotonic across the clear (1 set -> 2 clear), never back to a value already
+        // seen.
         assert_eq!(table.generation, 2);
         assert!(!device.query_health().unwrap().rewrite_on);
     }
@@ -338,8 +339,8 @@ mod mock_roundtrip {
         .with_payload(vec![0x5A; len])
     }
 
-    // The box counts payload bytes only, and an overwrite frees its old payload before the new one is
-    // costed. A rule past what is left never reaches the wire.
+    // The box counts payload bytes only, and an overwrite frees its old payload before the new one
+    // is costed. A rule larger than what is left is never sent.
     #[test]
     fn the_payload_pool_is_checked_before_the_wire() {
         use crate::REWRITE_PAYLOAD_POOL;
@@ -405,7 +406,7 @@ mod mock_roundtrip {
             device.set_rewrite(&answer(id, 1)).unwrap();
         }
         assert!(!full(), "a table at the count is no refusal");
-        // Past the crate's own check, the way a second host would reach the box.
+        // Past the crate's check, the way a second host would reach the box.
         device
             .link
             .send(FrameType::Rewrite, &raw(&answer(99, 1)))
@@ -635,7 +636,7 @@ fn health_u16_high_bits_decode() {
     assert!(h.link_up && !h.mouse_attached);
     assert!(h.rewrite_on && h.patch_on && h.transform_on);
     assert_eq!(h.to_flags(), 0x0701);
-    // A box that answers only the low byte still decodes bits 0-7, high byte clear.
+    // A box that replies with only the low byte still decodes bits 0-7, high byte clear.
     let lo = Health::from_flags(0x80);
     assert!(lo.kbd_attached && !lo.rewrite_on && !lo.patch_on && !lo.transform_on);
 }
@@ -650,7 +651,8 @@ fn resp_health_u16_roundtrips_through_parse() {
     assert!(h.rewrite_on && h.patch_on && !h.transform_on);
 }
 
-// The box refuses a match past its compare length and a rule its read-back reply cannot carry.
+// The box refuses a match longer than its compare length and a rule its read-back reply can't
+// carry.
 mod box_limits {
     use crate::device::rewrite::validate_rule;
     use crate::error::Error;
@@ -720,14 +722,14 @@ mod box_limits {
         let rule = patch();
         device.set_rewrite(&rule).unwrap();
 
-        // Past the crate's own check, straight onto the link, where the mock refuses what the box does.
+        // Past the crate's check, straight onto the link, where the mock refuses what the box does.
         let gen_before = device.query_rewrite().unwrap().generation;
         for bad in [
             rewrite_payload(4, 3, 1, 1, 9, 0, &M, &K, &[0, 0, 0]), // nine actions, 0 to 8
             rewrite_payload(4, 3, 1, 1, 10, 0, &M, &K, &[]),
             rewrite_payload(11, 0, 1, 1, 0, 0, &[], &[], &[]), // a class that is never rewritten
             rewrite_payload(4, 3, 3, 1, 0, 0, &M, &K, &[]),    // a relative direction
-            rewrite_payload(8, 0, 1, 1, 4, 0, &[], &[], &[0u8; 502]), // past its own read-back
+            rewrite_payload(8, 0, 1, 1, 4, 0, &[], &[], &[0u8; 502]), // past the read-back
             rewrite_payload(4, 3, 1, 1, 2, 60, &M, &K, &[0u8; 5]), // a patch past the report head
             rewrite_payload(4, 2, 1, 1, 2, 60, &M, &K, &[0u8; 5]), // onto the held key: it stays
         ] {

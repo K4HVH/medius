@@ -1,5 +1,5 @@
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Duration;
 
 use crate::error::{Error, Result};
@@ -8,28 +8,39 @@ use crate::link::catch::{FilterSet, collapse};
 use crate::types::{CatchEvent, CatchFilter};
 
 use super::Device;
+use super::closer::{Close, StreamCloser};
 
 /// Live stream of [`CatchEvent`]s from the box (`CATCH`, §3.9).
 ///
-/// Unsubscribes when the last clone drops. [`Device::input_events`] decodes held-usage snapshots into
-/// press and release edges.
+/// Unsubscribes when the last clone drops, or at once on [`Self::close`]. [`Device::input_events`]
+/// decodes held-usage snapshots into press and release edges.
 #[derive(Clone, Debug)]
 pub struct EventStream {
     rx: flume::Receiver<CatchEvent>,
     dropped: Arc<AtomicU64>,
     // Shared so a clone keeps the subscription.
-    _guard: Arc<CatchGuard>,
+    guard: Arc<CatchGuard>,
 }
 
 #[derive(Debug)]
 struct CatchGuard {
     link: Link,
     id: u64,
+    closed: AtomicBool,
+}
+
+impl Close for CatchGuard {
+    // Unsubscribing drops the stream's sender, which wakes every receiver blocked on it.
+    fn close(&self) {
+        if !self.closed.swap(true, Ordering::AcqRel) {
+            self.link.catch_unsubscribe(self.id);
+        }
+    }
 }
 
 impl Drop for CatchGuard {
     fn drop(&mut self) {
-        self.link.catch_unsubscribe(self.id);
+        self.close();
     }
 }
 
@@ -43,48 +54,85 @@ impl EventStream {
         EventStream {
             rx,
             dropped,
-            _guard: Arc::new(CatchGuard { link, id }),
+            guard: Arc::new(CatchGuard {
+                link,
+                id,
+                closed: AtomicBool::new(false),
+            }),
         }
     }
 
-    /// Block until the next event.
+    pub(crate) fn closed(&self) -> bool {
+        self.guard.closed.load(Ordering::Acquire)
+    }
+
+    /// Block until the next event; `Disconnected` once the box disconnects or the stream is closed.
     pub fn recv(&self) -> Result<CatchEvent> {
+        if self.closed() {
+            return Err(Error::Disconnected);
+        }
         self.rx.recv().map_err(|_| Error::Disconnected)
     }
 
     /// Next buffered event, or `None` if none is queued. Never blocks.
     pub fn try_recv(&self) -> Option<CatchEvent> {
+        if self.closed() {
+            return None;
+        }
         self.rx.try_recv().ok()
     }
 
     /// Block up to `timeout` for the next event; `None` on timeout or a closed channel.
     ///
-    /// A closed stream returns at once, so a poll loop that ignores [`Self::is_connected`] spins once
-    /// the box goes away.
+    /// A closed stream returns at once, so a poll loop that ignores [`Self::is_connected`] spins
+    /// once the box disconnects.
     pub fn recv_timeout(&self, timeout: Duration) -> Option<CatchEvent> {
+        if self.closed() {
+            return None;
+        }
         self.rx.recv_timeout(timeout).ok()
     }
 
-    /// Blocking iterator, ending when the box disconnects.
+    /// Blocking iterator, ending when the box disconnects or the stream is closed.
     pub fn iter(&self) -> impl Iterator<Item = CatchEvent> + '_ {
-        self.rx.iter()
+        std::iter::from_fn(|| self.recv().ok())
     }
 
     /// Drain buffered events without blocking.
     pub fn try_iter(&self) -> impl Iterator<Item = CatchEvent> + '_ {
-        self.rx.try_iter()
+        std::iter::from_fn(|| self.try_recv())
     }
 
     /// Await the next event; runs under any executor.
     #[cfg(feature = "async")]
     pub async fn recv_async(&self) -> Result<CatchEvent> {
+        if self.closed() {
+            return Err(Error::Disconnected);
+        }
         self.rx.recv_async().await.map_err(|_| Error::Disconnected)
     }
 
     /// As a [`Stream`](futures_core::Stream), for `.next().await` and the combinators.
     #[cfg(feature = "async")]
     pub fn stream(&self) -> impl futures_core::Stream<Item = CatchEvent> + '_ {
-        self.rx.stream()
+        ClosingStream {
+            inner: self.rx.stream(),
+            closed: &self.guard.closed,
+        }
+    }
+
+    /// End the subscription for this stream and every clone of it. Every blocked receive returns at
+    /// once, as does every later one; events still queued are dropped.
+    ///
+    /// For a thread that holds no handle to the stream, see [`Self::closer`].
+    pub fn close(&self) {
+        self.guard.close();
+    }
+
+    /// A handle that closes this stream from any thread.
+    pub fn closer(&self) -> StreamCloser {
+        let guard: Arc<dyn Close> = self.guard.clone();
+        StreamCloser(Arc::downgrade(&guard))
     }
 
     /// Events dropped because the consumer fell behind (host-side back-pressure).
@@ -97,7 +145,29 @@ impl EventStream {
     /// Separates the two meanings of `None` from [`Self::recv_timeout`] and [`Self::try_recv`]:
     /// "nothing yet" (wait longer) and "nothing ever again" (stop).
     pub fn is_connected(&self) -> bool {
-        !self.rx.is_disconnected()
+        !self.closed() && !self.rx.is_disconnected()
+    }
+}
+
+// The channel's stream, ending as soon as the stream is closed rather than after what is queued.
+#[cfg(feature = "async")]
+struct ClosingStream<'a> {
+    inner: flume::r#async::RecvStream<'a, CatchEvent>,
+    closed: &'a AtomicBool,
+}
+
+#[cfg(feature = "async")]
+impl futures_core::Stream for ClosingStream<'_> {
+    type Item = CatchEvent;
+
+    fn poll_next(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Option<CatchEvent>> {
+        if self.closed.load(Ordering::Acquire) {
+            return std::task::Poll::Ready(None);
+        }
+        std::pin::Pin::new(&mut self.inner).poll_next(cx)
     }
 }
 
@@ -125,7 +195,7 @@ pub(crate) fn prepare(filters: impl IntoIterator<Item = CatchFilter>) -> Result<
     if wanted.is_empty() {
         return Err(Error::EmptySubscription);
     }
-    // WITH/AGAINST resolve against the injection in flight when a report is weighed.
+    // WITH/AGAINST only resolve when a report is weighed, against the bearing at that moment.
     if let Some(f) = wanted.iter().find(|f| f.direction().is_relative()) {
         return Err(Error::RelativeDirection {
             direction: f.direction(),
@@ -137,7 +207,7 @@ pub(crate) fn prepare(filters: impl IntoIterator<Item = CatchFilter>) -> Result<
             class: f.class().expect("a meaningless capture names a class"),
         });
     }
-    // 0xFFFF is the every-id sentinel: an exact subscription to it reaches the wire as the class
+    // 0xFFFF is the every-id sentinel: an exact subscription to it would be sent as the class
     // blanket, a much wider stream than asked for, with no error.
     if let Some((class, id)) = wanted.iter().find_map(|f| {
         let (_, id) = f.wire();

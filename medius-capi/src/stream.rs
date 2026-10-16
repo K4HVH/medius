@@ -26,11 +26,15 @@ pub unsafe extern "C" fn medius_device_catch_events(
     out: *mut *mut MediusEventStream,
 ) -> MediusStatus {
     guard_status(|| {
-        if dev.is_null() || out.is_null() || filters.is_null() {
+        if dev.is_null() || out.is_null() {
             return fail(MediusStatus::ErrInvalidArg, "null pointer");
         }
+        // An empty list may come with a null pointer; it still gets `ErrEmptySubscription`.
         if n == 0 {
-            return fail(MediusStatus::ErrInvalidArg, "empty filter list");
+            return record(&medius::Error::EmptySubscription);
+        }
+        if filters.is_null() {
+            return fail(MediusStatus::ErrInvalidArg, "null pointer");
         }
         let slice = unsafe { std::slice::from_raw_parts(filters, n) };
         // Refuse the whole call: dropping the offender would narrow the subscription with no
@@ -84,7 +88,23 @@ pub unsafe extern "C" fn medius_event_stream_free(stream: *mut MediusEventStream
     });
 }
 
-/// Block until the next physical-input event, writing it to `*out`; `ErrDisconnected` on close.
+/// End the subscription for this handle and every clone of it. Every blocked receive returns at
+/// once, as does every later one; queued events are dropped. Free the handle once no thread is
+/// using it. Null is a no-op.
+///
+/// # Safety
+/// `stream` must be a live handle from `medius_device_catch_events` or a clone, or null. Other
+/// threads may be receiving on it.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn medius_event_stream_close(stream: *mut MediusEventStream) {
+    guard((), || {
+        if !stream.is_null() {
+            unsafe { (*stream).inner.close() };
+        }
+    });
+}
+
+/// Block until the next event, writing it to `*out`; `ErrDisconnected` on close.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_event_stream_recv(
     stream: *mut MediusEventStream,
@@ -220,11 +240,15 @@ pub unsafe extern "C" fn medius_device_input_events(
     out: *mut *mut MediusInputStream,
 ) -> MediusStatus {
     guard_status(|| {
-        if dev.is_null() || out.is_null() || filters.is_null() {
+        if dev.is_null() || out.is_null() {
             return fail(MediusStatus::ErrInvalidArg, "null pointer");
         }
+        // An empty list may come with a null pointer; it still gets `ErrEmptySubscription`.
         if n == 0 {
-            return fail(MediusStatus::ErrInvalidArg, "empty filter list");
+            return record(&medius::Error::EmptySubscription);
+        }
+        if filters.is_null() {
+            return fail(MediusStatus::ErrInvalidArg, "null pointer");
         }
         let slice = unsafe { std::slice::from_raw_parts(filters, n) };
         let mut parsed = Vec::with_capacity(n);
@@ -264,6 +288,21 @@ pub unsafe extern "C" fn medius_input_stream_free(stream: *mut MediusInputStream
     });
 }
 
+/// End the subscription. Every blocked receive returns at once, as does every later one; queued
+/// events are dropped. Free the handle once no thread is using it. Null is a no-op.
+///
+/// # Safety
+/// `stream` must be a live handle from `medius_device_input_events`, or null. Other threads may be
+/// receiving on it.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn medius_input_stream_close(stream: *mut MediusInputStream) {
+    guard((), || {
+        if !stream.is_null() {
+            unsafe { (*stream).inner.close() };
+        }
+    });
+}
+
 /// Block until the next input event, writing it to `*out`; `ErrDisconnected` on close.
 ///
 /// # Safety
@@ -277,7 +316,7 @@ pub unsafe extern "C" fn medius_input_stream_recv(
         if stream.is_null() || out.is_null() {
             return fail(MediusStatus::ErrInvalidArg, "null pointer");
         }
-        let s = unsafe { &mut (*stream).inner };
+        let s = unsafe { &(*stream).inner };
         match s.recv() {
             Ok(ev) => {
                 unsafe { *out = input_event_to_c(ev) };
@@ -289,7 +328,8 @@ pub unsafe extern "C" fn medius_input_stream_recv(
     })
 }
 
-/// The next decoded event, written to `*out`; returns false if none is queued (never blocks).
+/// The next decoded event, written to `*out`; returns false if none is queued or another thread is
+/// receiving (never blocks).
 ///
 /// # Safety
 /// `stream` and `out` must be non-null and valid.
@@ -302,7 +342,7 @@ pub unsafe extern "C" fn medius_input_stream_try_recv(
         if stream.is_null() || out.is_null() {
             return false;
         }
-        let s = unsafe { &mut (*stream).inner };
+        let s = unsafe { &(*stream).inner };
         match s.try_recv() {
             Some(ev) => {
                 unsafe { *out = input_event_to_c(ev) };
@@ -327,7 +367,7 @@ pub unsafe extern "C" fn medius_input_stream_recv_timeout(
         if stream.is_null() || out.is_null() {
             return false;
         }
-        let s = unsafe { &mut (*stream).inner };
+        let s = unsafe { &(*stream).inner };
         match s.recv_timeout(Duration::from_millis(timeout_ms)) {
             Some(ev) => {
                 unsafe { *out = input_event_to_c(ev) };
@@ -341,7 +381,7 @@ pub unsafe extern "C" fn medius_input_stream_recv_timeout(
 /// Events the underlying subscription dropped because the consumer fell behind.
 ///
 /// # Safety
-/// `stream` must be non-null and valid, or null.
+/// `stream` must be a live handle, or null.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_input_stream_dropped(stream: *mut MediusInputStream) -> u64 {
     guard(0, || {
@@ -352,9 +392,9 @@ pub unsafe extern "C" fn medius_input_stream_dropped(stream: *mut MediusInputStr
     })
 }
 
-/// Write the usages of `class` this stream holds to `out[0..cap]`, returning how many there are;
-/// above `cap`, only `cap` were written. `class` takes a `MEDIUS_CLASS_*` constant; any other value
-/// reads as 0.
+/// Write the usages of `class` this stream holds to `out[0..cap]` and return how many are held; if
+/// more than `cap`, only `cap` were written. `class` takes a `MEDIUS_CLASS_*` constant; any other
+/// value reads as 0.
 ///
 /// # Safety
 /// `out` must point to space for `cap` `MediusUsage`.
@@ -386,7 +426,7 @@ pub unsafe extern "C" fn medius_input_stream_held(
 ///
 /// A catch stamp is microseconds on a chip that booted before this process: it wraps every ~71.6
 /// minutes and is unrelated to any clock here. Feed every event in as it arrives, in order, with
-/// your monotonic `now_ns`.
+/// the caller's monotonic `now_ns`.
 pub struct MediusTimeline {
     inner: medius::Timeline,
     origin: std::time::Instant,
@@ -468,7 +508,7 @@ pub unsafe extern "C" fn medius_timeline_observe_input(
 /// `MEDIUS_CLOCK_DOMAIN_*` constant; any other value is a no-op.
 ///
 /// # Safety
-/// `t` must be non-null and valid, or null.
+/// `t` must be a live handle, or null.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_timeline_reset(t: *mut MediusTimeline, domain: u8) {
     guard((), || {
@@ -482,7 +522,7 @@ pub unsafe extern "C" fn medius_timeline_reset(t: *mut MediusTimeline, domain: u
 /// `domain` takes a `MEDIUS_CLOCK_DOMAIN_*` constant; any other value reads as 0.
 ///
 /// # Safety
-/// `t` must be non-null and valid, or null.
+/// `t` must be a live handle, or null.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_timeline_samples(t: *mut MediusTimeline, domain: u8) -> u64 {
     guard(0, || {
@@ -502,7 +542,7 @@ pub unsafe extern "C" fn medius_timeline_samples(t: *mut MediusTimeline, domain:
 /// "nothing ever again"; this tells them apart.
 ///
 /// # Safety
-/// `stream` must be non-null and valid, or null.
+/// `stream` must be a live handle, or null.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_event_stream_is_connected(stream: *mut MediusEventStream) -> bool {
     guard(false, || {
@@ -517,7 +557,7 @@ pub unsafe extern "C" fn medius_event_stream_is_connected(stream: *mut MediusEve
 /// `medius_event_stream_is_connected`.
 ///
 /// # Safety
-/// `stream` must be non-null and valid, or null.
+/// `stream` must be a live handle, or null.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_input_stream_is_connected(stream: *mut MediusInputStream) -> bool {
     guard(false, || {
@@ -571,6 +611,22 @@ pub unsafe extern "C" fn medius_log_stream_free(stream: *mut MediusLogStream) {
     });
 }
 
+/// End this LOG stream and every clone of it. Every blocked receive returns at once, as does every
+/// later one. Other LOG streams keep reading. Free the handle once no thread is using it. Null is a
+/// no-op.
+///
+/// # Safety
+/// `stream` must be a live handle from `medius_device_logs` or a clone, or null. Other threads may
+/// be receiving on it.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn medius_log_stream_close(stream: *mut MediusLogStream) {
+    guard((), || {
+        if !stream.is_null() {
+            unsafe { (*stream).inner.close() };
+        }
+    });
+}
+
 /// Block until the next LOG line, writing it to `*out`. Returns `ErrDisconnected` on close.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_log_stream_recv(
@@ -611,6 +667,20 @@ pub unsafe extern "C" fn medius_log_stream_try_recv(
             }
             None => false,
         }
+    })
+}
+
+/// Whether the box is still delivering to this LOG stream. See `medius_event_stream_is_connected`.
+///
+/// # Safety
+/// `stream` must be a live handle, or null.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn medius_log_stream_is_connected(stream: *mut MediusLogStream) -> bool {
+    guard(false, || {
+        if stream.is_null() {
+            return false;
+        }
+        unsafe { (*stream).inner.is_connected() }
     })
 }
 

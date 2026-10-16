@@ -1,4 +1,4 @@
-//! Media-key command vocabulary: a media key by 16-bit Consumer usage, and the media catch snapshot.
+//! Media-key command vocabulary: a media key by 16-bit Consumer usage.
 
 /// Media key by 16-bit HID Consumer usage (§3.11, v2.0.0).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]

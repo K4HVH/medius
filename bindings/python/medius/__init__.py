@@ -1,4 +1,4 @@
-"""Python bindings for the medius transparent mouse passthrough box."""
+"""Python bindings for Medius, replacement firmware for the MAKCU box."""
 
 from __future__ import annotations
 

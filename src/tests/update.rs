@@ -197,8 +197,7 @@ fn a_zero_credit_falls_back_to_the_default() {
 
 #[test]
 fn update_status_names_every_value_the_box_can_answer() {
-    // Derived from name(): a hand-written list missed the very status it guarded, since adding one
-    // meant remembering a test in another file.
+    // Derived from name(), so a status added there can't be missed here.
     let named: Vec<u8> = (0u8..=0xFF)
         .filter(|&v| UpdateStatus(v).name() != "unknown")
         .collect();
@@ -225,6 +224,7 @@ fn update_targets_round_trip() {
 mod against_the_mock {
     use super::*;
     use crate::protocol::FrameType;
+    use crate::protocol::opcode::OTA_OP_BEGIN;
 
     fn image(n: usize) -> Vec<u8> {
         (0..n).map(|i| (i * 31 + 7) as u8).collect()
@@ -247,6 +247,52 @@ mod against_the_mock {
         assert!(dev.firmware_info().expect("info").device_staged);
         dev.activate_firmware().expect("activated");
         assert!(!dev.firmware_info().expect("info").device_staged);
+    }
+
+    // The firmware keeps one session per chip: each chip's image stages, reads and aborts apart.
+    #[test]
+    fn each_chip_stages_and_aborts_apart() {
+        let mock = crate::MockBox::new();
+        let dev = crate::Device::with_mock(mock.clone());
+        dev.stage_firmware(UpdateTarget::Host, &image(OTA_CHUNK + 1), &mut |_| {})
+            .expect("host staged");
+        dev.stage_firmware(UpdateTarget::Device, &image(OTA_CHUNK + 2), &mut |_| {})
+            .expect("device staged");
+        let info = dev.firmware_info().expect("info");
+        assert!(info.host_staged && info.device_staged);
+        dev.abort_update(UpdateTarget::Host).expect("abort");
+        let info = dev.firmware_info().expect("info");
+        assert!(!info.host_staged && info.device_staged);
+    }
+
+    #[test]
+    fn a_begin_for_one_chip_is_not_busy_behind_the_other() {
+        let mock = crate::MockBox::new();
+        let begin = |target: UpdateTarget| {
+            let mut p = vec![OTA_OP_BEGIN, target.as_u8()];
+            p.extend_from_slice(&10u32.to_le_bytes());
+            p.extend_from_slice(&[0u8; 32]);
+            mock.update_op_for_test(&p).map(|(_, status, _)| status)
+        };
+        assert_eq!(begin(UpdateTarget::Host), Some(0x01));
+        assert_eq!(begin(UpdateTarget::Device), Some(0x01));
+        // A second BEGIN on an open session is BUSY, as on the box.
+        assert_eq!(begin(UpdateTarget::Host), Some(0x10));
+        // A target byte naming neither chip gets no reply.
+        assert_eq!(
+            mock.update_op_for_test(&[OTA_OP_BEGIN, 2, 10, 0, 0, 0]),
+            None
+        );
+    }
+
+    #[test]
+    fn a_staged_image_reads_on_its_own_chip() {
+        let mock = crate::MockBox::new();
+        let dev = crate::Device::with_mock(mock.clone());
+        dev.stage_firmware(UpdateTarget::Host, &image(OTA_CHUNK + 1), &mut |_| {})
+            .expect("staged");
+        let info = dev.firmware_info().expect("info");
+        assert!(info.host_staged && !info.device_staged);
     }
 
     #[test]
@@ -340,7 +386,7 @@ mod correlation {
     use super::*;
     use crate::protocol::FrameType;
 
-    // A DATA acknowledgement answers a window, so it carries its own rolling SEQ.
+    // A DATA acknowledgement covers a window, so it carries a separate rolling SEQ.
     #[test]
     fn data_acks_carry_a_rolling_seq_not_the_command_seq() {
         let mock = crate::MockBox::new();
@@ -368,7 +414,7 @@ mod correlation {
             acks.len()
         );
         // Starts at 0 and steps by one per acknowledgement, unlike the command SEQs (one per chunk,
-        // sixteen per window).
+        // 16 per window).
         let expected: Vec<u8> = (0..acks.len() as u8).collect();
         assert_eq!(acks, expected, "acks should roll 0,1,2..., got {acks:?}");
         assert_ne!(
@@ -395,7 +441,7 @@ mod correlation {
             "an over-long chunk is malformed, and the answer names the chunk size"
         );
 
-        // An image overrun is the other answer, and must stay distinct from it.
+        // An image overrun is the other reply, and must stay distinct from it.
         let mut u2 = crate::mock::MockUpdate::default();
         let mut small = Vec::new();
         small.extend_from_slice(&10u32.to_le_bytes());
@@ -432,5 +478,79 @@ mod stale_replies {
             "not monotonic: {seen:?}"
         );
         assert!(seen.iter().all(|&s| s <= img.len()));
+    }
+}
+
+#[cfg(feature = "mock")]
+mod refused_and_rebooting {
+    use super::*;
+    use crate::protocol::FrameType;
+    use crate::protocol::opcode::{OTA_OP_ABORT, OTA_OP_ACTIVATE};
+
+    fn image() -> Vec<u8> {
+        (0..OTA_CHUNK * 3).map(|i| i as u8).collect()
+    }
+
+    fn aborts(mock: &crate::MockBox) -> Vec<u8> {
+        mock.recorded_frames()
+            .iter()
+            .filter(|f| f.ty == FrameType::Update && f.payload.first() == Some(&OTA_OP_ABORT))
+            .map(|f| f.payload[1])
+            .collect()
+    }
+
+    fn refused(err: crate::Error) {
+        assert!(matches!(
+            err,
+            crate::Error::Update {
+                op: OTA_OP_ACTIVATE,
+                status: UpdateStatus::LINK_DOWN,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn a_refused_activate_aborts_the_staged_image() {
+        let mock = crate::MockBox::new();
+        let dev = crate::Device::with_mock(mock.clone());
+        mock.refuse_next_activate(UpdateStatus::LINK_DOWN);
+        refused(
+            dev.update_firmware(UpdateTarget::Host, &image(), &mut |_| {})
+                .unwrap_err(),
+        );
+        assert_eq!(aborts(&mock), vec![UpdateTarget::Host.as_u8()]);
+        let info = dev.firmware_info().expect("info");
+        assert!(!info.host_staged && !info.device_staged);
+    }
+
+    #[cfg(feature = "async")]
+    #[test]
+    fn a_refused_async_activate_aborts_the_staged_image() {
+        let mock = crate::MockBox::new();
+        let dev = crate::Device::with_mock(mock.clone()).into_async();
+        mock.refuse_next_activate(UpdateStatus::LINK_DOWN);
+        refused(
+            futures::executor::block_on(dev.update_firmware(UpdateTarget::Device, image(), |_| {}))
+                .unwrap_err(),
+        );
+        assert_eq!(aborts(&mock), vec![UpdateTarget::Device.as_u8()]);
+    }
+
+    #[test]
+    fn wait_firmware_confirmed_asks_through_the_reboot() {
+        let mock = crate::MockBox::new();
+        let dev = crate::Device::with_mock(mock.clone());
+        mock.reboot_after_activate(1, 2);
+        dev.update_firmware(UpdateTarget::Device, &image(), &mut |_| {})
+            .expect("updated");
+        let before = mock.recorded_frames().len();
+        let info = dev.wait_firmware_confirmed().expect("confirmed");
+        assert!(!info.any_pending());
+        let asked = mock.recorded_frames()[before..]
+            .iter()
+            .filter(|f| f.ty == FrameType::Query && f.payload.first() == Some(&Q_FIRMWARE))
+            .count();
+        assert_eq!(asked, 4);
     }
 }

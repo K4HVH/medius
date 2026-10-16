@@ -905,7 +905,7 @@ pub(crate) fn clip_packet_unbind_from_c(c: &MediusClipPacketTrigger) -> Option<C
     clip_packet_key_from_c(c, medius::ClipAction::Start)
 }
 
-// Write `e` into `c`, a zeroed slot. The lengths are the array's at most.
+// Write `e` into `c`, a zeroed slot. The lengths are at most the array's.
 fn write_clip_packet_trigger(c: &mut MediusClipPacketTrigger, e: &ClipPacketTriggerEntry) {
     let t = &e.trigger;
     let ml = t.match_bytes.len().min(MEDIUS_MAX_PKT_MATCH);

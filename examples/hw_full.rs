@@ -186,7 +186,7 @@ mod linux {
             };
             found.push((name, target.to_string_lossy().into_owned()));
         }
-        // The clone takes the attached device's VID:PID, so none is fixed.
+        // The clone takes the real device's VID:PID, so none is fixed.
         found.sort();
         if found.is_empty() {
             return Err("no usb event-mouse or event-kbd node in /dev/input/by-id; is USB1 cabled to this machine?".into());
@@ -337,8 +337,8 @@ mod linux {
                         .is_none_or(|hz| (100.0..=8000.0).contains(&hz))
                 })
                 .unwrap_or(false);
-            // Link drop counters are cumulative since boot; nonzero means a report or injected delta
-            // lost between the box's two chips.
+            // Link drop counters are cumulative since boot; nonzero means a report or injected
+            // delta was lost between the box's two chips.
             let stats_ok = stats
                 .as_ref()
                 .map(|s| s.tx_drops == 0 && s.link_rx_drops == 0 && s.host_rx_drops == 0)
@@ -446,8 +446,8 @@ mod linux {
         }
 
         {
-            // Per-command override on the wire: with riding on and the mouse idle, a plain move never
-            // reaches the PC, a NOW move does, FLUSH sends what was held and DISCARD drops it. Leaves
+            // Per-command override on the wire: with riding on and the mouse idle, a plain move is
+            // never emitted, a NOW move is, FLUSH sends what was held and DISCARD drops it. Leaves
             // riding off.
             let dev = device.as_ref().unwrap();
             let window = Duration::from_millis(20);
@@ -471,8 +471,9 @@ mod linux {
             std::thread::sleep(Duration::from_millis(300));
             let bypassed = acc.rel_x.load(Ordering::Relaxed);
 
-            // Only a native cursor-motion report clears held motion, and the mouse stays still here, so
-            // each step drops the previous step's motion first or FLUSH reads the running total.
+            // Only a native cursor-motion report clears held motion, and the mouse stays still
+            // here, so each step drops the previous step's motion first; otherwise FLUSH reads the
+            // running total.
             reset_motion(&acc);
             let _ = dev.discard_motion();
             let _ = dev.move_rel(70, 0);
@@ -526,7 +527,7 @@ mod linux {
         }
 
         {
-            // OPTION(RENDER): the render texture, and whether native motion goes through it.
+            // OPTION(RENDER): the render texture, and whether native motion is rendered.
             let dev = device.as_ref().unwrap();
             let mut all_ok = true;
             let mut last = String::new();
@@ -548,8 +549,8 @@ mod linux {
                     last = format!("{mode:?}/full={full} -> {read:?}");
                 }
             }
-            // The pace reports the rendered gate: on LEARNED a rendered stream self-paces at 1 kHz once
-            // a profile arms, and stays at the learnt cap before.
+            // The pace reports the rendered gate: on LEARNED a rendered stream self-paces at 1 kHz
+            // once a profile arms, and at the learnt cap until then.
             let _ = dev.set_render(RenderMode::Stock, false);
             let _ = dev.set_emit_pace(EmitPace::Learned, None);
             std::thread::sleep(Duration::from_millis(60));
@@ -608,10 +609,10 @@ mod linux {
         }
 
         {
-            // With the opt-in on, a force re-clones and drops the control port mid-suite, so this runs
-            // faithful-only, where the box stores the request inert: force_active stays 0 and
-            // advertised_hz native, which an echo cannot fake. tools/validate_rate_force.py covers the
-            // descriptor half, with the reboot.
+            // With the opt-in on, a force re-clones and drops the control port mid-suite. So this
+            // runs faithful-only, where the box stores the request inert: force_active stays 0 and
+            // advertised_hz stays native, which an echo can't fake. tools/validate_rate_force.py
+            // covers the descriptor half, with the reboot.
             let dev = device.as_ref().unwrap();
             let allowed = dev.query_imperfect().map(|i| i.allowed).unwrap_or(true);
             if allowed {
@@ -668,8 +669,8 @@ mod linux {
         }
 
         {
-            // The clone cannot show the LED, so this is a smoke check: every mode is accepted, the box
-            // stays healthy, and the LED returns to the box.
+            // The clone cannot show the LED, so this is a smoke check: every mode is accepted, the
+            // box stays healthy, and the LED returns to the box's status display.
             let dev = device.as_ref().unwrap();
             let mut accepted = true;
             for (mode, level) in [
@@ -690,8 +691,8 @@ mod linux {
         }
 
         {
-            // LOCK: a locked axis still moves under injection (only physical input is suppressed). The
-            // 3 ms inject cadence doubles as the keepalive.
+            // LOCK: a locked axis still moves under injection (only native input is suppressed).
+            // The 3 ms inject cadence doubles as the keepalive.
             let dev = device.as_ref().unwrap();
             let _ = dev.reset();
             let _ = dev.lock(Axis::X, Direction::Both);
@@ -818,8 +819,8 @@ mod linux {
                         && !l.is_locked(Axis::X, Direction::Both)
                 })
                 .unwrap_or(false);
-            // A momentary usage has nothing to reverse, and a magnitude past the bound is refused, not
-            // clamped; both before the wire.
+            // A momentary usage has nothing to reverse, and a magnitude past the bound is refused,
+            // not clamped; both are refused before the wire.
             let n_usage = matches!(
                 dev.scale(Button::LEFT, Direction::Positive, -100),
                 Err(medius::Error::LockScaleUsage { .. })
@@ -981,7 +982,7 @@ mod linux {
         }
 
         {
-            // LOCK: injection overrides a locked button (block-press, but a forced press wins).
+            // LOCK: injection overrides a locked button (a forced press passes a press block).
             let dev = device.as_ref().unwrap();
             let _ = dev.reset();
             let _ = dev.lock(Button::LEFT, Direction::Positive);
@@ -1021,8 +1022,8 @@ mod linux {
         }
 
         {
-            // LOCK (keyboard/blanket): a key lock and the all-keys blanket set HEALTH lock_on and RESET
-            // clears them; the physical block needs keyboard input (run `medius.py`).
+            // LOCK (keyboard/blanket): a key lock and the all-keys blanket set HEALTH lock_on and
+            // RESET clears them; verifying the block needs native keyboard input (run `medius.py`).
             let dev = device.as_ref().unwrap();
             let has_kbd = dev.query_health().map(|h| h.kbd_attached).unwrap_or(false);
             if has_kbd {
@@ -1131,9 +1132,9 @@ mod linux {
             // HID_IN is host-stamped (the real device produced it) and EMIT device-stamped (the clone
             // did). A wrong domain gives plausible wrong deltas, not an error, so it is asserted.
             //
-            // EMIT is driven by injecting: a change-driven mouse NAKs at rest (the Mamba Elite sends
-            // nothing untouched), so waiting alone sees neither class. HID_IN needs the device to
-            // report, and says so when it did not.
+            // EMIT is driven by injecting: a change-driven mouse NAKs at rest (the Mamba Elite
+            // sends nothing untouched), so waiting alone sees neither class. HID_IN needs the real
+            // device to report, and says so when it did not.
             let dev = device.as_ref().unwrap();
             let mut hid_in = 0usize;
             let mut emit = 0usize;
@@ -1228,7 +1229,7 @@ mod linux {
             let (mut presses, mut releases, mut motions) = (0usize, 0usize, 0usize);
             let mut consistent = true;
             let mut held: Vec<medius::Usage> = Vec::new();
-            if let Ok(mut input) = dev.input_events(CatchFilter::all_input()) {
+            if let Ok(input) = dev.input_events(CatchFilter::all_input()) {
                 let deadline = std::time::Instant::now() + Duration::from_secs(3);
                 while std::time::Instant::now() < deadline {
                     let Some(ev) = input.recv_timeout(Duration::from_millis(100)) else {
@@ -1270,6 +1271,82 @@ mod linux {
                 format!(
                     "{presses} press, {releases} release, {motions} motion; refusals_ok={refuses} \
                      (move and click the mouse if all three are 0)"
+                ),
+            );
+        }
+
+        {
+            // Each stream closed from another thread: the receiver, reading until its stream ends, wakes
+            // at once; the box's catch table loses both subscriptions; a new one still receives.
+            let dev = device.as_ref().unwrap();
+            let entries = || dev.query_catch().map_or(usize::MAX, |c| c.entries.len());
+            let before = entries();
+            let woke = |close: Box<dyn FnOnce() + Send>, recv: Box<dyn FnOnce() -> bool + Send>| {
+                let (tx, rx) = std::sync::mpsc::channel();
+                let t = std::thread::spawn(move || tx.send(recv()).unwrap());
+                std::thread::sleep(Duration::from_millis(50));
+                let at = std::time::Instant::now();
+                close();
+                let ended = rx.recv_timeout(Duration::from_secs(2)).unwrap_or(false);
+                // A receiver the close never woke is left behind rather than joined, so the check fails
+                // instead of hanging.
+                if ended {
+                    let _ = t.join();
+                }
+                ended && at.elapsed() < Duration::from_millis(500)
+            };
+            let events_ok = dev
+                .catch_events([CatchFilter::traffic_class(TrafficClass::Emit)])
+                .is_ok_and(|s| {
+                    let blocked = s.clone();
+                    woke(
+                        Box::new(move || s.close()),
+                        Box::new(move || {
+                            while blocked.recv().is_ok() {}
+                            !blocked.is_connected()
+                        }),
+                    )
+                });
+            let input_ok = dev
+                .input_events(CatchFilter::all_input())
+                .is_ok_and(|input| {
+                    let closer = input.closer();
+                    woke(
+                        Box::new(move || closer.close()),
+                        Box::new(move || {
+                            while input.recv().is_ok() {}
+                            !input.is_connected()
+                        }),
+                    )
+                });
+            let unsubscribed = entries() == before;
+            let (closing, other) = (dev.logs(), dev.logs());
+            let blocked = closing.clone();
+            let logs_ok = woke(
+                Box::new(move || closing.close()),
+                Box::new(move || {
+                    while blocked.recv().is_ok() {}
+                    !blocked.is_connected()
+                }),
+            ) && other.is_connected();
+            let mut fresh = 0usize;
+            if let Ok(stream) = dev.catch_events([CatchFilter::traffic_class(TrafficClass::Emit)]) {
+                for _ in 0..20 {
+                    let _ = dev.move_rel(1, 0);
+                    let _ = dev.move_rel(-1, 0);
+                    std::thread::sleep(Duration::from_millis(4));
+                }
+                fresh = stream
+                    .recv_timeout(Duration::from_millis(500))
+                    .map_or(0, |_| 1 + stream.try_iter().count());
+            }
+            let _ = dev.reset();
+            check(
+                "streams: close",
+                events_ok && input_ok && unsubscribed && logs_ok && fresh > 0,
+                format!(
+                    "events={events_ok} input={input_ok} table_back={unsubscribed} logs={logs_ok} \
+                     (other log stream open) fresh_emits={fresh}"
                 ),
             );
         }
@@ -1470,7 +1547,7 @@ mod linux {
 
         {
             // Clip playback: 200 mouse moves and a KEY_A hold drive both interfaces; the grabbed node
-            // reports its own. Also covers auto-lock and counters.
+            // reads them back. Also covers auto-lock and counters.
             let dev = device.as_ref().unwrap();
             let _ = dev.reset();
             reset_motion(&acc);
@@ -1488,8 +1565,8 @@ mod linux {
             b.release(Key::A);
             let appended = clip.append(&b).is_ok();
             let loaded = clip.query_status().map(|s| s.total > 0).unwrap_or(false);
-            // Selective auto-lock: cursor axes and buttons only, keyboard free (the clip still drives
-            // KEY_A; only physical input is locked).
+            // Selective auto-lock: cursor axes and buttons only, keyboard free (the clip still
+            // drives KEY_A; only native input is locked).
             let scoped = clip.set_autolock(&[Blanket::Aim, Blanket::Buttons]).is_ok();
             let started = scoped && clip.start().is_ok();
             std::thread::sleep(Duration::from_millis(150));
@@ -1521,7 +1598,7 @@ mod linux {
                 ),
             );
 
-            // Trigger set and config readback (firing needs a physical press, in the physical suite):
+            // Trigger set and config readback (firing needs a native press, in the physical suite):
             // bind two, read back, unbind, clear.
             let _ = clip.clear();
             let bound_key = clip
@@ -1684,7 +1761,7 @@ mod linux {
         }
 
         {
-            // Halving is a SUSTAINED rate fault, so this measures the sustained rate.
+            // Halving is a sustained rate fault, so this measures the sustained rate.
             let dev = device.as_ref().unwrap();
             let _ = dev.reset();
             std::thread::sleep(Duration::from_millis(100));
@@ -1858,9 +1935,9 @@ mod linux {
         }
 
         {
-            // A held Y scale survives the host chip's reboot: the chip returns within the link watch's
-            // timeout, so nothing is released; a counted release (a slower reboot) gets the scale
-            // re-sent.
+            // A held Y scale survives the host chip's reboot: the chip returns within the link
+            // watch's timeout, so nothing is released. A slower reboot is a counted release, and
+            // the scale is re-sent.
             let dev = device.as_ref().unwrap();
             let _ = dev.scale(Axis::Y, Direction::Both, 40);
             let session = dev.query_stats().map(|s| s.session).ok();
@@ -2118,8 +2195,8 @@ mod linux {
                 ),
             );
 
-            // CATCH marks a packet a rule acted on: a PATCH at EMIT turning the (3, 0) frame's X into 5
-            // reaches the PC as 5 on a marked frame; without the rule, neither.
+            // CATCH marks a packet a rule acted on: a PATCH at EMIT turning the (3, 0) frame's X
+            // into 5 is emitted as 5 on a marked frame; without the rule, neither.
             let _ = dev.set_spread(0);
             let x_at = frame.as_ref().and_then(|f| {
                 let at: Vec<usize> = (0..f.len()).filter(|&i| f[i] == 3).collect();
@@ -2435,8 +2512,8 @@ mod linux {
 
         {
             // Re-presenting the clone (a patch apply, then its clear) releases the session like a
-            // replug, with no hello: the crate sees the PC enumerate the new clone and re-sends the
-            // scale.
+            // replug, with no hello: the crate detects the PC enumerating the new clone and
+            // re-sends the scale.
             let reopened = match args.get(2) {
                 Some(p) => Device::open(p),
                 None => Device::find(),
@@ -2483,8 +2560,9 @@ mod linux {
 
         {
             // Erases the box's name, options and everything learned about every device seen, then
-            // restarts it, so it runs only when named. It reopens its own handle (the crash-safe check
-            // took the suite's). medius-fw's tools/validate_factory_reset.py covers the behaviour.
+            // restarts it, so it runs only when named. It opens a separate handle (the crash-safe
+            // check took the suite's). medius-fw's tools/validate_factory_reset.py covers the
+            // behaviour.
             if std::env::var("MEDIUS_HW_FACTORY_RESET").as_deref() == Ok("1") {
                 let reopened = match args.get(2) {
                     Some(p) => Device::open(p),

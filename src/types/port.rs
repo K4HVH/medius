@@ -9,6 +9,6 @@ pub struct PortInfo {
     pub vid: u16,
     /// USB product id.
     pub pid: u16,
-    /// USB `iSerial` string of the control adapter, or `None` when it serves none.
+    /// USB `iSerial` string of the control adapter; `None` if the adapter has none.
     pub serial: Option<String>,
 }

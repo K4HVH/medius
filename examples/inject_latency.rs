@@ -1,7 +1,7 @@
-//! Measures how long `move_rel` blocks the calling thread, so a host-side write stall shows as a
-//! number, and how long a query takes to come back, to compare against the same box on another host.
-//! Reports percentiles, every call over the stall threshold, and the share of wall clock spent in the
-//! library.
+//! Measures how long `move_rel` blocks the calling thread (a host-side write stall shows as a
+//! number) and how long a query takes to come back, for comparing the same box across hosts.
+//! Reports percentiles, every call over the stall threshold, and the share of wall clock spent in
+//! the library.
 
 use std::time::{Duration, Instant};
 

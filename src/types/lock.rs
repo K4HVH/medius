@@ -19,7 +19,7 @@ pub enum Blanket {
 }
 
 impl Blanket {
-    /// Every group, for a clip auto-lock over all physical input.
+    /// Every group, for a clip auto-lock over all native input.
     pub const ALL: &'static [Blanket] = &[
         Blanket::Aim,
         Blanket::Wheel,
@@ -114,7 +114,7 @@ pub enum LockScope {
 
 /// Decoded `RESP(LOCKS)` entry (§4.8): what is weighed, in which direction, by how much.
 ///
-/// Mirrors the `LOCK` frame field for field, so it replays as sent. Only directions off
+/// Mirrors the `LOCK` frame field for field, so it replays as sent. Only directions not at
 /// [`LOCK_SCALE_PASS`] are reported; a target absent from the reply passes untouched.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct LockEntry {
@@ -122,12 +122,12 @@ pub struct LockEntry {
     pub scope: LockScope,
     /// Which direction of it.
     pub direction: Direction,
-    /// Percent of the physical value kept: 0 blocks, 100 passes, above 100 amplifies, and a negative
-    /// one reverses what it keeps. A momentary usage carries one bit, so the box stores the block or
-    /// pass it amounts to and never reports a value between.
+    /// Percent of the native value kept: 0 blocks, 100 passes, >100 amplifies, and a negative scale
+    /// reverses what it keeps. A momentary usage carries one bit, so the box stores a block or a pass
+    /// and never reports a value between.
     ///
-    /// The figure the box applies, which can differ from the one sent: in
-    /// [`BearingMode::Vector`](crate::BearingMode) one relative scale, the lower of X's and Y's,
+    /// This is the figure the box applies, which can differ from the one sent. In
+    /// [`BearingMode::Vector`](crate::BearingMode) one relative scale (the lower of X's and Y's)
     /// governs both axes, and both relative entries carry it.
     pub scale: i16,
 }
@@ -179,11 +179,11 @@ impl Locks {
         &self.entries
     }
 
-    /// Whether `target` is blocked outright on `dir`, by its own entry or a covering blanket. A
+    /// Whether `target` is blocked outright on `dir`, by an entry for it or a covering blanket. A
     /// direction weighed between block and pass is not locked.
     ///
-    /// [`Direction::Both`] asks about the two absolute signs. Ask for a relative direction by name: a
-    /// target can be blocked against the bearing while both its fixed signs pass.
+    /// [`Direction::Both`] asks about the two fixed signs only. Ask about a relative direction by
+    /// name: a target can be blocked against the bearing while both its fixed signs pass.
     pub fn is_locked(&self, target: impl Into<LockTarget>, dir: Direction) -> bool {
         let target = target.into();
         match dir {
@@ -195,17 +195,17 @@ impl Locks {
         }
     }
 
-    /// Scale in effect on one target and direction: percent of the physical value kept;
+    /// Scale in effect on one target and direction: percent of the native value kept;
     /// [`LOCK_SCALE_PASS`] when nothing weighs it.
     ///
-    /// [`Direction::Both`] reports the least that survives across any direction, ranked by magnitude
-    /// so a block outranks a reversal of any size: `Positive` blocked with `Against` at `-50` reports
-    /// `0`. A delta meets something else: one fixed-direction scale times one bearing-relative one,
-    /// so `Negative` 50 with `Against` 40 lands at 20% while this returns 40. For that figure, ask by
+    /// [`Direction::Both`] reports the scale that keeps least across every direction, by magnitude,
+    /// so a block outranks a reversal of any size (`Positive` blocked with `Against` at `-50` reports
+    /// `0`). The box scales a delta by one fixed-direction scale times one bearing-relative scale:
+    /// `Negative` 50 with `Against` 40 lands at 20%, while this returns 40. For that figure, ask by
     /// direction and multiply.
     ///
-    /// A covering blanket counts; where several entries cover one direction, the least that survives
-    /// wins.
+    /// A covering blanket counts. Where several entries cover one direction, the one that keeps least
+    /// applies.
     pub fn scale_of(&self, target: impl Into<LockTarget>, dir: Direction) -> i16 {
         let target = target.into();
         let covers = |e: &LockEntry| match e.scope {
@@ -216,8 +216,8 @@ impl Locks {
             .iter()
             .filter(|e| covers(e) && (dir == Direction::Both || e.direction.admits(dir)))
             .map(|e| e.scale)
-            // By magnitude: a signed minimum ranks -50 below 0 and reports a reversal over the block
-            // the delta meets.
+            // By magnitude: a signed minimum would rank -50 below 0 and report a reversal over the
+            // block applied to the delta.
             .min_by_key(|s| (s.unsigned_abs(), *s))
             .unwrap_or(LOCK_SCALE_PASS)
     }

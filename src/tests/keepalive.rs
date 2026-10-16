@@ -40,8 +40,8 @@ fn keepalive_fires_while_a_button_is_held() {
     drop(device);
 }
 
-// A second of control silence clears the clip and triggers on the box, and a retained clip armed on
-// a trigger is where the host goes quiet, waiting for the button.
+// 1 s of control silence clears the clip and triggers on the box. A retained clip armed on a
+// trigger is exactly when the host goes quiet, waiting for the button.
 #[test]
 fn keepalive_fires_while_a_clip_waits_on_a_trigger() {
     let mock = MockBox::new();
@@ -148,7 +148,7 @@ fn keepalive_follows_a_clip_setting_and_a_trigger_binding() {
     clip.unbind(Button::SIDE1, Edge::Press).unwrap();
     assert!(!fires(), "and unbound it is not");
 
-    // A packet trigger waits on the device the way an input trigger waits on a button.
+    // A packet trigger waits on the real device the way an input trigger waits on a button.
     let packet = ClipPacketTrigger::new(TrafficClass::HidIn, 2, Direction::IN, ClipAction::Start)
         .matching([0x07, 0x20], [0xFF, 0x20]);
     clip.bind_packet(&packet).unwrap();

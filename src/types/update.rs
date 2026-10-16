@@ -64,8 +64,8 @@ impl ImageState {
         }
     }
 
-    /// True until the chip confirms its booted image. Meanwhile it refuses another update, since
-    /// the running one might still be reverted.
+    /// True until the chip confirms its booted image. Until then the chip refuses another update,
+    /// since the running image might still be reverted.
     pub fn is_pending(self) -> bool {
         matches!(self, ImageState::PendingVerify)
     }
@@ -147,7 +147,7 @@ impl FirmwareInfo {
         })
     }
 
-    /// True while either chip is on probation, when updates are refused.
+    /// True while either chip is on probation (updates are refused).
     pub fn any_pending(&self) -> bool {
         self.device.state.is_pending() || self.host.is_some_and(|h| h.state.is_pending())
     }
@@ -251,9 +251,9 @@ pub(crate) fn update_reason(op: u8, status: UpdateStatus, arg: u32) -> String {
         UpdateStatus::WRITE_FAILED => format!("flash write failed (error {arg})"),
         UpdateStatus::BAD_SHA => "image corrupted in transit; retry".into(),
         UpdateStatus::BAD_IMAGE => format!("not a bootable image (error {arg})"),
-        UpdateStatus::LINK_DOWN => "the mouse-side chip is not reachable".into(),
+        UpdateStatus::LINK_DOWN => "the host chip is not reachable".into(),
         UpdateStatus::TIMEOUT if op == OTA_OP_ACTIVATE => {
-            "the mouse-side chip did not come back; power cycle the box".into()
+            "the host chip did not come back; power cycle the box".into()
         }
         UpdateStatus::TIMEOUT => "the box stopped answering; transfer dropped".into(),
         UpdateStatus::NOTHING_STAGED => "nothing is staged".into(),

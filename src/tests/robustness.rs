@@ -66,11 +66,12 @@ fn truncated_frame_does_not_panic_and_reader_recovers() {
     );
 }
 
-// Every box reply is bounded; past the bound the firmware appends what fits and replies anyway
+// Every box reply is bounded: past the bound the firmware appends what fits and replies anyway
 // (ctrl_locks_append, ctrl_catch_append, ctrl_clip_held_append, ctrl_clip_trig_append,
 // ctrl_usage_append, ctrl_pack_traffic_event, usbdev_box_name_copy, the DEVICE_INFO product copy).
-// The mock's builders take lengths from public setters, so each truncates alike; unbounded, the count
-// byte wraps past 255 or the payload outgrows a frame, and `encode` fails the caller's query.
+// The mock's builders take lengths from public setters, so each truncates the same way. Unbounded,
+// the count byte would wrap past 255 or the payload outgrow a frame, and `encode` would fail the
+// caller's query.
 use crate::types::{
     CatchClass, CatchEntry, CatchFilter, CatchState, ClipAction, ClipPacketTrigger,
     ClipPacketTriggerEntry, ClipSettings, ClipStatus, ClipTrigger, ClockDomain, DeviceInfo,
@@ -85,7 +86,7 @@ fn many_usages(n: usize) -> Vec<Usage> {
 
 #[test]
 fn a_name_past_the_wire_cap_still_answers_and_reads_back_cut() {
-    // CTRL_NAME_MAX is 32, and 600 bytes is past what a frame carries at all.
+    // CTRL_NAME_MAX is 32, and 600 bytes is more than a frame carries.
     let mock = MockBox::new();
     mock.set_version(Version {
         proto_ver: crate::protocol::PROTO_VER,
@@ -171,7 +172,8 @@ fn a_clip_status_past_the_wire_caps_still_answers() {
         })
         .chain(
             [
-                // Entries the box could never hold: a match past its compare length, and one unlike its mask.
+                // Entries the box could never hold: a match longer than its compare length, and a
+                // match not the length of its mask.
                 ClipPacketTrigger::new(TrafficClass::Emit, 1, Direction::IN, ClipAction::Stop)
                     .matching([0; 17], [0; 17]),
                 ClipPacketTrigger::new(TrafficClass::Emit, 2, Direction::IN, ClipAction::Stop)
@@ -283,7 +285,7 @@ fn a_log_line_past_what_a_frame_carries_still_arrives() {
 
 #[test]
 fn a_key_snapshot_at_the_cap_is_untouched() {
-    // The caps truncate, they do not cut short what already fits: 40 usages is exactly the bound.
+    // The caps cut only past the bound, never what fits: 40 usages is exactly the bound.
     let mock = MockBox::new();
     let device = Device::with_mock(mock.clone());
     let s = device.catch_events([CatchFilter::everything()]).unwrap();

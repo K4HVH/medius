@@ -9,14 +9,14 @@ use crate::types::{CatchEvent, InputEvent, MotionEvent, TrafficEvent, UsageSnaps
 /// Chip whose clock stamped an event.
 ///
 /// The chips boot independently, so a stamp compares only with stamps from the same domain.
-/// [`Timeline`] puts both on one.
+/// [`Timeline`] puts both on one timeline.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum ClockDomain {
     /// Device-facing chip, stamped in USB interrupt context when the real device's transfer
     /// completes. Carried by everything the real device produced.
     HostChip,
     /// PC-facing chip, stamped at the tap. Carried by everything the PC produced and the clone
-    /// emitted; the host chip never sees those bytes.
+    /// emitted; the host chip never receives those bytes.
     DeviceChip,
 }
 
@@ -42,20 +42,20 @@ impl ClockDomain {
 
 /// Measured offset between the two chips' clocks, from `RESP(CATCH)` (§4.9).
 ///
-/// Four-timestamp exchange over the inter-chip link, each frame stamped as it reaches the wire.
-/// That keeps queueing, the link's largest and most variable delay, out of the measurement.
+/// Measured by a four-timestamp exchange over the inter-chip link, each frame stamped as it reaches
+/// the wire. That keeps queueing (the link's largest and most variable delay) out of the measurement.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct ClockEstimate {
     /// Host chip clock minus device chip clock, in microseconds.
     pub offset_us: i32,
     /// Relative drift between the crystals, in parts per billion; `None` when the box has fitted
-    /// none. A fitted zero means the crystals match. A link too busy for enough clean exchanges to
-    /// reach the box's filter gets no fit, exactly when assuming zero drift is least safe.
+    /// none. A fitted zero means the crystals match. A link too busy to get enough clean exchanges
+    /// through the box's filter gets no fit: exactly when assuming zero drift is least safe.
     pub rate_ppb: Option<i32>,
-    /// Best round trip in the window; the offset is good to about half this.
+    /// Best round trip in the window; the offset is good to ~half this.
     pub delay_us: u16,
-    /// Estimate age; `None` when the box has no estimate yet, which tells that apart from a zero
-    /// offset.
+    /// Estimate age. `None` until the box has an estimate, so a missing estimate never reads as a
+    /// zero offset.
     pub age: Option<Duration>,
 }
 
@@ -89,19 +89,18 @@ impl ClockEstimate {
 
     /// Device-chip stamp in the host chip's domain; `None` with no estimate.
     ///
-    /// Applies the offset only. The box corrects drift against the instant it measured the offset,
-    /// which this side lacks, so over a long stream the crystals diverge at up to 20 ppm, about
-    /// 20 us per second of estimate age. Re-read [`Device::query_catch`](crate::Device::query_catch)
-    /// when [`Self::age`] grows large relative to [`Self::error_bound_us`];
-    /// [`Self::drift_us_over`] gives the cost.
+    /// Applies the offset only. Correcting drift needs the instant the box measured the offset, which
+    /// this side lacks. Over a long stream the crystals diverge at up to 20 ppm (~20 us per second of
+    /// estimate age). Re-read [`Device::query_catch`](crate::Device::query_catch) when [`Self::age`]
+    /// grows large next to [`Self::error_bound_us`]; [`Self::drift_us_over`] gives the cost.
     pub fn to_host_domain(&self, device_us: u32) -> Option<i64> {
         self.age?;
         Some(device_us as i64 + self.offset_us as i64)
     }
 
-    /// Offset drift over `elapsed`, in microseconds; add [`Self::error_bound_us`] for the total bound
-    /// on a stamp translated `elapsed` after the estimate. 0 when the box has fitted no rate, which
-    /// does not mean zero drift.
+    /// Offset drift over `elapsed`, in microseconds. Add [`Self::error_bound_us`] for the total bound
+    /// on a stamp translated `elapsed` after the estimate. 0 when the box has fitted no rate: the
+    /// drift is then unknown, not zero.
     pub fn drift_us_over(&self, elapsed: Duration) -> i64 {
         let Some(ppb) = self.rate_ppb else { return 0 };
         (elapsed.as_micros() as i64).saturating_mul(ppb as i64) / 1_000_000_000
@@ -246,11 +245,12 @@ impl DomainState {
 /// true.
 ///
 /// That suits events arriving one at a time, not bursts. A backlog drained after a consumer stall
-/// arrives at nearly one instant, and no filter over arrival times recovers when it was produced:
-/// the burst maps into the span it drained in and reports little [`Stamped::excess`].
+/// arrives at nearly one instant, and no filter over arrival times recovers when each event was
+/// produced. The burst maps into the span it drained in and reports little [`Stamped::excess`].
 ///
-/// Cross-domain ordering is good to the difference in how far the two floors have converged,
-/// largest just after a domain's first event. Within one domain, [`Stamped::box_us`] is exact.
+/// Ordering across domains is good to the difference in how far the two floors have converged; that
+/// error is largest just after a domain's first event. Within one domain, [`Stamped::box_us`] is
+/// exact.
 #[derive(Debug)]
 pub struct Timeline {
     origin: Instant,

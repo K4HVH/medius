@@ -10,7 +10,7 @@ from pathlib import Path
 
 # The header's MEDIUS_ABI_VERSION these mirrors follow; the tests hold it to the header, and import
 # refuses a library whose medius_abi_version() reports another number.
-ABI_VERSION = 9
+ABI_VERSION = 10
 
 MEDIUS_MAX_USAGES = 256
 MEDIUS_CLIP_TRIG_MAX = 8
@@ -137,6 +137,10 @@ class MediusFirmwareInfo(ctypes.Structure):
         ("device_staged", u8),
         ("host_staged", u8),
     ]
+
+
+class MediusUpdateError(ctypes.Structure):
+    _fields_ = [("op", u8), ("status", u8), ("arg", u32)]
 
 
 class MediusHealth(ctypes.Structure):
@@ -667,6 +671,7 @@ _decl("medius_abi_version", u32, [])
 _decl("medius_version_string", ctypes.c_char_p, [])
 _decl("medius_last_error_message", usize, [ctypes.c_char_p, usize])
 _decl("medius_last_error_proto_ver", u8, [])
+_decl("medius_last_error_update", c_bool, [ctypes.POINTER(MediusUpdateError)])
 
 _decl("medius_usage_button", MediusUsage, [u8])
 _decl("medius_usage_key", MediusUsage, [u8])
@@ -735,6 +740,7 @@ _decl(
 )
 _decl("medius_event_stream_clone", HANDLE, [HANDLE])
 _decl("medius_event_stream_free", None, [HANDLE])
+_decl("medius_event_stream_close", None, [HANDLE])
 _decl("medius_event_stream_recv", i32, [HANDLE, ctypes.POINTER(MediusCatchEvent)])
 _decl("medius_event_stream_try_recv", c_bool, [HANDLE, ctypes.POINTER(MediusCatchEvent)])
 _decl("medius_event_stream_recv_timeout", c_bool, [HANDLE, u64, ctypes.POINTER(MediusCatchEvent)])
@@ -746,6 +752,7 @@ _decl(
     [HANDLE, ctypes.POINTER(MediusCatchFilter), usize, PHANDLE],
 )
 _decl("medius_input_stream_free", None, [HANDLE])
+_decl("medius_input_stream_close", None, [HANDLE])
 _decl("medius_input_stream_recv", i32, [HANDLE, ctypes.POINTER(MediusInputEvent)])
 _decl("medius_input_stream_try_recv", c_bool, [HANDLE, ctypes.POINTER(MediusInputEvent)])
 _decl("medius_input_stream_recv_timeout", c_bool, [HANDLE, u64, ctypes.POINTER(MediusInputEvent)])
@@ -773,9 +780,11 @@ _decl("medius_timeline_samples", u64, [HANDLE, u8])
 _decl("medius_device_logs", i32, [HANDLE, PHANDLE])
 _decl("medius_log_stream_clone", HANDLE, [HANDLE])
 _decl("medius_log_stream_free", None, [HANDLE])
+_decl("medius_log_stream_close", None, [HANDLE])
 _decl("medius_log_stream_recv", i32, [HANDLE, ctypes.POINTER(MediusLogLine)])
 _decl("medius_log_stream_try_recv", c_bool, [HANDLE, ctypes.POINTER(MediusLogLine)])
 _decl("medius_log_stream_recv_timeout", c_bool, [HANDLE, u64, ctypes.POINTER(MediusLogLine)])
+_decl("medius_log_stream_is_connected", c_bool, [HANDLE])
 
 _decl("medius_clip_frame_new", HANDLE, [])
 _decl("medius_clip_frame_free", None, [HANDLE])
@@ -838,6 +847,12 @@ _decl(
 )
 _decl("medius_device_abort_update", i32, [HANDLE, u8])
 _decl("medius_device_activate_firmware", i32, [HANDLE])
+_decl(
+    "medius_device_update_firmware",
+    i32,
+    [HANDLE, u8, ctypes.POINTER(u8), ctypes.c_size_t, UPDATE_PROGRESS_CB, ctypes.c_void_p],
+)
+_decl("medius_device_wait_firmware_confirmed", i32, [HANDLE, ctypes.POINTER(MediusFirmwareInfo)])
 
 HAS_MOCK = _decl("medius_mock_new", HANDLE, [], optional=True) is not None
 if HAS_MOCK:
@@ -873,6 +888,8 @@ if HAS_MOCK:
     _decl("medius_mock_detach", None, [HANDLE, c_bool])
     _decl("medius_mock_attach", None, [HANDLE])
     _decl("medius_mock_silent", None, [HANDLE])
+    _decl("medius_mock_refuse_next_activate", None, [HANDLE, u8])
+    _decl("medius_mock_reboot_after_activate", None, [HANDLE, u32, u32])
     _decl("medius_mock_push_raw", None, [HANDLE, ctypes.POINTER(u8), usize])
     _decl("medius_mock_push_log", None, [HANDLE, u8, ctypes.c_char_p])
     _decl("medius_mock_push_motion", None, [HANDLE, u8, u32, MediusMotionEvent])

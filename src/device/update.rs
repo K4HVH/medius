@@ -20,7 +20,7 @@ pub(crate) const ACTIVATE_TIMEOUT: Duration = Duration::from_secs(60);
 // How often a blocked receive wakes to check for a reply another caller parked.
 const HELD_POLL: Duration = Duration::from_millis(50);
 
-// Outlasts the mouse-side chip's 40 s probation, the longer of the two.
+// Outlasts the host chip's 40 s probation, the longer of the two.
 pub(crate) const CONFIRM_TIMEOUT: Duration = Duration::from_secs(55);
 
 // Chunking and credit accounting for one staged image, transport-free, so the sync and async
@@ -71,7 +71,7 @@ impl<'a> ChunkPlan<'a> {
         Some(frame)
     }
 
-    // The box owes a reply once the window is full or the image is out.
+    // The box owes a reply once the window is full or the image is sent.
     pub(crate) fn awaiting_ack(&self) -> bool {
         self.unacked > 0 && (self.unacked >= self.credit || self.sent >= self.image.len())
     }
@@ -120,9 +120,11 @@ impl Device {
         }
     }
 
-    /// Block until neither chip is on probation; a chip that has not confirmed its booted image
-    /// refuses another update. The device chip confirms after ten seconds of running; the mouse-side
-    /// chip only on a completed clock exchange over the inter-chip link.
+    /// Block until neither chip is on probation (a chip that hasn't confirmed its booted image
+    /// refuses another update). The device chip confirms after 10 s of running; the host chip
+    /// confirms only on a completed clock exchange over the inter-chip link. Keeps asking while the
+    /// box reboots after an activate. After 55 s, returns [`Error::Update`] (`ON_PROBATION`) if a
+    /// chip is still on probation, or [`Error::QueryTimeout`] if the box hasn't replied.
     pub fn wait_firmware_confirmed(&self) -> Result<FirmwareInfo> {
         let deadline = Instant::now() + CONFIRM_TIMEOUT;
         loop {
@@ -177,7 +179,7 @@ impl Device {
                 arg,
             });
         }
-        // AFTER the BEGIN reply, not before it.
+        // After the BEGIN reply, not before it.
         self.drop_held(OTA_OP_DATA);
 
         let mut plan = ChunkPlan::new(image, target, arg);
@@ -230,7 +232,8 @@ impl Device {
         Ok(())
     }
 
-    /// Stage one image and activate it.
+    /// Stage one image and activate it; a refused activate aborts the staged image, so a later
+    /// activate cannot boot it.
     pub fn update_firmware(
         &self,
         target: UpdateTarget,
@@ -253,7 +256,7 @@ impl Device {
         body: &[u8],
         timeout: Duration,
     ) -> Result<(UpdateStatus, u32)> {
-        // Anything queued for this op answers an earlier command; taking it would report a stale
+        // Anything queued for this op replies to an earlier command; taking it would report a stale
         // outcome.
         while let Ok(p) = self.link.updates_rx().try_recv() {
             if p.first() != Some(&op) {
@@ -269,10 +272,10 @@ impl Device {
         self.recv_update(op, timeout)
     }
 
-    // Matched on the op byte, not `SEQ`: one acknowledgement answers a window of `DATA` frames and
-    // carries its own rolling `SEQ`. A reply for another op is parked, not dropped: the MPMC channel
-    // is shared and `AsyncDevice::offload` runs transfers on their own threads, so dropping it would
-    // time out another caller whose box replied.
+    // Matched on the op byte, not `SEQ`: one acknowledgement covers a window of `DATA` frames and
+    // carries a separate rolling `SEQ`. A reply for another op is parked, not dropped. The MPMC
+    // channel is shared and `AsyncDevice::offload` runs transfers on separate threads, so dropping
+    // the reply would time out another caller whose box replied.
     pub(crate) fn recv_update(&self, op: u8, timeout: Duration) -> Result<(UpdateStatus, u32)> {
         let deadline = Instant::now() + timeout;
         loop {
