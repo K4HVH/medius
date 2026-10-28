@@ -110,7 +110,7 @@ impl TransferStatus {
     }
 }
 
-/// Native reply to a [`transfer`](crate::Device::transfer): status and any IN data.
+/// Native reply to a [`transfer`](crate::Device::transfer): status and the real device's reply.
 ///
 /// A [`TransferStatus`] other than [`Ok`](TransferStatus::Ok) is a protocol outcome, not a link
 /// error: it is returned, not raised. Read it with [`is_ok`](Self::is_ok) and [`data`](Self::data).
@@ -119,7 +119,10 @@ impl TransferStatus {
 pub struct TransferOutcome {
     /// How the transfer ended.
     pub status: TransferStatus,
-    /// IN data returned (empty for an OUT transfer, a STALL, or no data).
+    /// An IN transfer's data stage, whole even where the real device sent more than wLength asked for. For an OUT
+    /// transfer or one with wLength 0, what it sent where the status stage was due (at most 64 bytes, usually none).
+    /// Empty for any status but [`Ok`](TransferStatus::Ok). A PC sees a reply past wLength, and data in a status
+    /// stage, as the transfer failing.
     pub data: Vec<u8>,
 }
 

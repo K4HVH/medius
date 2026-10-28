@@ -69,9 +69,10 @@ impl Device {
     ///
     /// `ep` is 0 for EP0, or a control endpoint the real device declares. `setup` is the 8-byte
     /// setup packet; `out` is the OUT data stage (empty for an IN transfer). The
-    /// [`TransferOutcome`] carries the [`status`](TransferOutcome::status) and any IN data. A
-    /// status other than [`Ok`](TransferStatus::Ok) is a protocol result, not a link error, so it
-    /// is returned, not raised; the outer `Ok` means the box replied.
+    /// [`TransferOutcome`] carries the [`status`](TransferOutcome::status) and the real device's
+    /// reply ([`data`](TransferOutcome::data)). A status other than [`Ok`](TransferStatus::Ok) is a
+    /// protocol result, not a link error, so it is returned, not raised; the outer `Ok` means the
+    /// box replied.
     ///
     /// Needs [`allow_imperfect_clones`](Device::allow_imperfect_clones): with the opt-in off the
     /// box replies [`Refused`](TransferStatus::Refused) without reaching the real device. While the
