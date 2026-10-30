@@ -438,10 +438,12 @@ class Setup:
 
 @dataclass
 class TransferOutcome:
-    """The real device's reply to `Device.transfer`: status and any IN data.
+    """The real device's reply to `Device.transfer`: status and its reply.
 
     ``status`` is a `TransferStatus`, or the raw wire byte for an unnamed value. A non-OK status is
-    a protocol outcome, not a link error, and carries no data.
+    a protocol outcome, not a link error, and carries no data. ``data`` is an IN transfer's data
+    stage, whole even past wLength; for an OUT transfer or one with wLength 0, what the real device
+    sent where the status stage was due (at most 64 bytes, usually none).
     """
 
     status: "TransferStatus | int"
