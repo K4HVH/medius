@@ -206,11 +206,11 @@ fn a_frame_the_box_would_fault_on_is_refused_before_anything_is_encoded() {
     // A transfer item's length is its setup packet's: wLength bytes of OUT data, none for an IN request.
     assert!(matches!(
         refused(ClipFrame::new().transfer(0, Setup::new(0x21, 9, 0, 0, 4), [1])),
-        Error::ClipTransferData { want: 4, got: 1 }
+        Error::TransferData { want: 4, got: 1 }
     ));
     assert!(matches!(
         refused(ClipFrame::new().transfer(0, Setup::new(0xA1, 1, 0, 0, 4), [1, 2, 3, 4])),
-        Error::ClipTransferData { want: 0, got: 4 }
+        Error::TransferData { want: 0, got: 4 }
     ));
 }
 

@@ -620,46 +620,47 @@ pub unsafe extern "C" fn medius_device_raw(
     })
 }
 
-/// `TRANSFER` (§3.14): run one control transfer against the real device, writing the reply to
-/// `*out`. `ep` is 0 for EP0 or a control endpoint the real device declares; `out_data[0..out_len]`
-/// is the OUT data stage (empty for IN). A non-OK `out->status` is a protocol outcome, not a
-/// failure. The box replies `REFUSED` while the opt-in is off, and `NAK` while the game PC has the
-/// clone suspended (the real device is suspended too). `MEDIUS_STATUS_OK` means only that the box
-/// replied.
+/// `TRANSFER` (§3.14): run one control transfer against the real device. `ep` is 0 for EP0 or a
+/// control endpoint the real device declares. `out_data[0..out_len]` is the OUT data stage:
+/// `setup.length` bytes for OUT, none for IN, at most `MEDIUS_MAX_TRANSFER_OUT`. The reply's first
+/// `reply_cap` bytes go to `reply` (`MEDIUS_MAX_TRANSFER_REPLY` holds any), and `*out` takes the
+/// status, the stage it ended in and the reply's length. The box waits
+/// `medius_default_transfer_timeout_ms()` on the real device. A non-OK `out->status` is a protocol
+/// outcome: `MEDIUS_STATUS_OK` means only that the box replied. With the opt-in off the box replies
+/// `REFUSED`.
 #[unsafe(no_mangle)]
+#[allow(clippy::too_many_arguments)]
 pub unsafe extern "C" fn medius_device_transfer(
     dev: *mut MediusDevice,
     ep: u8,
     setup: MediusSetup,
     out_data: *const u8,
     out_len: usize,
+    reply: *mut u8,
+    reply_cap: usize,
     out: *mut MediusTransferOutcome,
 ) -> MediusStatus {
-    guard_status(|| {
-        if dev.is_null() || out.is_null() {
-            return fail(MediusStatus::ErrInvalidArg, "null pointer");
-        }
-        let Some(data) = (unsafe { opt_slice(out_data, out_len) }) else {
-            return fail(
-                MediusStatus::ErrInvalidArg,
-                "null out_data with out_len > 0",
-            );
-        };
-        match unsafe { &(*dev).inner }.transfer(ep, setup_from_c(setup), data) {
-            Ok(outcome) => {
-                unsafe { *out = outcome.into() };
-                clear_error();
-                MediusStatus::Ok
-            }
-            Err(e) => record(&e),
-        }
+    guard_status(|| unsafe {
+        transfer_into(
+            dev,
+            ep,
+            setup,
+            out_data,
+            out_len,
+            medius::DEFAULT_TRANSFER_TIMEOUT,
+            reply,
+            reply_cap,
+            out,
+        )
     })
 }
 
-/// [`medius_device_transfer`] with a reply timeout in milliseconds. The box gives up on a control
-/// transfer after ~800 ms. A shorter `timeout_ms` can abandon the wait before a slow device
-/// replies, so keep it >= `medius_default_transfer_timeout_ms()`.
+/// [`medius_device_transfer`] with the box's wait on the real device set to `timeout_ms`, 1 to
+/// 65535, else `MEDIUS_STATUS_ERR_TRANSFER_TIMEOUT_RANGE`. The call waits up to `timeout_ms` plus
+/// 2 s for the reply, then gives `MEDIUS_STATUS_ERR_QUERY_TIMEOUT`; a reply that lost a chunk on
+/// the control link gives `MEDIUS_STATUS_ERR_TRANSFER_REPLY_INCOMPLETE`.
 #[unsafe(no_mangle)]
+#[allow(clippy::too_many_arguments)]
 pub unsafe extern "C" fn medius_device_transfer_timeout(
     dev: *mut MediusDevice,
     ep: u8,
@@ -667,32 +668,61 @@ pub unsafe extern "C" fn medius_device_transfer_timeout(
     out_data: *const u8,
     out_len: usize,
     timeout_ms: u32,
+    reply: *mut u8,
+    reply_cap: usize,
     out: *mut MediusTransferOutcome,
 ) -> MediusStatus {
-    guard_status(|| {
-        if dev.is_null() || out.is_null() {
-            return fail(MediusStatus::ErrInvalidArg, "null pointer");
-        }
-        let Some(data) = (unsafe { opt_slice(out_data, out_len) }) else {
-            return fail(
-                MediusStatus::ErrInvalidArg,
-                "null out_data with out_len > 0",
-            );
-        };
-        match unsafe { &(*dev).inner }.transfer_timeout(
+    guard_status(|| unsafe {
+        transfer_into(
+            dev,
             ep,
-            setup_from_c(setup),
-            data,
-            Duration::from_millis(timeout_ms as u64),
-        ) {
-            Ok(outcome) => {
-                unsafe { *out = outcome.into() };
-                clear_error();
-                MediusStatus::Ok
-            }
-            Err(e) => record(&e),
-        }
+            setup,
+            out_data,
+            out_len,
+            Duration::from_millis(timeout_ms.into()),
+            reply,
+            reply_cap,
+            out,
+        )
     })
+}
+
+#[allow(clippy::too_many_arguments)]
+unsafe fn transfer_into(
+    dev: *mut MediusDevice,
+    ep: u8,
+    setup: MediusSetup,
+    out_data: *const u8,
+    out_len: usize,
+    timeout: Duration,
+    reply: *mut u8,
+    reply_cap: usize,
+    out: *mut MediusTransferOutcome,
+) -> MediusStatus {
+    if dev.is_null() || out.is_null() {
+        return fail(MediusStatus::ErrInvalidArg, "null pointer");
+    }
+    if reply.is_null() && reply_cap > 0 {
+        return fail(MediusStatus::ErrInvalidArg, "null reply with reply_cap > 0");
+    }
+    let Some(data) = (unsafe { opt_slice(out_data, out_len) }) else {
+        return fail(
+            MediusStatus::ErrInvalidArg,
+            "null out_data with out_len > 0",
+        );
+    };
+    match unsafe { &(*dev).inner }.transfer_timeout(ep, setup_from_c(setup), data, timeout) {
+        Ok(outcome) => {
+            let n = outcome.data.len().min(reply_cap);
+            if n > 0 {
+                unsafe { std::ptr::copy_nonoverlapping(outcome.data.as_ptr(), reply, n) };
+            }
+            unsafe { *out = (&outcome).into() };
+            clear_error();
+            MediusStatus::Ok
+        }
+        Err(e) => record(&e),
+    }
 }
 
 fn with_rewrite_rule(
@@ -1325,7 +1355,7 @@ pub extern "C" fn medius_default_query_timeout_ms() -> u32 {
     dur_ms(medius::DEFAULT_QUERY_TIMEOUT)
 }
 
-/// Default reply wait for `medius_device_transfer`, in milliseconds.
+/// How long the box waits on the real device for `medius_device_transfer`, in milliseconds.
 #[unsafe(no_mangle)]
 pub extern "C" fn medius_default_transfer_timeout_ms() -> u32 {
     dur_ms(medius::DEFAULT_TRANSFER_TIMEOUT)
@@ -1339,7 +1369,7 @@ pub extern "C" fn medius_default_keepalive_cadence_ms() -> u32 {
 
 /// The C ABI version this header declares, bumped on any breaking change. Compare with
 /// `medius_abi_version()` once at start-up.
-pub const MEDIUS_ABI_VERSION: u32 = 10;
+pub const MEDIUS_ABI_VERSION: u32 = 11;
 
 /// The loaded library's C ABI version, bumped on any breaking header change. Compare with
 /// `MEDIUS_ABI_VERSION` once at start-up. On a mismatch call nothing else: the header's struct

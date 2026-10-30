@@ -320,13 +320,7 @@ fn query(ctx: &KeepaliveCtx, what: u8) -> Option<Vec<u8>> {
 
 // The outer `None` means the frame wasn't sent. The wait ends early if the device is dropped.
 fn query_sent(ctx: &KeepaliveCtx, what: u8) -> Option<Option<Vec<u8>>> {
-    let (seq, gen_id, rx) = correlation::register(
-        &ctx.pending,
-        &ctx.query_gen,
-        &ctx.seq,
-        FrameType::Resp,
-        what,
-    );
+    let (seq, gen_id, rx) = correlation::register(&ctx.pending, &ctx.query_gen, &ctx.seq, what);
     let sent = write_frame(
         &ctx.transport,
         &ctx.write_lock,

@@ -3626,7 +3626,7 @@ fn a_refused_clip_frame_has_its_own_status_and_sends_nothing() {
         unsafe { medius_clip_frame_transfer(frame, 0, setup, byte.as_ptr(), 1) },
         MediusStatus::Ok
     );
-    refused(MediusStatus::ErrClipTransferData, "transfer data");
+    refused(MediusStatus::ErrTransferData, "transfer data");
 
     assert_eq!(
         unsafe { medius_clip_frame_raw(frame, 1, MediusDirection::Both as u8, byte.as_ptr(), 1) },
@@ -4436,44 +4436,156 @@ fn dev_layer_commands_reach_the_wire_like_the_crate() {
     );
 }
 
-#[test]
-fn transfer_timeout_takes_its_own_reply_wait() {
-    assert!(medius_default_transfer_timeout_ms() >= 800);
+const GET_CONFIG: MediusSetup = MediusSetup {
+    request_type: 0x80,
+    request: 0x06,
+    value: 0x0200,
+    index: 0,
+    length: 0xFFFF,
+};
+
+// A device over a mock whose TRANSFER brings back `data` with `status` and `stage`, the opt-in on.
+fn transfer_mock(status: u8, stage: u8, data: &[u8]) -> (*mut MediusMockBox, *mut MediusDevice) {
     let mock = medius_mock_new();
     unsafe {
         medius_mock_set_imperfect_status(mock, allowed_status());
-        let data = [0x12u8, 0x01];
-        medius_mock_set_transfer_reply(mock, 0x00, data.as_ptr(), data.len());
+        medius_mock_set_transfer_reply(mock, status, stage, data.as_ptr(), data.len());
     }
     let mut dev: *mut MediusDevice = ptr::null_mut();
     assert_eq!(
         unsafe { medius_device_with_mock(mock, &mut dev) },
         MediusStatus::Ok
     );
-    let setup = MediusSetup {
-        request_type: 0x80,
-        request: 0x06,
-        value: 0x0100,
-        index: 0x0000,
+    (mock, dev)
+}
+
+#[test]
+fn transfer_sends_the_crates_frames_with_the_timeout() {
+    assert_eq!(medius_default_transfer_timeout_ms(), 1000);
+    let set = medius::Setup::new(0x21, 0x09, 0x0200, 0, 2);
+    let c_set = MediusSetup {
+        request_type: 0x21,
+        request: 0x09,
+        value: 0x0200,
+        index: 0,
         length: 2,
     };
+    assert_parity_imperfect(
+        move |d| {
+            d.transfer(3, set, &[0xAA, 0xBB]).unwrap();
+            d.transfer_timeout(3, set, &[0xAA, 0xBB], Duration::from_millis(40_000))
+                .unwrap();
+        },
+        move |dev| unsafe {
+            let data = [0xAAu8, 0xBB];
+            let mut out: MediusTransferOutcome = std::mem::zeroed();
+            assert_eq!(
+                medius_device_transfer(
+                    dev,
+                    3,
+                    c_set,
+                    data.as_ptr(),
+                    2,
+                    ptr::null_mut(),
+                    0,
+                    &mut out
+                ),
+                MediusStatus::Ok
+            );
+            assert_eq!(
+                medius_device_transfer_timeout(
+                    dev,
+                    3,
+                    c_set,
+                    data.as_ptr(),
+                    2,
+                    40_000,
+                    ptr::null_mut(),
+                    0,
+                    &mut out
+                ),
+                MediusStatus::Ok
+            );
+        },
+    );
+}
+
+#[test]
+fn transfer_writes_the_reply_to_the_buffer_and_its_length_to_the_outcome() {
+    let data: Vec<u8> = (0..600u32).map(|i| (i * 3) as u8).collect();
+    let want = {
+        let mock =
+            MockBox::new()
+                .with_imperfect(true)
+                .with_transfer_reply(medius::TransferOutcome {
+                    status: medius::TransferStatus::Stall,
+                    stage: medius::TransferStage::Data,
+                    data: data.clone(),
+                });
+        Device::with_mock(mock)
+            .transfer(0, medius::Setup::new(0x80, 0x06, 0x0200, 0, 0xFFFF), &[])
+            .unwrap()
+    };
+    let (mock, dev) = transfer_mock(
+        MediusTransferStatus::Stall as u8,
+        MediusTransferStage::Data as u8,
+        &data,
+    );
+    let mut reply = vec![0u8; MEDIUS_MAX_TRANSFER_REPLY];
     let mut out: MediusTransferOutcome = unsafe { std::mem::zeroed() };
     assert_eq!(
         unsafe {
-            medius_device_transfer_timeout(
+            medius_device_transfer(
                 dev,
                 0,
-                setup,
+                GET_CONFIG,
                 ptr::null(),
                 0,
-                medius_default_transfer_timeout_ms(),
+                reply.as_mut_ptr(),
+                reply.len(),
                 &mut out,
             )
         },
         MediusStatus::Ok
     );
-    assert_eq!(out.status, MediusTransferStatus::Ok as u8);
-    assert_eq!(out.len, 2);
+    assert_eq!(out.status, want.status.as_u8());
+    assert_eq!(out.stage, want.stage.as_u8());
+    assert_eq!(&reply[..out.len], want.data());
+    // A buffer too small takes the reply's head, and the outcome still names the whole length.
+    let mut head = [0u8; 100];
+    let mut cut: MediusTransferOutcome = unsafe { std::mem::zeroed() };
+    assert_eq!(
+        unsafe {
+            medius_device_transfer(
+                dev,
+                0,
+                GET_CONFIG,
+                ptr::null(),
+                0,
+                head.as_mut_ptr(),
+                head.len(),
+                &mut cut,
+            )
+        },
+        MediusStatus::Ok
+    );
+    assert_eq!(cut.len, 600);
+    assert_eq!(&head[..], &data[..100]);
+    assert_eq!(
+        unsafe {
+            medius_device_transfer(
+                dev,
+                0,
+                GET_CONFIG,
+                ptr::null(),
+                0,
+                ptr::null_mut(),
+                1,
+                &mut cut,
+            )
+        },
+        MediusStatus::ErrInvalidArg
+    );
     unsafe {
         medius_device_free(dev);
         medius_mock_free(mock);
@@ -4481,43 +4593,44 @@ fn transfer_timeout_takes_its_own_reply_wait() {
 }
 
 #[test]
-fn transfer_roundtrips_the_devices_answer() {
-    let want = {
-        let mock = MockBox::new()
-            .with_imperfect(true)
-            .with_transfer_reply(0x00, &[0x12, 0x01, 0x10, 0x02]);
-        let dev = Device::with_mock(mock);
-        dev.transfer(0, medius::Setup::new(0x80, 0x06, 0x0100, 0x0000, 18), &[])
-            .unwrap()
-    };
-
-    let mock = medius_mock_new();
-    unsafe {
-        medius_mock_set_imperfect_status(mock, allowed_status());
-        let data = [0x12u8, 0x01, 0x10, 0x02];
-        medius_mock_set_transfer_reply(mock, 0x00, data.as_ptr(), data.len());
-    }
-    let mut dev: *mut MediusDevice = ptr::null_mut();
-    assert_eq!(
-        unsafe { medius_device_with_mock(mock, &mut dev) },
-        MediusStatus::Ok
+fn a_transfer_the_box_would_refuse_is_refused_at_the_boundary() {
+    let (mock, dev) = transfer_mock(
+        MediusTransferStatus::Ok as u8,
+        MediusTransferStage::Status as u8,
+        &[],
     );
-    let setup = MediusSetup {
-        request_type: 0x80,
-        request: 0x06,
-        value: 0x0100,
-        index: 0x0000,
-        length: 18,
+    let set = MediusSetup {
+        request_type: 0x21,
+        request: 0x09,
+        value: 0x0200,
+        index: 0,
+        length: 2,
     };
+    let one = [0x01u8];
     let mut out: MediusTransferOutcome = unsafe { std::mem::zeroed() };
-    assert_eq!(
-        unsafe { medius_device_transfer(dev, 0, setup, ptr::null(), 0, &mut out) },
-        MediusStatus::Ok
-    );
-    assert_eq!(out.status, MediusTransferStatus::Ok as u8);
-    assert_eq!(out.status, want.status.as_u8());
-    assert_eq!(&out.data[..out.len as usize], want.data());
     unsafe {
+        assert_eq!(
+            medius_device_transfer(dev, 0, set, one.as_ptr(), 1, ptr::null_mut(), 0, &mut out),
+            MediusStatus::ErrTransferData
+        );
+        for timeout_ms in [0, 65_536] {
+            assert_eq!(
+                medius_device_transfer_timeout(
+                    dev,
+                    0,
+                    GET_CONFIG,
+                    ptr::null(),
+                    0,
+                    timeout_ms,
+                    ptr::null_mut(),
+                    0,
+                    &mut out
+                ),
+                MediusStatus::ErrTransferTimeoutRange,
+                "{timeout_ms} ms"
+            );
+        }
+        assert!(!(*mock).inner.saw(medius::FrameType::Transfer));
         medius_device_free(dev);
         medius_mock_free(mock);
     }
@@ -4525,27 +4638,34 @@ fn transfer_roundtrips_the_devices_answer() {
 
 #[test]
 fn a_refused_transfer_carries_no_data() {
-    // With the opt-in off the box replies REFUSED with no data, whatever a caller passes.
+    // With the opt-in off the box replies REFUSED in the setup stage, with no data.
     let mock = medius_mock_new();
     let mut dev: *mut MediusDevice = ptr::null_mut();
     assert_eq!(
         unsafe { medius_device_with_mock(mock, &mut dev) },
         MediusStatus::Ok
     );
-    let setup = MediusSetup {
-        request_type: 0x80,
-        request: 0x06,
-        value: 0x0100,
-        index: 0,
-        length: 18,
-    };
+    let mut reply = [0xEEu8; 64];
     let mut out: MediusTransferOutcome = unsafe { std::mem::zeroed() };
     assert_eq!(
-        unsafe { medius_device_transfer(dev, 0, setup, ptr::null(), 0, &mut out) },
+        unsafe {
+            medius_device_transfer(
+                dev,
+                0,
+                GET_CONFIG,
+                ptr::null(),
+                0,
+                reply.as_mut_ptr(),
+                reply.len(),
+                &mut out,
+            )
+        },
         MediusStatus::Ok
     );
     assert_eq!(out.status, MediusTransferStatus::Refused as u8);
+    assert_eq!(out.stage, MediusTransferStage::Setup as u8);
     assert_eq!(out.len, 0);
+    assert_eq!(reply, [0xEE; 64], "nothing written past the reply");
     unsafe {
         medius_device_free(dev);
         medius_mock_free(mock);

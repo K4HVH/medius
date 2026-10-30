@@ -22,9 +22,15 @@ impl Device {
         let serial = crate::transport::serial::SerialTransport::open(path)?;
         let device = Device::from_transport(Arc::new(serial));
         let version = device.handshake()?;
+        // The scan lists the port by its device name; `path` may be a link to it (/dev/serial/by-id). Without its
+        // serial, a reconnect has to probe every box and sim on the PC, which takes seconds.
+        let real = std::fs::canonicalize(path).ok();
         let port_serial = crate::transport::scan::find_medius()
             .into_iter()
-            .find(|p| Path::new(&p.path) == path)
+            .find(|p| {
+                Path::new(&p.path) == path
+                    || real.is_some() && std::fs::canonicalize(&p.path).ok() == real
+            })
             .and_then(|p| p.serial);
         device.link.set_identity(BoxIdentity {
             serial: port_serial,
