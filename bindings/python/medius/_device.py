@@ -538,17 +538,21 @@ class Device(Handle):
     def transfer(
         self, ep: int, setup: Setup, out: bytes = b"", timeout_ms: Optional[int] = None
     ) -> TransferOutcome:
-        """`TRANSFER` (§3.14): run one control transfer against the real device and return its
-        reply.
+        """`TRANSFER` (§3.14): run one control transfer against the real device and return what came
+        back.
 
-        `ep` is 0 for EP0, or a control endpoint the real device declares; `out` is the OUT data
-        stage (empty for IN). A non-OK `TransferOutcome.status` is a protocol outcome: it is
-        returned, not raised. The box replies `REFUSED` while the opt-in is off, and `NAK` while the
-        game PC has the clone suspended (the real device is suspended too). `timeout_ms` is the
-        reply wait (default `default_transfer_timeout_ms()`). The box gives up on a transfer after
-        ~800 ms, so a shorter wait can give up before a slow device replies.
+        `ep` is 0 for EP0, or a control endpoint the real device declares. `out` is the OUT data
+        stage: `setup.length` bytes for an OUT request, none for an IN one (`TransferDataError`),
+        at most `TRANSFER_OUT_MAX` (`FrameTooLongError`). A non-OK `TransferOutcome.status` is a
+        protocol outcome: it is returned, not raised. With the opt-in off the box replies
+        `REFUSED`. `timeout_ms` (1-65535, else `TransferTimeoutRangeError`) is how long the box
+        waits on the real device, the time the game PC holds the pipe included; the default is
+        `default_transfer_timeout_ms()`. The call waits up to `timeout_ms` plus 2 s for the reply
+        (`QueryTimeoutError` past that), and a reply that lost a chunk on the control link raises
+        `TransferReplyIncompleteError`.
         """
         buf, n = _bytes_buf(out, "out")
+        reply = (_native.u8 * _native.MEDIUS_MAX_TRANSFER_REPLY)()
         outcome = _native.MediusTransferOutcome()
         if timeout_ms is None:
             check(
@@ -558,6 +562,8 @@ class Device(Handle):
                     setup_to_c(setup),
                     buf,
                     n,
+                    reply,
+                    len(reply),
                     ctypes.byref(outcome),
                 )
             )
@@ -570,10 +576,12 @@ class Device(Handle):
                     buf,
                     n,
                     _u32(timeout_ms, "timeout_ms"),
+                    reply,
+                    len(reply),
                     ctypes.byref(outcome),
                 )
             )
-        return transfer_outcome_from_c(outcome)
+        return transfer_outcome_from_c(outcome, reply)
 
     def set_rewrite(self, rule: RewriteRule) -> None:
         """`REWRITE` (§3.14): add or overwrite one rewrite rule; needs the opt-in.

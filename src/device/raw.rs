@@ -3,15 +3,13 @@ use std::time::Duration;
 use crate::error::{Error, Result};
 use crate::protocol::FrameType;
 use crate::protocol::command::raw_payload;
-use crate::types::{Direction, Setup, TransferOutcome, TransferStatus};
+use crate::types::{Direction, Setup, TransferOutcome};
 
 use super::Device;
 
-/// How long a [`transfer`](Device::transfer) waits for the native reply before
-/// [`Error::QueryTimeout`](crate::Error::QueryTimeout). Longer than
-/// [`DEFAULT_QUERY_TIMEOUT`](crate::DEFAULT_QUERY_TIMEOUT), as a real device can be slower than a
-/// box-local query.
-pub const DEFAULT_TRANSFER_TIMEOUT: Duration = Duration::from_millis(1500);
+/// How long the box waits on the real device for a [`transfer`](Device::transfer), the time the
+/// game PC holds the pipe included.
+pub const DEFAULT_TRANSFER_TIMEOUT: Duration = Duration::from_millis(1000);
 
 impl Device {
     // The box drops an advanced-layer (§3.14) frame with no reply while the opt-in is off, so the
@@ -65,21 +63,27 @@ impl Device {
             .send(FrameType::Raw, &raw_payload(ep, direction, bytes))
     }
 
-    /// `TRANSFER` (§3.14): run one control transfer against the real device and return its reply.
+    /// `TRANSFER` (§3.14): run one control transfer against the real device and return what came
+    /// back.
     ///
     /// `ep` is 0 for EP0, or a control endpoint the real device declares. `setup` is the 8-byte
-    /// setup packet; `out` is the OUT data stage (empty for an IN transfer). The
-    /// [`TransferOutcome`] carries the [`status`](TransferOutcome::status) and the real device's
-    /// reply ([`data`](TransferOutcome::data)). A status other than [`Ok`](TransferStatus::Ok) is a
-    /// protocol result, not a link error, so it is returned, not raised; the outer `Ok` means the
-    /// box replied.
+    /// setup packet. `out` is the OUT data stage: `setup.length` bytes for an OUT request, none for
+    /// an IN one, else [`Error::TransferData`]; at most
+    /// [`TRANSFER_OUT_MAX`](crate::TRANSFER_OUT_MAX) (501) bytes, else [`Error::FrameTooLong`]. The
+    /// [`TransferOutcome`] carries the [`status`](TransferOutcome::status), the
+    /// [`stage`](TransferOutcome::stage) the transfer ended in, and the real device's reply
+    /// ([`data`](TransferOutcome::data)), whole at any length. A status other than
+    /// [`Ok`](crate::TransferStatus::Ok) is a protocol result, not a link error, so it is returned,
+    /// not raised; the outer `Ok` means the box replied.
+    ///
+    /// The box waits [`DEFAULT_TRANSFER_TIMEOUT`] on the real device;
+    /// [`transfer_timeout`](Device::transfer_timeout) sets another. The game PC's requests on the
+    /// same endpoint come first: one waiting holds the transfer back, and one arriving takes the
+    /// pipe from it ([`Busy`](crate::TransferStatus::Busy)). One transfer is outstanding at a time:
+    /// another sent while it waits is [`Refused`](crate::TransferStatus::Refused).
     ///
     /// Needs [`allow_imperfect_clones`](Device::allow_imperfect_clones): with the opt-in off the
-    /// box replies [`Refused`](TransferStatus::Refused) without reaching the real device. While the
-    /// game PC has the clone suspended, the real device is suspended too and the box replies
-    /// [`Nak`](TransferStatus::Nak). Transfers cross the inter-chip link one at a time, as a
-    /// request and reply separate from the game PC's EP0 proxy. Uses [`DEFAULT_TRANSFER_TIMEOUT`];
-    /// [`transfer_timeout`](Device::transfer_timeout) sets another.
+    /// box replies [`Refused`](crate::TransferStatus::Refused) without reaching the real device.
     ///
     /// ```no_run
     /// # use medius::{Device, Result, Setup, TransferStatus};
@@ -97,12 +101,13 @@ impl Device {
         self.transfer_timeout(ep, setup, out, DEFAULT_TRANSFER_TIMEOUT)
     }
 
-    /// [`transfer`](Device::transfer) with an explicit reply timeout.
+    /// [`transfer`](Device::transfer) with the box's wait on the real device set to `timeout`: 1 ms
+    /// to 65535 ms in whole milliseconds, else [`Error::TransferTimeoutRange`].
     ///
-    /// The box gives up on a control transfer after ~800 ms. A shorter `timeout` can abandon the
-    /// wait before a slow device replies. If 256 more transfers to the same `ep` then wrap the
-    /// sequence number within those ~800 ms, the late reply can be matched to a later transfer.
-    /// Keep `timeout` >=800 ms, as [`DEFAULT_TRANSFER_TIMEOUT`] is.
+    /// The call waits up to `timeout` plus 2 s for the reply's last chunk, then gives
+    /// [`Error::QueryTimeout`]; a reply that lost a chunk on the control link gives
+    /// [`Error::TransferReplyIncomplete`]. While it waits, the keepalive keeps held state from the
+    /// box's 1 s silence clear.
     pub fn transfer_timeout(
         &self,
         ep: u8,
@@ -110,10 +115,31 @@ impl Device {
         out: &[u8],
         timeout: Duration,
     ) -> Result<TransferOutcome> {
-        let (status, data) = self.link.transfer(ep, setup, out, timeout)?;
-        Ok(TransferOutcome {
-            status: TransferStatus::from_u8(status),
-            data,
+        let timeout_ms = transfer_timeout_ms(timeout)?;
+        validate_transfer_data(setup, out)?;
+        self.link.transfer(ep, timeout_ms, setup, out)
+    }
+}
+
+pub(crate) fn transfer_timeout_ms(timeout: Duration) -> Result<u16> {
+    match u16::try_from(timeout.as_millis()) {
+        Ok(ms) if ms > 0 => Ok(ms),
+        _ => Err(Error::TransferTimeoutRange { timeout }),
+    }
+}
+
+pub(crate) fn validate_transfer_data(setup: Setup, out: &[u8]) -> Result<()> {
+    let want = if setup.is_in() {
+        0
+    } else {
+        setup.length as usize
+    };
+    if out.len() == want {
+        Ok(())
+    } else {
+        Err(Error::TransferData {
+            want,
+            got: out.len(),
         })
     }
 }

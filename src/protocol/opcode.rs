@@ -12,13 +12,15 @@ pub const MAX_PAYLOAD: usize = 512;
 /// other version with [`Error::BadProtoVer`](crate::Error::BadProtoVer); update that box from
 /// <https://medius.k4tech.net/dashboard>.
 ///
-/// 9 (v3.4.2): `RESP(STATS)` grows from 17 to 31 bytes (a dropped-frame counter per inter-chip link
-/// direction, one for relay back-pressure, and the session counter); a `CONTROL` event's handshake
-/// moves to flags bits 0-1, beside the rule bit (b7). 8 (v3.4.1): reshaped `RESP(CLIP)` and
-/// `CLIP_TRIGGER`; an interrupt OUT packet on a vendor interface matches as `VendorInterrupt` (7
-/// matched it as `HidOut`). 7 (v3.4.0): the advanced control layer (`RAW`/`TRANSFER`/`REWRITE`/
-/// `PATCH`) and `u16` `HEALTH` flags.
-pub const PROTO_VER: u8 = 9;
+/// 10 (v3.5.0): `TRANSFER` carries how long the box waits on the real device; `TRANSFER_RESP` comes
+/// in chunks, names the stage the transfer ended in and adds `BUSY`, `SUSPENDED` and `ERROR`; a
+/// `CONTROL` event's NAK covers every control endpoint. 9 (v3.4.2): `RESP(STATS)` grows from 17 to
+/// 31 bytes (a dropped-frame counter per inter-chip link direction, one for relay back-pressure,
+/// and the session counter); a `CONTROL` event's handshake moves to flags bits 0-1, beside the rule
+/// bit (b7). 8 (v3.4.1): reshaped `RESP(CLIP)` and `CLIP_TRIGGER`; an interrupt OUT packet on a
+/// vendor interface matches as `VendorInterrupt` (7 matched it as `HidOut`). 7 (v3.4.0): the
+/// advanced control layer (`RAW`/`TRANSFER`/`REWRITE`/`PATCH`) and `u16` `HEALTH` flags.
+pub const PROTO_VER: u8 = 10;
 
 /// `INJECT` class byte: the momentary-usage field kind.
 pub const INJ_BTN: u8 = 0;
@@ -242,7 +244,7 @@ pub const CATCH_MAX_ENTRIES: usize = 32;
 pub const CATCH_CTRL_OK: u8 = 0x00;
 /// The PC got a STALL.
 pub const CATCH_CTRL_STALL: u8 = 0x01;
-/// NAKed until the PC gave up (endpoint 0 only).
+/// NAKed until the PC gave up.
 pub const CATCH_CTRL_NAK: u8 = 0x02;
 /// The bits of a `CATCH_CLS_CONTROL` event's flags that carry the handshake.
 pub const CATCH_CTRL_MASK: u8 = 0x03;
@@ -256,6 +258,28 @@ pub const CATCH_F_ZLP: u8 = 0x02;
 
 /// `RESP(CATCH).clk_rate_ppb` sentinel: no fitted drift rate. A fitted 0 means matched crystals.
 pub const CLK_RATE_NONE: i32 = i32::MIN;
+
+// `TRANSFER_RESP` `status` (§3.14), also a `CLIP_XFER` event's flags byte.
+pub const XFER_OK: u8 = 0x00;
+pub const XFER_BUSY: u8 = 0xF9;
+pub const XFER_SUSPENDED: u8 = 0xFA;
+pub const XFER_ERROR: u8 = 0xFB;
+pub const XFER_REFUSED: u8 = 0xFC;
+pub const XFER_STALL: u8 = 0xFD;
+pub const XFER_NO_ANSWER: u8 = 0xFE;
+pub const XFER_NO_DEVICE: u8 = 0xFF;
+// `TRANSFER_RESP` `stage`: where the transfer ended.
+pub const XFER_STAGE_SETUP: u8 = 0;
+pub const XFER_STAGE_DATA: u8 = 1;
+pub const XFER_STAGE_STATUS: u8 = 2;
+/// `TRANSFER_RESP` flags bit 0: the reply's last chunk, whose `status` and `stage` are the outcome.
+pub const XFER_LAST: u8 = 0x01;
+/// `TRANSFER` bytes ahead of the OUT data: `[ep][timeout_ms u16][setup 8]`.
+pub const XFER_REQ_HDR: usize = 11;
+/// `TRANSFER_RESP` bytes ahead of a chunk's data: `[ep][status][stage][flags][offset u16]`.
+pub const XFER_RESP_HDR: usize = 6;
+/// Most OUT data one `TRANSFER` carries: one frame less its header.
+pub const TRANSFER_OUT_MAX: usize = MAX_PAYLOAD - XFER_REQ_HDR;
 
 // `REWRITE` action byte (§3.14): what the top-ranked matching rule does to the packet. A report
 // class can `DROP`; only the control class may `ANSWER`/`STALL`/`NAK` or rewrite the native reply.
@@ -273,7 +297,7 @@ pub const RW_REPLACE: u8 = 3;
 pub const RW_ANSWER: u8 = 4;
 /// Control: protocol STALL.
 pub const RW_STALL: u8 = 5;
-/// Control: NAK on EP0 until the host times out; STALL on a control endpoint above 0.
+/// Control: NAK until the PC gives up.
 pub const RW_NAK: u8 = 6;
 /// Control IN: overwrite the native reply at `off`.
 pub const RW_REPLY_PATCH: u8 = 7;
@@ -455,7 +479,8 @@ pub enum FrameType {
     /// `TRANSFER`: one control transfer against the real device, replied to by `TransferResp`
     /// (PC→box, §3.14).
     Transfer = 0x1A,
-    /// `TRANSFER_RESP`: the native reply to a `TRANSFER`; `SEQ` echoes the request (box→PC, §3.14).
+    /// `TRANSFER_RESP`: one chunk of the reply to a `TRANSFER`; `SEQ` echoes the request (box→PC,
+    /// §3.14).
     TransferResp = 0x1B,
     /// `REWRITE`: add/overwrite/remove one on-box rewrite rule, fire-and-forget (PC→box, §3.14).
     Rewrite = 0x1C,

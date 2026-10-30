@@ -30,9 +30,10 @@ use crate::protocol::opcode::{
 use crate::protocol::opcode::{
     CLK_RATE_NONE, PATCH_APPLY, PATCH_CLEAR, PATCH_MAX_ENTRIES, Q_PATCH_ENTRY, Q_PATCHES,
     Q_REWRITE, Q_REWRITE_ENTRY, REWRITE_MATCH_MAX, REWRITE_MAX_ENTRIES, REWRITE_PAYLOAD_POOL,
+    XFER_LAST, XFER_REQ_HDR, XFER_RESP_HDR,
 };
 use crate::protocol::{DecodedFrame, FrameType, encode};
-use crate::types::{PatchSection, UpdateStatus};
+use crate::types::{PatchSection, TransferOutcome, TransferStage, TransferStatus, UpdateStatus};
 use sha2::{Digest, Sha256};
 
 use crate::transport::mock::MockTransport;
@@ -93,8 +94,8 @@ struct State {
     // (keyed rows in installation order, a full flag).
     transforms: Vec<MockTransform>,
     transform_full: bool,
-    // The canned reply to a TRANSFER (status, IN data). The box replies 0xFC with the opt-in off.
-    transfer_reply: (u8, Vec<u8>),
+    // The reply to a TRANSFER the box does not refuse.
+    transfer_reply: TransferOutcome,
     recorded: Vec<DecodedFrame>,
     respond: bool,
     refuse_activate: Option<u8>,
@@ -431,7 +432,11 @@ impl Default for State {
             patch_full: false,
             transforms: Vec::new(),
             transform_full: false,
-            transfer_reply: (0x00, Vec::new()),
+            transfer_reply: TransferOutcome {
+                status: TransferStatus::Ok,
+                stage: TransferStage::Status,
+                data: Vec::new(),
+            },
             recorded: Vec::new(),
             respond: true,
             refuse_activate: None,
@@ -471,6 +476,7 @@ const CATCH_MAXN: usize = 32; // CTRL_CATCH_MAXN
 const USAGE_EVENT_MAX: usize = 40; // CTRL_USAGE_EVENT_MAX
 const CLIP_HELD_MAX: usize = USAGE_EVENT_MAX; // CTRL_CLIP_HELD_MAX, defined as CTRL_USAGE_EVENT_MAX
 const TRAFFIC_DATA_MAX: usize = 180; // CTRL_TRAFFIC_DATA_MAX
+const XFER_CHUNK: usize = 448; // XFR_CHUNK
 const PATCH_POOL: usize = 1024; // PATCH_POOL, the bytes every stored patch shares
 // How long a booted device chip takes to clone the attached device again.
 const BOOT_CLONE_DELAY: std::time::Duration = std::time::Duration::from_millis(100);
@@ -1055,6 +1061,46 @@ impl State {
         if !imperfect.allowed {
             self.packet_triggers.drop_consuming();
         }
+    }
+
+    // A chunk a frame (§3.14); only the last carries the status and stage.
+    fn transfer_resp(&self, seq: u8, p: &[u8]) -> Vec<u8> {
+        if p.len() < XFER_REQ_HDR {
+            return Vec::new();
+        }
+        let timeout_ms = u16::from_le_bytes([p[1], p[2]]);
+        let setup_in = p[3] & 0x80 != 0;
+        let w_length = u16::from_le_bytes([p[9], p[10]]) as usize;
+        let short = !setup_in && p.len() - XFER_REQ_HDR < w_length;
+        let refused = TransferOutcome {
+            status: TransferStatus::Refused,
+            stage: TransferStage::Setup,
+            data: Vec::new(),
+        };
+        let reply = if !self.imperfect.allowed || timeout_ms == 0 || short {
+            &refused
+        } else {
+            &self.transfer_reply
+        };
+        let pieces: Vec<&[u8]> = reply.data.chunks(XFER_CHUNK).collect();
+        let n = pieces.len().max(1);
+        let mut out = Vec::new();
+        for i in 0..n {
+            let last = i + 1 == n;
+            let data = pieces.get(i).copied().unwrap_or(&[]);
+            let offset = ((i * XFER_CHUNK) as u16).to_le_bytes();
+            let mut c = Vec::with_capacity(XFER_RESP_HDR + data.len());
+            c.push(p[0]);
+            if last {
+                c.extend_from_slice(&[reply.status.as_u8(), reply.stage.as_u8(), XFER_LAST]);
+            } else {
+                c.extend_from_slice(&[0, 0, 0]);
+            }
+            c.extend_from_slice(&offset);
+            c.extend_from_slice(data);
+            out.extend(encode(FrameType::TransferResp, seq, &c).expect("chunk fits"));
+        }
+        out
     }
 
     // Modelled on transform_tab_set (§3.15). A transform is faithful, so it runs whatever the opt-in.
@@ -1993,23 +2039,7 @@ impl MockBox {
                     };
                 }
                 if ty == FrameType::Transfer && st.respond {
-                    // TRANSFER_RESP [ep][status][IN data], SEQ echoes. The box replies 0xFC
-                    // (refused) while the opt-in is off; otherwise the canned reply the test
-                    // scripted.
-                    let ep = payload.first().copied().unwrap_or(0);
-                    let (status, mut data) = if st.imperfect.allowed {
-                        st.transfer_reply.clone()
-                    } else {
-                        (0xFC, Vec::new())
-                    };
-                    // The box sets in_len = 0 unless status == 0 (usbdev_transfer): a non-OK reply
-                    // carries no IN data, so drop any the test scripted alongside a failing status.
-                    if status != 0 {
-                        data.clear();
-                    }
-                    let mut p = vec![ep, status];
-                    p.extend_from_slice(&data);
-                    break 'reply encode(FrameType::TransferResp, seq, &p).expect("resp fits");
+                    break 'reply st.transfer_resp(seq, payload);
                 }
                 if ty == FrameType::Query && st.respond {
                     match payload.first().copied() {
@@ -2296,19 +2326,19 @@ impl MockBox {
         self
     }
 
-    /// Canned `(status, IN data)` reply to a `TRANSFER` while the opt-in is on (builder style). With
-    /// the opt-in off the mock replies `0xFC` (refused).
-    pub fn with_transfer_reply(self, status: u8, data: &[u8]) -> Self {
-        {
-            let mut st = self.state.lock();
-            st.transfer_reply = (status, data.to_vec());
-        }
+    /// What a `TRANSFER` brings back (builder style), a chunk a frame as the box sends it. The mock
+    /// refuses a `TRANSFER` as the box does: with the opt-in off, a zero timeout, or OUT data
+    /// shorter than `wLength`.
+    #[must_use]
+    pub fn with_transfer_reply(self, reply: TransferOutcome) -> Self {
+        self.state.lock().transfer_reply = reply;
         self
     }
 
-    /// Set the canned `TRANSFER` reply after construction.
-    pub fn set_transfer_reply(&self, status: u8, data: &[u8]) {
-        self.state.lock().transfer_reply = (status, data.to_vec());
+    /// Set what a `TRANSFER` brings back after construction; see
+    /// [`with_transfer_reply`](Self::with_transfer_reply).
+    pub fn set_transfer_reply(&self, reply: TransferOutcome) {
+        self.state.lock().transfer_reply = reply;
     }
 
     /// Update the configured movement-riding window in place; `None` = off.

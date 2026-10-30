@@ -23,7 +23,7 @@ mod linux {
         ClipBuilder, ClipFrame, ClipPacketTrigger, ClipState, ClipTrigger, Device, Direction, Edge,
         EmitPace, Input, Key, LedMode, LedTarget, MediaKey, Patch, PatchSection, RebootTarget,
         RenderMode, RewriteAction, RewriteClass, RewriteRule, Setup, Timeline, TrafficClass,
-        TransferStatus, Transform, TransformOp,
+        TransferStage, TransferStatus, Transform, TransformOp,
     };
     use medius::{BEARING_WINDOW_DEFAULT, PROTO_VER};
 
@@ -1984,19 +1984,43 @@ mod linux {
         // descriptor patches.
         {
             let dev = device.as_ref().unwrap();
+            let get_device = Setup::new(0x80, 0x06, 0x0100, 0x0000, 18);
+            let _ = dev.allow_imperfect_clones(false);
+            let refused = dev.transfer(0, get_device, &[]);
             let opt = dev.allow_imperfect_clones(true);
 
-            // TRANSFER: read the real device's 18-byte device descriptor over EP0.
-            let t = dev.transfer(0, Setup::new(0x80, 0x06, 0x0100, 0x0000, 18), &[]);
-            let transfer_ok = matches!(&t, Ok(o)
-                if o.status == TransferStatus::Ok && o.data().len() >= 2 && o.data()[1] == 0x01);
+            // TRANSFER: the 18-byte device descriptor; the whole configuration descriptor, asked
+            // with wLength 0xFFFF, in as many chunks as it takes; and the device descriptor again
+            // under a 10 s box-side wait. With the opt-in off the box refuses before the real
+            // device.
+            let shape = |r: &medius::Result<medius::TransferOutcome>| {
+                r.as_ref()
+                    .map(|o| (o.status, o.stage, o.data().len()))
+                    .map_err(|e| e.to_string())
+            };
+            let t = dev.transfer(0, get_device, &[]);
+            let device_ok = matches!(&t, Ok(o)
+                if o.is_ok() && o.stage == TransferStage::Status
+                    && o.data().len() == 18 && o.data()[1] == 0x01);
+            let c = dev.transfer(0, Setup::new(0x80, 0x06, 0x0200, 0x0000, 0xFFFF), &[]);
+            let config_ok = matches!(&c, Ok(o)
+                if o.is_ok() && o.data().len() >= 4 && o.data()[1] == 0x02
+                    && o.data().len() == u16::from_le_bytes([o.data()[2], o.data()[3]]) as usize);
+            let long = dev.transfer_timeout(0, get_device, &[], Duration::from_secs(10));
+            let long_ok = matches!(&long, Ok(o) if o.is_ok() && o.data().len() == 18);
+            let refused_ok = matches!(&refused, Ok(o)
+                if o.status == TransferStatus::Refused && o.stage == TransferStage::Setup
+                    && o.data().is_empty());
             check(
                 "advanced control: transfer",
-                opt.is_ok() && transfer_ok,
+                opt.is_ok() && device_ok && config_ok && long_ok && refused_ok,
                 format!(
-                    "EP0 GET_DESCRIPTOR(Device) -> {:?} ({} B)",
-                    t.as_ref().map(|o| o.status),
-                    t.as_ref().map(|o| o.data().len()).unwrap_or(0)
+                    "device descriptor -> {:?}, configuration descriptor (wLength 0xFFFF) -> {:?}, \
+                     10 s wait -> {:?}, opt-in off -> {:?}",
+                    shape(&t),
+                    shape(&c),
+                    shape(&long),
+                    shape(&refused)
                 ),
             );
 
@@ -2083,7 +2107,6 @@ mod linux {
             );
 
             // Clip entries on this layer: a raw report and a control transfer on the clip's timeline.
-            let get_device = Setup::new(0x80, 0x06, 0x0100, 0x0000, 18);
             let mut adv = ClipBuilder::new();
             adv.gap(2).frame(
                 ClipFrame::new()
@@ -2368,6 +2391,11 @@ mod linux {
                 adev.lock(Button::LEFT, Direction::Against),
                 Err(medius::Error::RelativeDirection { .. })
             );
+            let _ = adev.allow_imperfect_clones(true);
+            let atransfer = block_on(adev.transfer(0, Setup::new(0x80, 0x06, 0x0100, 0, 18), &[]));
+            let atr_ok = matches!(&atransfer, Ok(o)
+                if o.is_ok() && o.stage == TransferStage::Status && o.data().len() == 18);
+            let _ = adev.allow_imperfect_clones(false);
             let _ = adev.set_bearing(Some(BEARING_WINDOW_DEFAULT), BearingMode::PerAxis);
             let _ = adev.reset();
             reset_motion(&acc);
@@ -2389,10 +2417,11 @@ mod linux {
                     && ascale_ok
                     && abear_ok
                     && arel_ok
+                    && atr_ok
                     && amoved == 12
                     && arecon_ok,
                 format!(
-                    "AsyncDevice: version_ok={av_ok}, health_ok={ah_ok}, option_queries_ok={aopt_ok}, name_ok={aname_ok}, scale_ok={ascale_ok}, bearing_ok={abear_ok}, relative_refused={arel_ok}, reconnect_ok={arecon_ok}, async_logs_drained={alog_n}, async move REL_X={amoved}"
+                    "AsyncDevice: version_ok={av_ok}, health_ok={ah_ok}, option_queries_ok={aopt_ok}, name_ok={aname_ok}, scale_ok={ascale_ok}, bearing_ok={abear_ok}, relative_refused={arel_ok}, transfer_ok={atr_ok}, reconnect_ok={arecon_ok}, async_logs_drained={alog_n}, async move REL_X={amoved}"
                 ),
             );
         }

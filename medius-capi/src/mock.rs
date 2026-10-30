@@ -166,12 +166,15 @@ pub unsafe extern "C" fn medius_mock_set_imperfect_status(
     });
 }
 
-/// Set the canned `(status, IN data)` reply to a `TRANSFER` while the opt-in is on; with it off the
-/// mock replies `REFUSED`. A non-OK status carries no data, as on the box.
+/// Set what a `TRANSFER` brings back: a `MEDIUS_TRANSFER_STATUS_*` status, a
+/// `MEDIUS_TRANSFER_STAGE_*` stage and the reply `data[0..len]`, sent in chunks as the box sends
+/// them. The mock refuses a `TRANSFER` as the box does: with the opt-in off, a zero timeout, or OUT
+/// data shorter than `wLength`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_mock_set_transfer_reply(
     mock: *mut MediusMockBox,
     status: u8,
+    stage: u8,
     data: *const u8,
     len: usize,
 ) {
@@ -181,7 +184,11 @@ pub unsafe extern "C" fn medius_mock_set_transfer_reply(
         } else {
             unsafe { std::slice::from_raw_parts(data, len) }
         };
-        m.set_transfer_reply(status, slice);
+        m.set_transfer_reply(medius::TransferOutcome {
+            status: medius::TransferStatus::from_u8(status),
+            stage: medius::TransferStage::from_u8(stage),
+            data: slice.to_vec(),
+        });
     });
 }
 

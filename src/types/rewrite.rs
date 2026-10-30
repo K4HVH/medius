@@ -34,8 +34,10 @@ pub enum RewriteClass {
     /// Bulk traffic on a vendor interface; `id` is the endpoint number, `direction`
     /// [`IN`](crate::Direction::IN) or [`OUT`](crate::Direction::OUT).
     VendorBulk = CATCH_CLS_VEND_BULK,
-    /// Proxied control transfer; `id` is the endpoint number (0 = EP0). On EP0 only class and vendor
-    /// requests reach a rule (change descriptors with `PATCH`); above EP0 every request does.
+    /// Proxied control transfer; `id` is the endpoint number (0 = EP0). On EP0, class and vendor
+    /// requests reach a rule, as do the standard requests the clone relays to the real device; the
+    /// clone serves the rest itself (change descriptors with `PATCH`). Above EP0 every request
+    /// does.
     Control = CATCH_CLS_CONTROL,
     /// Emitted bytes, after the renderer; `id` is the endpoint number, `direction`
     /// [`IN`](crate::Direction::IN). Matches injected and rendered frames as well as relayed ones.
@@ -100,7 +102,7 @@ pub enum RewriteAction {
     Answer = RW_ANSWER,
     /// Control: protocol STALL.
     Stall = RW_STALL,
-    /// Control: NAK on EP0 until the host times out; STALL on a control endpoint above 0.
+    /// Control: NAK until the PC gives up.
     Nak = RW_NAK,
     /// Control IN: overwrite the native reply at `offset`.
     ReplyPatch = RW_REPLY_PATCH,

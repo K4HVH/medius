@@ -42,11 +42,15 @@ const _: () = {
     assert!(MEDIUS_MAX_REWRITE_MATCH == medius::REWRITE_MATCH_MAX);
     assert!(MEDIUS_REWRITE_PAYLOAD_POOL == medius::REWRITE_PAYLOAD_POOL);
     assert!(MEDIUS_MAX_DEV_PAYLOAD == medius::MAX_PAYLOAD);
+    assert!(MEDIUS_MAX_TRANSFER_OUT == medius::TRANSFER_OUT_MAX);
 };
 /// Largest byte payload one control-link frame carries (`MAX_PAYLOAD`): the bound on a
-/// `medius_device_raw` write, a rewrite payload, a descriptor patch and a control transfer's data
-/// stage.
+/// `medius_device_raw` write, a rewrite payload and a descriptor patch.
 pub const MEDIUS_MAX_DEV_PAYLOAD: usize = 512;
+/// Most OUT data one `medius_device_transfer` carries: one frame less its header.
+pub const MEDIUS_MAX_TRANSFER_OUT: usize = 501;
+/// Longest reply a control transfer brings back: wLength 65535 rounded up to whole 64-byte packets.
+pub const MEDIUS_MAX_TRANSFER_REPLY: usize = 65536;
 
 /// CATCH classes (`MediusCatchFilter::class`). 0-3 are the `LOCK` and `INJECT` classes; 4-11 are
 /// byte-oriented traffic.
@@ -62,8 +66,8 @@ pub const MEDIUS_CATCH_CLASS_HID_OUT: u8 = 5;
 pub const MEDIUS_CATCH_CLASS_VENDOR_INTERRUPT: u8 = 6;
 /// Vendor-interface bulk traffic, keyed by endpoint number and direction.
 pub const MEDIUS_CATCH_CLASS_VENDOR_BULK: u8 = 7;
-/// A control transaction the game PC received, keyed by endpoint number (0 = EP0); on EP0, class
-/// and vendor requests only.
+/// A control transaction the game PC received, keyed by endpoint number (0 = EP0); on EP0, the
+/// requests relayed to the real device, not the ones the clone serves itself.
 pub const MEDIUS_CATCH_CLASS_CONTROL: u8 = 8;
 /// Bytes the clone emitted, keyed by endpoint number, direction IN.
 pub const MEDIUS_CATCH_CLASS_EMIT: u8 = 9;
@@ -765,11 +769,38 @@ pub enum MediusPatchSection {
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MediusTransferStatus {
+    /// Completed.
     Ok = 0x00,
+    /// The game PC's transfer held the pipe until the timeout and nothing was sent (stage
+    /// `SETUP`); or the game PC's next request on that endpoint, or a bus event it caused, took the
+    /// pipe in the stage named.
+    Busy = 0xF9,
+    /// The game PC has suspended the clone, and with it the real device: nothing was sent.
+    Suspended = 0xFA,
+    /// The real device's packets were corrupt past three tries, or ran past the buffer the host
+    /// asked for.
+    Error = 0xFB,
+    /// Never sent: the opt-in is off, `ep` is a control endpoint the real device does not declare,
+    /// or another transfer is outstanding.
     Refused = 0xFC,
+    /// The real device STALLed, in the stage named.
     Stall = 0xFD,
-    Nak = 0xFE,
+    /// The real device NAKed until the timeout, in the stage named; or the host chip's reply was
+    /// lost on the inter-chip link.
+    NoAnswer = 0xFE,
+    /// No device attached.
     NoDevice = 0xFF,
+}
+
+/// Where a control transfer ended (§3.14): the `stage` byte of a `MediusTransferOutcome`. An
+/// unnamed byte is a stage this build does not know, carried through verbatim.
+#[repr(u8)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MediusTransferStage {
+    Setup = 0,
+    Data = 1,
+    /// Where a completed transfer ends.
+    Status = 2,
 }
 
 /// A USB setup packet: the eight `<BBHHH>` little-endian bytes of `bmRequestType`, `bRequest`,
@@ -785,20 +816,23 @@ pub struct MediusSetup {
     pub length: u16,
 }
 
-/// The real device's reply to `medius_device_transfer`: status, and its reply in `data[0..len]`: an IN
-/// transfer's data stage, whole even past wLength; for an OUT transfer or one with wLength 0, what it
-/// sent where the status stage was due (at most 64 bytes, usually none). A non-OK `status` is a
-/// protocol outcome, not a link error, and carries no data.
+/// How `medius_device_transfer` ended. The reply goes to the caller's buffer: the IN data stage as
+/// the box received it, partial data before a STALL included, and past wLength where the real
+/// device sent more than was asked for in the packets a host asks for; for an OUT transfer or one
+/// with wLength 0, what the real device sent where the status stage was due (at most one packet,
+/// usually none). It is meaningful on any status. A non-OK `status` is a protocol outcome, not a
+/// link error.
 #[repr(C)]
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MediusTransferOutcome {
     /// One of `MEDIUS_TRANSFER_STATUS_*`, or an unknown status carried through. A byte, not
     /// `MediusTransferStatus`, so it can carry unnamed values; C++ (`enum : uint8_t`) needs a cast
     /// to compare it to one.
     pub status: u8,
-    /// Valid bytes in `data`.
-    pub len: u16,
-    pub data: [u8; MEDIUS_MAX_DEV_PAYLOAD],
+    /// One of `MEDIUS_TRANSFER_STAGE_*`, or an unknown stage carried through, as `status` is.
+    pub stage: u8,
+    /// The reply's length. Bytes past the buffer's capacity were not written.
+    pub len: usize,
 }
 
 /// A rewrite rule (§3.14), keyed by `(class, id, direction, match, mask)`.
@@ -1276,10 +1310,11 @@ pub struct MediusTrafficEvent {
 pub enum MediusControlStatus {
     /// The transaction completed.
     Ok = 0,
-    /// A STALL from the real device or from a rule refusing the request; above endpoint 0, also
-    /// for a failed request.
+    /// The real device STALLed, or a `Stall` rule refused the request.
     Stalled = 1,
-    /// NAKed until the PC gave up, on endpoint 0 only.
+    /// NAKed until the PC gave up: the real device left the request unanswered or it failed on the
+    /// real device's bus, a `Nak` rule matched it, or the PC gave up before the real device
+    /// finished. The last is raised when the PC's next SETUP on that endpoint replaces the request.
     Naked = 2,
     /// A handshake value this build does not know; `MediusTrafficEvent::flags` bits 0-1 hold it.
     Other = 3,
