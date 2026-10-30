@@ -1457,7 +1457,8 @@ typedef struct MediusRate {
 // `medius_device_reset`.
 typedef struct MediusStats {
     uint32_t inject_emits;
-    // Reports the clone's TX queue could not hold, never emitted to the game PC. Should stay 0.
+    // Input reports never emitted to the game PC: one the clone's TX queue could not hold, or one the
+    // host chip's forwarder or link could not take. Should stay 0.
     uint16_t tx_drops;
     uint16_t tx_merges;
     uint8_t tx_maxdepth;
@@ -1473,7 +1474,8 @@ typedef struct MediusStats {
     // Relayed traffic and commands that went no further. Counted apart from `tx_drops` because no
     // native input goes missing with it. Each of these counts:
     //
-    // - a vendor IN packet that found its endpoint's queue full of the control PC's RAW packets
+    // - a vendor IN packet the host chip's link would not carry, or that found its endpoint's queue
+    //   full of the control PC's RAW packets
     // - a native zero-length packet answering a poll the PC did not make (the one poll the box
     //   runs ahead of a suspended PC)
     // - an OUT packet the box could not queue, that failed 3 times on the real device's bus, or
