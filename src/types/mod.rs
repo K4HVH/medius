@@ -72,7 +72,7 @@ pub use rewrite::{
 };
 pub use spread::SpreadStatus;
 pub use stats::Stats;
-pub use transfer::{Setup, TransferOutcome, TransferStatus};
+pub use transfer::{Setup, TransferOutcome, TransferStage, TransferStatus};
 pub use transform::{Transform, TransformKey, TransformOp, Transforms};
 pub use update::{
     ChipFirmware, FirmwareInfo, ImageState, UpdateProgress, UpdateStatus, UpdateTarget,

@@ -422,8 +422,9 @@ pub unsafe extern "C" fn medius_traffic_event_setup(event: *const MediusTrafficE
     })
 }
 
-/// The data stage of a CONTROL or CLIP_TRANSFER event, the whole packet for any other class; its
-/// length goes to `*out_len`. Points into `event`. Mirrors `medius::TrafficEvent::data`.
+/// The data stage of a CONTROL event, the reply of a CLIP_TRANSFER one (empty on an OUT request
+/// with a data stage), the whole packet for any other class; its length goes to `*out_len`. Points
+/// into `event`. Mirrors `medius::TrafficEvent::data`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_traffic_event_data(
     event: *const MediusTrafficEvent,
@@ -479,9 +480,9 @@ pub unsafe extern "C" fn medius_traffic_event_control_status(
 }
 
 /// How the transfer ended, written to `*out` as a `MEDIUS_TRANSFER_STATUS_*` value; false for any
-/// class but CLIP_TRANSFER. `MEDIUS_TRANSFER_STATUS_NAK` when no reply came; an unnamed byte is
-/// carried through. A null `out` is skipped and the return value still holds. Mirrors
-/// `medius::TrafficEvent::transfer_status`.
+/// class but CLIP_TRANSFER. `MEDIUS_TRANSFER_STATUS_NO_ANSWER` when no answer came in 4 s; an
+/// unnamed byte is carried through. A null `out` is skipped and the return value still holds.
+/// Mirrors `medius::TrafficEvent::transfer_status`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_traffic_event_transfer_status(
     event: *const MediusTrafficEvent,

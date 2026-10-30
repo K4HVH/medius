@@ -56,10 +56,12 @@ class Status(IntEnum):
     ERR_RAW_DIRECTION = 29
     ERR_CLIP_FRAME_COUNT = 30
     ERR_CLIP_FRAME_TOO_LONG = 31
-    ERR_CLIP_TRANSFER_DATA = 32
+    ERR_TRANSFER_DATA = 32
     ERR_CLIP_PACKET_TRIGGER = 33
     ERR_REWRITE_MATCH_TOO_LONG = 34
     ERR_REWRITE_POOL_FULL = 35
+    ERR_TRANSFER_TIMEOUT_RANGE = 36
+    ERR_TRANSFER_REPLY_INCOMPLETE = 37
 
 
 class DeviceKind(IntEnum):
@@ -121,6 +123,8 @@ CLIP_PKT_TRIG_MAX = 8
 CLIP_PKT_MATCH_POOL = 112
 #: Most match bytes one packet trigger compares.
 PKT_MATCH_MAX = 16
+#: Most OUT data one `Device.transfer` carries: one frame less its header.
+TRANSFER_OUT_MAX = 501
 
 
 class Edge(IntEnum):
@@ -331,9 +335,11 @@ class ClockDomain(IntEnum):
 
 
 class ControlStatus(IntEnum):
-    """The handshake the game PC received for a control transaction. `STALLED` covers a STALL from
-    the real device, a request a rule refused, and above endpoint 0 a request that failed; `NAKED`
-    is endpoint 0 only."""
+    """The handshake the game PC received for a control transaction. `STALLED`: the real device
+    STALLed, or a `STALL` rule refused the request. `NAKED`: NAKed until the PC gave up, because the
+    real device left the request unanswered or it failed on the real device's bus, a `NAK` rule
+    matched it, or the PC gave up before the real device finished (raised when the PC's next SETUP
+    on that endpoint replaces the request)."""
 
     OK = 0
     STALLED = 1
@@ -395,15 +401,40 @@ class TransferStatus(IntEnum):
     build does not know, kept as its integer value without raising.
     """
 
+    #: Completed.
     OK = 0x00
+    #: The game PC's transfer held the pipe until the timeout and nothing was sent (stage
+    #: `SETUP`); or the game PC's next request on that endpoint, or a bus event it caused, took the
+    #: pipe in the stage named.
+    BUSY = 0xF9
+    #: The game PC has suspended the clone, and with it the real device: nothing was sent.
+    SUSPENDED = 0xFA
+    #: The real device's packets were corrupt past three tries, or ran past the buffer the host
+    #: asked for.
+    ERROR = 0xFB
+    #: Never sent: the opt-in is off, `ep` is a control endpoint the real device does not declare,
+    #: or another transfer is outstanding.
     REFUSED = 0xFC
+    #: The real device STALLed, in the stage named.
     STALL = 0xFD
-    NAK = 0xFE
+    #: The real device NAKed until the timeout, in the stage named; or the host chip's reply was
+    #: lost on the inter-chip link.
+    NO_ANSWER = 0xFE
+    #: No device attached.
     NO_DEVICE = 0xFF
 
     @property
     def is_ok(self) -> bool:
         return self == TransferStatus.OK
+
+
+class TransferStage(IntEnum):
+    """Where a control transfer ended (§3.14). An unnamed wire byte is kept as its integer value."""
+
+    SETUP = 0
+    DATA = 1
+    #: Where a completed transfer ends.
+    STATUS = 2
 
 
 class TransformOp(IntEnum):

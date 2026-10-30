@@ -44,7 +44,6 @@ from medius import (
     ClipSettings,
     ClipState,
     ClipStatus,
-    ClipTransferDataError,
     ClipTrigger,
     ClockDomain,
     ClockEstimate,
@@ -62,6 +61,7 @@ from medius import (
     Usage,
     Device,
     EmitPace,
+    FrameTooLongError,
     FrameType,
     Health,
     ImperfectStatus,
@@ -103,8 +103,11 @@ from medius import (
     RewriteAction,
     RewriteMatchTooLongError,
     Setup,
+    TransferDataError,
     TransferOutcome,
+    TransferStage,
     TransferStatus,
+    TransferTimeoutRangeError,
     Transform,
     Transforms,
     TransformOp,
@@ -125,8 +128,8 @@ def test_mock_feature_present():
 
 def test_meta_functions():
     # The ctypes structs hand-mirror the C header, so a bumped ABI leaves them stale: pin it.
-    assert medius.abi_version() == 10
-    assert medius._native.ABI_VERSION == 10
+    assert medius.abi_version() == 11
+    assert medius._native.ABI_VERSION == 11
     assert medius.version_string()
     assert medius.default_query_timeout_ms() > 0
     assert medius.default_keepalive_cadence_ms() > 0
@@ -1007,7 +1010,7 @@ def test_clip_transfer_event_accessors():
     assert stalled.rule_acted() is False
     assert stalled.data() == b""
     unanswered = TrafficEvent(CatchClass.CLIP_TRANSFER, 0, Direction.IN, 0xFE, 8, setup)
-    assert unanswered.transfer_status() == TransferStatus.NAK
+    assert unanswered.transfer_status() == TransferStatus.NO_ANSWER
     # A status no member names is kept as its byte.
     unknown = TrafficEvent(CatchClass.CLIP_TRANSFER, 0, Direction.IN, 0x42, 8, setup)
     assert unknown.transfer_status() == 0x42
@@ -1321,7 +1324,9 @@ def test_a_byte_argument_that_is_not_bytes_is_refused(bad):
                 lambda: mock.set_clip_settings(ClipSettings(packet_triggers=[ClipPacketTrigger(*_HELD[:4], match_bytes=bad)])),
                 lambda: mock.clip_packet(TrafficClass.HID_IN, 2, Direction.IN, bad),
                 lambda: d.set_patch(Patch(PatchSection.DEVICE, 0, 0, 0, bad)),
-                lambda: mock.set_transfer_reply(TransferStatus.OK, bad),
+                lambda: mock.set_transfer_reply(
+                    TransferOutcome(TransferStatus.OK, TransferStage.STATUS, bad)
+                ),
                 lambda: mock.push_traffic(0, 0, ClockDomain.DEVICE_CHIP, TrafficEvent(CatchClass.HID_IN, 1, Direction.IN, 0, 3, bad)),
             ]
             for i, call in enumerate(calls):
@@ -1358,8 +1363,8 @@ def test_a_refused_clip_frame_raises_its_own_exception_and_sends_nothing():
         (ClipFrameCountError, dict(edges=[(left, Action.PRESS)] * (CLIP_EDGES_MAX + 1))),
         (ClipFrameCountError, dict(raw=[(1, Direction.OUT, b"\x00")] * (CLIP_RAW_MAX + 1))),
         (ClipFrameTooLongError, dict(raw=[(1, Direction.OUT, bytes(CLIP_ENTRY_MAX))])),
-        (ClipTransferDataError, dict(transfers=[(0, set_report, b"\x04")])),
-        (ClipTransferDataError, dict(transfers=[(0, Setup(0xA1, 0x01, 0x0300, 0, 8), b"\x04")])),
+        (TransferDataError, dict(transfers=[(0, set_report, b"\x04")])),
+        (TransferDataError, dict(transfers=[(0, Setup(0xA1, 0x01, 0x0300, 0, 8), b"\x04")])),
         (RawDirectionError, dict(raw=[(1, Direction.BOTH, b"\x00")])),
         (RelativeDirectionError, dict(raw=[(1, Direction.WITH, b"\x00")])),
     ]
@@ -2350,45 +2355,68 @@ def test_transfer_roundtrips_the_answer():
     reply = bytes([0x12, 0x01, 0x10, 0x02])
     with MockBox() as mock:
         mock.set_imperfect_status(_allowed())
-        mock.set_transfer_reply(TransferStatus.OK, reply)
+        mock.set_transfer_reply(TransferOutcome(TransferStatus.OK, TransferStage.STATUS, reply))
         with Device.with_mock(mock) as d:
             out = d.transfer(0, Setup(0x80, 0x06, 0x0100, 0, 18))
     assert isinstance(out, TransferOutcome)
     assert out.status == TransferStatus.OK
+    assert out.stage == TransferStage.STATUS
     assert out.is_ok
     assert out.data == reply
 
 
-def test_transfer_takes_its_own_reply_wait():
-    reply = bytes([0x12, 0x01])
+def test_a_long_reply_and_the_data_before_a_stall_reach_python():
+    reply = bytes((i * 7) & 0xFF for i in range(1000))
     with MockBox() as mock:
         mock.set_imperfect_status(_allowed())
-        mock.set_transfer_reply(TransferStatus.OK, reply)
+        mock.set_transfer_reply(TransferOutcome(TransferStatus.STALL, TransferStage.DATA, reply))
         with Device.with_mock(mock) as d:
-            out = d.transfer(
-                0, Setup(0x80, 0x06, 0x0100, 0, 2), timeout_ms=medius.default_transfer_timeout_ms()
-            )
-    assert out.status == TransferStatus.OK
+            out = d.transfer(0, Setup(0x80, 0x06, 0x0200, 0, 0xFFFF))
+    assert out.status == TransferStatus.STALL
+    assert out.stage == TransferStage.DATA
     assert out.data == reply
-    assert medius.default_transfer_timeout_ms() >= 800
+
+
+def test_an_unnamed_status_and_stage_arrive_as_bytes():
+    with MockBox() as mock:
+        mock.set_imperfect_status(_allowed())
+        mock.set_transfer_reply(TransferOutcome(0x42, 7, b""))
+        with Device.with_mock(mock) as d:
+            out = d.transfer(0, Setup(0x80, 0x06, 0x0100, 0, 18))
+    assert (out.status, out.stage) == (0x42, 7)
+    assert not isinstance(out.status, TransferStatus)
+
+
+def test_transfer_sends_its_timeout_and_refuses_what_the_box_would():
+    assert medius.default_transfer_timeout_ms() == 1000
+    get = Setup(0x80, 0x06, 0x0100, 0, 18)
+    with MockBox() as mock:
+        mock.set_imperfect_status(_allowed())
+        with Device.with_mock(mock) as d:
+            d.transfer(0, get)
+            d.transfer(0, get, timeout_ms=40_000)
+            with pytest.raises(TransferTimeoutRangeError):
+                d.transfer(0, get, timeout_ms=0)
+            with pytest.raises(TransferTimeoutRangeError):
+                d.transfer(0, get, timeout_ms=65_536)
+            with pytest.raises(TransferDataError):
+                d.transfer(0, Setup(0x21, 0x09, 0x0200, 0, 2), b"\x01")
+            with pytest.raises(FrameTooLongError):
+                d.transfer(0, Setup(0x21, 0x09, 0x0200, 0, 502), bytes(502))
+        timeouts = [
+            int.from_bytes(bytes(f.payload[1:3]), "little")
+            for f in (mock.recorded_frame(i) for i in range(mock.recorded()))
+            if f.type == FrameType.TRANSFER
+        ]
+    assert timeouts == [1000, 40_000]
 
 
 def test_transfer_is_refused_without_the_opt_in():
     with MockBox() as mock, Device.with_mock(mock) as d:
         out = d.transfer(0, Setup(0x80, 0x06, 0x0100, 0, 18))
     assert out.status == TransferStatus.REFUSED
+    assert out.stage == TransferStage.SETUP
     assert not out.is_ok
-    assert out.data == b""
-
-
-def test_a_non_ok_transfer_carries_no_data():
-    # The box zeroes the IN length unless the status is OK, so a stall scripted with bytes drops them.
-    with MockBox() as mock:
-        mock.set_imperfect_status(_allowed())
-        mock.set_transfer_reply(TransferStatus.STALL, b"\x12\x01\x00\x02")
-        with Device.with_mock(mock) as d:
-            out = d.transfer(0, Setup(0x80, 0x06, 0x0100, 0, 18))
-    assert out.status == TransferStatus.STALL
     assert out.data == b""
 
 

@@ -10,7 +10,7 @@ from pathlib import Path
 
 # The header's MEDIUS_ABI_VERSION these mirrors follow; the tests hold it to the header, and import
 # refuses a library whose medius_abi_version() reports another number.
-ABI_VERSION = 10
+ABI_VERSION = 11
 
 MEDIUS_MAX_USAGES = 256
 MEDIUS_CLIP_TRIG_MAX = 8
@@ -29,6 +29,8 @@ MEDIUS_MAX_TRANSFORM_ENTRIES = 32
 MEDIUS_MAX_REWRITE_MATCH = 16
 MEDIUS_MAX_PKT_MATCH = 16
 MEDIUS_MAX_DEV_PAYLOAD = 512
+MEDIUS_MAX_TRANSFER_OUT = 501
+MEDIUS_MAX_TRANSFER_REPLY = 65536
 
 # CATCH wildcard sentinels.
 MEDIUS_CATCH_CLASS_ANY = 0xFF
@@ -292,8 +294,8 @@ class MediusSetup(ctypes.Structure):
 class MediusTransferOutcome(ctypes.Structure):
     _fields_ = [
         ("status", u8),
-        ("len", u16),
-        ("data", u8 * MEDIUS_MAX_DEV_PAYLOAD),
+        ("stage", u8),
+        ("len", usize),
     ]
 
 
@@ -640,12 +642,31 @@ _decl("medius_device_raw", i32, [HANDLE, u8, u8, ctypes.POINTER(u8), usize])
 _decl(
     "medius_device_transfer",
     i32,
-    [HANDLE, u8, MediusSetup, ctypes.POINTER(u8), usize, ctypes.POINTER(MediusTransferOutcome)],
+    [
+        HANDLE,
+        u8,
+        MediusSetup,
+        ctypes.POINTER(u8),
+        usize,
+        ctypes.POINTER(u8),
+        usize,
+        ctypes.POINTER(MediusTransferOutcome),
+    ],
 )
 _decl(
     "medius_device_transfer_timeout",
     i32,
-    [HANDLE, u8, MediusSetup, ctypes.POINTER(u8), usize, u32, ctypes.POINTER(MediusTransferOutcome)],
+    [
+        HANDLE,
+        u8,
+        MediusSetup,
+        ctypes.POINTER(u8),
+        usize,
+        u32,
+        ctypes.POINTER(u8),
+        usize,
+        ctypes.POINTER(MediusTransferOutcome),
+    ],
 )
 _decl("medius_device_set_rewrite", i32, [HANDLE, ctypes.POINTER(MediusRewriteRule)])
 _decl("medius_device_remove_rewrite", i32, [HANDLE, ctypes.POINTER(MediusRewriteRule)])
@@ -869,7 +890,7 @@ if HAS_MOCK:
     _decl("medius_mock_set_locks", None, [HANDLE, MediusLocks])
     _decl("medius_mock_set_catch_state", None, [HANDLE, MediusCatchState])
     _decl("medius_mock_set_imperfect_status", None, [HANDLE, MediusImperfectStatus])
-    _decl("medius_mock_set_transfer_reply", None, [HANDLE, u8, ctypes.POINTER(u8), usize])
+    _decl("medius_mock_set_transfer_reply", None, [HANDLE, u8, u8, ctypes.POINTER(u8), usize])
     _decl("medius_mock_set_advertised_hz", None, [HANDLE, u16])
     _decl("medius_mock_set_movement_riding", None, [HANDLE, c_bool, u32])
     _decl("medius_mock_set_bearing", None, [HANDLE, u16, u8])

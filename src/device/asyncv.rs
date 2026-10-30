@@ -14,8 +14,7 @@ use crate::types::{
     Direction, Edge, EmitPace, EmitPaceStatus, FirmwareInfo, Health, ImperfectStatus, LedMode,
     LedTarget, LockTarget, Locks, Motion, MoveTiming, Patch, PatchSet, PendingMotion, Rate,
     RebootTarget, RenderMode, RenderStatus, RewriteRule, RewriteTable, Setup, SpreadStatus, Stats,
-    TransferOutcome, TransferStatus, Transform, Transforms, UpdateProgress, UpdateTarget, Usage,
-    Version,
+    TransferOutcome, Transform, Transforms, UpdateProgress, UpdateTarget, Usage, Version,
 };
 
 use super::Device;
@@ -24,7 +23,7 @@ use super::clip::ClipHandle;
 use super::discover::BoxInfo;
 use super::input::InputStream;
 use super::logs::LogStream;
-use super::raw::DEFAULT_TRANSFER_TIMEOUT;
+use super::raw::{DEFAULT_TRANSFER_TIMEOUT, transfer_timeout_ms, validate_transfer_data};
 
 /// Async view over a [`Device`]: the same `Link` core. Queries are `async` and await the correlated
 /// `RESP` with the default timeout; commands send at once.
@@ -543,12 +542,15 @@ impl AsyncDevice {
     }
 
     /// `TRANSFER`: one control transfer against the real device; see [`Device::transfer`].
+    /// Dropping the future stops the wait, not the transfer, and the box refuses another until it
+    /// ends.
     pub async fn transfer(&self, ep: u8, setup: Setup, out: &[u8]) -> Result<TransferOutcome> {
         self.transfer_timeout(ep, setup, out, DEFAULT_TRANSFER_TIMEOUT)
             .await
     }
 
-    /// [`transfer`](Self::transfer) with an explicit reply timeout; see [`Device::transfer_timeout`].
+    /// [`transfer`](Self::transfer) with the box's wait on the real device set to `timeout`; see
+    /// [`Device::transfer_timeout`].
     pub async fn transfer_timeout(
         &self,
         ep: u8,
@@ -556,11 +558,9 @@ impl AsyncDevice {
         out: &[u8],
         timeout: Duration,
     ) -> Result<TransferOutcome> {
-        let (status, data) = self.link.transfer_async(ep, setup, out, timeout).await?;
-        Ok(TransferOutcome {
-            status: TransferStatus::from_u8(status),
-            data,
-        })
+        let timeout_ms = transfer_timeout_ms(timeout)?;
+        validate_transfer_data(setup, out)?;
+        self.link.transfer_async(ep, timeout_ms, setup, out).await
     }
 
     /// `REWRITE`: add one rewrite rule; see [`Device::set_rewrite`].
