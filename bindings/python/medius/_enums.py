@@ -410,7 +410,7 @@ class TransferStatus(IntEnum):
     #: The game PC has suspended the clone, and with it the real device: nothing was sent.
     SUSPENDED = 0xFA
     #: The real device's packets were corrupt past three tries, or ran past the buffer the host
-    #: asked for.
+    #: asked for; or the host chip had no channel free to send it on.
     ERROR = 0xFB
     #: Never sent: the opt-in is off, `ep` is a control endpoint the real device does not declare,
     #: or another transfer is outstanding.
