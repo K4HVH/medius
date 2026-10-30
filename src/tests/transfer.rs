@@ -202,6 +202,50 @@ mod chunks {
         ));
     }
 
+    // The 65536 bytes a device sends for wLength 0xFFFF in 64-byte packets, in 448-byte chunks, then the empty
+    // chunk ending the reply at 65536, which the u16 offset carries as 0.
+    fn full_reply(seq: u8, ep: u8, lose_last_data: bool) -> Vec<u8> {
+        let mut out = Vec::new();
+        for off in (0..65536usize).step_by(448) {
+            let n = (65536 - off).min(448);
+            if lose_last_data && off + n == 65536 {
+                continue;
+            }
+            out.extend(chunk(
+                seq,
+                ep,
+                0,
+                1,
+                0,
+                off as u16,
+                &vec![(off / 448) as u8; n],
+            ));
+        }
+        out.extend(chunk(seq, ep, 0x00, 2, XFER_LAST, 0, &[]));
+        out
+    }
+
+    #[test]
+    fn a_64_kib_reply_comes_back_whole() {
+        let dev = device(|seq, ep| full_reply(seq, ep, false));
+        let reply = dev.transfer(0, GET_CONFIG, &[]).unwrap();
+        assert_eq!(reply.status, TransferStatus::Ok);
+        assert_eq!(reply.data.len(), 65536);
+        assert_eq!(reply.data[65535], (65535 / 448) as u8);
+    }
+
+    #[test]
+    fn a_64_kib_reply_that_lost_its_last_data_chunk_is_an_error() {
+        let dev = device(|seq, ep| full_reply(seq, ep, true));
+        assert!(matches!(
+            dev.transfer(0, GET_CONFIG, &[]),
+            Err(Error::TransferReplyIncomplete {
+                got: 65408,
+                len: 65536
+            })
+        ));
+    }
+
     #[test]
     fn frames_that_are_not_this_transfers_chunks_are_skipped() {
         let dev = device(|seq, ep| {

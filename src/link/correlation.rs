@@ -45,7 +45,12 @@ impl TransferReply {
         else {
             return false;
         };
-        let off = u16::from_le_bytes([lo, hi]) as usize;
+        let mut off = u16::from_le_bytes([lo, hi]) as usize;
+        // A reply runs to 65536 bytes, one past what the offset holds, so the empty chunk ending a reply of
+        // that length reads 0. In order, an empty chunk at 0 after data is that end.
+        if off == 0 && data.is_empty() && !self.data.is_empty() {
+            off = 1 << 16;
+        }
         let end = off + data.len();
         if self.data.len() < end {
             self.data.resize(end, 0);
@@ -372,9 +377,10 @@ impl Link {
         std::thread::Builder::new()
             .name("medius-query-timeout".into())
             .spawn(move || {
-                if let Err(flume::RecvTimeoutError::Timeout) = cancel_rx.recv_timeout(timeout)
-                    && let Some(inner) = weak.upgrade()
-                {
+                // Past the timeout, or with the future dropped unanswered, the entry has no waiter left.
+                // A reply that came first has already freed it, and the generation guards a newer one.
+                let _ = cancel_rx.recv_timeout(timeout);
+                if let Some(inner) = weak.upgrade() {
                     inner.cancel_query(seq, gen_id);
                 }
             })
