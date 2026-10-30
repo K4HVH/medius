@@ -166,7 +166,7 @@ class TransferTimeoutRangeError(MediusError):
 
 
 class TransferReplyIncompleteError(MediusError):
-    """A transfer reply that lost a chunk on the control link."""
+    """A transfer reply that lost a chunk between the box's chips or on the control link."""
 
 
 class ClipPacketTriggerError(MediusError):

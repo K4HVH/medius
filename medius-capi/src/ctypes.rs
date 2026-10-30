@@ -66,8 +66,10 @@ pub const MEDIUS_CATCH_CLASS_HID_OUT: u8 = 5;
 pub const MEDIUS_CATCH_CLASS_VENDOR_INTERRUPT: u8 = 6;
 /// Vendor-interface bulk traffic, keyed by endpoint number and direction.
 pub const MEDIUS_CATCH_CLASS_VENDOR_BULK: u8 = 7;
-/// A control transaction the game PC received, keyed by endpoint number (0 = EP0); on EP0, the
-/// requests relayed to the real device, not the ones the clone serves itself.
+/// A control transaction the game PC received, keyed by endpoint number (0 = EP0). On EP0 every
+/// class and vendor request raises one, those the box answers from its cache or a rule ends
+/// included, as does each standard request relayed to the real device; the standard requests the
+/// clone serves itself raise none.
 pub const MEDIUS_CATCH_CLASS_CONTROL: u8 = 8;
 /// Bytes the clone emitted, keyed by endpoint number, direction IN.
 pub const MEDIUS_CATCH_CLASS_EMIT: u8 = 9;
@@ -783,7 +785,8 @@ pub enum MediusTransferStatus {
     /// asked for; or the host chip had no channel free to send it on.
     Error = 0xFB,
     /// Never sent: the opt-in is off, `ep` is a control endpoint the real device does not declare,
-    /// or another transfer is outstanding.
+    /// another transfer is outstanding, or the box had no room for it then (the link between its
+    /// chips was full, or an earlier transfer's reply still held its place, for up to 1 s).
     Refused = 0xFC,
     /// The real device STALLed, in the stage named.
     Stall = 0xFD,

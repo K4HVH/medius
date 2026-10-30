@@ -143,7 +143,7 @@ pub enum Error {
     TransferTimeoutRange { timeout: std::time::Duration },
 
     #[error(
-        "transfer reply arrived with {got} of its {len} bytes; a chunk was lost on the control link"
+        "transfer reply arrived with {got} of its {len} bytes; a chunk was lost between the box's chips or on the control link"
     )]
     TransferReplyIncomplete { got: usize, len: usize },
 
