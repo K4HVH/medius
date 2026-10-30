@@ -92,8 +92,10 @@
 // Vendor-interface bulk traffic, keyed by endpoint number and direction.
 #define MEDIUS_CATCH_CLASS_VENDOR_BULK 7
 
-// A control transaction the game PC received, keyed by endpoint number (0 = EP0); on EP0, the
-// requests relayed to the real device, not the ones the clone serves itself.
+// A control transaction the game PC received, keyed by endpoint number (0 = EP0). On EP0 every
+// class and vendor request raises one, those the box answers from its cache or a rule ends
+// included, as does each standard request relayed to the real device; the standard requests the
+// clone serves itself raise none.
 #define MEDIUS_CATCH_CLASS_CONTROL 8
 
 // Bytes the clone emitted, keyed by endpoint number, direction IN.
@@ -227,7 +229,7 @@ enum MediusStatus
     MEDIUS_STATUS_ERR_REWRITE_POOL_FULL = 35,
     // A transfer timeout outside 1 to 65535 ms.
     MEDIUS_STATUS_ERR_TRANSFER_TIMEOUT_RANGE = 36,
-    // A transfer reply that lost a chunk on the control link.
+    // A transfer reply that lost a chunk between the box's chips or on the control link.
     MEDIUS_STATUS_ERR_TRANSFER_REPLY_INCOMPLETE = 37,
 };
 #ifndef __cplusplus
@@ -929,7 +931,8 @@ enum MediusTransferStatus
     // asked for; or the host chip had no channel free to send it on.
     MEDIUS_TRANSFER_STATUS_ERROR = 251,
     // Never sent: the opt-in is off, `ep` is a control endpoint the real device does not declare,
-    // or another transfer is outstanding.
+    // another transfer is outstanding, or the box had no room for it then (the link between its
+    // chips was full, or an earlier transfer's reply still held its place, for up to 1 s).
     MEDIUS_TRANSFER_STATUS_REFUSED = 252,
     // The real device STALLed, in the stage named.
     MEDIUS_TRANSFER_STATUS_STALL = 253,
@@ -2371,8 +2374,9 @@ MediusStatus medius_device_transfer(struct MediusDevice *dev,
 
 // [`medius_device_transfer`] with the box's wait on the real device set to `timeout_ms`, 1 to
 // 65535, else `MEDIUS_STATUS_ERR_TRANSFER_TIMEOUT_RANGE`. The call waits up to `timeout_ms` plus
-// 2 s for the reply, then gives `MEDIUS_STATUS_ERR_QUERY_TIMEOUT`; a reply that lost a chunk on
-// the control link gives `MEDIUS_STATUS_ERR_TRANSFER_REPLY_INCOMPLETE`.
+// 2 s for the reply, then gives `MEDIUS_STATUS_ERR_QUERY_TIMEOUT`; a reply that lost a chunk
+// between the box's chips (STATS `relay_drops` counts it) or on the control link gives
+// `MEDIUS_STATUS_ERR_TRANSFER_REPLY_INCOMPLETE`.
 MediusStatus medius_device_transfer_timeout(struct MediusDevice *dev,
                                             uint8_t ep,
                                             struct MediusSetup setup,

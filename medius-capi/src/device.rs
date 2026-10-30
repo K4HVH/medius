@@ -657,8 +657,9 @@ pub unsafe extern "C" fn medius_device_transfer(
 
 /// [`medius_device_transfer`] with the box's wait on the real device set to `timeout_ms`, 1 to
 /// 65535, else `MEDIUS_STATUS_ERR_TRANSFER_TIMEOUT_RANGE`. The call waits up to `timeout_ms` plus
-/// 2 s for the reply, then gives `MEDIUS_STATUS_ERR_QUERY_TIMEOUT`; a reply that lost a chunk on
-/// the control link gives `MEDIUS_STATUS_ERR_TRANSFER_REPLY_INCOMPLETE`.
+/// 2 s for the reply, then gives `MEDIUS_STATUS_ERR_QUERY_TIMEOUT`; a reply that lost a chunk
+/// between the box's chips (STATS `relay_drops` counts it) or on the control link gives
+/// `MEDIUS_STATUS_ERR_TRANSFER_REPLY_INCOMPLETE`.
 #[unsafe(no_mangle)]
 #[allow(clippy::too_many_arguments)]
 pub unsafe extern "C" fn medius_device_transfer_timeout(

@@ -413,7 +413,8 @@ class TransferStatus(IntEnum):
     #: asked for; or the host chip had no channel free to send it on.
     ERROR = 0xFB
     #: Never sent: the opt-in is off, `ep` is a control endpoint the real device does not declare,
-    #: or another transfer is outstanding.
+    #: another transfer is outstanding, or the box had no room for it then (the link between its
+    #: chips was full, or an earlier transfer's reply still held its place, for up to 1 s).
     REFUSED = 0xFC
     #: The real device STALLed, in the stage named.
     STALL = 0xFD

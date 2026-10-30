@@ -105,8 +105,8 @@ impl Device {
     /// to 65535 ms in whole milliseconds, else [`Error::TransferTimeoutRange`].
     ///
     /// The call waits up to `timeout` plus 2 s for the reply's last chunk, then gives
-    /// [`Error::QueryTimeout`]; a reply that lost a chunk on the control link gives
-    /// [`Error::TransferReplyIncomplete`]. While it waits, the keepalive keeps held state from the
+    /// [`Error::QueryTimeout`]; a reply that lost a chunk gives [`Error::TransferReplyIncomplete`]:
+    /// between the box's chips (STATS `relay_drops` counts it) or on the control link. While it waits, the keepalive keeps held state from the
     /// box's 1 s silence clear.
     pub fn transfer_timeout(
         &self,
