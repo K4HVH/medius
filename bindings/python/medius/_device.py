@@ -545,10 +545,11 @@ class Device(Handle):
         stage: `setup.length` bytes for an OUT request, none for an IN one (`TransferDataError`),
         at most `TRANSFER_OUT_MAX` (`FrameTooLongError`). A non-OK `TransferOutcome.status` is a
         protocol outcome: it is returned, not raised. With the opt-in off the box replies
-        `REFUSED`. `timeout_ms` (1-65535, else `TransferTimeoutRangeError`) is how long the box
-        waits on the real device, the time the game PC holds the pipe included; the default is
-        `default_transfer_timeout_ms()`. The call waits up to `timeout_ms` plus 2 s for the reply
-        (`QueryTimeoutError` past that), and a reply that lost a chunk on the control link raises
+        `REFUSED`. `timeout_ms` (1-65535, else `TransferTimeoutRangeError`; a negative value or one
+        past 32 bits raises `ValueError`) is how long the box waits on the real device, the time the
+        game PC holds the pipe included; the default is `default_transfer_timeout_ms()`. The call
+        waits up to `timeout_ms` plus 2 s for the reply (`QueryTimeoutError` past that), and a reply
+        that lost a chunk between the box's chips or on the control link raises
         `TransferReplyIncompleteError`.
         """
         buf, n = _bytes_buf(out, "out")

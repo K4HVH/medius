@@ -76,7 +76,7 @@ pub enum MediusStatus {
     ErrRewritePoolFull = 35,
     /// A transfer timeout outside 1 to 65535 ms.
     ErrTransferTimeoutRange = 36,
-    /// A transfer reply that lost a chunk on the control link.
+    /// A transfer reply that lost a chunk between the box's chips or on the control link.
     ErrTransferReplyIncomplete = 37,
 }
 
