@@ -1150,8 +1150,10 @@ typedef struct MediusLockTarget {
     struct MediusUsage usage;
 } MediusLockTarget;
 
-// The real device's reply to `medius_device_transfer`: status, and IN data in `data[0..len]`. A
-// non-OK `status` is a protocol outcome, not a link error, and carries no data.
+// The real device's reply to `medius_device_transfer`: status, and its reply in `data[0..len]`: an IN
+// transfer's data stage, whole even past wLength; for an OUT transfer or one with wLength 0, what it
+// sent where the status stage was due (at most 64 bytes, usually none). A non-OK `status` is a
+// protocol outcome, not a link error, and carries no data.
 typedef struct MediusTransferOutcome {
     // One of `MEDIUS_TRANSFER_STATUS_*`, or an unknown status carried through. A byte, not
     // `MediusTransferStatus`, so it can carry unnamed values; C++ (`enum : uint8_t`) needs a cast
