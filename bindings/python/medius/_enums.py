@@ -338,8 +338,10 @@ class ControlStatus(IntEnum):
     """The handshake the game PC received for a control transaction. `STALLED`: the real device
     STALLed, or a `STALL` rule refused the request. `NAKED`: NAKed until the PC gave up, because the
     real device left the request unanswered or it failed on the real device's bus, a `NAK` rule
-    matched it, or the PC gave up before the real device finished (raised when the PC's next SETUP
-    on that endpoint replaces the request)."""
+    matched it, the PC gave up before the real device finished, a SET_INTERFACE on its interface, a
+    configuration change or a suspend ended it, or the box had no room to pass a step of it on. For
+    a request the PC gave up on, the event comes when the PC's next SETUP on that endpoint replaces
+    it, or 250-300 ms after the PC stopped polling it, whichever is first."""
 
     OK = 0
     STALLED = 1
@@ -413,13 +415,15 @@ class TransferStatus(IntEnum):
     #: asked for; or the host chip had no channel free to send it on.
     ERROR = 0xFB
     #: Never sent: the opt-in is off, `ep` is a control endpoint the real device does not declare,
-    #: another transfer is outstanding, or the box had no room for it then (the link between its
-    #: chips was full, or an earlier transfer's reply still held its place, for up to 1 s).
+    #: another transfer is outstanding, or the box had no room for it then: the link between its chips
+    #: was full, or an earlier transfer still held its place (its reply for up to 1 s after it ended,
+    #: or, where the box ended that reply at a 1 s chunk wait, until the real device finishes it).
     REFUSED = 0xFC
     #: The real device STALLed, in the stage named.
     STALL = 0xFD
     #: The real device NAKed until the timeout, in the stage named; or the host chip's reply was
-    #: lost on the inter-chip link.
+    #: lost on the inter-chip link; or the reply's next chunk waited 1 s to be passed on to the
+    #: control port, in the data stage.
     NO_ANSWER = 0xFE
     #: No device attached.
     NO_DEVICE = 0xFF

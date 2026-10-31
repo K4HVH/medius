@@ -311,8 +311,11 @@ enum MediusControlStatus
     // The real device STALLed, or a `Stall` rule refused the request.
     MEDIUS_CONTROL_STATUS_STALLED = 1,
     // NAKed until the PC gave up: the real device left the request unanswered or it failed on the
-    // real device's bus, a `Nak` rule matched it, or the PC gave up before the real device
-    // finished. The last is raised when the PC's next SETUP on that endpoint replaces the request.
+    // real device's bus, a `Nak` rule matched it, the PC gave up before the real device finished,
+    // a SET_INTERFACE on its interface, a configuration change or a suspend ended it, or the box
+    // had no room to pass a step of it on. For a request the PC gave up on, the event comes when
+    // the PC's next SETUP on that endpoint replaces it, or 250-300 ms after the PC stopped polling
+    // it, whichever is first.
     MEDIUS_CONTROL_STATUS_NAKED = 2,
     // A handshake value this build does not know; `MediusTrafficEvent::flags` bits 0-1 hold it.
     MEDIUS_CONTROL_STATUS_OTHER = 3,
@@ -931,13 +934,15 @@ enum MediusTransferStatus
     // asked for; or the host chip had no channel free to send it on.
     MEDIUS_TRANSFER_STATUS_ERROR = 251,
     // Never sent: the opt-in is off, `ep` is a control endpoint the real device does not declare,
-    // another transfer is outstanding, or the box had no room for it then (the link between its
-    // chips was full, or an earlier transfer's reply still held its place, for up to 1 s).
+    // another transfer is outstanding, or the box had no room for it then: the link between its chips
+    // was full, or an earlier transfer still held its place (its reply for up to 1 s after it ended,
+    // or, where the box ended that reply at a 1 s chunk wait, until the real device finishes it).
     MEDIUS_TRANSFER_STATUS_REFUSED = 252,
     // The real device STALLed, in the stage named.
     MEDIUS_TRANSFER_STATUS_STALL = 253,
     // The real device NAKed until the timeout, in the stage named; or the host chip's reply was
-    // lost on the inter-chip link.
+    // lost on the inter-chip link; or the reply's next chunk waited 1 s to be passed on to the
+    // control port, in the data stage.
     MEDIUS_TRANSFER_STATUS_NO_ANSWER = 254,
     // No device attached.
     MEDIUS_TRANSFER_STATUS_NO_DEVICE = 255,
@@ -1460,8 +1465,9 @@ typedef struct MediusRate {
 // `medius_device_reset`.
 typedef struct MediusStats {
     uint32_t inject_emits;
-    // Input reports never emitted to the game PC: one the clone's TX queue could not hold, or one the
-    // host chip's forwarder or link could not take. Should stay 0.
+    // Input reports never emitted to the game PC: one the clone's TX queue could not hold, one the
+    // host chip's forwarder or link could not take, or one a stop of its stream (a setting switch, a
+    // halt, a suspend) cut short. Should stay 0.
     uint16_t tx_drops;
     uint16_t tx_merges;
     uint8_t tx_maxdepth;
@@ -1484,7 +1490,9 @@ typedef struct MediusStats {
     // - an OUT packet the box could not queue, that failed 3 times on the real device's bus, or
     //   that a bus reset or SET_INTERFACE overtook
     // - a RAW OUT packet with no room to wait
-    // - a relayed request or a flagged MOVE the box could not queue
+    // - a relayed request, or a packet or step of one, the box could not queue (the request then
+    //   ends, NAKed until the game PC gives up)
+    // - a flagged MOVE the box could not queue
     // - any frame other than native input that either chip's link receive ring dropped
     // - a frame from the control PC the box's receive ring had no room for (1 per frame)
     // - an overrun of the control port's UART (1 per overrun, however many frames it cost)
