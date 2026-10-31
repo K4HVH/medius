@@ -284,7 +284,8 @@ class Stats:
     Narrowed fields saturate rather than wrap. The three drop counters are full width and do not
     saturate, so a count keeps rising while loss continues.
 
-    `tx_drops` (a report the clone's queue, or the host chip's forwarder or link, could not take) and
+    `tx_drops` (a report the clone's queue, or the host chip's forwarder or link, could not take, or
+    that a stop of its stream cut short) and
     `link_rx_drops`/`host_rx_drops` (an input-carrying frame one chip could not take off the
     inter-chip link) count lost input and should read 0.
 
@@ -293,7 +294,8 @@ class Stats:
     - a vendor IN packet the host chip's link would not carry, or behind a queue full of RAW packets
     - a zero-length packet answering a poll a suspended PC did not make
     - an OUT or RAW OUT packet the box could not queue or deliver
-    - a relayed request or flagged MOVE the box could not queue
+    - a relayed request, or a packet or step of one, the box could not queue (the request then ends)
+    - a flagged MOVE the box could not queue
     - a non-input frame either chip's link ring dropped
     - a frame from the control PC the receive ring had no room for
     - a control-port UART overrun
