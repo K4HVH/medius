@@ -74,13 +74,15 @@ pub enum TransferStatus {
     /// asked for; or the host chip had no channel free to send it on.
     Error,
     /// Never sent: the opt-in is off, `ep` is a control endpoint the real device does not declare,
-    /// another transfer is outstanding, or the box had no room for it then (the link between its
-    /// chips was full, or an earlier transfer's reply still held its place, for up to 1 s).
+    /// another transfer is outstanding, or the box had no room for it then: the link between its chips
+    /// was full, or an earlier transfer still held its place (its reply for up to 1 s after it ended,
+    /// or, where the box ended that reply at a 1 s chunk wait, until the real device finishes it).
     Refused,
     /// The real device STALLed, in the stage named.
     Stall,
     /// The real device NAKed until the timeout, in the stage named; or the host chip's reply was
-    /// lost on the inter-chip link.
+    /// lost on the inter-chip link; or the reply's next chunk waited 1 s to be passed on to the
+    /// control port, in the data stage.
     NoAnswer,
     /// No device attached.
     NoDevice,
