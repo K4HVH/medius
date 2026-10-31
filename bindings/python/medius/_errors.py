@@ -156,9 +156,17 @@ class ClipFrameTooLongError(MediusError):
     """A clip frame that encodes to more than `CLIP_ENTRY_MAX` bytes."""
 
 
-class ClipTransferDataError(MediusError):
-    """A clip transfer whose data disagrees with its setup packet: `length` bytes for OUT, none for
-    IN."""
+class TransferDataError(MediusError):
+    """A control transfer, or a clip's, whose data disagrees with its setup packet: `length` bytes
+    for OUT, none for IN."""
+
+
+class TransferTimeoutRangeError(MediusError):
+    """A transfer timeout outside 1 to 65535 ms."""
+
+
+class TransferReplyIncompleteError(MediusError):
+    """A transfer reply that lost a chunk between the box's chips or on the control link."""
 
 
 class ClipPacketTriggerError(MediusError):
@@ -200,10 +208,12 @@ _STATUS_EXC = {
     Status.ERR_RAW_DIRECTION: RawDirectionError,
     Status.ERR_CLIP_FRAME_COUNT: ClipFrameCountError,
     Status.ERR_CLIP_FRAME_TOO_LONG: ClipFrameTooLongError,
-    Status.ERR_CLIP_TRANSFER_DATA: ClipTransferDataError,
+    Status.ERR_TRANSFER_DATA: TransferDataError,
     Status.ERR_CLIP_PACKET_TRIGGER: ClipPacketTriggerError,
     Status.ERR_REWRITE_MATCH_TOO_LONG: RewriteMatchTooLongError,
     Status.ERR_REWRITE_POOL_FULL: RewritePoolFullError,
+    Status.ERR_TRANSFER_TIMEOUT_RANGE: TransferTimeoutRangeError,
+    Status.ERR_TRANSFER_REPLY_INCOMPLETE: TransferReplyIncompleteError,
 }
 
 

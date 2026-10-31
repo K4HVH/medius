@@ -97,8 +97,8 @@ class ClipBuilder(Handle):
         return self
 
     def transfer(self, ep: int, setup: Setup, out: bytes = b"") -> "ClipBuilder":
-        """A frame carrying one control transfer, as `Device.transfer` runs one; the reply arrives
-        as a `TrafficClass.CLIP_TRANSFER` event."""
+        """A frame carrying one control transfer, as `Device.transfer` runs one, with 4 s for the
+        real device to answer; the reply arrives as a `TrafficClass.CLIP_TRANSFER` event."""
         buf, n = _bytes_buf(out, "out")
         check(
             self._call(_native.lib.medius_clip_builder_transfer, _u8(ep, "ep"), setup_to_c(setup), buf, n)
@@ -173,7 +173,7 @@ class ClipHandle(Handle):
         (`ClipFrameCountError`); a frame encoding to more than `CLIP_ENTRY_MAX` bytes
         (`ClipFrameTooLongError`); a raw report neither `Direction.IN` nor `Direction.OUT`
         (`RawDirectionError`, or `RelativeDirectionError` for the bearing-relative pair); a transfer
-        whose data doesn't match its setup packet (`ClipTransferDataError`).
+        whose data doesn't match its setup packet (`TransferDataError`).
         """
         check(self._call(lambda c: builder._call(lambda b: _native.lib.medius_clip_append(c, b))))
 

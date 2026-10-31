@@ -34,6 +34,7 @@ from ._enums import (
     RewriteAction,
     RewriteClass,
     TrafficClass,
+    TransferStage,
     TransferStatus,
     TransformOp,
     Button,
@@ -283,16 +284,18 @@ class Stats:
     Narrowed fields saturate rather than wrap. The three drop counters are full width and do not
     saturate, so a count keeps rising while loss continues.
 
-    `tx_drops` (a report the clone's queue could not hold) and `link_rx_drops`/`host_rx_drops` (an
-    input-carrying frame one chip could not take off the inter-chip link) count lost input and
-    should read 0.
+    `tx_drops` (a report the clone's queue, or the host chip's forwarder or link, could not take, or
+    that a stop of its stream cut short) and
+    `link_rx_drops`/`host_rx_drops` (an input-carrying frame one chip could not take off the
+    inter-chip link) count lost input and should read 0.
 
     `relay_drops` counts relayed traffic and commands that went no further, never native input:
 
-    - a vendor IN packet behind a queue full of RAW packets
+    - a vendor IN packet the host chip's link would not carry, or behind a queue full of RAW packets
     - a zero-length packet answering a poll a suspended PC did not make
     - an OUT or RAW OUT packet the box could not queue or deliver
-    - a relayed request or flagged MOVE the box could not queue
+    - a relayed request, or a packet or step of one, the box could not queue (the request then ends)
+    - a flagged MOVE the box could not queue
     - a non-input frame either chip's link ring dropped
     - a frame from the control PC the receive ring had no room for
     - a control-port UART overrun
@@ -438,15 +441,18 @@ class Setup:
 
 @dataclass
 class TransferOutcome:
-    """The real device's reply to `Device.transfer`: status and its reply.
+    """What `Device.transfer` brought back: how it ended, where, and the real device's reply.
 
-    ``status`` is a `TransferStatus`, or the raw wire byte for an unnamed value. A non-OK status is
-    a protocol outcome, not a link error, and carries no data. ``data`` is an IN transfer's data
-    stage, whole even past wLength; for an OUT transfer or one with wLength 0, what the real device
-    sent where the status stage was due (at most 64 bytes, usually none).
+    ``status`` is a `TransferStatus` and ``stage`` a `TransferStage`, or the raw wire byte for an
+    unnamed value. A non-OK status is a protocol outcome, not a link error. ``data`` is the IN data
+    stage as the box received it, partial data before a STALL included, and past wLength where the
+    real device sent more than was asked for in the packets a host asks for; for an OUT transfer or
+    one with wLength 0, what the real device sent where the status stage was due (at most one
+    packet, usually none). It is meaningful on any status.
     """
 
     status: "TransferStatus | int"
+    stage: "TransferStage | int"
     data: bytes = b""
 
     @property
@@ -762,7 +768,8 @@ class TrafficEvent:
         return bytes(p[:8]) if p else None
 
     def data(self) -> bytes:
-        """The data stage of a CONTROL or CLIP_TRANSFER event, the whole packet for any other class."""
+        """The data stage of a CONTROL event, the reply of a CLIP_TRANSFER one (empty on an OUT
+        request with a data stage), the whole packet for any other class."""
         c = traffic_event_to_c(self)
         n = _native.usize()
         p = _native.lib.medius_traffic_event_data(ctypes.byref(c), ctypes.byref(n))
@@ -777,8 +784,8 @@ class TrafficEvent:
         return None
 
     def transfer_status(self) -> "Optional[TransferStatus | int]":
-        """How the transfer ended; `None` for any class but CLIP_TRANSFER. `NAK` when no reply came;
-        the raw byte for an unnamed status."""
+        """How the transfer ended; `None` for any class but CLIP_TRANSFER. `NO_ANSWER` when no
+        answer came in 4 s; the raw byte for an unnamed status."""
         c = traffic_event_to_c(self)
         out = _native.u8()
         if not _native.lib.medius_traffic_event_transfer_status(ctypes.byref(c), ctypes.byref(out)):
@@ -1483,13 +1490,16 @@ def setup_to_c(s) -> "_native.MediusSetup":
     )
 
 
-def transfer_outcome_from_c(c) -> TransferOutcome:
-    n = min(int(c.len), _native.MEDIUS_MAX_DEV_PAYLOAD)
+def transfer_outcome_from_c(c, reply) -> TransferOutcome:
     try:
         status = TransferStatus(c.status)
     except ValueError:
         status = int(c.status)
-    return TransferOutcome(status, bytes(c.data[:n]))
+    try:
+        stage = TransferStage(c.stage)
+    except ValueError:
+        stage = int(c.stage)
+    return TransferOutcome(status, stage, bytes(reply[: min(int(c.len), len(reply))]))
 
 
 def rewrite_rule_to_c(r) -> "_native.MediusRewriteRule":

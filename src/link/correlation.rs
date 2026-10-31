@@ -7,33 +7,92 @@ use parking_lot::Mutex;
 use crate::error::{Error, Result};
 use crate::protocol::FrameType;
 use crate::protocol::command::{query_payload, transfer_payload};
-use crate::protocol::opcode::Q_OPTIONS;
-use crate::types::Setup;
+use crate::protocol::opcode::{Q_OPTIONS, XFER_LAST, XFER_RESP_HDR};
+use crate::types::{Setup, TransferOutcome, TransferStage, TransferStatus};
 
 use super::{Link, LinkInner};
 
 pub(crate) struct PendingEntry {
     gen_id: u64,
-    // Type and first byte must both match: a stale `RESP` on a waiting `TRANSFER`'s `SEQ` is never
-    // taken as its reply, even if its selector equals the endpoint byte.
-    expected_ty: FrameType,
-    expected_what: u8,
-    tx: flume::Sender<Vec<u8>>,
+    waiter: Waiter,
+}
+
+// The first byte must match too: a stale reply on a reused `SEQ` is never taken as the awaited one.
+enum Waiter {
+    Resp {
+        what: u8,
+        tx: flume::Sender<Vec<u8>>,
+    },
+    Transfer {
+        ep: u8,
+        reply: TransferReply,
+        tx: flume::Sender<TransferReply>,
+    },
+}
+
+#[derive(Default)]
+pub(crate) struct TransferReply {
+    status: u8,
+    stage: u8,
+    data: Vec<u8>,
+    got: usize,
+}
+
+impl TransferReply {
+    fn take(&mut self, chunk: &[u8]) -> bool {
+        let Some((&[_, status, stage, flags, lo, hi], data)) =
+            chunk.split_first_chunk::<XFER_RESP_HDR>()
+        else {
+            return false;
+        };
+        let mut off = u16::from_le_bytes([lo, hi]) as usize;
+        // A reply runs to 65536 bytes, one past what the offset holds, so the empty chunk ending a reply of
+        // that length reads 0. In order, an empty chunk at 0 after data is that end.
+        if off == 0 && data.is_empty() && !self.data.is_empty() {
+            off = 1 << 16;
+        }
+        let end = off + data.len();
+        if self.data.len() < end {
+            self.data.resize(end, 0);
+        }
+        self.data[off..end].copy_from_slice(data);
+        self.got += data.len();
+        if flags & XFER_LAST == 0 {
+            return false;
+        }
+        self.status = status;
+        self.stage = stage;
+        true
+    }
+
+    pub(crate) fn outcome(self) -> Result<TransferOutcome> {
+        if self.got != self.data.len() {
+            return Err(Error::TransferReplyIncomplete {
+                got: self.got,
+                len: self.data.len(),
+            });
+        }
+        Ok(TransferOutcome {
+            status: TransferStatus::from_u8(self.status),
+            stage: TransferStage::from_u8(self.stage),
+            data: self.data,
+        })
+    }
 }
 
 /// `SEQ` of the box's unsolicited `RESP(VERSION)` hello; no awaited reply uses it.
 pub(crate) const HELLO_SEQ: u8 = 0;
 
+const TRANSFER_REPLY_MARGIN: Duration = Duration::from_secs(2);
+
 // Takes a free `SEQ` for a reply to wait on, never the hello's.
-pub(crate) fn register(
+fn insert(
     pending: &Mutex<HashMap<u8, PendingEntry>>,
     query_gen: &AtomicU64,
     seq_counter: &AtomicU8,
-    expected_ty: FrameType,
-    expected_what: u8,
-) -> (u8, u64, flume::Receiver<Vec<u8>>) {
+    waiter: Waiter,
+) -> (u8, u64) {
     let gen_id = query_gen.fetch_add(1, Ordering::Relaxed);
-    let (tx, rx) = flume::bounded::<Vec<u8>>(1);
     let mut pending = pending.lock();
     let next = || seq_counter.fetch_add(1, Ordering::Relaxed);
     let mut seq = next();
@@ -46,15 +105,18 @@ pub(crate) fn register(
     if seq == HELLO_SEQ {
         seq = next();
     }
-    pending.insert(
-        seq,
-        PendingEntry {
-            gen_id,
-            expected_ty,
-            expected_what,
-            tx,
-        },
-    );
+    pending.insert(seq, PendingEntry { gen_id, waiter });
+    (seq, gen_id)
+}
+
+pub(crate) fn register(
+    pending: &Mutex<HashMap<u8, PendingEntry>>,
+    query_gen: &AtomicU64,
+    seq_counter: &AtomicU8,
+    what: u8,
+) -> (u8, u64, flume::Receiver<Vec<u8>>) {
+    let (tx, rx) = flume::bounded(1);
+    let (seq, gen_id) = insert(pending, query_gen, seq_counter, Waiter::Resp { what, tx });
     (seq, gen_id, rx)
 }
 
@@ -72,11 +134,27 @@ pub(crate) fn deliver(
     payload: Vec<u8>,
 ) {
     let mut pending = pending.lock();
-    let matches = pending
-        .get(&seq)
-        .is_some_and(|e| e.expected_ty == ty && payload.first() == Some(&e.expected_what));
-    if matches && let Some(entry) = pending.remove(&seq) {
-        let _ = entry.tx.send(payload);
+    let Some(entry) = pending.get_mut(&seq) else {
+        return;
+    };
+    let first = payload.first().copied();
+    let done = match &mut entry.waiter {
+        Waiter::Resp { what, .. } => ty == FrameType::Resp && first == Some(*what),
+        Waiter::Transfer { ep, reply, .. } => {
+            ty == FrameType::TransferResp && first == Some(*ep) && reply.take(&payload)
+        }
+    };
+    if !done {
+        return;
+    }
+    match pending.remove(&seq).map(|e| e.waiter) {
+        Some(Waiter::Resp { tx, .. }) => {
+            let _ = tx.send(payload);
+        }
+        Some(Waiter::Transfer { reply, tx, .. }) => {
+            let _ = tx.send(reply);
+        }
+        None => {}
     }
 }
 
@@ -87,18 +165,29 @@ impl LinkInner {
 }
 
 impl Link {
-    pub(crate) fn register_pending(
-        &self,
-        expected_ty: FrameType,
-        expected_what: u8,
-    ) -> (u8, u64, flume::Receiver<Vec<u8>>) {
+    pub(crate) fn register_pending(&self, what: u8) -> (u8, u64, flume::Receiver<Vec<u8>>) {
         register(
             &self.inner.pending,
             &self.inner.query_gen,
             &self.inner.seq,
-            expected_ty,
-            expected_what,
+            what,
         )
+    }
+
+    fn register_transfer(&self, ep: u8) -> (u8, u64, flume::Receiver<TransferReply>) {
+        let (tx, rx) = flume::bounded(1);
+        let waiter = Waiter::Transfer {
+            ep,
+            reply: TransferReply::default(),
+            tx,
+        };
+        let (seq, gen_id) = insert(
+            &self.inner.pending,
+            &self.inner.query_gen,
+            &self.inner.seq,
+            waiter,
+        );
+        (seq, gen_id, rx)
     }
 
     pub(crate) fn cancel_query(&self, seq: u8, gen_id: u64) {
@@ -121,7 +210,7 @@ impl Link {
         expected_what: u8,
         request: &[u8],
     ) -> Result<(u8, u64, flume::Receiver<Vec<u8>>)> {
-        let (seq, gen_id, rx) = self.register_pending(FrameType::Resp, expected_what);
+        let (seq, gen_id, rx) = self.register_pending(expected_what);
         if let Err(e) = self.send_with_seq(seq, FrameType::Query, request) {
             self.cancel_query(seq, gen_id);
             return Err(e);
@@ -137,24 +226,54 @@ impl Link {
         self.recv_query(seq, gen_id, &rx, what, timeout)
     }
 
-    /// One `TRANSFER`, awaiting its `TRANSFER_RESP` (correlated by `SEQ` on the reply's opcode).
-    /// Returns `(status, in_data)`; the surrounding `Ok` means the box replied.
+    /// One `TRANSFER` the box waits `timeout_ms` on, awaiting the last chunk of its reply.
     pub(crate) fn transfer(
         &self,
         ep: u8,
+        timeout_ms: u16,
         setup: Setup,
         out: &[u8],
-        timeout: Duration,
-    ) -> Result<(u8, Vec<u8>)> {
-        let (seq, gen_id, rx) = self.register_pending(FrameType::TransferResp, ep);
-        if let Err(e) =
-            self.send_with_seq(seq, FrameType::Transfer, &transfer_payload(ep, setup, out))
-        {
+    ) -> Result<TransferOutcome> {
+        let (seq, gen_id, rx) = self.send_transfer(ep, timeout_ms, setup, out)?;
+        match rx.recv_timeout(transfer_wait(timeout_ms)) {
+            Ok(reply) => {
+                trace_event!(
+                    target: "medius::device",
+                    tracing::Level::DEBUG,
+                    ep,
+                    seq,
+                    "transfer resolved",
+                );
+                reply.outcome()
+            }
+            Err(_) => {
+                self.cancel_query(seq, gen_id);
+                trace_event!(
+                    target: "medius::device",
+                    tracing::Level::WARN,
+                    ep,
+                    seq,
+                    "transfer timed out",
+                );
+                Err(Error::QueryTimeout)
+            }
+        }
+    }
+
+    fn send_transfer(
+        &self,
+        ep: u8,
+        timeout_ms: u16,
+        setup: Setup,
+        out: &[u8],
+    ) -> Result<(u8, u64, flume::Receiver<TransferReply>)> {
+        let payload = transfer_payload(ep, timeout_ms, setup, out);
+        let (seq, gen_id, rx) = self.register_transfer(ep);
+        if let Err(e) = self.send_with_seq(seq, FrameType::Transfer, &payload) {
             self.cancel_query(seq, gen_id);
             return Err(e);
         }
-        let resp = self.recv_query(seq, gen_id, &rx, ep, timeout)?;
-        Ok(split_transfer_resp(&resp))
+        Ok((seq, gen_id, rx))
     }
 
     pub(crate) fn query(&self, what: u8) -> Result<Vec<u8>> {
@@ -235,37 +354,33 @@ impl Link {
     pub(crate) async fn transfer_async(
         &self,
         ep: u8,
+        timeout_ms: u16,
         setup: Setup,
         out: &[u8],
-        timeout: Duration,
-    ) -> Result<(u8, Vec<u8>)> {
-        let (seq, gen_id, rx) = self.register_pending(FrameType::TransferResp, ep);
-        if let Err(e) =
-            self.send_with_seq(seq, FrameType::Transfer, &transfer_payload(ep, setup, out))
-        {
-            self.cancel_query(seq, gen_id);
-            return Err(e);
-        }
-        let resp = self.recv_query_async(seq, gen_id, rx, timeout).await?;
-        Ok(split_transfer_resp(&resp))
+    ) -> Result<TransferOutcome> {
+        let (seq, gen_id, rx) = self.send_transfer(ep, timeout_ms, setup, out)?;
+        self.recv_query_async(seq, gen_id, rx, transfer_wait(timeout_ms))
+            .await?
+            .outcome()
     }
 
     #[cfg(feature = "async")]
-    async fn recv_query_async(
+    async fn recv_query_async<T>(
         &self,
         seq: u8,
         gen_id: u64,
-        rx: flume::Receiver<Vec<u8>>,
+        rx: flume::Receiver<T>,
         timeout: Duration,
-    ) -> Result<Vec<u8>> {
+    ) -> Result<T> {
         let (cancel_tx, cancel_rx) = flume::bounded::<()>(1);
         let weak = self.weak();
         std::thread::Builder::new()
             .name("medius-query-timeout".into())
             .spawn(move || {
-                if let Err(flume::RecvTimeoutError::Timeout) = cancel_rx.recv_timeout(timeout)
-                    && let Some(inner) = weak.upgrade()
-                {
+                // Past the timeout, or with the future dropped unanswered, the entry has no waiter left.
+                // A reply that came first has already freed it, and the generation guards a newer one.
+                let _ = cancel_rx.recv_timeout(timeout);
+                if let Some(inner) = weak.upgrade() {
                     inner.cancel_query(seq, gen_id);
                 }
             })
@@ -279,10 +394,6 @@ impl Link {
     }
 }
 
-// `[ep][status][in-data...]` -> `(status, in-data)`. A reply too short for a status reads as
-// `Refused` (0xFC), the byte the box sends when it declines.
-fn split_transfer_resp(payload: &[u8]) -> (u8, Vec<u8>) {
-    let status = payload.get(1).copied().unwrap_or(0xFC);
-    let data = payload.get(2..).unwrap_or(&[]).to_vec();
-    (status, data)
+fn transfer_wait(timeout_ms: u16) -> Duration {
+    Duration::from_millis(timeout_ms.into()) + TRANSFER_REPLY_MARGIN
 }

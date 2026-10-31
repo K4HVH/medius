@@ -433,10 +433,13 @@ fn clip_transfer_event_splits_like_a_control_event_and_carries_a_transfer_status
     assert_eq!(t.transfer_status(), Some(TransferStatus::Ok));
     assert!(t.control_status().is_none());
     for (flags, want) in [
-        (0xFD, TransferStatus::Stall),
-        (0xFE, TransferStatus::Nak),
-        (0xFF, TransferStatus::NoDevice),
+        (0xF9, TransferStatus::Busy),
+        (0xFA, TransferStatus::Suspended),
+        (0xFB, TransferStatus::Error),
         (0xFC, TransferStatus::Refused),
+        (0xFD, TransferStatus::Stall),
+        (0xFE, TransferStatus::NoAnswer),
+        (0xFF, TransferStatus::NoDevice),
     ] {
         let mut q = p.clone();
         q[9] = flags;

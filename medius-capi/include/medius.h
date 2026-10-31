@@ -61,9 +61,14 @@
 #define MEDIUS_REWRITE_PAYLOAD_POOL 2048
 
 // Largest byte payload one control-link frame carries (`MAX_PAYLOAD`): the bound on a
-// `medius_device_raw` write, a rewrite payload, a descriptor patch and a control transfer's data
-// stage.
+// `medius_device_raw` write, a rewrite payload and a descriptor patch.
 #define MEDIUS_MAX_DEV_PAYLOAD 512
+
+// Most OUT data one `medius_device_transfer` carries: one frame less its header.
+#define MEDIUS_MAX_TRANSFER_OUT 501
+
+// Longest reply a control transfer brings back: wLength 65535 rounded up to whole 64-byte packets.
+#define MEDIUS_MAX_TRANSFER_REPLY 65536
 
 // CATCH classes (`MediusCatchFilter::class`). 0-3 are the `LOCK` and `INJECT` classes; 4-11 are
 // byte-oriented traffic.
@@ -87,8 +92,10 @@
 // Vendor-interface bulk traffic, keyed by endpoint number and direction.
 #define MEDIUS_CATCH_CLASS_VENDOR_BULK 7
 
-// A control transaction the game PC received, keyed by endpoint number (0 = EP0); on EP0, class
-// and vendor requests only.
+// A control transaction the game PC received, keyed by endpoint number (0 = EP0). On EP0 every
+// class and vendor request raises one, those the box answers from its cache or a rule ends
+// included, as does each standard request relayed to the real device; the standard requests the
+// clone serves itself raise none.
 #define MEDIUS_CATCH_CLASS_CONTROL 8
 
 // Bytes the clone emitted, keyed by endpoint number, direction IN.
@@ -150,7 +157,7 @@
 
 // The C ABI version this header declares, bumped on any breaking change. Compare with
 // `medius_abi_version()` once at start-up.
-#define MEDIUS_ABI_VERSION 10
+#define MEDIUS_ABI_VERSION 11
 
 // Result of a fallible `medius_*` call: `MEDIUS_OK` is 0, anything else a failure.
 enum MediusStatus
@@ -210,9 +217,9 @@ enum MediusStatus
     MEDIUS_STATUS_ERR_CLIP_FRAME_COUNT = 30,
     // A clip frame that encodes to more than `MEDIUS_CLIP_ENTRY_MAX` bytes.
     MEDIUS_STATUS_ERR_CLIP_FRAME_TOO_LONG = 31,
-    // A clip transfer whose data disagrees with its setup packet: `length` bytes for OUT, none for
-    // IN.
-    MEDIUS_STATUS_ERR_CLIP_TRANSFER_DATA = 32,
+    // A control transfer, or a clip's, whose data disagrees with its setup packet: `length` bytes
+    // for OUT, none for IN.
+    MEDIUS_STATUS_ERR_TRANSFER_DATA = 32,
     // A clip packet trigger the box would refuse; `medius_last_error_message` says why.
     MEDIUS_STATUS_ERR_CLIP_PACKET_TRIGGER = 33,
     // A rewrite rule with more than `MEDIUS_MAX_REWRITE_MATCH` match bytes.
@@ -220,6 +227,10 @@ enum MediusStatus
     // A rewrite payload larger than what the other held rules leave of
     // `MEDIUS_REWRITE_PAYLOAD_POOL`.
     MEDIUS_STATUS_ERR_REWRITE_POOL_FULL = 35,
+    // A transfer timeout outside 1 to 65535 ms.
+    MEDIUS_STATUS_ERR_TRANSFER_TIMEOUT_RANGE = 36,
+    // A transfer reply that lost a chunk between the box's chips or on the control link.
+    MEDIUS_STATUS_ERR_TRANSFER_REPLY_INCOMPLETE = 37,
 };
 #ifndef __cplusplus
 #if __STDC_VERSION__ >= 202311L
@@ -297,10 +308,14 @@ enum MediusControlStatus
  {
     // The transaction completed.
     MEDIUS_CONTROL_STATUS_OK = 0,
-    // A STALL from the real device or from a rule refusing the request; above endpoint 0, also
-    // for a failed request.
+    // The real device STALLed, or a `Stall` rule refused the request.
     MEDIUS_CONTROL_STATUS_STALLED = 1,
-    // NAKed until the PC gave up, on endpoint 0 only.
+    // NAKed until the PC gave up: the real device left the request unanswered or it failed on the
+    // real device's bus, a `Nak` rule matched it, the PC gave up before the real device finished,
+    // a SET_INTERFACE on its interface, a configuration change or a suspend ended it, or the box
+    // had no room to pass a step of it on. For a request the PC gave up on, the event comes when
+    // the PC's next SETUP on that endpoint replaces it, or 250-300 ms after the PC stopped polling
+    // it, whichever is first.
     MEDIUS_CONTROL_STATUS_NAKED = 2,
     // A handshake value this build does not know; `MediusTrafficEvent::flags` bits 0-1 hold it.
     MEDIUS_CONTROL_STATUS_OTHER = 3,
@@ -880,6 +895,26 @@ typedef uint8_t MediusRewriteClass;
 #endif // __STDC_VERSION__ >= 202311L
 #endif // __cplusplus
 
+// Where a control transfer ended (§3.14): the `stage` byte of a `MediusTransferOutcome`. An
+// unnamed byte is a stage this build does not know, carried through verbatim.
+enum MediusTransferStage
+#if defined(__cplusplus) || __STDC_VERSION__ >= 202311L
+  : uint8_t
+#endif // defined(__cplusplus) || __STDC_VERSION__ >= 202311L
+ {
+    MEDIUS_TRANSFER_STAGE_SETUP = 0,
+    MEDIUS_TRANSFER_STAGE_DATA = 1,
+    // Where a completed transfer ends.
+    MEDIUS_TRANSFER_STAGE_STATUS = 2,
+};
+#ifndef __cplusplus
+#if __STDC_VERSION__ >= 202311L
+typedef enum MediusTransferStage MediusTransferStage;
+#else
+typedef uint8_t MediusTransferStage;
+#endif // __STDC_VERSION__ >= 202311L
+#endif // __cplusplus
+
 // How a control transfer ended (§3.14): the `status` byte of a `MediusTransferOutcome`. An unnamed
 // byte is a status this build does not know, carried through verbatim.
 enum MediusTransferStatus
@@ -887,10 +922,29 @@ enum MediusTransferStatus
   : uint8_t
 #endif // defined(__cplusplus) || __STDC_VERSION__ >= 202311L
  {
+    // Completed.
     MEDIUS_TRANSFER_STATUS_OK = 0,
+    // The game PC's transfer held the pipe until the timeout and nothing was sent (stage
+    // `SETUP`); or the game PC's next request on that endpoint, or a bus event it caused, took the
+    // pipe in the stage named.
+    MEDIUS_TRANSFER_STATUS_BUSY = 249,
+    // The game PC has suspended the clone, and with it the real device: nothing was sent.
+    MEDIUS_TRANSFER_STATUS_SUSPENDED = 250,
+    // The real device's packets were corrupt past three tries, or ran past the buffer the host
+    // asked for; or the host chip had no channel free to send it on.
+    MEDIUS_TRANSFER_STATUS_ERROR = 251,
+    // Never sent: the opt-in is off, `ep` is a control endpoint the real device does not declare,
+    // another transfer is outstanding, or the box had no room for it then: the link between its chips
+    // was full, or an earlier transfer still held its place (its reply for up to 1 s after it ended,
+    // or, where the box ended that reply at a 1 s chunk wait, until the real device finishes it).
     MEDIUS_TRANSFER_STATUS_REFUSED = 252,
+    // The real device STALLed, in the stage named.
     MEDIUS_TRANSFER_STATUS_STALL = 253,
-    MEDIUS_TRANSFER_STATUS_NAK = 254,
+    // The real device NAKed until the timeout, in the stage named; or the host chip's reply was
+    // lost on the inter-chip link; or the reply's next chunk waited 1 s to be passed on to the
+    // control port, in the data stage.
+    MEDIUS_TRANSFER_STATUS_NO_ANSWER = 254,
+    // No device attached.
     MEDIUS_TRANSFER_STATUS_NO_DEVICE = 255,
 };
 #ifndef __cplusplus
@@ -1150,18 +1204,21 @@ typedef struct MediusLockTarget {
     struct MediusUsage usage;
 } MediusLockTarget;
 
-// The real device's reply to `medius_device_transfer`: status, and its reply in `data[0..len]`: an IN
-// transfer's data stage, whole even past wLength; for an OUT transfer or one with wLength 0, what it
-// sent where the status stage was due (at most 64 bytes, usually none). A non-OK `status` is a
-// protocol outcome, not a link error, and carries no data.
+// How `medius_device_transfer` ended. The reply goes to the caller's buffer: the IN data stage as
+// the box received it, partial data before a STALL included, and past wLength where the real
+// device sent more than was asked for in the packets a host asks for; for an OUT transfer or one
+// with wLength 0, what the real device sent where the status stage was due (at most one packet,
+// usually none). It is meaningful on any status. A non-OK `status` is a protocol outcome, not a
+// link error.
 typedef struct MediusTransferOutcome {
     // One of `MEDIUS_TRANSFER_STATUS_*`, or an unknown status carried through. A byte, not
     // `MediusTransferStatus`, so it can carry unnamed values; C++ (`enum : uint8_t`) needs a cast
     // to compare it to one.
     uint8_t status;
-    // Valid bytes in `data`.
-    uint16_t len;
-    uint8_t data[MEDIUS_MAX_DEV_PAYLOAD];
+    // One of `MEDIUS_TRANSFER_STAGE_*`, or an unknown stage carried through, as `status` is.
+    uint8_t stage;
+    // The reply's length. Bytes past the buffer's capacity were not written.
+    uintptr_t len;
 } MediusTransferOutcome;
 
 // A rewrite rule (§3.14), keyed by `(class, id, direction, match, mask)`.
@@ -1408,7 +1465,9 @@ typedef struct MediusRate {
 // `medius_device_reset`.
 typedef struct MediusStats {
     uint32_t inject_emits;
-    // Reports the clone's TX queue could not hold, never emitted to the game PC. Should stay 0.
+    // Input reports never emitted to the game PC: one the clone's TX queue could not hold, one the
+    // host chip's forwarder or link could not take, or one a stop of its stream (a setting switch, a
+    // halt, a suspend) cut short. Should stay 0.
     uint16_t tx_drops;
     uint16_t tx_merges;
     uint8_t tx_maxdepth;
@@ -1424,13 +1483,16 @@ typedef struct MediusStats {
     // Relayed traffic and commands that went no further. Counted apart from `tx_drops` because no
     // native input goes missing with it. Each of these counts:
     //
-    // - a vendor IN packet that found its endpoint's queue full of the control PC's RAW packets
+    // - a vendor IN packet the host chip's link would not carry, or that found its endpoint's queue
+    //   full of the control PC's RAW packets
     // - a native zero-length packet answering a poll the PC did not make (the one poll the box
     //   runs ahead of a suspended PC)
     // - an OUT packet the box could not queue, that failed 3 times on the real device's bus, or
     //   that a bus reset or SET_INTERFACE overtook
     // - a RAW OUT packet with no room to wait
-    // - a relayed request or a flagged MOVE the box could not queue
+    // - a relayed request, or a packet or step of one, the box could not queue (the request then
+    //   ends, NAKed until the game PC gives up)
+    // - a flagged MOVE the box could not queue
     // - any frame other than native input that either chip's link receive ring dropped
     // - a frame from the control PC the box's receive ring had no room for (1 per frame)
     // - an overrun of the control port's UART (1 per overrun, however many frames it cost)
@@ -1924,10 +1986,11 @@ MediusStatus medius_clip_frame_raw(struct MediusClipFrame *f,
                                    const uint8_t *bytes,
                                    uintptr_t len);
 
-// Add a control transfer against the real device, as `medius_device_transfer` runs one.
-// `out_data[0..out_len]` is the OUT data stage: `setup.length` bytes for OUT, none for IN, checked
-// by `medius_clip_append`. The reply arrives as a `MEDIUS_CATCH_CLASS_CLIP_TRANSFER` event. The
-// box runs it only with the imperfect-clone opt-in on.
+// Add a control transfer against the real device, as `medius_device_transfer` runs one, with 4 s
+// for the real device to answer. `out_data[0..out_len]` is the OUT data stage: `setup.length`
+// bytes for OUT, none for IN, checked by `medius_clip_append`. The reply arrives as a
+// `MEDIUS_CATCH_CLASS_CLIP_TRANSFER` event. The box runs it only with the imperfect-clone opt-in
+// on.
 MediusStatus medius_clip_frame_transfer(struct MediusClipFrame *f,
                                         uint8_t ep,
                                         struct MediusSetup setup,
@@ -2009,7 +2072,7 @@ void medius_clip_free(struct MediusClip *clip);
 // `MEDIUS_CLIP_RAW_MAX` raw reports (`MEDIUS_STATUS_ERR_CLIP_FRAME_COUNT`); a frame encoding to
 // more than `MEDIUS_CLIP_ENTRY_MAX` bytes (`..._CLIP_FRAME_TOO_LONG`); a raw report neither IN nor
 // OUT (`..._RAW_DIRECTION`, or `..._RELATIVE_DIRECTION` for the bearing-relative pair); a transfer
-// whose data doesn't match its setup packet (`..._CLIP_TRANSFER_DATA`).
+// whose data doesn't match its setup packet (`..._TRANSFER_DATA`).
 MediusStatus medius_clip_append(struct MediusClip *clip, const struct MediusClipBuilder *builder);
 
 // Set the autolock scope: the input groups `scope` points at (NULL / 0 = none). Set before the first
@@ -2300,28 +2363,36 @@ MediusStatus medius_device_raw(struct MediusDevice *dev,
                                const uint8_t *bytes,
                                uintptr_t len);
 
-// `TRANSFER` (§3.14): run one control transfer against the real device, writing the reply to
-// `*out`. `ep` is 0 for EP0 or a control endpoint the real device declares; `out_data[0..out_len]`
-// is the OUT data stage (empty for IN). A non-OK `out->status` is a protocol outcome, not a
-// failure. The box replies `REFUSED` while the opt-in is off, and `NAK` while the game PC has the
-// clone suspended (the real device is suspended too). `MEDIUS_STATUS_OK` means only that the box
-// replied.
+// `TRANSFER` (§3.14): run one control transfer against the real device. `ep` is 0 for EP0 or a
+// control endpoint the real device declares. `out_data[0..out_len]` is the OUT data stage:
+// `setup.length` bytes for OUT, none for IN, at most `MEDIUS_MAX_TRANSFER_OUT`. The reply's first
+// `reply_cap` bytes go to `reply` (`MEDIUS_MAX_TRANSFER_REPLY` holds any), and `*out` takes the
+// status, the stage it ended in and the reply's length. The box waits
+// `medius_default_transfer_timeout_ms()` on the real device. A non-OK `out->status` is a protocol
+// outcome: `MEDIUS_STATUS_OK` means only that the box replied. With the opt-in off the box replies
+// `REFUSED`.
 MediusStatus medius_device_transfer(struct MediusDevice *dev,
                                     uint8_t ep,
                                     struct MediusSetup setup,
                                     const uint8_t *out_data,
                                     uintptr_t out_len,
+                                    uint8_t *reply,
+                                    uintptr_t reply_cap,
                                     struct MediusTransferOutcome *out);
 
-// [`medius_device_transfer`] with a reply timeout in milliseconds. The box gives up on a control
-// transfer after ~800 ms. A shorter `timeout_ms` can abandon the wait before a slow device
-// replies, so keep it >= `medius_default_transfer_timeout_ms()`.
+// [`medius_device_transfer`] with the box's wait on the real device set to `timeout_ms`, 1 to
+// 65535, else `MEDIUS_STATUS_ERR_TRANSFER_TIMEOUT_RANGE`. The call waits up to `timeout_ms` plus
+// 2 s for the reply, then gives `MEDIUS_STATUS_ERR_QUERY_TIMEOUT`; a reply that lost a chunk
+// between the box's chips (STATS `relay_drops` counts it) or on the control link gives
+// `MEDIUS_STATUS_ERR_TRANSFER_REPLY_INCOMPLETE`.
 MediusStatus medius_device_transfer_timeout(struct MediusDevice *dev,
                                             uint8_t ep,
                                             struct MediusSetup setup,
                                             const uint8_t *out_data,
                                             uintptr_t out_len,
                                             uint32_t timeout_ms,
+                                            uint8_t *reply,
+                                            uintptr_t reply_cap,
                                             struct MediusTransferOutcome *out);
 
 // `REWRITE` (§3.14): add or overwrite one rewrite rule; gated on the imperfect-clone opt-in.
@@ -2551,7 +2622,7 @@ MediusStatus medius_device_counters(struct MediusDevice *dev, struct MediusCount
 // Default query reply timeout, in milliseconds.
 uint32_t medius_default_query_timeout_ms(void);
 
-// Default reply wait for `medius_device_transfer`, in milliseconds.
+// How long the box waits on the real device for `medius_device_transfer`, in milliseconds.
 uint32_t medius_default_transfer_timeout_ms(void);
 
 // Default keepalive cadence for held overrides, in milliseconds.
@@ -2707,8 +2778,9 @@ bool medius_traffic_event_truncated(const struct MediusTrafficEvent *event);
 // `medius::TrafficEvent::setup`.
 const uint8_t *medius_traffic_event_setup(const struct MediusTrafficEvent *event);
 
-// The data stage of a CONTROL or CLIP_TRANSFER event, the whole packet for any other class; its
-// length goes to `*out_len`. Points into `event`. Mirrors `medius::TrafficEvent::data`.
+// The data stage of a CONTROL event, the reply of a CLIP_TRANSFER one (empty on an OUT request
+// with a data stage), the whole packet for any other class; its length goes to `*out_len`. Points
+// into `event`. Mirrors `medius::TrafficEvent::data`.
 const uint8_t *medius_traffic_event_data(const struct MediusTrafficEvent *event,
                                          uintptr_t *out_len);
 
@@ -2718,9 +2790,9 @@ bool medius_traffic_event_control_status(const struct MediusTrafficEvent *event,
                                          MediusControlStatus *out);
 
 // How the transfer ended, written to `*out` as a `MEDIUS_TRANSFER_STATUS_*` value; false for any
-// class but CLIP_TRANSFER. `MEDIUS_TRANSFER_STATUS_NAK` when no reply came; an unnamed byte is
-// carried through. A null `out` is skipped and the return value still holds. Mirrors
-// `medius::TrafficEvent::transfer_status`.
+// class but CLIP_TRANSFER. `MEDIUS_TRANSFER_STATUS_NO_ANSWER` when no answer came in 4 s; an
+// unnamed byte is carried through. A null `out` is skipped and the return value still holds.
+// Mirrors `medius::TrafficEvent::transfer_status`.
 bool medius_traffic_event_transfer_status(const struct MediusTrafficEvent *event, uint8_t *out);
 
 // The lifecycle event, written to `*out`; false for any class but BUS or an unknown kind. Mirrors
@@ -3031,10 +3103,13 @@ void medius_mock_set_imperfect_status(struct MediusMockBox *mock,
 #endif
 
 #if defined(MEDIUS_FEATURE_MOCK)
-// Set the canned `(status, IN data)` reply to a `TRANSFER` while the opt-in is on; with it off the
-// mock replies `REFUSED`. A non-OK status carries no data, as on the box.
+// Set what a `TRANSFER` brings back: a `MEDIUS_TRANSFER_STATUS_*` status, a
+// `MEDIUS_TRANSFER_STAGE_*` stage and the reply `data[0..len]`, sent in chunks as the box sends
+// them. The mock refuses a `TRANSFER` as the box does: with the opt-in off, a zero timeout, or OUT
+// data shorter than `wLength`.
 void medius_mock_set_transfer_reply(struct MediusMockBox *mock,
                                     uint8_t status,
+                                    uint8_t stage,
                                     const uint8_t *data,
                                     uintptr_t len);
 #endif

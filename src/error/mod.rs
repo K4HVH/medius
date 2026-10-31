@@ -133,6 +133,20 @@ pub enum Error {
     )]
     RawDirection { direction: crate::types::Direction },
 
+    #[error(
+        "transfer needs {want} data bytes and has {got}: wLength for an OUT request, none for an \
+         IN one"
+    )]
+    TransferData { want: usize, got: usize },
+
+    #[error("transfer timeout {timeout:?} is outside the box's 1 ms to 65535 ms")]
+    TransferTimeoutRange { timeout: std::time::Duration },
+
+    #[error(
+        "transfer reply arrived with {got} of its {len} bytes; a chunk was lost between the box's chips or on the control link"
+    )]
+    TransferReplyIncomplete { got: usize, len: usize },
+
     #[error("clip frame has {count} {what}, over the limit of {limit}")]
     ClipFrameCount {
         what: &'static str,
@@ -145,12 +159,6 @@ pub enum Error {
         max = crate::types::CLIP_ENTRY_MAX
     )]
     ClipFrameTooLong { len: usize },
-
-    #[error(
-        "clip transfer needs {want} data bytes and has {got}: wLength for an OUT request, none for \
-         an IN one"
-    )]
-    ClipTransferData { want: usize, got: usize },
 
     #[error("a clip packet trigger {reason}")]
     ClipPacketTrigger { reason: &'static str },

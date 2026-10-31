@@ -136,10 +136,14 @@ pub enum BusEvent {
 pub enum ControlStatus {
     /// Transaction completed.
     Ok,
-    /// STALL to the PC: from the real device, from a rule refusing the request, or for a failed
-    /// request above endpoint 0.
+    /// STALL to the PC: the real device STALLed, or a `Stall` rule refused the request.
     Stalled,
-    /// NAKed until the PC gave up, on endpoint 0 only: no native reply, or a `Nak` rule.
+    /// NAKed until the PC gave up: the real device left the request unanswered or it failed on the
+    /// real device's bus, a `Nak` rule matched it, the PC gave up before the real device finished,
+    /// a SET_INTERFACE on its interface, a configuration change or a suspend ended it, or the box
+    /// had no room to pass a step of it on. For a request the PC gave up on, the event comes when
+    /// the PC's next SETUP on that endpoint replaces it, or 250-300 ms after the PC stopped polling
+    /// it, whichever is first.
     Naked,
     /// Handshake value unknown to this build, kept distinct so a newer firmware's value does not
     /// read as a device fault.
@@ -207,8 +211,8 @@ impl TrafficEvent {
         }
     }
 
-    /// Data stage of a [`CatchClass::Control`] or [`CatchClass::ClipTransfer`] event; the whole
-    /// packet for any other class.
+    /// Data stage of a [`CatchClass::Control`] event, the reply of a [`CatchClass::ClipTransfer`]
+    /// one (empty on an OUT request with a data stage); the whole packet for any other class.
     ///
     /// Empty when the capture cut the setup packet itself short: the surviving bytes are the
     /// request, and returning them would label a GET_DESCRIPTOR request as the descriptor.
@@ -253,7 +257,8 @@ impl TrafficEvent {
     }
 
     /// How a [`CatchClass::ClipTransfer`] event's transfer ended: the status
-    /// [`transfer`](crate::Device::transfer) returns, or [`Nak`](TransferStatus::Nak) with no reply.
+    /// [`transfer`](crate::Device::transfer) returns, or [`NoAnswer`](TransferStatus::NoAnswer) if
+    /// no answer came in 4 s.
     pub fn transfer_status(&self) -> Option<TransferStatus> {
         (self.class == CatchClass::ClipTransfer).then(|| TransferStatus::from_u8(self.flags))
     }

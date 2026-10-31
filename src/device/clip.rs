@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU8, Ordering};
 
-use crate::device::raw::validate_raw_direction;
+use crate::device::raw::{validate_raw_direction, validate_transfer_data};
 use crate::error::{Error, Result};
 use crate::link::Link;
 use crate::link::reconcile::clip_packet_key;
@@ -47,17 +47,7 @@ fn encode_frame(f: &ClipFrame, out: &mut Vec<u8>) -> Result<()> {
         validate_raw_direction(item.direction)?;
     }
     for item in &f.transfers {
-        let want = if item.setup.is_in() {
-            0
-        } else {
-            item.setup.length as usize
-        };
-        if item.out.len() != want {
-            return Err(Error::ClipTransferData {
-                want,
-                got: item.out.len(),
-            });
-        }
+        validate_transfer_data(item.setup, &item.out)?;
     }
     let len = f.byte_len();
     if len > CLIP_ENTRY_MAX {

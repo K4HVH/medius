@@ -64,9 +64,9 @@ pub enum MediusStatus {
     ErrClipFrameCount = 30,
     /// A clip frame that encodes to more than `MEDIUS_CLIP_ENTRY_MAX` bytes.
     ErrClipFrameTooLong = 31,
-    /// A clip transfer whose data disagrees with its setup packet: `length` bytes for OUT, none for
-    /// IN.
-    ErrClipTransferData = 32,
+    /// A control transfer, or a clip's, whose data disagrees with its setup packet: `length` bytes
+    /// for OUT, none for IN.
+    ErrTransferData = 32,
     /// A clip packet trigger the box would refuse; `medius_last_error_message` says why.
     ErrClipPacketTrigger = 33,
     /// A rewrite rule with more than `MEDIUS_MAX_REWRITE_MATCH` match bytes.
@@ -74,6 +74,10 @@ pub enum MediusStatus {
     /// A rewrite payload larger than what the other held rules leave of
     /// `MEDIUS_REWRITE_PAYLOAD_POOL`.
     ErrRewritePoolFull = 35,
+    /// A transfer timeout outside 1 to 65535 ms.
+    ErrTransferTimeoutRange = 36,
+    /// A transfer reply that lost a chunk between the box's chips or on the control link.
+    ErrTransferReplyIncomplete = 37,
 }
 
 #[derive(Default)]
@@ -125,7 +129,9 @@ fn status_for(err: &Error) -> MediusStatus {
         Error::RawDirection { .. } => MediusStatus::ErrRawDirection,
         Error::ClipFrameCount { .. } => MediusStatus::ErrClipFrameCount,
         Error::ClipFrameTooLong { .. } => MediusStatus::ErrClipFrameTooLong,
-        Error::ClipTransferData { .. } => MediusStatus::ErrClipTransferData,
+        Error::TransferData { .. } => MediusStatus::ErrTransferData,
+        Error::TransferTimeoutRange { .. } => MediusStatus::ErrTransferTimeoutRange,
+        Error::TransferReplyIncomplete { .. } => MediusStatus::ErrTransferReplyIncomplete,
         Error::ClipPacketTrigger { .. } => MediusStatus::ErrClipPacketTrigger,
         Error::ImperfectRequired => MediusStatus::ErrImperfectRequired,
         Error::RewriteMaskLength { .. } => MediusStatus::ErrRewriteMaskLength,

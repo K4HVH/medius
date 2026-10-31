@@ -179,10 +179,11 @@ pub unsafe extern "C" fn medius_clip_frame_raw(
     with_frame(f, |cf| cf.raw(ep_num, dir, slice))
 }
 
-/// Add a control transfer against the real device, as `medius_device_transfer` runs one.
-/// `out_data[0..out_len]` is the OUT data stage: `setup.length` bytes for OUT, none for IN, checked
-/// by `medius_clip_append`. The reply arrives as a `MEDIUS_CATCH_CLASS_CLIP_TRANSFER` event. The
-/// box runs it only with the imperfect-clone opt-in on.
+/// Add a control transfer against the real device, as `medius_device_transfer` runs one, with 4 s
+/// for the real device to answer. `out_data[0..out_len]` is the OUT data stage: `setup.length`
+/// bytes for OUT, none for IN, checked by `medius_clip_append`. The reply arrives as a
+/// `MEDIUS_CATCH_CLASS_CLIP_TRANSFER` event. The box runs it only with the imperfect-clone opt-in
+/// on.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_clip_frame_transfer(
     f: *mut MediusClipFrame,
@@ -443,7 +444,7 @@ pub unsafe extern "C" fn medius_clip_free(clip: *mut MediusClip) {
 /// `MEDIUS_CLIP_RAW_MAX` raw reports (`MEDIUS_STATUS_ERR_CLIP_FRAME_COUNT`); a frame encoding to
 /// more than `MEDIUS_CLIP_ENTRY_MAX` bytes (`..._CLIP_FRAME_TOO_LONG`); a raw report neither IN nor
 /// OUT (`..._RAW_DIRECTION`, or `..._RELATIVE_DIRECTION` for the bearing-relative pair); a transfer
-/// whose data doesn't match its setup packet (`..._CLIP_TRANSFER_DATA`).
+/// whose data doesn't match its setup packet (`..._TRANSFER_DATA`).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_clip_append(
     clip: *mut MediusClip,
