@@ -2810,7 +2810,7 @@ def test_a_release_the_box_counts_is_recovered():
             while d.query_locks().scale_of(x, Direction.POSITIVE) != 40:
                 assert time.monotonic() < deadline, "the scale never went back"
                 time.sleep(0.01)
-            mock.detach(back_within_grace=False)
+            mock.detach()
             mock.attach()
             deadline = time.monotonic() + 3
             while d.query_locks().scale_of(x, Direction.POSITIVE) != 40:

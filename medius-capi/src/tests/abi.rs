@@ -5418,13 +5418,13 @@ fn the_session_counter_reads_through_and_the_mock_moves_it() {
         MediusStatus::Ok
     );
     unsafe {
-        medius_mock_detach(mock, false);
+        medius_mock_detach(mock);
         medius_mock_attach(mock);
     }
     assert_eq!(session(), 2);
     unsafe {
         medius_mock_link_lost(ptr::null_mut());
-        medius_mock_detach(ptr::null_mut(), true);
+        medius_mock_detach(ptr::null_mut());
         medius_mock_attach(ptr::null_mut());
         medius_device_free(dev);
         medius_mock_free(mock);

@@ -227,16 +227,13 @@ class MockBox:
         (counted in `Stats.session`); the clone stays up."""
         _native.lib.medius_mock_link_lost(self._handle)
 
-    def detach(self, back_within_grace: bool = False):
-        """Simulate the real device detaching: the mock releases host-set session state. With
-        `back_within_grace`, the same device re-attaches inside the 250 ms grace and the clone stays
-        up. Otherwise the clone is torn down when the grace ends (counted again only if a command
-        arrived during the grace) and stays down until `attach`."""
-        _native.lib.medius_mock_detach(self._handle, bool(back_within_grace))
+    def detach(self):
+        """Simulate the real device detaching: the mock releases host-set session state (counted once
+        in `Stats.session`) and takes the clone down until `attach`."""
+        _native.lib.medius_mock_detach(self._handle)
 
     def attach(self):
-        """Simulate the real device re-attaching. Inside a detach's grace the clone is unchanged;
-        after the teardown a fresh clone starts, with nothing to release."""
+        """Simulate the real device re-attaching: a fresh clone starts, with nothing to release."""
         _native.lib.medius_mock_attach(self._handle)
 
     def silent(self):
