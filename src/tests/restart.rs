@@ -591,38 +591,32 @@ fn scale_x(device: &Device) -> i16 {
         .scale_of(Axis::X, Direction::Positive)
 }
 
-// An inter-chip link drop, or a detach the device returns from within the grace, releases the
-// session with no re-clone or hello. The box counts it, and since the clone is up the crate
-// re-sends at once.
+// An inter-chip link drop releases the session with no re-clone or hello. The box counts it, and
+// since the clone is up the crate re-sends at once.
 #[test]
 fn a_release_that_leaves_the_clone_up_is_recovered() {
-    for event in ["link", "short detach"] {
-        let mock = MockBox::new();
-        let (device, clip) = holding_a_lock(&mock);
-        let from = mock.recorded();
-        match event {
-            "link" => mock.link_lost(),
-            _ => mock.detach(true),
-        }
-        assert_eq!(scale_x(&device), 100, "{event}: the box released the scale");
-        await_that("the clip was never reported lost", || clip.lost());
-        assert_eq!(scale_x(&device), 40, "{event}");
-        assert_eq!(
-            sent_after(&mock, from, FrameType::Inject),
-            vec![vec![0, 3, 0, 1]]
-        );
-        assert_eq!(device.counters().restarts, 0);
-    }
+    let mock = MockBox::new();
+    let (device, clip) = holding_a_lock(&mock);
+    let from = mock.recorded();
+    mock.link_lost();
+    assert_eq!(scale_x(&device), 100, "the box released the scale");
+    await_that("the clip was never reported lost", || clip.lost());
+    assert_eq!(scale_x(&device), 40);
+    assert_eq!(
+        sent_after(&mock, from, FrameType::Inject),
+        vec![vec![0, 3, 0, 1]]
+    );
+    assert_eq!(device.counters().restarts, 0);
 }
 
-// A detach past the grace takes the clone down, and nothing can land until another device is
-// cloned: the recovery waits, however long, then re-sends.
+// A detach takes the clone down, and nothing can land until another device is cloned: the recovery
+// waits, however long, then re-sends.
 #[test]
 fn a_detach_waits_for_the_next_clone() {
     let mock = MockBox::new();
     let (device, clip) = holding_a_lock(&mock);
     let from = mock.recorded();
-    mock.detach(false);
+    mock.detach();
     std::thread::sleep(Duration::from_millis(900));
     assert!(
         sent_after(&mock, from, FrameType::Lock).is_empty(),
@@ -663,47 +657,25 @@ fn the_mock_counts_a_release_only_after_a_command() {
     assert_eq!(session(), 0, "nothing set, nothing to lose");
     device.scale(Axis::X, Direction::Both, 40).unwrap();
     mock.link_lost();
-    mock.detach(true);
+    mock.detach();
+    mock.attach();
     assert_eq!(session(), 1, "one command, one release counted");
-    // A detach counts at once. Its teardown after the grace counts again only if a command came
-    // during the grace. A device returning to a torn-down clone starts a fresh clone, releasing
-    // nothing.
+    // A detach counts once, its teardown included, and a fresh clone releases nothing.
     device.scale(Axis::X, Direction::Both, 40).unwrap();
-    mock.detach(false);
+    mock.detach();
     assert_eq!(session(), 2);
-    std::thread::sleep(Duration::from_millis(300));
     mock.attach();
-    assert_eq!(
-        session(),
-        2,
-        "a quiet grace and a fresh clone count nothing"
-    );
-    device.scale(Axis::X, Direction::Both, 40).unwrap();
-    mock.detach(false);
-    device.scale(Axis::X, Direction::Both, 40).unwrap();
-    std::thread::sleep(Duration::from_millis(300));
-    assert_eq!(
-        session(),
-        4,
-        "a command in the grace makes the teardown count"
-    );
-    // The device back inside the grace keeps the clone, and an identical re-attach counts nothing.
-    mock.attach();
-    device.scale(Axis::X, Direction::Both, 40).unwrap();
-    mock.detach(false);
-    mock.attach();
-    std::thread::sleep(Duration::from_millis(300));
-    assert_eq!(session(), 5);
+    assert_eq!(session(), 2, "a fresh clone counts nothing");
     // A RESET counts what an earlier command set and leaves nothing marked. Sent bare, since
     // `reset()` first clears the catch table with a separate command.
     let reset = || device.link.send(FrameType::Reset, &[0]).unwrap();
     reset();
-    assert_eq!(session(), 5, "nothing set since the last count");
+    assert_eq!(session(), 2, "nothing set since the last count");
     device.scale(Axis::X, Direction::Both, 40).unwrap();
     reset();
-    assert_eq!(session(), 6);
+    assert_eq!(session(), 3);
     mock.link_lost();
-    assert_eq!(session(), 6);
+    assert_eq!(session(), 3);
     mock.restart();
     assert_eq!(session(), 0, "a boot starts it again");
     device.reboot(RebootTarget::DeviceRun).unwrap();
@@ -740,7 +712,7 @@ fn a_command_waits_for_a_re_send_in_progress() {
 fn a_re_send_that_lands_on_a_going_clone_is_sent_again() {
     let mock = MockBox::new();
     let (device, _clip) = holding_a_lock(&mock);
-    mock.detach_torn_down_before_next_command();
+    mock.torn_down_before_next_command();
     std::thread::sleep(Duration::from_millis(700));
     assert_eq!(scale_x(&device), 100, "the re-send went with the clone");
     mock.attach();
@@ -782,7 +754,7 @@ fn the_second_part_of_a_release_is_caught_by_the_close_watch() {
 fn a_boot_during_another_recovery_is_counted() {
     let mock = MockBox::new();
     let (device, _clip) = holding_a_lock(&mock);
-    mock.detach(false);
+    mock.detach();
     std::thread::sleep(Duration::from_millis(700));
     mock.restart();
     await_restarts(&device, 1);
@@ -886,29 +858,27 @@ fn dropping_the_device_does_not_wait_out_a_recovery() {
     );
 }
 
-// A presentation requested inside a detach's grace waits for its end, and happens only if the device
-// came back.
+// An APPLY with no device attached presents nothing, and the next device attached is cloned with the
+// stored set.
 #[test]
-fn the_mock_holds_a_presentation_through_a_detach_s_grace() {
+fn the_mock_presents_a_patch_set_on_the_next_attach() {
     use crate::{Patch, PatchSection};
-    for back in [false, true] {
-        let mock = MockBox::new().with_imperfect(true);
-        let device = Device::from_transport_with_cadence(mock.transport(), Duration::from_secs(60));
-        device
-            .set_patch(&Patch::new(PatchSection::Device, 12, [0x00, 0x01]))
-            .unwrap();
-        mock.detach(false);
-        device.apply_patch().unwrap();
-        assert!(
-            !device.query_patches().unwrap().applied,
-            "held in the grace"
-        );
-        if back {
-            mock.attach();
-        }
-        std::thread::sleep(Duration::from_millis(300));
-        assert_eq!(device.query_patches().unwrap().applied, back, "back={back}");
-    }
+    let mock = MockBox::new().with_imperfect(true);
+    let device = Device::from_transport_with_cadence(mock.transport(), Duration::from_secs(60));
+    device
+        .set_patch(&Patch::new(PatchSection::Device, 12, [0x00, 0x01]))
+        .unwrap();
+    mock.detach();
+    device.apply_patch().unwrap();
+    assert!(
+        !device.query_patches().unwrap().applied,
+        "no device attached"
+    );
+    mock.attach();
+    assert!(
+        device.query_patches().unwrap().applied,
+        "cloned with the stored set"
+    );
 }
 
 // A ring read overtaken by a release shows the ring empty before anything is reported; that

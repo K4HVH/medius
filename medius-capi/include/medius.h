@@ -3209,16 +3209,13 @@ void medius_mock_link_lost(struct MediusMockBox *mock);
 #endif
 
 #if defined(MEDIUS_FEATURE_MOCK)
-// Simulate the real device detaching: the mock releases host-set session state at once. With
-// `back_within_grace`, the same device re-attaches inside the 250 ms grace and the clone stays up.
-// Otherwise the clone is torn down when the grace ends (counted again only if a command arrived
-// during the grace) and stays down until `medius_mock_attach`.
-void medius_mock_detach(struct MediusMockBox *mock, bool back_within_grace);
+// Simulate the real device detaching: the mock releases host-set session state (counted once) and
+// takes the clone down until `medius_mock_attach`.
+void medius_mock_detach(struct MediusMockBox *mock);
 #endif
 
 #if defined(MEDIUS_FEATURE_MOCK)
-// Simulate the real device re-attaching. Inside a detach's grace the clone is unchanged; after the
-// teardown a fresh clone starts, with nothing to release.
+// Simulate the real device re-attaching: a fresh clone starts, with nothing to release.
 void medius_mock_attach(struct MediusMockBox *mock);
 #endif
 

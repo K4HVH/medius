@@ -110,11 +110,6 @@ struct State {
     clone_up: bool,
     // What the box does later unprompted; each runs on the first frame at or past its time.
     clone_up_at: Option<std::time::Instant>,
-    // A detach's grace: when it ends, whether the device came back inside it, and a presentation
-    // asked for during it, which waits for the grace to end.
-    grace_until: Option<std::time::Instant>,
-    device_back: bool,
-    represent_held: bool,
     represent_at: Option<std::time::Instant>,
     represent_delay: std::time::Duration,
     #[cfg(test)]
@@ -447,9 +442,6 @@ impl Default for State {
             session_dirty: false,
             clone_up: true,
             clone_up_at: None,
-            grace_until: None,
-            device_back: false,
-            represent_held: false,
             represent_at: None,
             represent_delay: REPRESENT_DELAY,
             #[cfg(test)]
@@ -480,8 +472,6 @@ const XFER_CHUNK: usize = 448; // XFR_CHUNK
 const PATCH_POOL: usize = 1024; // PATCH_POOL, the bytes every stored patch shares
 // How long a booted device chip takes to clone the attached device again.
 const BOOT_CLONE_DELAY: std::time::Duration = std::time::Duration::from_millis(100);
-// main.c's DETACH_GRACE_US: a detached device that comes back inside it keeps the clone.
-const DETACH_GRACE: std::time::Duration = std::time::Duration::from_millis(250);
 // The main loop's longest tick: an opt-in toggle re-presents the clone up to this long after the
 // command.
 const REPRESENT_DELAY: std::time::Duration = std::time::Duration::from_millis(50);
@@ -928,8 +918,6 @@ impl State {
         self.session_dirty = false;
         self.clone_up = false;
         self.clone_up_at = Some(std::time::Instant::now() + BOOT_CLONE_DELAY);
-        self.grace_until = None;
-        self.represent_held = false;
         self.represent_at = None;
         self.patch_presented = self.patches_to_serve();
         self.patch_refused = false;
@@ -945,24 +933,13 @@ impl State {
             self.clone_up_at = None;
             self.clone_up = true;
         }
-        if self.grace_until.is_some_and(|t| now >= t) {
-            self.grace_until = None;
-            if self.device_back {
-                if std::mem::take(&mut self.represent_held) {
-                    self.present_patches();
-                }
-            } else {
-                self.represent_held = false;
-                self.tear_down();
-            }
-        }
         if self.represent_at.is_some_and(|t| now >= t) {
             self.represent_at = None;
             self.present_patches();
         }
     }
 
-    // The clone's teardown after a detach's grace: counted only when a command came since the detach.
+    // The clone's teardown: counted only when a command came since the last count.
     fn tear_down(&mut self) {
         self.count_release();
         self.release_session();
@@ -1000,9 +977,8 @@ impl State {
     // APPLY, CLEAR and an opt-in toggle re-present the clone when what it serves changes. That is a
     // re-clone: the session goes and the game PC enumerates the clone again.
     fn present_patches(&mut self) {
-        // Inside a detach's grace the snapshot may be of a device that has gone: the request waits.
-        if self.grace_until.is_some() {
-            self.represent_held = true;
+        // With no device attached there is nothing to present: the next attach serves the stored set.
+        if !self.clone_up {
             return;
         }
         let serve = self.patches_to_serve();
@@ -2514,29 +2490,20 @@ impl MockBox {
         st.release_session();
     }
 
-    /// Simulate the real device detaching: the box releases host-set session state at once. With
-    /// `back_within_grace`, the device re-attaches inside the 250 ms grace and the clone stays up.
-    /// Otherwise the clone is torn down when the grace ends (counted again only if a command arrived
-    /// during the grace) and stays down until [`attach`](Self::attach).
-    pub fn detach(&self, back_within_grace: bool) {
+    /// Simulate the real device detaching: the box releases host-set session state (counted once
+    /// in [`Stats::session`](crate::Stats::session)) and takes the clone down until
+    /// [`attach`](Self::attach).
+    pub fn detach(&self) {
         let mut st = self.state.lock();
         st.advance(std::time::Instant::now());
-        st.count_release();
-        st.release_session();
-        if !back_within_grace {
-            st.grace_until = Some(std::time::Instant::now() + DETACH_GRACE);
-            st.device_back = false;
-        }
+        st.tear_down();
     }
 
-    /// Simulate the real device re-attaching. Inside a detach's grace the clone is unchanged; after
-    /// the teardown a fresh clone starts, with nothing to release.
+    /// Simulate the real device re-attaching: a fresh clone starts, with nothing to release.
     pub fn attach(&self) {
         let mut st = self.state.lock();
         st.advance(std::time::Instant::now());
-        if st.grace_until.is_some() {
-            st.device_back = true;
-        } else if !st.clone_up {
+        if !st.clone_up {
             st.clone_up = true;
             st.patch_presented = st.patches_to_serve();
             st.patch_refused = false;
@@ -2556,10 +2523,11 @@ impl MockBox {
         self.state.lock().link_lost_before_clip_query = true;
     }
 
-    // A detach whose teardown lands just before the next command, with nothing marked since the
-    // detach was counted: the window a re-send can fall into.
+    // A release counted now, and the clone's teardown just before the next command with nothing marked
+    // between, as an opt-in toggle's re-present lands on the box's next loop tick: the window a re-send
+    // can fall into.
     #[cfg(test)]
-    pub(crate) fn detach_torn_down_before_next_command(&self) {
+    pub(crate) fn torn_down_before_next_command(&self) {
         let mut st = self.state.lock();
         st.count_release();
         st.release_session();

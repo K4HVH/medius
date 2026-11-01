@@ -906,7 +906,7 @@ if HAS_MOCK:
     )
     _decl("medius_mock_restart", None, [HANDLE])
     _decl("medius_mock_link_lost", None, [HANDLE])
-    _decl("medius_mock_detach", None, [HANDLE, c_bool])
+    _decl("medius_mock_detach", None, [HANDLE])
     _decl("medius_mock_attach", None, [HANDLE])
     _decl("medius_mock_silent", None, [HANDLE])
     _decl("medius_mock_refuse_next_activate", None, [HANDLE, u8])
