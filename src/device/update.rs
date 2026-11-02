@@ -121,7 +121,8 @@ impl Device {
     }
 
     /// Block until neither chip is on probation (a chip that hasn't confirmed its booted image
-    /// refuses another update). The device chip confirms after 10 s of running; the host chip
+    /// refuses another update). The device chip confirms after 10 s of running, once the mouse is
+    /// still (25 s at the latest); the host chip
     /// confirms only on a completed clock exchange over the inter-chip link. Keeps asking while the
     /// box reboots after an activate. After 55 s, returns [`Error::Update`] (`ON_PROBATION`) if a
     /// chip is still on probation, or [`Error::QueryTimeout`] if the box hasn't replied.
