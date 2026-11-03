@@ -653,7 +653,7 @@ fn a_clip_reply_of_another_shape_is_refused() {
 }
 
 // Packet triggers: `CLIP_TRIGGER` with a traffic class, and the list that closes `RESP(CLIP)`.
-// The byte vectors are the firmware's: tests/host/test_clip_ptrig.c and tools/medius.py pin the same.
+// The byte vectors are the firmware's: its host test tests/host/test_clip_ptrig.c pins the same.
 mod packet_trigger {
     use crate::device::clip::{validate_packet_key, validate_packet_trigger};
     use crate::error::Error;
