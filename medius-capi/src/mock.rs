@@ -630,3 +630,25 @@ pub unsafe extern "C" fn medius_device_open_mock(
         }
     })
 }
+
+/// Build a `Device` over the mock and run the handshake `medius_device_open_for_update` runs.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn medius_device_open_mock_for_update(
+    mock: *const MediusMockBox,
+    out: *mut *mut MediusDevice,
+) -> MediusStatus {
+    guard_status(|| {
+        if mock.is_null() || out.is_null() {
+            return fail(MediusStatus::ErrInvalidArg, "null pointer");
+        }
+        let mock = unsafe { (*mock).inner.clone() };
+        match Device::open_mock_for_update(mock) {
+            Ok(dev) => {
+                unsafe { *out = MediusDevice::boxed(dev) };
+                clear_error();
+                MediusStatus::Ok
+            }
+            Err(e) => record(&e),
+        }
+    })
+}

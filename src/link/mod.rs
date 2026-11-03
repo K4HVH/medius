@@ -17,7 +17,7 @@ use std::time::Duration;
 
 use parking_lot::Mutex;
 
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::protocol::{FrameType, encode};
 use crate::transport::Transport;
 use crate::types::{CountersSnapshot, LogLine};
@@ -200,6 +200,11 @@ impl Link {
     }
 
     pub(crate) fn send_with_seq(&self, seq: u8, ty: FrameType, payload: &[u8]) -> Result<()> {
+        if let Some(got) = self.update_only()
+            && !is_update_path(ty, payload)
+        {
+            return Err(Error::BadProtoVer { got });
+        }
         write_frame(
             &self.inner.transport,
             &self.inner.write_lock,
@@ -213,6 +218,21 @@ impl Link {
     pub(crate) fn send(&self, ty: FrameType, payload: &[u8]) -> Result<()> {
         let seq = self.next_seq();
         self.send_with_seq(seq, ty, payload)
+    }
+
+    /// The box's protocol, when this link may send it only the update path.
+    pub(crate) fn update_only(&self) -> Option<u8> {
+        self.inner.restart.update_only()
+    }
+
+    /// From here on, a box on any protocol from `MIN_PROTO_VER` on is reached on the update path.
+    pub(crate) fn open_for_update(&self) {
+        self.inner.restart.open_for_update();
+    }
+
+    /// Whether a box on `proto` is now reached on the update path only.
+    pub(crate) fn reaches_update_only(&self, proto: u8) -> bool {
+        self.inner.restart.reaches_update_only(proto)
     }
 
     pub(crate) fn counters(&self) -> CountersSnapshot {
@@ -302,4 +322,11 @@ fn write_frame(
         len = payload.len(),
     );
     Ok(())
+}
+
+// What a box below this build's protocol is sent: its version and firmware queries, and UPDATE.
+fn is_update_path(ty: FrameType, payload: &[u8]) -> bool {
+    use crate::protocol::opcode::{Q_FIRMWARE, Q_VERSION};
+    ty == FrameType::Update
+        || ty == FrameType::Query && matches!(payload.first(), Some(&Q_VERSION) | Some(&Q_FIRMWARE))
 }

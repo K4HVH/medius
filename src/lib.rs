@@ -32,13 +32,13 @@ pub use device::raw::DEFAULT_TRANSFER_TIMEOUT;
 pub use error::{Error, Result};
 pub use link::{DEFAULT_KEEPALIVE_CADENCE, DEFAULT_QUERY_TIMEOUT};
 pub use protocol::MAX_PAYLOAD;
-pub use protocol::PROTO_VER;
 pub use protocol::opcode::{
     CATCH_MAX_ENTRIES, CLIP_PKT_MATCH_POOL, CLIP_PKT_TRIG_MAX, LOCK_SCALE_BLOCK, LOCK_SCALE_MAX,
     LOCK_SCALE_MIN, LOCK_SCALE_PASS, PATCH_MAX_ENTRIES, PKT_MATCH_MAX, REWRITE_MATCH_MAX,
     REWRITE_MAX_ENTRIES, REWRITE_PAYLOAD_POOL, TRANSFER_OUT_MAX, TRANSFORM_MAX_ENTRIES,
 };
 pub use protocol::{DecodedFrame, FrameType};
+pub use protocol::{MIN_PROTO_VER, PROTO_VER};
 pub use transport::scan::find_medius;
 pub use types::{
     Action, Axis, Bearing, BearingMode, Blanket, BusEvent, Button, CLIP_EDGES_MAX, CLIP_ENTRY_MAX,

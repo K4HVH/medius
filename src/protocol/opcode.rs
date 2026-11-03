@@ -22,6 +22,11 @@ pub const MAX_PAYLOAD: usize = 512;
 /// advanced control layer (`RAW`/`TRANSFER`/`REWRITE`/`PATCH`) and `u16` `HEALTH` flags.
 pub const PROTO_VER: u8 = 10;
 
+/// Oldest control protocol whose update path this build speaks: from 5 on, `QUERY(VERSION)`,
+/// `QUERY(FIRMWARE)` and `UPDATE` are unchanged, so [`Device::open_for_update`](crate::Device::open_for_update)
+/// can bring a box on any protocol from here to [`PROTO_VER`] up to date.
+pub const MIN_PROTO_VER: u8 = 5;
+
 /// `INJECT` class byte: the momentary-usage field kind.
 pub const INJ_BTN: u8 = 0;
 pub const INJ_KEY: u8 = 1;

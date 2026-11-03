@@ -2682,4 +2682,10 @@ impl crate::Device {
     pub fn open_mock(mock: MockBox) -> crate::Result<crate::Device> {
         crate::Device::open_transport(mock.transport())
     }
+
+    /// [`Device`](crate::Device) over a [`MockBox`], with the handshake
+    /// [`open_for_update`](crate::Device::open_for_update) runs.
+    pub fn open_mock_for_update(mock: MockBox) -> crate::Result<crate::Device> {
+        crate::Device::open_transport_for_update(mock.transport())
+    }
 }
