@@ -537,6 +537,29 @@ mod refused_and_rebooting {
         assert_eq!(aborts(&mock), vec![UpdateTarget::Device.as_u8()]);
     }
 
+    // Right after an activate the chip may still answer from the image being replaced; a reply then
+    // says nothing about the new one. The wait must not end before the box shows it rebooted.
+    #[test]
+    fn wait_firmware_confirmed_waits_for_the_reboot() {
+        let mock = crate::MockBox::new();
+        let dev = crate::Device::with_mock(mock.clone());
+        dev.update_firmware(UpdateTarget::Device, &image(), &mut |_| {})
+            .expect("updated");
+        let started = std::time::Instant::now();
+        let booting = mock.clone();
+        let boot = std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(1_000));
+            booting.restart();
+        });
+        dev.wait_firmware_confirmed().expect("confirmed");
+        let waited = started.elapsed();
+        boot.join().expect("boot thread");
+        assert!(
+            waited >= std::time::Duration::from_millis(900),
+            "returned {waited:?} after the activate, before the box rebooted"
+        );
+    }
+
     #[test]
     fn wait_firmware_confirmed_asks_through_the_reboot() {
         let mock = crate::MockBox::new();
@@ -698,5 +721,95 @@ mod update_only {
     fn open_still_refuses_old_proto() {
         let err = crate::Device::open_mock(on_proto(9)).unwrap_err();
         assert!(matches!(err, Error::BadProtoVer { got: 9 }), "{err:?}");
+    }
+}
+
+// A box before v3.4.0 runs its control link at 4 Mbaud; one updated past it comes back at 6 Mbaud.
+#[cfg(feature = "mock")]
+mod update_rates {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    use crate::transport::serial::{CTRL_BAUD, LEGACY_CTRL_BAUD};
+    use crate::types::{UpdateTarget, Version};
+
+    fn on_proto(proto_ver: u8) -> crate::MockBox {
+        crate::MockBox::new().with_version(Version {
+            proto_ver,
+            fw_major: 3,
+            fw_minor: 3,
+            fw_patch: 4,
+            mac: [0x58, 0x8c, 0x81, 0xe0, 0x82, 0x44],
+            name: "Medius-8244".into(),
+        })
+    }
+
+    #[test]
+    fn open_for_update_falls_back_to_the_legacy_rate() {
+        let old = on_proto(6);
+        let silent = crate::MockBox::new().silent();
+        let asked = Arc::new(parking_lot::Mutex::new(Vec::new()));
+        let log = Arc::clone(&asked);
+        let (o, s) = (old.clone(), silent.clone());
+        let dev = crate::Device::open_with_opener_for_update(Arc::new(move |baud| {
+            log.lock().push(baud);
+            Ok(if baud == LEGACY_CTRL_BAUD {
+                o.transport()
+            } else {
+                s.transport()
+            })
+        }))
+        .expect("reached at 4 Mbaud");
+        assert!(dev.is_update_only());
+        assert_eq!(*asked.lock(), vec![CTRL_BAUD, LEGACY_CTRL_BAUD]);
+        assert_eq!(dev.query_version().expect("version").proto_ver, 6);
+    }
+
+    // A serial port opens once at a time: the link must let go of the port at one rate before it is
+    // opened at the other.
+    #[test]
+    fn the_port_is_released_before_it_opens_at_the_other_rate() {
+        let old = on_proto(6);
+        let first = crate::MockBox::new().silent().transport();
+        let unheld = Arc::strong_count(&first);
+        let held_at_reopen = Arc::new(parking_lot::Mutex::new(None));
+        let (f, h, o) = (Arc::clone(&first), Arc::clone(&held_at_reopen), old.clone());
+        crate::Device::open_with_opener_for_update(Arc::new(move |baud| {
+            if baud == CTRL_BAUD {
+                return Ok(Arc::clone(&f));
+            }
+            *h.lock() = Some(Arc::strong_count(&f));
+            Ok(o.transport())
+        }))
+        .expect("reached at 4 Mbaud");
+        // `f` itself, captured by the opener, is the one count above `unheld`.
+        assert_eq!(*held_at_reopen.lock(), Some(unheld + 1));
+    }
+
+    #[test]
+    fn wait_confirmed_follows_the_box_to_the_new_rate() {
+        let old = on_proto(6);
+        old.reboot_after_activate(u32::MAX, 0); // gone from 4 Mbaud once it activates
+        let new = crate::MockBox::new(); // the updated box, confirmed, at 6 Mbaud
+        let silent = crate::MockBox::new().silent();
+        let activated = Arc::new(AtomicBool::new(false));
+        let flag = Arc::clone(&activated);
+        let (o, n, s) = (old.clone(), new.clone(), silent.clone());
+        let dev = crate::Device::open_with_opener_for_update(Arc::new(move |baud| {
+            Ok(match (baud == CTRL_BAUD, flag.load(Ordering::SeqCst)) {
+                (true, true) => n.transport(),
+                (true, false) => s.transport(),
+                (false, _) => o.transport(),
+            })
+        }))
+        .expect("opened");
+        let image: Vec<u8> = (0..10_000u32).map(|i| i as u8).collect();
+        dev.update_firmware(UpdateTarget::Device, &image, &mut |_| {})
+            .expect("updated");
+        activated.store(true, Ordering::SeqCst);
+        let info = dev
+            .wait_firmware_confirmed()
+            .expect("confirmed at the new rate");
+        assert!(!info.any_pending());
     }
 }

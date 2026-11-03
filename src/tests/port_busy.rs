@@ -101,11 +101,16 @@ fn listing_skips_a_held_port() {
         pid: 0x55d3,
         serial: None,
     };
-    assert!(crate::device::discover::probe(&port).is_none());
+    let (boxes, held) = crate::device::discover::list_and_held_from(&[port]);
+    assert!(boxes.is_empty());
+    assert!(
+        held.contains(&format!("sleep (pid {})", child.id())),
+        "{held:?}"
+    );
     assert_eq!(
         owner.bytes_received(),
         0,
-        "the probe wrote to a port another process holds"
+        "listing wrote to a port another process holds"
     );
     child.kill().expect("kill sleep");
     child.wait().expect("reap sleep");

@@ -22,7 +22,11 @@ impl std::fmt::Debug for SerialTransport {
 
 impl SerialTransport {
     pub(crate) fn open(path: &Path) -> io::Result<Self> {
-        let read = open_handle(&path.to_string_lossy())?;
+        Self::open_at(path, CTRL_BAUD)
+    }
+
+    pub(crate) fn open_at(path: &Path, baud: u32) -> io::Result<Self> {
+        let read = open_handle(&path.to_string_lossy(), baud)?;
         let _ = read.clear(serialport::ClearBuffer::Input);
         let write = read.try_clone().map_err(to_io)?;
         Ok(SerialTransport {
@@ -32,8 +36,8 @@ impl SerialTransport {
     }
 }
 
-fn open_handle(path: &str) -> io::Result<Box<dyn SerialPort>> {
-    let builder = serialport::new(path, CTRL_BAUD).timeout(IO_TIMEOUT);
+fn open_handle(path: &str, baud: u32) -> io::Result<Box<dyn SerialPort>> {
+    let builder = serialport::new(path, baud).timeout(IO_TIMEOUT);
     #[cfg(unix)]
     {
         let mut port = serialport::TTYPort::open(&builder).map_err(to_io)?;

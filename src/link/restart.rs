@@ -1,4 +1,4 @@
-use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use parking_lot::Mutex;
@@ -80,6 +80,8 @@ pub(crate) struct RestartWatch {
     for_update: AtomicBool,
     // The box's protocol while it is below this build's (0 otherwise): only the update path is sent.
     update_only: AtomicU8,
+    // Every hello the box sent, on any protocol: a count that moves when a chip boots.
+    boots: AtomicU64,
 }
 
 #[derive(Debug, Default)]
@@ -100,6 +102,10 @@ struct Watch {
 impl RestartWatch {
     pub(crate) fn open_for_update(&self) {
         self.for_update.store(true, Ordering::SeqCst);
+    }
+
+    pub(crate) fn boots(&self) -> u64 {
+        self.boots.load(Ordering::SeqCst)
     }
 
     pub(crate) fn update_only(&self) -> Option<u8> {
@@ -130,6 +136,7 @@ impl RestartWatch {
             Some(Resp::Version(v)) => v.proto_ver,
             _ => return,
         };
+        self.boots.fetch_add(1, Ordering::SeqCst);
         if self.reaches_update_only(proto) {
             return;
         }

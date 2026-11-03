@@ -4,6 +4,9 @@ use std::time::Duration;
 
 pub(crate) const CTRL_BAUD: u32 = 6_000_000;
 
+// Firmware before v3.4.0 (control protocols 5 and 6) runs the link at 4 Mbaud.
+pub(crate) const LEGACY_CTRL_BAUD: u32 = 4_000_000;
+
 // Bounds a parked read so the reader thread stays responsive to stop and reconnect.
 const IO_TIMEOUT: Duration = Duration::from_millis(100);
 

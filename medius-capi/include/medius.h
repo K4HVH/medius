@@ -2220,7 +2220,8 @@ uintptr_t medius_list(struct MediusBoxInfo *out,
 
 // Open the box whose identity matches `id` (device-chip MAC hex or CH343 serial), handshake, and
 // write the handle to `*out`. `MEDIUS_STATUS_ERR_BAD_PROTO_VER` if that box speaks another
-// control protocol.
+// control protocol, `MEDIUS_STATUS_ERR_PORT_BUSY` if no box matches and another process holds a
+// box's port.
 MediusStatus medius_device_open_by_id(const char *id, struct MediusDevice **out);
 
 // Open the first box whose clone is a mouse, handshake, and write the handle to `*out`. With no such box, a box on another control protocol (which reports no clone) gives `MEDIUS_STATUS_ERR_BAD_PROTO_VER`.

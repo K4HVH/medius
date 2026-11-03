@@ -23,6 +23,9 @@ const HELD_POLL: Duration = Duration::from_millis(50);
 // Outlasts the host chip's 40 s probation, the longer of the two.
 pub(crate) const CONFIRM_TIMEOUT: Duration = Duration::from_secs(55);
 
+// How long a confirm wait trusts no reply after an activate unless the box shows its reboot first.
+const REBOOT_WAIT: Duration = Duration::from_secs(5);
+
 // Chunking and credit accounting for one staged image, transport-free, so the sync and async
 // transfers share one copy of the wire logic.
 pub(crate) struct ChunkPlan<'a> {
@@ -128,13 +131,28 @@ impl Device {
     /// chip is still on probation, or [`Error::QueryTimeout`] if the box hasn't replied.
     pub fn wait_firmware_confirmed(&self) -> Result<FirmwareInfo> {
         let deadline = Instant::now() + CONFIRM_TIMEOUT;
+        // Right after an activate, a chip can still answer from the image it is replacing. Its replies
+        // count once the box shows the reboot: a hello, a query left unanswered, or REBOOT_WAIT gone.
+        let activated = self.link.take_activated();
+        let mut rebooted = activated.is_none();
         loop {
-            // Called right after an activate, while the box reboots into the image it will confirm.
             let info = match self.firmware_info() {
+                Ok(i) if !rebooted => {
+                    let (boots, at) = activated.expect("set while not rebooted");
+                    rebooted = self.link.boots() > boots || at.elapsed() >= REBOOT_WAIT;
+                    if !rebooted {
+                        std::thread::sleep(Duration::from_millis(200));
+                        continue;
+                    }
+                    i
+                }
                 Ok(i) => i,
                 // Only a timeout: the CH343 stays enumerated while the chip behind it reboots, so a
                 // reboot reads as an unanswered query.
                 Err(Error::QueryTimeout) if Instant::now() < deadline => {
+                    rebooted = true;
+                    // Opened to update, the box may have rebooted into firmware on the other rate.
+                    self.link.switch_rate();
                     std::thread::sleep(Duration::from_millis(500));
                     continue;
                 }
@@ -230,6 +248,7 @@ impl Device {
                 arg,
             });
         }
+        self.link.note_activated();
         Ok(())
     }
 
