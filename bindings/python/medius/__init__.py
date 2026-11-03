@@ -176,7 +176,9 @@ def find_ports(cap: int = 16) -> List[PortInfo]:
 
 def list_boxes(cap: int = 16) -> List[BoxInfo]:
     """Enumerate every connected box, reading its version and device info. A box on another control
-    protocol is listed with `device` None."""
+    protocol is listed with `device` None. On Linux, a box whose port another process holds is left
+    out. A box on firmware before v3.4.0 runs at 4 Mbaud and isn't listed; open it by its port with
+    `Device.open_for_update`."""
     import ctypes
 
     arr = (_native.MediusBoxInfo * cap)()

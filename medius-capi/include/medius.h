@@ -2183,6 +2183,7 @@ MediusStatus medius_clip_query_status(struct MediusClip *clip,
 MediusStatus medius_clip_query_config(struct MediusClip *clip, struct MediusClipSettings *out);
 
 // Open the box at serial `path` (NUL-terminated UTF-8), handshake, and write the owned handle to `*out`.
+// On Linux, `MEDIUS_STATUS_ERR_PORT_BUSY` if another process holds the port.
 MediusStatus medius_device_open(const char *path,
                                 struct MediusDevice **out);
 
@@ -2200,6 +2201,7 @@ MediusStatus medius_device_open_for_update(const char *path,
 bool medius_device_is_update_only(const struct MediusDevice *dev);
 
 // Discover the first medius box by USB id, open it, handshake, and write the handle to `*out`.
+// On Linux, `MEDIUS_STATUS_ERR_PORT_BUSY` if another process holds that box's port.
 MediusStatus medius_device_find(struct MediusDevice **out);
 
 // Clone a handle to the same reference-counted connection; free each clone.
@@ -2213,7 +2215,7 @@ uintptr_t medius_find_ports(struct MediusPortInfo *out,
                             uintptr_t cap,
                             uintptr_t *out_total);
 
-// Enumerate every connected box into `out` (up to `cap`), reading each in turn; writes the total to `*out_total` and returns the number written. A box on another control protocol is listed with `has_device` 0.
+// Enumerate every connected box into `out` (up to `cap`), reading each in turn; writes the total to `*out_total` and returns the number written. A box on another control protocol is listed with `has_device` 0. On Linux, a box whose port another process holds is left out. A box on firmware before v3.4.0 runs at 4 Mbaud and isn't listed; open it by its port with `medius_device_open_for_update`.
 uintptr_t medius_list(struct MediusBoxInfo *out,
                       uintptr_t cap,
                       uintptr_t *out_total);
@@ -2224,10 +2226,10 @@ uintptr_t medius_list(struct MediusBoxInfo *out,
 // box's port.
 MediusStatus medius_device_open_by_id(const char *id, struct MediusDevice **out);
 
-// Open the first box whose clone is a mouse, handshake, and write the handle to `*out`. With no such box, a box on another control protocol (which reports no clone) gives `MEDIUS_STATUS_ERR_BAD_PROTO_VER`.
+// Open the first box whose clone is a mouse, handshake, and write the handle to `*out`. With no such box, a box on another control protocol (which reports no clone) gives `MEDIUS_STATUS_ERR_BAD_PROTO_VER`, and `MEDIUS_STATUS_ERR_PORT_BUSY` if none matches and another process holds a box's port.
 MediusStatus medius_device_find_mouse_box(struct MediusDevice **out);
 
-// Open the first box whose clone is a keyboard, handshake, and write the handle to `*out`. With no such box, a box on another control protocol (which reports no clone) gives `MEDIUS_STATUS_ERR_BAD_PROTO_VER`.
+// Open the first box whose clone is a keyboard, handshake, and write the handle to `*out`. With no such box, a box on another control protocol (which reports no clone) gives `MEDIUS_STATUS_ERR_BAD_PROTO_VER`, and `MEDIUS_STATUS_ERR_PORT_BUSY` if none matches and another process holds a box's port.
 MediusStatus medius_device_find_keyboard_box(struct MediusDevice **out);
 
 MediusStatus medius_device_move_rel(struct MediusDevice *dev, int16_t dx, int16_t dy);
@@ -2594,8 +2596,12 @@ MediusStatus medius_device_update_firmware(struct MediusDevice *dev,
                                            void *user);
 
 // Block until neither chip is on probation and write both chips' firmware state to `*out`. Keeps
-// asking while the box reboots after an activate. After 55 s, returns `ErrUpdate` if a chip is
-// still on probation, or `ErrQueryTimeout` if the box hasn't replied.
+// asking while the box reboots after an activate. Right after an activate a chip can still answer
+// from the image it is replacing, so a reply counts only once the box shows the reboot (its ready
+// hello, or a query left unanswered), or after 5 s. A handle from `medius_device_open_for_update`
+// follows the box to the other control rate when it reboots into firmware on it. After 55 s,
+// returns `ErrUpdate` if a chip is still on probation, or `ErrQueryTimeout` if the box hasn't
+// replied.
 //
 // # Safety
 // `dev` must be a live device handle and `out` writable.

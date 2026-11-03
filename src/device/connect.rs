@@ -224,7 +224,8 @@ impl Device {
         Err(Error::NoReply)
     }
 
-    /// Open the first box found by VID/PID, with the handshake.
+    /// Open the first box found by VID/PID, with the handshake. On Linux, [`Error::PortBusy`] if
+    /// another process holds that box's port.
     pub fn find() -> Result<Device> {
         let port = crate::transport::scan::find_medius()
             .into_iter()

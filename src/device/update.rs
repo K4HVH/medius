@@ -127,8 +127,12 @@ impl Device {
     /// refuses another update). The device chip confirms after 10 s of running, once the mouse is
     /// still (25 s at the latest); the host chip
     /// confirms only on a completed clock exchange over the inter-chip link. Keeps asking while the
-    /// box reboots after an activate. After 55 s, returns [`Error::Update`] (`ON_PROBATION`) if a
-    /// chip is still on probation, or [`Error::QueryTimeout`] if the box hasn't replied.
+    /// box reboots after an activate. Right after an activate a chip can still answer from the image
+    /// it is replacing, so a reply counts only once the box shows the reboot (its ready hello, or a
+    /// query left unanswered), or after 5 s. A device from
+    /// [`open_for_update`](Self::open_for_update) follows the box to the other control rate when it
+    /// reboots into firmware on it. After 55 s, returns [`Error::Update`] (`ON_PROBATION`) if a chip
+    /// is still on probation, or [`Error::QueryTimeout`] if the box hasn't replied.
     pub fn wait_firmware_confirmed(&self) -> Result<FirmwareInfo> {
         let deadline = Instant::now() + CONFIRM_TIMEOUT;
         // Right after an activate, a chip can still answer from the image it is replacing. Its replies
