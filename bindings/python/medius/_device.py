@@ -112,6 +112,25 @@ class Device(Handle):
         return cls(out.value)
 
     @classmethod
+    def open_for_update(cls, path) -> "Device":
+        """Open the box at `path` to update it, on any control protocol from 5 on.
+
+        On this build's protocol the device is a full one, as from `open`. On another it is
+        update-only (`is_update_only`): `query_version`, `firmware_info`, `stage_firmware`,
+        `activate_firmware`, `abort_update`, `update_firmware` and `wait_firmware_confirmed` work,
+        and every other call raises `BadProtoVerError`. Open the box again once it is updated.
+        Raises `BadProtoVerError` for a box older than protocol 5."""
+        out = ctypes.c_void_p()
+        check(_native.lib.medius_device_open_for_update(path.encode("utf-8"), ctypes.byref(out)))
+        return cls(out.value)
+
+    @property
+    def is_update_only(self) -> bool:
+        """Whether this device reaches only the update path: its box speaks an older control
+        protocol than this package. See `open_for_update`."""
+        return bool(self._call(_native.lib.medius_device_is_update_only))
+
+    @classmethod
     def find_mouse_box(cls) -> "Device":
         """Open the first box whose clone is a mouse.
 
@@ -137,6 +156,14 @@ class Device(Handle):
         _require_mock()
         out = ctypes.c_void_p()
         check(_native.lib.medius_device_open_mock(mock._handle, ctypes.byref(out)))
+        return cls(out.value)
+
+    @classmethod
+    def open_mock_for_update(cls, mock) -> "Device":
+        """Build a device over a `MockBox` and run the handshake `open_for_update` runs."""
+        _require_mock()
+        out = ctypes.c_void_p()
+        check(_native.lib.medius_device_open_mock_for_update(mock._handle, ctypes.byref(out)))
         return cls(out.value)
 
     @classmethod

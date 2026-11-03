@@ -223,6 +223,35 @@ def test_bad_proto_version_reports_status_and_proto_ver():
     mock.close()
 
 
+def test_open_for_update_old_box():
+    mock = MockBox()
+    mock.set_version(Version(9, 3, 4, 6))
+    d = Device.open_mock_for_update(mock)
+    assert d.is_update_only
+    assert d.firmware_info() is not None
+    with pytest.raises(BadProtoVerError) as ei:
+        d.move_rel(1, 0)
+    assert ei.value.proto_ver == 9
+    d.close()
+    mock.close()
+
+
+def test_open_for_update_refuses_proto_4():
+    mock = MockBox()
+    mock.set_version(Version(4, 3, 0, 0))
+    with pytest.raises(BadProtoVerError):
+        Device.open_mock_for_update(mock)
+    mock.close()
+
+
+def test_open_for_update_current_box_is_full():
+    mock = MockBox()
+    with Device.open_mock_for_update(mock) as d:
+        assert not d.is_update_only
+        d.move_rel(1, 0)
+    mock.close()
+
+
 def test_a_listed_box_on_another_protocol_has_no_device():
     from medius import DeviceKind, _native
     from medius._types import box_from_c

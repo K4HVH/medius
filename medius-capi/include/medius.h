@@ -2183,6 +2183,19 @@ MediusStatus medius_clip_query_config(struct MediusClip *clip, struct MediusClip
 MediusStatus medius_device_open(const char *path,
                                 struct MediusDevice **out);
 
+// Open the box at serial `path` to update it, on any control protocol from 5 on, and write the
+// handle to `*out`. On this build's protocol the handle is a full one, as from `medius_device_open`.
+// On another, it is update-only (`medius_device_is_update_only`): the version and firmware queries
+// and `medius_device_stage_firmware`, `_activate_firmware`, `_abort_update`, `_update_firmware` and
+// `_wait_firmware_confirmed` work, and every other call returns `MEDIUS_STATUS_ERR_BAD_PROTO_VER`.
+// A box on a protocol older than 5 gives `MEDIUS_STATUS_ERR_BAD_PROTO_VER`.
+MediusStatus medius_device_open_for_update(const char *path,
+                                           struct MediusDevice **out);
+
+// Whether this handle reaches only the update path: its box speaks an older control protocol than
+// this library. See `medius_device_open_for_update`. False for a null handle.
+bool medius_device_is_update_only(const struct MediusDevice *dev);
+
 // Discover the first medius box by USB id, open it, handshake, and write the handle to `*out`.
 MediusStatus medius_device_find(struct MediusDevice **out);
 
@@ -3310,6 +3323,12 @@ MediusStatus medius_device_with_mock(const struct MediusMockBox *mock, struct Me
 #if defined(MEDIUS_FEATURE_MOCK)
 // Build a `Device` over the mock and run the version handshake (can fail if the mock is silent).
 MediusStatus medius_device_open_mock(const struct MediusMockBox *mock, struct MediusDevice **out);
+#endif
+
+#if defined(MEDIUS_FEATURE_MOCK)
+// Build a `Device` over the mock and run the handshake `medius_device_open_for_update` runs.
+MediusStatus medius_device_open_mock_for_update(const struct MediusMockBox *mock,
+                                                struct MediusDevice **out);
 #endif
 
 #ifdef __cplusplus

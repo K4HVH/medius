@@ -554,3 +554,149 @@ mod refused_and_rebooting {
         assert_eq!(asked, 4);
     }
 }
+
+#[cfg(feature = "mock")]
+mod update_only {
+    use std::time::Duration;
+
+    use crate::protocol::FrameType;
+    use crate::protocol::opcode::{Q_FIRMWARE, Q_VERSION};
+    use crate::types::{UpdateTarget, Version};
+    use crate::{Button, Direction, Error, MIN_PROTO_VER};
+
+    fn on_proto(proto_ver: u8) -> crate::MockBox {
+        crate::MockBox::new().with_version(Version {
+            proto_ver,
+            fw_major: 3,
+            fw_minor: 4,
+            fw_patch: 6,
+            mac: [0x58, 0x8c, 0x81, 0xe0, 0x82, 0x44],
+            name: "Medius-8244".into(),
+        })
+    }
+
+    fn image() -> Vec<u8> {
+        (0..10_000u32).map(|i| i as u8).collect()
+    }
+
+    fn only_update_frames(mock: &crate::MockBox) {
+        for f in mock.recorded_frames() {
+            let allowed = f.ty == FrameType::Update
+                || f.ty == FrameType::Query
+                    && matches!(f.payload.first(), Some(&Q_VERSION) | Some(&Q_FIRMWARE));
+            assert!(
+                allowed,
+                "sent {:?} {:02x?} to an update-only box",
+                f.ty, f.payload
+            );
+        }
+    }
+
+    #[test]
+    fn min_proto_ver_is_five() {
+        assert_eq!(MIN_PROTO_VER, 5);
+    }
+
+    #[test]
+    fn open_for_update_accepts_proto_5_to_9() {
+        for p in [5, 7, 9] {
+            let dev = crate::Device::open_mock_for_update(on_proto(p)).expect("opened");
+            assert!(dev.is_update_only(), "proto {p}");
+        }
+    }
+
+    #[test]
+    fn open_for_update_refuses_proto_4() {
+        let err = crate::Device::open_mock_for_update(on_proto(4)).unwrap_err();
+        assert!(matches!(err, Error::BadProtoVer { got: 4 }), "{err:?}");
+    }
+
+    #[test]
+    fn open_for_update_on_current_proto_is_full() {
+        let dev = crate::Device::open_mock_for_update(on_proto(crate::PROTO_VER)).expect("opened");
+        assert!(!dev.is_update_only());
+        dev.move_rel(1, 0).expect("a full device moves");
+    }
+
+    #[test]
+    fn update_only_refuses_other_commands() {
+        let dev = crate::Device::open_mock_for_update(on_proto(9)).expect("opened");
+        assert!(matches!(
+            dev.move_rel(1, 0),
+            Err(Error::BadProtoVer { got: 9 })
+        ));
+        assert!(matches!(
+            dev.query_stats(),
+            Err(Error::BadProtoVer { got: 9 })
+        ));
+        assert!(matches!(
+            dev.lock(Button::LEFT, Direction::Both),
+            Err(Error::BadProtoVer { got: 9 })
+        ));
+    }
+
+    #[test]
+    fn update_only_never_reasserts_a_refused_command() {
+        let mock = on_proto(9);
+        let dev = crate::Device::open_mock_for_update(mock.clone()).expect("opened");
+        let _ = dev.lock(Button::LEFT, Direction::Both);
+        assert!(dev.catch_events(crate::CatchFilter::all_input()).is_err());
+        assert!(dev.press(Button::LEFT).is_err());
+        std::thread::sleep(Duration::from_millis(1_300));
+        only_update_frames(&mock);
+    }
+
+    #[test]
+    fn update_only_round_trip() {
+        let mock = on_proto(9);
+        let dev = crate::Device::open_mock_for_update(mock.clone()).expect("opened");
+        mock.reboot_after_activate(1, 2);
+        dev.update_firmware(UpdateTarget::Device, &image(), &mut |_| {})
+            .expect("updated");
+        dev.wait_firmware_confirmed().expect("confirmed");
+        std::thread::sleep(Duration::from_millis(1_300));
+        only_update_frames(&mock);
+    }
+
+    #[test]
+    fn update_only_runs_no_restart_recovery() {
+        let mock = on_proto(9);
+        let dev = crate::Device::open_mock_for_update(mock.clone()).expect("opened");
+        mock.restart();
+        std::thread::sleep(Duration::from_millis(1_300));
+        dev.firmware_info()
+            .expect("still reached after the box booted");
+        only_update_frames(&mock);
+    }
+
+    #[test]
+    fn a_box_downgraded_while_open_for_update_stays_reachable() {
+        let mock = on_proto(crate::PROTO_VER);
+        let dev = crate::Device::open_mock_for_update(mock.clone()).expect("opened");
+        assert!(!dev.is_update_only());
+        mock.set_version(Version {
+            proto_ver: 9,
+            ..dev.query_version().expect("version")
+        });
+        mock.restart();
+        let until = std::time::Instant::now() + Duration::from_secs(2);
+        while !dev.is_update_only() && std::time::Instant::now() < until {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(
+            dev.is_update_only(),
+            "the hello on protocol 9 made it update-only"
+        );
+        dev.firmware_info().expect("the update path still answers");
+        assert!(matches!(
+            dev.move_rel(1, 0),
+            Err(Error::BadProtoVer { got: 9 })
+        ));
+    }
+
+    #[test]
+    fn open_still_refuses_old_proto() {
+        let err = crate::Device::open_mock(on_proto(9)).unwrap_err();
+        assert!(matches!(err, Error::BadProtoVer { got: 9 }), "{err:?}");
+    }
+}

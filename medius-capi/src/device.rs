@@ -93,6 +93,47 @@ pub unsafe extern "C" fn medius_device_open(
     })
 }
 
+/// Open the box at serial `path` to update it, on any control protocol from 5 on, and write the
+/// handle to `*out`. On this build's protocol the handle is a full one, as from `medius_device_open`.
+/// On another, it is update-only (`medius_device_is_update_only`): the version and firmware queries
+/// and `medius_device_stage_firmware`, `_activate_firmware`, `_abort_update`, `_update_firmware` and
+/// `_wait_firmware_confirmed` work, and every other call returns `MEDIUS_STATUS_ERR_BAD_PROTO_VER`.
+/// A box on a protocol older than 5 gives `MEDIUS_STATUS_ERR_BAD_PROTO_VER`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn medius_device_open_for_update(
+    path: *const c_char,
+    out: *mut *mut MediusDevice,
+) -> MediusStatus {
+    guard_status(|| {
+        if path.is_null() || out.is_null() {
+            return fail(MediusStatus::ErrInvalidArg, "null pointer");
+        }
+        let Ok(s) = (unsafe { CStr::from_ptr(path) }).to_str() else {
+            return fail(MediusStatus::ErrInvalidArg, "path is not valid UTF-8");
+        };
+        match Device::open_for_update(s) {
+            Ok(dev) => {
+                unsafe { *out = MediusDevice::boxed(dev) };
+                clear_error();
+                MediusStatus::Ok
+            }
+            Err(e) => record(&e),
+        }
+    })
+}
+
+/// Whether this handle reaches only the update path: its box speaks an older control protocol than
+/// this library. See `medius_device_open_for_update`. False for a null handle.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn medius_device_is_update_only(dev: *const MediusDevice) -> bool {
+    guard(false, || {
+        if dev.is_null() {
+            return false;
+        }
+        unsafe { &(*dev).inner }.is_update_only()
+    })
+}
+
 /// Discover the first medius box by USB id, open it, handshake, and write the handle to `*out`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_device_find(out: *mut *mut MediusDevice) -> MediusStatus {

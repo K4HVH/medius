@@ -691,6 +691,16 @@ impl AsyncDevice {
         Ok(Device::open(path)?.into_async())
     }
 
+    /// Open the box at `path` to update it, as an [`AsyncDevice`]; see [`Device::open_for_update`].
+    pub fn open_for_update(path: impl AsRef<std::path::Path>) -> Result<AsyncDevice> {
+        Ok(Device::open_for_update(path)?.into_async())
+    }
+
+    /// Whether this device reaches only the update path; see [`Device::is_update_only`].
+    pub fn is_update_only(&self) -> bool {
+        self.dev().is_update_only()
+    }
+
     /// Open the first box found as an [`AsyncDevice`]; blocks. See [`Device::find`].
     pub fn find() -> Result<AsyncDevice> {
         Ok(Device::find()?.into_async())

@@ -577,6 +577,8 @@ def _decl(name, restype, argtypes, optional=False):
 _decl("medius_device_open", i32, [ctypes.c_char_p, PHANDLE])
 _decl("medius_device_find", i32, [PHANDLE])
 _decl("medius_device_open_by_id", i32, [ctypes.c_char_p, PHANDLE])
+_decl("medius_device_open_for_update", i32, [ctypes.c_char_p, PHANDLE])
+_decl("medius_device_is_update_only", ctypes.c_bool, [HANDLE])
 _decl("medius_device_find_mouse_box", i32, [PHANDLE])
 _decl("medius_device_find_keyboard_box", i32, [PHANDLE])
 _decl("medius_device_clone", HANDLE, [HANDLE])
@@ -930,3 +932,4 @@ if HAS_MOCK:
     )
     _decl("medius_device_with_mock", i32, [HANDLE, PHANDLE])
     _decl("medius_device_open_mock", i32, [HANDLE, PHANDLE])
+    _decl("medius_device_open_mock_for_update", i32, [HANDLE, PHANDLE])

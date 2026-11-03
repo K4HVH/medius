@@ -15,13 +15,45 @@ const HANDSHAKE_ATTEMPTS: usize = 5;
 
 const HANDSHAKE_ATTEMPT_TIMEOUT: Duration = Duration::from_millis(250);
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Accept {
+    // This build's protocol only.
+    Current,
+    // Any protocol from MIN_PROTO_VER on; below PROTO_VER, the update path only.
+    Update,
+}
+
 impl Device {
     /// Open the box at serial `path` and run the version handshake.
     pub fn open(path: impl AsRef<Path>) -> Result<Device> {
-        let path = path.as_ref();
+        Device::open_accepting(path.as_ref(), Accept::Current)
+    }
+
+    /// Open the box at serial `path` to update it, on any control protocol from
+    /// [`MIN_PROTO_VER`](crate::MIN_PROTO_VER) on.
+    ///
+    /// A box on this build's [`PROTO_VER`](crate::PROTO_VER) opens as [`open`](Self::open) would. On
+    /// any other, the device is [update-only](Self::is_update_only): it answers
+    /// [`query_version`](Self::query_version), [`firmware_info`](Self::firmware_info),
+    /// [`stage_firmware`](Self::stage_firmware), [`activate_firmware`](Self::activate_firmware),
+    /// [`abort_update`](Self::abort_update), [`update_firmware`](Self::update_firmware) and
+    /// [`wait_firmware_confirmed`](Self::wait_firmware_confirmed), and every other call returns
+    /// [`Error::BadProtoVer`]. It holds no state and sends nothing on its own. Once updated, open the
+    /// box again to use it.
+    pub fn open_for_update(path: impl AsRef<Path>) -> Result<Device> {
+        Device::open_accepting(path.as_ref(), Accept::Update)
+    }
+
+    /// Whether this device reaches only the update path: the box speaks an older control protocol
+    /// than this build. See [`open_for_update`](Self::open_for_update).
+    pub fn is_update_only(&self) -> bool {
+        self.link.update_only().is_some()
+    }
+
+    fn open_accepting(path: &Path, accept: Accept) -> Result<Device> {
         let serial = crate::transport::serial::SerialTransport::open(path)?;
         let device = Device::from_transport(Arc::new(serial));
-        let version = device.handshake()?;
+        let version = device.handshake(accept)?;
         // The scan lists the port by its device name; `path` may be a link to it (/dev/serial/by-id). Without its
         // serial, a reconnect has to probe every box and sim on the PC, which takes seconds.
         let real = std::fs::canonicalize(path).ok();
@@ -42,15 +74,34 @@ impl Device {
     #[cfg_attr(not(feature = "mock"), allow(dead_code))]
     pub(crate) fn open_transport(transport: Arc<dyn Transport>) -> Result<Device> {
         let device = Device::from_transport(transport);
-        device.handshake()?;
+        device.handshake(Accept::Current)?;
         Ok(device)
     }
 
-    fn handshake(&self) -> Result<Version> {
+    #[cfg_attr(not(feature = "mock"), allow(dead_code))]
+    pub(crate) fn open_transport_for_update(transport: Arc<dyn Transport>) -> Result<Device> {
+        let device = Device::from_transport(transport);
+        device.handshake(Accept::Update)?;
+        Ok(device)
+    }
+
+    fn handshake(&self, accept: Accept) -> Result<Version> {
         let _span =
             trace_span!(target: "medius::device", tracing::Level::INFO, "connect").entered();
 
+        if accept == Accept::Update {
+            self.link.open_for_update();
+        }
         let version = self.read_version()?;
+        if self.link.reaches_update_only(version.proto_ver) {
+            trace_event!(
+                target: "medius::device",
+                tracing::Level::INFO,
+                proto_ver = version.proto_ver,
+                "connected, update only",
+            );
+            return Ok(version);
+        }
         if version.proto_ver != PROTO_VER {
             trace_event!(
                 target: "medius::device",

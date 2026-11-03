@@ -257,6 +257,18 @@ mod linux {
             .collect();
         std::thread::sleep(Duration::from_millis(300));
 
+        // OPEN FOR UPDATE: a box on this build's protocol opens as a full device. Closed before the
+        // main device opens: the port takes one reader.
+        let update_path = args
+            .get(2)
+            .cloned()
+            .or_else(|| medius::find_medius().into_iter().next().map(|p| p.path));
+        let for_update = update_path
+            .as_deref()
+            .ok_or(medius::Error::NotFound)
+            .and_then(Device::open_for_update)
+            .and_then(|d| Ok((d.is_update_only(), d.firmware_info()?)));
+
         let device = match args.get(2) {
             Some(p) => Device::open(p),
             None => Device::find(),
@@ -285,6 +297,17 @@ mod linux {
                 if pass { "PASS" } else { "FAIL" }
             );
         };
+
+        {
+            let dev = device.as_ref().unwrap();
+            let same = dev.firmware_info().ok();
+            let pass = matches!(&for_update, Ok((false, f)) if same.as_ref() == Some(f));
+            check(
+                "open for update",
+                pass,
+                format!("{for_update:?}  (a full device on this protocol, firmware as open reads it)"),
+            );
+        }
 
         {
             let dev = device.as_ref().unwrap();
