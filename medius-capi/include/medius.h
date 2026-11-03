@@ -231,6 +231,9 @@ enum MediusStatus
     MEDIUS_STATUS_ERR_TRANSFER_TIMEOUT_RANGE = 36,
     // A transfer reply that lost a chunk between the box's chips or on the control link.
     MEDIUS_STATUS_ERR_TRANSFER_REPLY_INCOMPLETE = 37,
+    // The control port is open in another process (Linux): the port takes one reader.
+    // `medius_last_error_message` names each holder as `"<name> (pid N)"`.
+    MEDIUS_STATUS_ERR_PORT_BUSY = 38,
 };
 #ifndef __cplusplus
 #if __STDC_VERSION__ >= 202311L

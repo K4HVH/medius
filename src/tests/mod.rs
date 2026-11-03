@@ -13,6 +13,8 @@ mod lock;
 mod movement;
 mod options;
 mod patch;
+#[cfg(target_os = "linux")]
+mod port_busy;
 mod rewrite;
 mod robustness;
 mod transfer;

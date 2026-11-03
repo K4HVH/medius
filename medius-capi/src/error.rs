@@ -78,6 +78,9 @@ pub enum MediusStatus {
     ErrTransferTimeoutRange = 36,
     /// A transfer reply that lost a chunk between the box's chips or on the control link.
     ErrTransferReplyIncomplete = 37,
+    /// The control port is open in another process (Linux): the port takes one reader.
+    /// `medius_last_error_message` names each holder as `"<name> (pid N)"`.
+    ErrPortBusy = 38,
 }
 
 #[derive(Default)]
@@ -114,6 +117,7 @@ fn status_for(err: &Error) -> MediusStatus {
         Error::Io(_) => MediusStatus::ErrIo,
         Error::NotFound => MediusStatus::ErrNotFound,
         Error::NoReply => MediusStatus::ErrNoReply,
+        Error::PortBusy { .. } => MediusStatus::ErrPortBusy,
         Error::BadProtoVer { .. } => MediusStatus::ErrBadProtoVer,
         Error::QueryTimeout => MediusStatus::ErrQueryTimeout,
         Error::Disconnected => MediusStatus::ErrDisconnected,

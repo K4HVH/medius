@@ -62,6 +62,7 @@ class Status(IntEnum):
     ERR_REWRITE_POOL_FULL = 35
     ERR_TRANSFER_TIMEOUT_RANGE = 36
     ERR_TRANSFER_REPLY_INCOMPLETE = 37
+    ERR_PORT_BUSY = 38
 
 
 class DeviceKind(IntEnum):
