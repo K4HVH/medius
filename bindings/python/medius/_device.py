@@ -92,12 +92,16 @@ class Device(Handle):
 
     @classmethod
     def open(cls, path) -> "Device":
+        """Open the box at serial `path` and run the version handshake. On Linux, raises
+        `PortBusyError` if another process holds the port."""
         out = ctypes.c_void_p()
         check(_native.lib.medius_device_open(path.encode("utf-8"), ctypes.byref(out)))
         return cls(out.value)
 
     @classmethod
     def find(cls) -> "Device":
+        """Open the first box found by USB id, or raise `NotFoundError`. On Linux, raises
+        `PortBusyError` if another process holds that box's port."""
         out = ctypes.c_void_p()
         check(_native.lib.medius_device_find(ctypes.byref(out)))
         return cls(out.value)
@@ -136,7 +140,7 @@ class Device(Handle):
         """Open the first box whose clone is a mouse.
 
         With no such box, a box on another control protocol (which reports no clone) raises
-        `BadProtoVerError`."""
+        `BadProtoVerError`, and `PortBusyError` if none matches and another process holds a box's port."""
         out = ctypes.c_void_p()
         check(_native.lib.medius_device_find_mouse_box(ctypes.byref(out)))
         return cls(out.value)
@@ -146,7 +150,7 @@ class Device(Handle):
         """Open the first box whose clone is a keyboard.
 
         With no such box, a box on another control protocol (which reports no clone) raises
-        `BadProtoVerError`."""
+        `BadProtoVerError`, and `PortBusyError` if none matches and another process holds a box's port."""
         out = ctypes.c_void_p()
         check(_native.lib.medius_device_find_keyboard_box(ctypes.byref(out)))
         return cls(out.value)
@@ -419,8 +423,12 @@ class Device(Handle):
     def wait_firmware_confirmed(self) -> FirmwareInfo:
         """Block until neither chip is on probation (a chip on probation refuses an update).
 
-        Keeps asking while the box reboots after an activate. After 55 s, raises `UpdateError` if a
-        chip is still on probation, or `QueryTimeoutError` if the box hasn't replied.
+        Keeps asking while the box reboots after an activate. Right after an activate a chip can still
+        answer from the image it is replacing, so a reply counts only once the box shows the reboot
+        (its ready hello, or a query left unanswered), or after 5 s. A device from `open_for_update`
+        follows the box to the other control rate when it reboots into firmware on it. After 55 s,
+        raises `UpdateError` if a chip is still on probation, or `QueryTimeoutError` if the box
+        hasn't replied.
         """
         out = _native.MediusFirmwareInfo()
         check(self._call(_native.lib.medius_device_wait_firmware_confirmed, ctypes.byref(out)))

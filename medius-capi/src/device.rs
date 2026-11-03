@@ -70,6 +70,7 @@ fn query<T, M: From<T>>(
 }
 
 /// Open the box at serial `path` (NUL-terminated UTF-8), handshake, and write the owned handle to `*out`.
+/// On Linux, `MEDIUS_STATUS_ERR_PORT_BUSY` if another process holds the port.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_device_open(
     path: *const c_char,
@@ -135,6 +136,7 @@ pub unsafe extern "C" fn medius_device_is_update_only(dev: *const MediusDevice) 
 }
 
 /// Discover the first medius box by USB id, open it, handshake, and write the handle to `*out`.
+/// On Linux, `MEDIUS_STATUS_ERR_PORT_BUSY` if another process holds that box's port.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_device_find(out: *mut *mut MediusDevice) -> MediusStatus {
     guard_status(|| {
@@ -200,7 +202,7 @@ pub unsafe extern "C" fn medius_find_ports(
     })
 }
 
-/// Enumerate every connected box into `out` (up to `cap`), reading each in turn; writes the total to `*out_total` and returns the number written. A box on another control protocol is listed with `has_device` 0.
+/// Enumerate every connected box into `out` (up to `cap`), reading each in turn; writes the total to `*out_total` and returns the number written. A box on another control protocol is listed with `has_device` 0. On Linux, a box whose port another process holds is left out. A box on firmware before v3.4.0 runs at 4 Mbaud and isn't listed; open it by its port with `medius_device_open_for_update`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_list(
     out: *mut MediusBoxInfo,
@@ -254,7 +256,7 @@ pub unsafe extern "C" fn medius_device_open_by_id(
     })
 }
 
-/// Open the first box whose clone is a mouse, handshake, and write the handle to `*out`. With no such box, a box on another control protocol (which reports no clone) gives `MEDIUS_STATUS_ERR_BAD_PROTO_VER`.
+/// Open the first box whose clone is a mouse, handshake, and write the handle to `*out`. With no such box, a box on another control protocol (which reports no clone) gives `MEDIUS_STATUS_ERR_BAD_PROTO_VER`, and `MEDIUS_STATUS_ERR_PORT_BUSY` if none matches and another process holds a box's port.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_device_find_mouse_box(out: *mut *mut MediusDevice) -> MediusStatus {
     guard_status(|| {
@@ -272,7 +274,7 @@ pub unsafe extern "C" fn medius_device_find_mouse_box(out: *mut *mut MediusDevic
     })
 }
 
-/// Open the first box whose clone is a keyboard, handshake, and write the handle to `*out`. With no such box, a box on another control protocol (which reports no clone) gives `MEDIUS_STATUS_ERR_BAD_PROTO_VER`.
+/// Open the first box whose clone is a keyboard, handshake, and write the handle to `*out`. With no such box, a box on another control protocol (which reports no clone) gives `MEDIUS_STATUS_ERR_BAD_PROTO_VER`, and `MEDIUS_STATUS_ERR_PORT_BUSY` if none matches and another process holds a box's port.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_device_find_keyboard_box(
     out: *mut *mut MediusDevice,
@@ -1232,8 +1234,12 @@ pub unsafe extern "C" fn medius_device_update_firmware(
 }
 
 /// Block until neither chip is on probation and write both chips' firmware state to `*out`. Keeps
-/// asking while the box reboots after an activate. After 55 s, returns `ErrUpdate` if a chip is
-/// still on probation, or `ErrQueryTimeout` if the box hasn't replied.
+/// asking while the box reboots after an activate. Right after an activate a chip can still answer
+/// from the image it is replacing, so a reply counts only once the box shows the reboot (its ready
+/// hello, or a query left unanswered), or after 5 s. A handle from `medius_device_open_for_update`
+/// follows the box to the other control rate when it reboots into firmware on it. After 55 s,
+/// returns `ErrUpdate` if a chip is still on probation, or `ErrQueryTimeout` if the box hasn't
+/// replied.
 ///
 /// # Safety
 /// `dev` must be a live device handle and `out` writable.

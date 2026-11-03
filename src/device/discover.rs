@@ -139,7 +139,9 @@ pub(crate) fn may_clone(kind: DeviceKind) -> impl Fn(&BoxInfo) -> bool {
 impl Device {
     /// Every connected box, with its version and cloned-device info. A box on another control
     /// protocol is listed with [`device`](BoxInfo::device) `None`. On Linux, a box whose port another
-    /// process holds open is left out: asking it would take that process's replies.
+    /// process holds open is left out: asking it would take that process's replies. A box on
+    /// firmware before v3.4.0 runs its control link at 4 Mbaud and isn't listed; open it by its port
+    /// with [`open_for_update`](Device::open_for_update).
     pub fn list() -> Vec<BoxInfo> {
         list_and_held().0
     }
@@ -158,13 +160,15 @@ impl Device {
     }
 
     /// Open the first box cloning a mouse ([`DeviceKind::Mouse`]). With no such box, a box on
-    /// another control protocol (which reports no clone) gives [`Error::BadProtoVer`].
+    /// another control protocol (which reports no clone) gives [`Error::BadProtoVer`], and
+    /// [`Error::PortBusy`] if none matches and another process holds a box's port.
     pub fn find_mouse_box() -> Result<Device> {
         Device::find_where(may_clone(DeviceKind::Mouse))
     }
 
     /// Open the first box cloning a keyboard ([`DeviceKind::Keyboard`]). With no such box, a box on
-    /// another control protocol (which reports no clone) gives [`Error::BadProtoVer`].
+    /// another control protocol (which reports no clone) gives [`Error::BadProtoVer`], and
+    /// [`Error::PortBusy`] if none matches and another process holds a box's port.
     pub fn find_keyboard_box() -> Result<Device> {
         Device::find_where(may_clone(DeviceKind::Keyboard))
     }

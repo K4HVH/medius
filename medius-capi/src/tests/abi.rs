@@ -1667,6 +1667,78 @@ fn bad_proto_version_is_reported() {
     unsafe { medius_mock_free(mock) };
 }
 
+fn mock_on_proto(proto_ver: u8) -> *mut MediusMockBox {
+    let mock = medius_mock_new();
+    unsafe {
+        medius_mock_set_version(
+            mock,
+            MediusVersion {
+                proto_ver,
+                fw_major: 3,
+                fw_minor: 4,
+                fw_patch: 7,
+                mac: [0; 6],
+                name: [0; MEDIUS_MAX_NAME],
+            },
+        );
+    }
+    mock
+}
+
+#[test]
+fn open_for_update_reaches_an_older_box_on_the_update_path_only() {
+    let mock = mock_on_proto(9);
+    let mut dev: *mut MediusDevice = ptr::null_mut();
+    assert_eq!(
+        unsafe { medius_device_open_mock_for_update(mock, &mut dev) },
+        MediusStatus::Ok
+    );
+    assert!(unsafe { medius_device_is_update_only(dev) });
+    assert_eq!(
+        unsafe { medius_device_move_rel(dev, 1, 0) },
+        MediusStatus::ErrBadProtoVer
+    );
+    assert_eq!(unsafe { medius_last_error_proto_ver() }, 9);
+    unsafe {
+        medius_device_free(dev);
+        medius_mock_free(mock);
+    }
+}
+
+#[test]
+fn open_for_update_refuses_a_box_older_than_protocol_5() {
+    let mock = mock_on_proto(4);
+    let mut dev: *mut MediusDevice = ptr::null_mut();
+    assert_eq!(
+        unsafe { medius_device_open_mock_for_update(mock, &mut dev) },
+        MediusStatus::ErrBadProtoVer
+    );
+    assert!(dev.is_null());
+    unsafe { medius_mock_free(mock) };
+}
+
+#[test]
+fn open_for_update_and_is_update_only_take_null() {
+    let mut dev: *mut MediusDevice = ptr::null_mut();
+    assert_eq!(
+        unsafe { medius_device_open_for_update(ptr::null(), &mut dev) },
+        MediusStatus::ErrInvalidArg
+    );
+    assert!(!unsafe { medius_device_is_update_only(ptr::null()) });
+}
+
+#[test]
+fn a_held_port_reports_port_busy_naming_the_holder() {
+    let status = crate::error::record(&medius::Error::PortBusy {
+        holders: vec!["firefox (pid 4242)".into()],
+    });
+    assert_eq!(status, MediusStatus::ErrPortBusy);
+    let mut buf = [0i8; 128];
+    let len = unsafe { medius_last_error_message(buf.as_mut_ptr(), buf.len()) };
+    let text: String = buf[..len].iter().map(|&b| b as u8 as char).collect();
+    assert!(text.contains("firefox (pid 4242)"), "{text}");
+}
+
 #[test]
 fn null_arguments_are_rejected() {
     assert_eq!(
