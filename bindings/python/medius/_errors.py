@@ -165,6 +165,11 @@ class TransferTimeoutRangeError(MediusError):
     """A transfer timeout outside 1 to 65535 ms."""
 
 
+class PortBusyError(MediusError):
+    """The control port is open in another process (Linux). The port takes one reader; the
+    message names each holder as `"<name> (pid N)"`."""
+
+
 class TransferReplyIncompleteError(MediusError):
     """A transfer reply that lost a chunk between the box's chips or on the control link."""
 
@@ -214,6 +219,7 @@ _STATUS_EXC = {
     Status.ERR_REWRITE_POOL_FULL: RewritePoolFullError,
     Status.ERR_TRANSFER_TIMEOUT_RANGE: TransferTimeoutRangeError,
     Status.ERR_TRANSFER_REPLY_INCOMPLETE: TransferReplyIncompleteError,
+    Status.ERR_PORT_BUSY: PortBusyError,
 }
 
 

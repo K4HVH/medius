@@ -24,7 +24,8 @@ enum Accept {
 }
 
 impl Device {
-    /// Open the box at serial `path` and run the version handshake.
+    /// Open the box at serial `path` and run the version handshake. On Linux, a port another
+    /// process holds open is refused with [`Error::PortBusy`].
     pub fn open(path: impl AsRef<Path>) -> Result<Device> {
         Device::open_accepting(path.as_ref(), Accept::Current)
     }
@@ -51,6 +52,10 @@ impl Device {
     }
 
     fn open_accepting(path: &Path, accept: Accept) -> Result<Device> {
+        let holders = crate::transport::serial::holders(path);
+        if !holders.is_empty() {
+            return Err(Error::PortBusy { holders });
+        }
         let serial = crate::transport::serial::SerialTransport::open(path)?;
         let device = Device::from_transport(Arc::new(serial));
         let version = device.handshake(accept)?;

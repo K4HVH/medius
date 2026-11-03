@@ -269,6 +269,28 @@ mod linux {
             .and_then(Device::open_for_update)
             .and_then(|d| Ok((d.is_update_only(), d.firmware_info()?)));
 
+        // PORT BUSY: with another process holding the port, the open is refused and names it.
+        let port_busy = update_path.as_deref().map(|p| {
+            let holder = std::fs::File::open(p).and_then(|f| {
+                std::process::Command::new("sleep")
+                    .arg("30")
+                    .stdin(f)
+                    .spawn()
+            });
+            let Ok(mut holder) = holder else {
+                return Err("could not start a holder".to_string());
+            };
+            std::thread::sleep(Duration::from_millis(100));
+            let want = format!("sleep (pid {})", holder.id());
+            let got = Device::open(p);
+            let _ = holder.kill();
+            let _ = holder.wait();
+            match got {
+                Err(medius::Error::PortBusy { holders }) if holders.contains(&want) => Ok(holders),
+                other => Err(format!("{other:?}")),
+            }
+        });
+
         let device = match args.get(2) {
             Some(p) => Device::open(p),
             None => Device::find(),
@@ -303,9 +325,18 @@ mod linux {
             let same = dev.firmware_info().ok();
             let pass = matches!(&for_update, Ok((false, f)) if same.as_ref() == Some(f));
             check(
+                "port busy",
+                matches!(port_busy, Some(Ok(_))),
+                format!(
+                    "{port_busy:?}  (another process holding the port is named, nothing opened)"
+                ),
+            );
+            check(
                 "open for update",
                 pass,
-                format!("{for_update:?}  (a full device on this protocol, firmware as open reads it)"),
+                format!(
+                    "{for_update:?}  (a full device on this protocol, firmware as open reads it)"
+                ),
             );
         }
 

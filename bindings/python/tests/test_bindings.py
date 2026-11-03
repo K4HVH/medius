@@ -4,6 +4,7 @@ import gc
 import pathlib
 import subprocess
 import tempfile
+import sys
 import time
 
 import pytest
@@ -250,6 +251,29 @@ def test_open_for_update_current_box_is_full():
         assert not d.is_update_only
         d.move_rel(1, 0)
     mock.close()
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="the holder scan reads /proc")
+def test_port_busy_error_maps():
+    import os
+    import pty
+    import subprocess
+
+    from medius import PortBusyError
+
+    master, slave = pty.openpty()
+    path = os.ttyname(slave)
+    child = subprocess.Popen(["sleep", "30"], stdin=slave)
+    os.close(slave)
+    try:
+        with pytest.raises(PortBusyError) as ei:
+            Device.open(path)
+        assert ei.value.status == Status.ERR_PORT_BUSY
+        assert f"sleep (pid {child.pid})" in str(ei.value)
+    finally:
+        child.kill()
+        child.wait()
+        os.close(master)
 
 
 def test_a_listed_box_on_another_protocol_has_no_device():

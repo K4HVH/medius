@@ -41,7 +41,11 @@ impl BoxInfo {
     }
 }
 
-fn probe(port: &PortInfo) -> Option<BoxInfo> {
+// A port another process holds is left alone: a version query there would take that reader's frames.
+pub(crate) fn probe(port: &PortInfo) -> Option<BoxInfo> {
+    if !crate::transport::serial::holders(Path::new(&port.path)).is_empty() {
+        return None;
+    }
     let serial = crate::transport::serial::SerialTransport::open(Path::new(&port.path)).ok()?;
     probe_transport(port, Arc::new(serial))
 }
@@ -106,7 +110,8 @@ pub(crate) fn may_clone(kind: DeviceKind) -> impl Fn(&BoxInfo) -> bool {
 
 impl Device {
     /// Every connected box, with its version and cloned-device info. A box on another control
-    /// protocol is listed with [`device`](BoxInfo::device) `None`.
+    /// protocol is listed with [`device`](BoxInfo::device) `None`. On Linux, a box whose port another
+    /// process holds open is left out: asking it would take that process's replies.
     pub fn list() -> Vec<BoxInfo> {
         crate::transport::scan::find_medius()
             .iter()
