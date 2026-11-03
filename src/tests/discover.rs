@@ -103,3 +103,23 @@ fn find_prefers_a_box_this_build_speaks_to() {
     let err = pick_where(&boxes, may_clone(DeviceKind::Keyboard)).unwrap_err();
     assert!(matches!(err, Error::BadProtoVer { got: V3_4_0 }), "{err:?}");
 }
+
+// No box matched an id or a predicate: a port another process holds may be the one asked for, so the
+// error names its holders rather than saying nothing was found.
+#[test]
+fn an_unmatched_open_names_the_holders_of_held_ports() {
+    use crate::device::discover::unmatched;
+    let held = vec!["firefox (pid 4242)".to_string()];
+    assert!(matches!(
+        unmatched(crate::Error::NotFound, held.clone()),
+        crate::Error::PortBusy { holders } if holders == held
+    ));
+    assert!(matches!(
+        unmatched(crate::Error::NotFound, Vec::new()),
+        crate::Error::NotFound
+    ));
+    assert!(matches!(
+        unmatched(crate::Error::BadProtoVer { got: 9 }, held),
+        crate::Error::BadProtoVer { got: 9 }
+    ));
+}

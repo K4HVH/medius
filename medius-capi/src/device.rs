@@ -229,7 +229,8 @@ pub unsafe extern "C" fn medius_list(
 
 /// Open the box whose identity matches `id` (device-chip MAC hex or CH343 serial), handshake, and
 /// write the handle to `*out`. `MEDIUS_STATUS_ERR_BAD_PROTO_VER` if that box speaks another
-/// control protocol.
+/// control protocol, `MEDIUS_STATUS_ERR_PORT_BUSY` if no box matches and another process holds a
+/// box's port.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_device_open_by_id(
     id: *const c_char,

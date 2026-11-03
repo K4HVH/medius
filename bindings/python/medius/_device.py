@@ -106,7 +106,8 @@ class Device(Handle):
     def open_by_id(cls, box_id: str) -> "Device":
         """Open the box whose identity matches `box_id` (device-chip MAC hex or CH343 serial).
 
-        Raises `BadProtoVerError` if that box speaks another control protocol."""
+        Raises `BadProtoVerError` if that box speaks another control protocol, `PortBusyError` if no
+        box matches and another process holds a box's port."""
         out = ctypes.c_void_p()
         check(_native.lib.medius_device_open_by_id(box_id.encode("utf-8"), ctypes.byref(out)))
         return cls(out.value)

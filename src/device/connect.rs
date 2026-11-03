@@ -6,7 +6,8 @@ use crate::error::{Error, Result};
 use crate::link::reconnect::BoxIdentity;
 use crate::protocol::opcode::{Q_CAPS, Q_STATS, Q_VERSION};
 use crate::protocol::{PROTO_VER, Resp, parse_resp};
-use crate::transport::Transport;
+use crate::transport::serial::{CTRL_BAUD, LEGACY_CTRL_BAUD};
+use crate::transport::{Opener, Transport};
 use crate::types::Version;
 
 use super::Device;
@@ -33,6 +34,10 @@ impl Device {
     /// Open the box at serial `path` to update it, on any control protocol from
     /// [`MIN_PROTO_VER`](crate::MIN_PROTO_VER) on.
     ///
+    /// Tries this build's 6 Mbaud control rate, then the 4 Mbaud firmware before v3.4.0 runs, and
+    /// [`wait_firmware_confirmed`](Self::wait_firmware_confirmed) follows the box to the other rate
+    /// when it reboots into firmware on it.
+    ///
     /// A box on this build's [`PROTO_VER`](crate::PROTO_VER) opens as [`open`](Self::open) would. On
     /// any other, the device is [update-only](Self::is_update_only): it answers
     /// [`query_version`](Self::query_version), [`firmware_info`](Self::firmware_info),
@@ -56,9 +61,21 @@ impl Device {
         if !holders.is_empty() {
             return Err(Error::PortBusy { holders });
         }
-        let serial = crate::transport::serial::SerialTransport::open(path)?;
-        let device = Device::from_transport(Arc::new(serial));
-        let version = device.handshake(accept)?;
+        let (device, version) = match accept {
+            Accept::Current => {
+                let serial = crate::transport::serial::SerialTransport::open(path)?;
+                let device = Device::from_transport(Arc::new(serial));
+                let version = device.handshake(accept)?;
+                (device, version)
+            }
+            Accept::Update => {
+                let owned = path.to_path_buf();
+                Device::open_with_opener_for_update_version(Arc::new(move |baud| {
+                    let serial = crate::transport::serial::SerialTransport::open_at(&owned, baud)?;
+                    Ok(Arc::new(serial) as Arc<dyn Transport>)
+                }))?
+            }
+        };
         // The scan lists the port by its device name; `path` may be a link to it (/dev/serial/by-id). Without its
         // serial, a reconnect has to probe every box and sim on the PC, which takes seconds.
         let real = std::fs::canonicalize(path).ok();
@@ -74,6 +91,39 @@ impl Device {
             mac: version.mac,
         });
         Ok(device)
+    }
+
+    // Opens to update at this build's control rate, then at the rate firmware before v3.4.0 runs, as the
+    // dashboard does; only silence moves on to the next rate.
+    #[cfg(all(test, feature = "mock"))]
+    pub(crate) fn open_with_opener_for_update(opener: Opener) -> Result<Device> {
+        Ok(Device::open_with_opener_for_update_version(opener)?.0)
+    }
+
+    fn open_with_opener_for_update_version(opener: Opener) -> Result<(Device, Version)> {
+        let mut device: Option<Device> = None;
+        for baud in [CTRL_BAUD, LEGACY_CTRL_BAUD] {
+            if let Some(d) = &device {
+                d.link.release_transport();
+            }
+            let transport = opener(baud)?;
+            let dev = match &device {
+                Some(d) => {
+                    d.link.swap_transport(transport);
+                    d.clone()
+                }
+                None => device.insert(Device::from_transport(transport)).clone(),
+            };
+            match dev.handshake(Accept::Update) {
+                Ok(version) => {
+                    dev.link.set_rates(opener, baud);
+                    return Ok((dev, version));
+                }
+                Err(Error::NoReply) => continue,
+                Err(e) => return Err(e),
+            }
+        }
+        Err(Error::NoReply)
     }
 
     #[cfg_attr(not(feature = "mock"), allow(dead_code))]

@@ -19,7 +19,8 @@ use parking_lot::Mutex;
 
 use crate::error::{Error, Result};
 use crate::protocol::{FrameType, encode};
-use crate::transport::Transport;
+use crate::transport::serial::{CTRL_BAUD, LEGACY_CTRL_BAUD};
+use crate::transport::{Opener, Transport};
 use crate::types::{CountersSnapshot, LogLine};
 
 use catch::CatchReg;
@@ -38,6 +39,9 @@ const HELD_UPDATES_MAX: usize = 64;
 
 /// Default keepalive cadence for re-sending a held override.
 pub const DEFAULT_KEEPALIVE_CADENCE: Duration = Duration::from_millis(500);
+
+// Outlasts a parked read (the serial I/O timeout), so the reader has dropped a port being released.
+const PORT_RELEASE_WAIT: Duration = Duration::from_millis(200);
 
 pub(crate) struct LinkInner {
     transport: Arc<TransportSlot>,
@@ -63,6 +67,10 @@ pub(crate) struct LinkInner {
     // different box that happens to be present.
     identity: Arc<Mutex<Option<BoxIdentity>>>,
     restart: Arc<RestartWatch>,
+    // Opened to update: the opener and the control rate in use, to follow the box across a rate change.
+    rates: Mutex<Option<(Opener, u32)>>,
+    // The boot count and time of the last accepted ACTIVATE, until a confirm wait sees the reboot.
+    activated: Mutex<Option<(u64, std::time::Instant)>>,
     query_timeout: Duration,
     reader: Option<JoinHandle<()>>,
     keepalive: Option<JoinHandle<()>>,
@@ -188,6 +196,8 @@ impl Link {
                 reconnect_lock,
                 identity,
                 restart,
+                rates: Mutex::new(None),
+                activated: Mutex::new(None),
                 query_timeout,
                 reader: Some(reader),
                 keepalive: Some(keepalive),
@@ -223,6 +233,64 @@ impl Link {
     /// The box's protocol, when this link may send it only the update path.
     pub(crate) fn update_only(&self) -> Option<u8> {
         self.inner.restart.update_only()
+    }
+
+    /// Use `transport` from here on, the reader moving to it.
+    pub(crate) fn swap_transport(&self, transport: Arc<dyn Transport>) {
+        self.inner.transport.swap(transport);
+    }
+
+    /// Let go of the port, as a reconnect does: a serial port opens once at a time, so the next
+    /// open at another rate waits for the reader to drop this one.
+    pub(crate) fn release_transport(&self) {
+        self.inner
+            .transport
+            .swap(Arc::new(crate::transport::Disconnected));
+        std::thread::sleep(PORT_RELEASE_WAIT);
+    }
+
+    /// Note an accepted ACTIVATE: until the box reboots, replies come from the image it replaces.
+    pub(crate) fn note_activated(&self) {
+        *self.inner.activated.lock() =
+            Some((self.inner.restart.boots(), std::time::Instant::now()));
+    }
+
+    /// The boot count and time of an ACTIVATE no confirm wait has seen through, clearing it.
+    pub(crate) fn take_activated(&self) -> Option<(u64, std::time::Instant)> {
+        self.inner.activated.lock().take()
+    }
+
+    /// Hellos the box has sent: it moves when a chip boots.
+    pub(crate) fn boots(&self) -> u64 {
+        self.inner.restart.boots()
+    }
+
+    /// Remember how to reopen the port, and the rate in use.
+    pub(crate) fn set_rates(&self, opener: Opener, baud: u32) {
+        *self.inner.rates.lock() = Some((opener, baud));
+    }
+
+    /// Reopen the port at the other control rate, for a box that rebooted into firmware on the other
+    /// one. False if this link has no opener or the port won't open.
+    pub(crate) fn switch_rate(&self) -> bool {
+        let mut rates = self.inner.rates.lock();
+        let Some((opener, baud)) = rates.as_mut() else {
+            return false;
+        };
+        let next = if *baud == CTRL_BAUD {
+            LEGACY_CTRL_BAUD
+        } else {
+            CTRL_BAUD
+        };
+        self.release_transport();
+        match opener(next) {
+            Ok(transport) => {
+                *baud = next;
+                self.inner.transport.swap(transport);
+                true
+            }
+            Err(_) => false,
+        }
     }
 
     /// From here on, a box on any protocol from `MIN_PROTO_VER` on is reached on the update path.
