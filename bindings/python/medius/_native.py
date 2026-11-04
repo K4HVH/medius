@@ -237,6 +237,7 @@ class MediusStats(ctypes.Structure):
         ("host_rx_drops", u32),
         ("relay_drops", u32),
         ("session", u16),
+        ("host_restarts", u16),
     ]
 
 

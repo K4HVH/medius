@@ -395,7 +395,7 @@ impl Default for State {
             rate: Rate::from_payload(&[4, 0, 0, 0, 0, 0]).unwrap(),
             stats: Stats::from_payload(&[
                 5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                0, 0, 0,
+                0, 0, 0, 0, 0,
             ])
             .unwrap(),
             table: LockTable::default(),
@@ -915,6 +915,7 @@ impl State {
         self.stats.reset_count = 0;
         self.stats.config_count = 0;
         self.stats.session = 0;
+        self.stats.host_restarts = 0;
         self.session_dirty = false;
         self.clone_up = false;
         self.clone_up_at = Some(std::time::Instant::now() + BOOT_CLONE_DELAY);
@@ -1405,6 +1406,7 @@ fn stats_payload(s: Stats) -> Vec<u8> {
     p.extend_from_slice(&s.host_rx_drops.to_le_bytes());
     p.extend_from_slice(&s.relay_drops.to_le_bytes());
     p.extend_from_slice(&s.session.to_le_bytes());
+    p.extend_from_slice(&s.host_restarts.to_le_bytes());
     p
 }
 
@@ -1991,6 +1993,11 @@ impl MockBox {
                 {
                     st.restart()
                 }
+                // The host chip is back within the link's timeout: nothing is released, and the
+                // device chip counts the restart.
+                FrameType::RebootDl if payload.first() == Some(&RebootTarget::HostRun.as_u8()) => {
+                    st.stats.host_restarts = st.stats.host_restarts.saturating_add(1)
+                }
                 _ => {}
             }
             let out: Vec<u8> = 'reply: {
@@ -2470,6 +2477,8 @@ impl MockBox {
     /// stored state stays, the box says hello now and on the next frame, and the clone is back 100 ms
     /// later. `RESET` with its store flag, and
     /// [`RebootTarget::DeviceRun`](crate::RebootTarget::DeviceRun), also restart the device chip.
+    /// [`RebootTarget::HostRun`](crate::RebootTarget::HostRun) restarts the host chip alone: it
+    /// counts one in [`Stats::host_restarts`](crate::Stats::host_restarts) and releases nothing.
     pub fn restart(&self) {
         let hello = {
             let mut st = self.state.lock();

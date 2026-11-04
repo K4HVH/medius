@@ -692,6 +692,7 @@ def test_stats_roundtrip():
         host_rx_drops=0,
         relay_drops=0x0A0B0C0D,
         session=0xBEEF,
+        host_restarts=0x1234,
     )
     with MockBox() as mock:
         mock.set_stats(stats)

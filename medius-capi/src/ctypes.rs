@@ -619,6 +619,10 @@ pub struct MediusStats {
     pub relay_drops: u32,
     /// Times the box released host-set session state. 0 at boot; wraps, so compare for inequality.
     pub session: u16,
+    /// Restarts of the host chip since the device chip booted. A host-chip restart is too short to
+    /// drop the inter-chip link, so nothing else counts it. Should stay 0 outside a
+    /// `medius_device_update_firmware` or a `medius_device_reboot`.
+    pub host_restarts: u16,
 }
 
 /// One entry in a decoded `RESP(LOCKS)`: the locked target and which edges are locked.
