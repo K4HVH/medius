@@ -58,12 +58,16 @@ pub struct Stats {
     /// transforms, the clip, an LED override). 0 at boot; wraps, so compare for inequality. The crate
     /// watches it and re-sends all of that state except the LED override.
     pub session: u16,
+    /// Restarts of the host chip since the device chip booted. A host-chip restart is too short to
+    /// drop the inter-chip link, so nothing else counts it. Should stay 0 outside an
+    /// [`update`](crate::Device::update_firmware) or a [`reboot`](crate::Device::reboot).
+    pub host_restarts: u16,
 }
 
 impl Stats {
     /// Decodes a `RESP(STATS)` payload (§4.6).
     pub(crate) fn from_payload(p: &[u8]) -> Option<Self> {
-        if p.len() < 31 {
+        if p.len() < 33 {
             return None;
         }
         Some(Stats {
@@ -79,6 +83,7 @@ impl Stats {
             host_rx_drops: u32::from_le_bytes([p[21], p[22], p[23], p[24]]),
             relay_drops: u32::from_le_bytes([p[25], p[26], p[27], p[28]]),
             session: u16::from_le_bytes([p[29], p[30]]),
+            host_restarts: u16::from_le_bytes([p[31], p[32]]),
         })
     }
 }

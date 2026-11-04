@@ -318,6 +318,9 @@ class Stats:
     relay_drops: int
     #: Times the box released host-set session state; wraps, so compare for inequality.
     session: int = 0
+    #: Restarts of the host chip since the device chip booted; should stay 0 outside an
+    #: `update_firmware()` or a `reboot()`.
+    host_restarts: int = 0
 
 
 @dataclass
@@ -1395,6 +1398,7 @@ def stats_from_c(c) -> Stats:
         c.host_rx_drops,
         c.relay_drops,
         c.session,
+        c.host_restarts,
     )
 
 
@@ -1412,6 +1416,7 @@ def stats_to_c(s) -> "_native.MediusStats":
         s.host_rx_drops,
         s.relay_drops,
         s.session,
+        s.host_restarts,
     )
 
 

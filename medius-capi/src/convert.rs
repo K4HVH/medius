@@ -453,6 +453,7 @@ impl From<Stats> for MediusStats {
             host_rx_drops: s.host_rx_drops,
             relay_drops: s.relay_drops,
             session: s.session,
+            host_restarts: s.host_restarts,
         }
     }
 }
@@ -1293,6 +1294,7 @@ impl From<MediusStats> for Stats {
             host_rx_drops: s.host_rx_drops,
             relay_drops: s.relay_drops,
             session: s.session,
+            host_restarts: s.host_restarts,
         }
     }
 }

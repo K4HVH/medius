@@ -683,6 +683,21 @@ fn the_mock_counts_a_release_only_after_a_command() {
     assert_eq!(session(), 0, "and a commanded reboot boots clean");
 }
 
+// A host-chip reboot is counted, releases nothing, and a device-chip boot starts the count again.
+#[test]
+fn the_mock_counts_a_host_chip_restart() {
+    let mock = MockBox::new();
+    let device = Device::from_transport_with_cadence(mock.transport(), Duration::from_secs(60));
+    let stats = || device.query_stats().unwrap();
+    device.scale(Axis::X, Direction::Both, 40).unwrap();
+    device.reboot(RebootTarget::HostRun).unwrap();
+    device.reboot(RebootTarget::HostRun).unwrap();
+    let after = stats();
+    assert_eq!((after.host_restarts, after.session), (2, 0));
+    mock.restart();
+    assert_eq!(stats().host_restarts, 0);
+}
+
 // A release or unlock waits out a re-send in progress, so the re-send's stale press or lock cannot
 // land after it.
 #[test]

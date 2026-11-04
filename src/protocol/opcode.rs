@@ -14,7 +14,8 @@ pub const MAX_PAYLOAD: usize = 512;
 ///
 /// 10 (v3.5.0): `TRANSFER` carries how long the box waits on the real device; `TRANSFER_RESP` comes
 /// in chunks, names the stage the transfer ended in and adds `BUSY`, `SUSPENDED` and `ERROR`; a
-/// `CONTROL` event's NAK covers every control endpoint. 9 (v3.4.2): `RESP(STATS)` grows from 17 to
+/// `CONTROL` event's NAK covers every control endpoint; `RESP(STATS)` grows from 31 to 33 bytes (the
+/// host chip's restarts the device chip saw). 9 (v3.4.2): `RESP(STATS)` grows from 17 to
 /// 31 bytes (a dropped-frame counter per inter-chip link direction, one for relay back-pressure,
 /// and the session counter); a `CONTROL` event's handshake moves to flags bits 0-1, beside the rule
 /// bit (b7). 8 (v3.4.1): reshaped `RESP(CLIP)` and `CLIP_TRIGGER`; an interrupt OUT packet on a

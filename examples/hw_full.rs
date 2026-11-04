@@ -405,7 +405,7 @@ mod linux {
                 .map(|hz| format!("{hz:.0}"))
                 .unwrap_or_else(|| "?".into());
             let confident = rate.as_ref().map(|r| r.confident).unwrap_or(false);
-            let (drops, wedges, link_drops, host_drops, relay_drops) = stats
+            let (drops, wedges, link_drops, host_drops, relay_drops, host_restarts) = stats
                 .as_ref()
                 .map(|s| {
                     (
@@ -414,9 +414,10 @@ mod linux {
                         s.link_rx_drops,
                         s.host_rx_drops,
                         s.relay_drops,
+                        s.host_restarts,
                     )
                 })
-                .unwrap_or((u16::MAX, u8::MAX, u32::MAX, u32::MAX, u32::MAX));
+                .unwrap_or((u16::MAX, u8::MAX, u32::MAX, u32::MAX, u32::MAX, u16::MAX));
             let id = info
                 .as_ref()
                 .map(|i| i.to_string())
@@ -425,7 +426,7 @@ mod linux {
                 "device info",
                 caps_ok && info_ok && rate_ok && stats_ok,
                 format!(
-                    "mouse={id} caps={caps:?}  rate={hz}Hz confident={confident}  tx_drops={drops} tx_wedges={wedges}  link_rx_drops={link_drops} host_rx_drops={host_drops} relay_drops={relay_drops}"
+                    "mouse={id} caps={caps:?}  rate={hz}Hz confident={confident}  tx_drops={drops} tx_wedges={wedges}  link_rx_drops={link_drops} host_rx_drops={host_drops} relay_drops={relay_drops} host_restarts={host_restarts}"
                 ),
             );
         }
@@ -1991,10 +1992,11 @@ mod linux {
         {
             // A held Y scale survives the host chip's reboot: the chip returns within the link
             // watch's timeout, so nothing is released. A slower reboot is a counted release, and
-            // the scale is re-sent.
+            // the scale is re-sent. The device chip counts the restart once.
             let dev = device.as_ref().unwrap();
             let _ = dev.scale(Axis::Y, Direction::Both, 40);
-            let session = dev.query_stats().map(|s| s.session).ok();
+            let before = dev.query_stats().ok();
+            let session = before.map(|s| s.session);
             let _ = dev.reboot(RebootTarget::HostRun);
             std::thread::sleep(Duration::from_secs(2));
             let mut recovered = matches!(dev.query_version(), Ok(v) if v.proto_ver == PROTO_VER);
@@ -2007,6 +2009,14 @@ mod linux {
                 recovered = matches!(dev.query_version(), Ok(v) if v.proto_ver == PROTO_VER);
             }
             let released = dev.query_stats().map(|s| s.session).ok() != session;
+            let restarts_before = before.map(|s| s.host_restarts);
+            let want_restarts = restarts_before.map(|r| r.saturating_add(1));
+            let restarts_at = Instant::now() + Duration::from_secs(5);
+            let mut host_restarts = dev.query_stats().map(|s| s.host_restarts).ok();
+            while host_restarts == restarts_before && Instant::now() < restarts_at {
+                std::thread::sleep(Duration::from_millis(100));
+                host_restarts = dev.query_stats().map(|s| s.host_restarts).ok();
+            }
             let deadline = Instant::now() + Duration::from_secs(5);
             let mut y_scale = -1;
             while Instant::now() < deadline {
@@ -2026,10 +2036,15 @@ mod linux {
             let _ = dev.reset();
             check(
                 "reboot-to-run",
-                recovered && moved == 10 && y_scale == 40,
+                recovered
+                    && moved == 10
+                    && y_scale == 40
+                    && want_restarts.is_some()
+                    && host_restarts == want_restarts,
                 format!(
-                    "reboot(HostRun) → responsive={recovered}, session moved={released}, Y scale \
-                     {y_scale}, post-reboot move REL_X={moved}"
+                    "reboot(HostRun) → responsive={recovered}, session moved={released}, \
+                     host_restarts {restarts_before:?} → {host_restarts:?}, Y scale {y_scale}, \
+                     post-reboot move REL_X={moved}"
                 ),
             );
         }
