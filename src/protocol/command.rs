@@ -1,6 +1,7 @@
 use super::opcode::{
     CLIP_PKT_TRIG_HDR, INJ_MOTION_CURSOR, INJ_MOTION_PAN, INJ_MOTION_WHEEL, OPT_BEARING, OPT_EMIT,
     OPT_IMPERFECT, OPT_MOVE_RIDE, OPT_NAME, OPT_RENDER, OPT_SPREAD, PATCH_APPLY, PATCH_CLEAR,
+    XFER_REQ_HDR,
 };
 use crate::types::{Direction, Setup};
 
@@ -144,10 +145,12 @@ pub fn raw_payload(ep: u8, direction: Direction, bytes: &[u8]) -> Vec<u8> {
     v
 }
 
-/// `TRANSFER` (§3.14): `[ep u8][setup 8][OUT data…]`; one control transfer against the real device.
-pub fn transfer_payload(ep: u8, setup: Setup, out: &[u8]) -> Vec<u8> {
-    let mut v = Vec::with_capacity(1 + 8 + out.len());
+/// `TRANSFER` (§3.14): `[ep u8][timeout_ms u16 LE][setup 8][OUT data…]`; one control transfer
+/// against the real device, which the box waits `timeout_ms` on.
+pub fn transfer_payload(ep: u8, timeout_ms: u16, setup: Setup, out: &[u8]) -> Vec<u8> {
+    let mut v = Vec::with_capacity(XFER_REQ_HDR + out.len());
     v.push(ep);
+    v.extend_from_slice(&timeout_ms.to_le_bytes());
     v.extend_from_slice(&setup.to_bytes());
     v.extend_from_slice(out);
     v

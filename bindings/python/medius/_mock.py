@@ -32,6 +32,7 @@ from ._types import (
     RecordedFrame,
     Stats,
     TrafficEvent,
+    TransferOutcome,
     UsageSnapshot,
     Version,
     caps_to_c,
@@ -118,13 +119,18 @@ class MockBox:
         consuming clip packet triggers, as the box does."""
         _native.lib.medius_mock_set_imperfect_status(self._handle, imperfect_to_c(status))
 
-    def set_transfer_reply(self, status, data: bytes = b""):
-        """Set the canned (status, IN data) reply to a TRANSFER while the opt-in is on; with it off
-        the mock replies REFUSED. `status` is a `TransferStatus` or a raw wire byte."""
-        raw = _as_bytes(data, "data")
+    def set_transfer_reply(self, reply: TransferOutcome):
+        """Set what a TRANSFER brings back, sent in chunks as the box sends them. The mock refuses a
+        TRANSFER as the box does: with the opt-in off, a zero timeout, or OUT data shorter than
+        wLength."""
+        raw = _as_bytes(reply.data, "data")
         buf = (_native.u8 * len(raw)).from_buffer_copy(raw)
         _native.lib.medius_mock_set_transfer_reply(
-            self._handle, _u8(int(status), "status"), buf, len(raw)
+            self._handle,
+            _u8(int(reply.status), "status"),
+            _u8(int(reply.stage), "stage"),
+            buf,
+            len(raw),
         )
 
     def set_advertised_hz(self, hz: int):
@@ -221,16 +227,13 @@ class MockBox:
         (counted in `Stats.session`); the clone stays up."""
         _native.lib.medius_mock_link_lost(self._handle)
 
-    def detach(self, back_within_grace: bool = False):
-        """Simulate the real device detaching: the mock releases host-set session state. With
-        `back_within_grace`, the same device re-attaches inside the 250 ms grace and the clone stays
-        up. Otherwise the clone is torn down when the grace ends (counted again only if a command
-        arrived during the grace) and stays down until `attach`."""
-        _native.lib.medius_mock_detach(self._handle, bool(back_within_grace))
+    def detach(self):
+        """Simulate the real device detaching: the mock releases host-set session state (counted once
+        in `Stats.session`) and takes the clone down until `attach`."""
+        _native.lib.medius_mock_detach(self._handle)
 
     def attach(self):
-        """Simulate the real device re-attaching. Inside a detach's grace the clone is unchanged;
-        after the teardown a fresh clone starts, with nothing to release."""
+        """Simulate the real device re-attaching: a fresh clone starts, with nothing to release."""
         _native.lib.medius_mock_attach(self._handle)
 
     def silent(self):

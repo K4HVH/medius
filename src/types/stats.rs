@@ -16,7 +16,9 @@
 pub struct Stats {
     /// Pure-injection reports emitted (the no-halving / 1 kHz path).
     pub inject_emits: u32,
-    /// Reports the clone's TX queue could not hold, never emitted to the game PC. Should stay 0.
+    /// Input reports never emitted to the game PC: one the clone's TX queue could not hold, one the
+    /// host chip's forwarder or link could not take, or one a stop of its stream (a setting switch, a
+    /// halt, a suspend) cut short. Should stay 0.
     pub tx_drops: u16,
     /// Backed-up reports merged instead of queued.
     pub tx_merges: u16,
@@ -38,13 +40,16 @@ pub struct Stats {
     /// Relayed traffic and commands that went no further. Counted apart from `tx_drops` because no
     /// native input goes missing with it. Each of these counts:
     ///
-    /// - a vendor IN packet that found its endpoint's queue full of the control PC's `RAW` packets
+    /// - a vendor IN packet the host chip's link would not carry, or that found its endpoint's queue
+    ///   full of the control PC's `RAW` packets
     /// - a native zero-length packet answering a poll the PC did not make (the one poll the box runs
     ///   ahead of a suspended PC)
     /// - an OUT packet the box could not queue, that failed 3 times on the real device's bus, or that
     ///   a bus reset or `SET_INTERFACE` overtook
     /// - a `RAW` OUT packet with no room to wait
-    /// - a relayed request or a flagged `MOVE` the box could not queue
+    /// - a relayed request, or a packet or step of one, the box could not queue (the request then
+    ///   ends, NAKed until the game PC gives up)
+    /// - a flagged `MOVE` the box could not queue
     /// - any frame other than native input that either chip's link receive ring dropped
     /// - a frame from the control PC the box's receive ring had no room for (1 per frame)
     /// - an overrun of the control port's UART (1 per overrun, however many frames it cost)
@@ -53,12 +58,16 @@ pub struct Stats {
     /// transforms, the clip, an LED override). 0 at boot; wraps, so compare for inequality. The crate
     /// watches it and re-sends all of that state except the LED override.
     pub session: u16,
+    /// Restarts of the host chip since the device chip booted. A host-chip restart is too short to
+    /// drop the inter-chip link, so nothing else counts it. Should stay 0 outside an
+    /// [`update`](crate::Device::update_firmware) or a [`reboot`](crate::Device::reboot).
+    pub host_restarts: u16,
 }
 
 impl Stats {
     /// Decodes a `RESP(STATS)` payload (§4.6).
     pub(crate) fn from_payload(p: &[u8]) -> Option<Self> {
-        if p.len() < 31 {
+        if p.len() < 33 {
             return None;
         }
         Some(Stats {
@@ -74,6 +83,7 @@ impl Stats {
             host_rx_drops: u32::from_le_bytes([p[21], p[22], p[23], p[24]]),
             relay_drops: u32::from_le_bytes([p[25], p[26], p[27], p[28]]),
             session: u16::from_le_bytes([p[29], p[30]]),
+            host_restarts: u16::from_le_bytes([p[31], p[32]]),
         })
     }
 }

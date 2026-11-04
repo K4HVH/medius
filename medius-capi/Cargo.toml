@@ -1,6 +1,6 @@
 [package]
 name = "medius-capi"
-version = "3.4.6"
+version = "3.5.0"
 edition = "2024"
 rust-version = "1.85"
 description = "C ABI for the medius crate, the Rust library for Medius on the MAKCU box"
@@ -23,4 +23,4 @@ mock = ["medius/mock"]
 
 [dependencies]
 # Pinned to the crate it ships with: a release publishes both at one version.
-medius = { path = "..", version = "=3.4.6" }
+medius = { path = "..", version = "=3.5.0" }

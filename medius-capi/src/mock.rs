@@ -166,12 +166,15 @@ pub unsafe extern "C" fn medius_mock_set_imperfect_status(
     });
 }
 
-/// Set the canned `(status, IN data)` reply to a `TRANSFER` while the opt-in is on; with it off the
-/// mock replies `REFUSED`. A non-OK status carries no data, as on the box.
+/// Set what a `TRANSFER` brings back: a `MEDIUS_TRANSFER_STATUS_*` status, a
+/// `MEDIUS_TRANSFER_STAGE_*` stage and the reply `data[0..len]`, sent in chunks as the box sends
+/// them. The mock refuses a `TRANSFER` as the box does: with the opt-in off, a zero timeout, or OUT
+/// data shorter than `wLength`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_mock_set_transfer_reply(
     mock: *mut MediusMockBox,
     status: u8,
+    stage: u8,
     data: *const u8,
     len: usize,
 ) {
@@ -181,7 +184,11 @@ pub unsafe extern "C" fn medius_mock_set_transfer_reply(
         } else {
             unsafe { std::slice::from_raw_parts(data, len) }
         };
-        m.set_transfer_reply(status, slice);
+        m.set_transfer_reply(medius::TransferOutcome {
+            status: medius::TransferStatus::from_u8(status),
+            stage: medius::TransferStage::from_u8(stage),
+            data: slice.to_vec(),
+        });
     });
 }
 
@@ -369,17 +376,14 @@ pub unsafe extern "C" fn medius_mock_link_lost(mock: *mut MediusMockBox) {
     with_mock(mock, |m| m.link_lost());
 }
 
-/// Simulate the real device detaching: the mock releases host-set session state at once. With
-/// `back_within_grace`, the same device re-attaches inside the 250 ms grace and the clone stays up.
-/// Otherwise the clone is torn down when the grace ends (counted again only if a command arrived
-/// during the grace) and stays down until `medius_mock_attach`.
+/// Simulate the real device detaching: the mock releases host-set session state (counted once) and
+/// takes the clone down until `medius_mock_attach`.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn medius_mock_detach(mock: *mut MediusMockBox, back_within_grace: bool) {
-    with_mock(mock, |m| m.detach(back_within_grace));
+pub unsafe extern "C" fn medius_mock_detach(mock: *mut MediusMockBox) {
+    with_mock(mock, |m| m.detach());
 }
 
-/// Simulate the real device re-attaching. Inside a detach's grace the clone is unchanged; after the
-/// teardown a fresh clone starts, with nothing to release.
+/// Simulate the real device re-attaching: a fresh clone starts, with nothing to release.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_mock_attach(mock: *mut MediusMockBox) {
     with_mock(mock, |m| m.attach());
@@ -617,6 +621,28 @@ pub unsafe extern "C" fn medius_device_open_mock(
         }
         let mock = unsafe { (*mock).inner.clone() };
         match Device::open_mock(mock) {
+            Ok(dev) => {
+                unsafe { *out = MediusDevice::boxed(dev) };
+                clear_error();
+                MediusStatus::Ok
+            }
+            Err(e) => record(&e),
+        }
+    })
+}
+
+/// Build a `Device` over the mock and run the handshake `medius_device_open_for_update` runs.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn medius_device_open_mock_for_update(
+    mock: *const MediusMockBox,
+    out: *mut *mut MediusDevice,
+) -> MediusStatus {
+    guard_status(|| {
+        if mock.is_null() || out.is_null() {
+            return fail(MediusStatus::ErrInvalidArg, "null pointer");
+        }
+        let mock = unsafe { (*mock).inner.clone() };
+        match Device::open_mock_for_update(mock) {
             Ok(dev) => {
                 unsafe { *out = MediusDevice::boxed(dev) };
                 clear_error();

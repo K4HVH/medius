@@ -206,11 +206,11 @@ fn a_frame_the_box_would_fault_on_is_refused_before_anything_is_encoded() {
     // A transfer item's length is its setup packet's: wLength bytes of OUT data, none for an IN request.
     assert!(matches!(
         refused(ClipFrame::new().transfer(0, Setup::new(0x21, 9, 0, 0, 4), [1])),
-        Error::ClipTransferData { want: 4, got: 1 }
+        Error::TransferData { want: 4, got: 1 }
     ));
     assert!(matches!(
         refused(ClipFrame::new().transfer(0, Setup::new(0xA1, 1, 0, 0, 4), [1, 2, 3, 4])),
-        Error::ClipTransferData { want: 0, got: 4 }
+        Error::TransferData { want: 0, got: 4 }
     ));
 }
 
@@ -653,7 +653,7 @@ fn a_clip_reply_of_another_shape_is_refused() {
 }
 
 // Packet triggers: `CLIP_TRIGGER` with a traffic class, and the list that closes `RESP(CLIP)`.
-// The byte vectors are the firmware's: tests/host/test_clip_ptrig.c and tools/medius.py pin the same.
+// The byte vectors are the firmware's: its host test tests/host/test_clip_ptrig.c pins the same.
 mod packet_trigger {
     use crate::device::clip::{validate_packet_key, validate_packet_trigger};
     use crate::error::Error;

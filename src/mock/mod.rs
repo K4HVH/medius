@@ -30,9 +30,10 @@ use crate::protocol::opcode::{
 use crate::protocol::opcode::{
     CLK_RATE_NONE, PATCH_APPLY, PATCH_CLEAR, PATCH_MAX_ENTRIES, Q_PATCH_ENTRY, Q_PATCHES,
     Q_REWRITE, Q_REWRITE_ENTRY, REWRITE_MATCH_MAX, REWRITE_MAX_ENTRIES, REWRITE_PAYLOAD_POOL,
+    XFER_LAST, XFER_REQ_HDR, XFER_RESP_HDR,
 };
 use crate::protocol::{DecodedFrame, FrameType, encode};
-use crate::types::{PatchSection, UpdateStatus};
+use crate::types::{PatchSection, TransferOutcome, TransferStage, TransferStatus, UpdateStatus};
 use sha2::{Digest, Sha256};
 
 use crate::transport::mock::MockTransport;
@@ -93,8 +94,8 @@ struct State {
     // (keyed rows in installation order, a full flag).
     transforms: Vec<MockTransform>,
     transform_full: bool,
-    // The canned reply to a TRANSFER (status, IN data). The box replies 0xFC with the opt-in off.
-    transfer_reply: (u8, Vec<u8>),
+    // The reply to a TRANSFER the box does not refuse.
+    transfer_reply: TransferOutcome,
     recorded: Vec<DecodedFrame>,
     respond: bool,
     refuse_activate: Option<u8>,
@@ -109,11 +110,6 @@ struct State {
     clone_up: bool,
     // What the box does later unprompted; each runs on the first frame at or past its time.
     clone_up_at: Option<std::time::Instant>,
-    // A detach's grace: when it ends, whether the device came back inside it, and a presentation
-    // asked for during it, which waits for the grace to end.
-    grace_until: Option<std::time::Instant>,
-    device_back: bool,
-    represent_held: bool,
     represent_at: Option<std::time::Instant>,
     represent_delay: std::time::Duration,
     #[cfg(test)]
@@ -399,7 +395,7 @@ impl Default for State {
             rate: Rate::from_payload(&[4, 0, 0, 0, 0, 0]).unwrap(),
             stats: Stats::from_payload(&[
                 5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                0, 0, 0,
+                0, 0, 0, 0, 0,
             ])
             .unwrap(),
             table: LockTable::default(),
@@ -431,7 +427,11 @@ impl Default for State {
             patch_full: false,
             transforms: Vec::new(),
             transform_full: false,
-            transfer_reply: (0x00, Vec::new()),
+            transfer_reply: TransferOutcome {
+                status: TransferStatus::Ok,
+                stage: TransferStage::Status,
+                data: Vec::new(),
+            },
             recorded: Vec::new(),
             respond: true,
             refuse_activate: None,
@@ -442,9 +442,6 @@ impl Default for State {
             session_dirty: false,
             clone_up: true,
             clone_up_at: None,
-            grace_until: None,
-            device_back: false,
-            represent_held: false,
             represent_at: None,
             represent_delay: REPRESENT_DELAY,
             #[cfg(test)]
@@ -471,11 +468,10 @@ const CATCH_MAXN: usize = 32; // CTRL_CATCH_MAXN
 const USAGE_EVENT_MAX: usize = 40; // CTRL_USAGE_EVENT_MAX
 const CLIP_HELD_MAX: usize = USAGE_EVENT_MAX; // CTRL_CLIP_HELD_MAX, defined as CTRL_USAGE_EVENT_MAX
 const TRAFFIC_DATA_MAX: usize = 180; // CTRL_TRAFFIC_DATA_MAX
+const XFER_CHUNK: usize = 448; // XFR_CHUNK
 const PATCH_POOL: usize = 1024; // PATCH_POOL, the bytes every stored patch shares
 // How long a booted device chip takes to clone the attached device again.
 const BOOT_CLONE_DELAY: std::time::Duration = std::time::Duration::from_millis(100);
-// main.c's DETACH_GRACE_US: a detached device that comes back inside it keeps the clone.
-const DETACH_GRACE: std::time::Duration = std::time::Duration::from_millis(250);
 // The main loop's longest tick: an opt-in toggle re-presents the clone up to this long after the
 // command.
 const REPRESENT_DELAY: std::time::Duration = std::time::Duration::from_millis(50);
@@ -919,11 +915,10 @@ impl State {
         self.stats.reset_count = 0;
         self.stats.config_count = 0;
         self.stats.session = 0;
+        self.stats.host_restarts = 0;
         self.session_dirty = false;
         self.clone_up = false;
         self.clone_up_at = Some(std::time::Instant::now() + BOOT_CLONE_DELAY);
-        self.grace_until = None;
-        self.represent_held = false;
         self.represent_at = None;
         self.patch_presented = self.patches_to_serve();
         self.patch_refused = false;
@@ -939,24 +934,13 @@ impl State {
             self.clone_up_at = None;
             self.clone_up = true;
         }
-        if self.grace_until.is_some_and(|t| now >= t) {
-            self.grace_until = None;
-            if self.device_back {
-                if std::mem::take(&mut self.represent_held) {
-                    self.present_patches();
-                }
-            } else {
-                self.represent_held = false;
-                self.tear_down();
-            }
-        }
         if self.represent_at.is_some_and(|t| now >= t) {
             self.represent_at = None;
             self.present_patches();
         }
     }
 
-    // The clone's teardown after a detach's grace: counted only when a command came since the detach.
+    // The clone's teardown: counted only when a command came since the last count.
     fn tear_down(&mut self) {
         self.count_release();
         self.release_session();
@@ -994,9 +978,8 @@ impl State {
     // APPLY, CLEAR and an opt-in toggle re-present the clone when what it serves changes. That is a
     // re-clone: the session goes and the game PC enumerates the clone again.
     fn present_patches(&mut self) {
-        // Inside a detach's grace the snapshot may be of a device that has gone: the request waits.
-        if self.grace_until.is_some() {
-            self.represent_held = true;
+        // With no device attached there is nothing to present: the next attach serves the stored set.
+        if !self.clone_up {
             return;
         }
         let serve = self.patches_to_serve();
@@ -1055,6 +1038,46 @@ impl State {
         if !imperfect.allowed {
             self.packet_triggers.drop_consuming();
         }
+    }
+
+    // A chunk a frame (§3.14); only the last carries the status and stage.
+    fn transfer_resp(&self, seq: u8, p: &[u8]) -> Vec<u8> {
+        if p.len() < XFER_REQ_HDR {
+            return Vec::new();
+        }
+        let timeout_ms = u16::from_le_bytes([p[1], p[2]]);
+        let setup_in = p[3] & 0x80 != 0;
+        let w_length = u16::from_le_bytes([p[9], p[10]]) as usize;
+        let short = !setup_in && p.len() - XFER_REQ_HDR < w_length;
+        let refused = TransferOutcome {
+            status: TransferStatus::Refused,
+            stage: TransferStage::Setup,
+            data: Vec::new(),
+        };
+        let reply = if !self.imperfect.allowed || timeout_ms == 0 || short {
+            &refused
+        } else {
+            &self.transfer_reply
+        };
+        let pieces: Vec<&[u8]> = reply.data.chunks(XFER_CHUNK).collect();
+        let n = pieces.len().max(1);
+        let mut out = Vec::new();
+        for i in 0..n {
+            let last = i + 1 == n;
+            let data = pieces.get(i).copied().unwrap_or(&[]);
+            let offset = ((i * XFER_CHUNK) as u16).to_le_bytes();
+            let mut c = Vec::with_capacity(XFER_RESP_HDR + data.len());
+            c.push(p[0]);
+            if last {
+                c.extend_from_slice(&[reply.status.as_u8(), reply.stage.as_u8(), XFER_LAST]);
+            } else {
+                c.extend_from_slice(&[0, 0, 0]);
+            }
+            c.extend_from_slice(&offset);
+            c.extend_from_slice(data);
+            out.extend(encode(FrameType::TransferResp, seq, &c).expect("chunk fits"));
+        }
+        out
     }
 
     // Modelled on transform_tab_set (§3.15). A transform is faithful, so it runs whatever the opt-in.
@@ -1383,6 +1406,7 @@ fn stats_payload(s: Stats) -> Vec<u8> {
     p.extend_from_slice(&s.host_rx_drops.to_le_bytes());
     p.extend_from_slice(&s.relay_drops.to_le_bytes());
     p.extend_from_slice(&s.session.to_le_bytes());
+    p.extend_from_slice(&s.host_restarts.to_le_bytes());
     p
 }
 
@@ -1969,6 +1993,11 @@ impl MockBox {
                 {
                     st.restart()
                 }
+                // The host chip is back within the link's timeout: nothing is released, and the
+                // device chip counts the restart.
+                FrameType::RebootDl if payload.first() == Some(&RebootTarget::HostRun.as_u8()) => {
+                    st.stats.host_restarts = st.stats.host_restarts.saturating_add(1)
+                }
                 _ => {}
             }
             let out: Vec<u8> = 'reply: {
@@ -1993,23 +2022,7 @@ impl MockBox {
                     };
                 }
                 if ty == FrameType::Transfer && st.respond {
-                    // TRANSFER_RESP [ep][status][IN data], SEQ echoes. The box replies 0xFC
-                    // (refused) while the opt-in is off; otherwise the canned reply the test
-                    // scripted.
-                    let ep = payload.first().copied().unwrap_or(0);
-                    let (status, mut data) = if st.imperfect.allowed {
-                        st.transfer_reply.clone()
-                    } else {
-                        (0xFC, Vec::new())
-                    };
-                    // The box sets in_len = 0 unless status == 0 (usbdev_transfer): a non-OK reply
-                    // carries no IN data, so drop any the test scripted alongside a failing status.
-                    if status != 0 {
-                        data.clear();
-                    }
-                    let mut p = vec![ep, status];
-                    p.extend_from_slice(&data);
-                    break 'reply encode(FrameType::TransferResp, seq, &p).expect("resp fits");
+                    break 'reply st.transfer_resp(seq, payload);
                 }
                 if ty == FrameType::Query && st.respond {
                     match payload.first().copied() {
@@ -2296,19 +2309,19 @@ impl MockBox {
         self
     }
 
-    /// Canned `(status, IN data)` reply to a `TRANSFER` while the opt-in is on (builder style). With
-    /// the opt-in off the mock replies `0xFC` (refused).
-    pub fn with_transfer_reply(self, status: u8, data: &[u8]) -> Self {
-        {
-            let mut st = self.state.lock();
-            st.transfer_reply = (status, data.to_vec());
-        }
+    /// What a `TRANSFER` brings back (builder style), a chunk a frame as the box sends it. The mock
+    /// refuses a `TRANSFER` as the box does: with the opt-in off, a zero timeout, or OUT data
+    /// shorter than `wLength`.
+    #[must_use]
+    pub fn with_transfer_reply(self, reply: TransferOutcome) -> Self {
+        self.state.lock().transfer_reply = reply;
         self
     }
 
-    /// Set the canned `TRANSFER` reply after construction.
-    pub fn set_transfer_reply(&self, status: u8, data: &[u8]) {
-        self.state.lock().transfer_reply = (status, data.to_vec());
+    /// Set what a `TRANSFER` brings back after construction; see
+    /// [`with_transfer_reply`](Self::with_transfer_reply).
+    pub fn set_transfer_reply(&self, reply: TransferOutcome) {
+        self.state.lock().transfer_reply = reply;
     }
 
     /// Update the configured movement-riding window in place; `None` = off.
@@ -2464,6 +2477,8 @@ impl MockBox {
     /// stored state stays, the box says hello now and on the next frame, and the clone is back 100 ms
     /// later. `RESET` with its store flag, and
     /// [`RebootTarget::DeviceRun`](crate::RebootTarget::DeviceRun), also restart the device chip.
+    /// [`RebootTarget::HostRun`](crate::RebootTarget::HostRun) restarts the host chip alone: it
+    /// counts one in [`Stats::host_restarts`](crate::Stats::host_restarts) and releases nothing.
     pub fn restart(&self) {
         let hello = {
             let mut st = self.state.lock();
@@ -2484,29 +2499,20 @@ impl MockBox {
         st.release_session();
     }
 
-    /// Simulate the real device detaching: the box releases host-set session state at once. With
-    /// `back_within_grace`, the device re-attaches inside the 250 ms grace and the clone stays up.
-    /// Otherwise the clone is torn down when the grace ends (counted again only if a command arrived
-    /// during the grace) and stays down until [`attach`](Self::attach).
-    pub fn detach(&self, back_within_grace: bool) {
+    /// Simulate the real device detaching: the box releases host-set session state (counted once
+    /// in [`Stats::session`](crate::Stats::session)) and takes the clone down until
+    /// [`attach`](Self::attach).
+    pub fn detach(&self) {
         let mut st = self.state.lock();
         st.advance(std::time::Instant::now());
-        st.count_release();
-        st.release_session();
-        if !back_within_grace {
-            st.grace_until = Some(std::time::Instant::now() + DETACH_GRACE);
-            st.device_back = false;
-        }
+        st.tear_down();
     }
 
-    /// Simulate the real device re-attaching. Inside a detach's grace the clone is unchanged; after
-    /// the teardown a fresh clone starts, with nothing to release.
+    /// Simulate the real device re-attaching: a fresh clone starts, with nothing to release.
     pub fn attach(&self) {
         let mut st = self.state.lock();
         st.advance(std::time::Instant::now());
-        if st.grace_until.is_some() {
-            st.device_back = true;
-        } else if !st.clone_up {
+        if !st.clone_up {
             st.clone_up = true;
             st.patch_presented = st.patches_to_serve();
             st.patch_refused = false;
@@ -2526,10 +2532,11 @@ impl MockBox {
         self.state.lock().link_lost_before_clip_query = true;
     }
 
-    // A detach whose teardown lands just before the next command, with nothing marked since the
-    // detach was counted: the window a re-send can fall into.
+    // A release counted now, and the clone's teardown just before the next command with nothing marked
+    // between, as an opt-in toggle's re-present lands on the box's next loop tick: the window a re-send
+    // can fall into.
     #[cfg(test)]
-    pub(crate) fn detach_torn_down_before_next_command(&self) {
+    pub(crate) fn torn_down_before_next_command(&self) {
         let mut st = self.state.lock();
         st.count_release();
         st.release_session();
@@ -2683,5 +2690,11 @@ impl crate::Device {
     /// [`Device`](crate::Device) over a [`MockBox`], with the version handshake.
     pub fn open_mock(mock: MockBox) -> crate::Result<crate::Device> {
         crate::Device::open_transport(mock.transport())
+    }
+
+    /// [`Device`](crate::Device) over a [`MockBox`], with the handshake
+    /// [`open_for_update`](crate::Device::open_for_update) runs.
+    pub fn open_mock_for_update(mock: MockBox) -> crate::Result<crate::Device> {
+        crate::Device::open_transport_for_update(mock.transport())
     }
 }
