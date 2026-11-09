@@ -1,6 +1,7 @@
 """Mock-backed tests for the Python bindings."""
 
 import gc
+import os
 import pathlib
 import subprocess
 import tempfile
@@ -178,6 +179,19 @@ def test_import_refuses_a_library_of_another_abi(monkeypatch, step):
 def test_import_takes_a_library_of_the_same_abi(monkeypatch):
     module = _load_native_against(monkeypatch, medius._native.ABI_VERSION)
     assert module.lib.medius_version_string().decode() == medius.version_string()
+
+
+@pytest.mark.parametrize("arg", ["'/dev/ttyACM0'", "12345"])
+def test_a_device_is_not_built_from_a_path_or_a_number(arg):
+    # Device(path) once kept the path as the native handle, and freeing it at interpreter exit
+    # crashed the process.
+    env = dict(os.environ, PYTHONPATH=str(pathlib.Path(medius.__file__).resolve().parents[1]))
+    run = subprocess.run(
+        [sys.executable, "-c", f"import medius\nd = medius.Device({arg})\n"],
+        env=env, capture_output=True, text=True, timeout=60,
+    )
+    assert run.returncode == 1, (run.returncode, run.stderr)
+    assert "TypeError" in run.stderr and "Device.open(path)" in run.stderr, run.stderr
 
 
 def test_configure_version_then_open_mock_matches():
