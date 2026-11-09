@@ -86,9 +86,22 @@ def _require_mock():
 
 
 class Device(Handle):
-    """An open connection to one medius box."""
+    """An open connection to one medius box. Open one with `open`, `find`, `open_by_id` or another
+    `open_*` / `find_*` method; `Device(...)` itself raises `TypeError`."""
 
     _free = "medius_device_free"
+
+    def __init__(self, *args, **kwargs):
+        raise TypeError(
+            "a Device is not built directly: open a box with Device.open(path), Device.find() or "
+            "Device.open_by_id(box_id)"
+        )
+
+    @classmethod
+    def _adopt(cls, handle) -> "Device":
+        device = cls.__new__(cls)
+        Handle.__init__(device, handle)
+        return device
 
     @classmethod
     def open(cls, path) -> "Device":
@@ -96,7 +109,7 @@ class Device(Handle):
         `PortBusyError` if another process holds the port."""
         out = ctypes.c_void_p()
         check(_native.lib.medius_device_open(path.encode("utf-8"), ctypes.byref(out)))
-        return cls(out.value)
+        return cls._adopt(out.value)
 
     @classmethod
     def find(cls) -> "Device":
@@ -104,7 +117,7 @@ class Device(Handle):
         `PortBusyError` if another process holds that box's port."""
         out = ctypes.c_void_p()
         check(_native.lib.medius_device_find(ctypes.byref(out)))
-        return cls(out.value)
+        return cls._adopt(out.value)
 
     @classmethod
     def open_by_id(cls, box_id: str) -> "Device":
@@ -114,7 +127,7 @@ class Device(Handle):
         box matches and another process holds a box's port."""
         out = ctypes.c_void_p()
         check(_native.lib.medius_device_open_by_id(box_id.encode("utf-8"), ctypes.byref(out)))
-        return cls(out.value)
+        return cls._adopt(out.value)
 
     @classmethod
     def open_for_update(cls, path) -> "Device":
@@ -127,7 +140,7 @@ class Device(Handle):
         Raises `BadProtoVerError` for a box older than protocol 5."""
         out = ctypes.c_void_p()
         check(_native.lib.medius_device_open_for_update(path.encode("utf-8"), ctypes.byref(out)))
-        return cls(out.value)
+        return cls._adopt(out.value)
 
     @property
     def is_update_only(self) -> bool:
@@ -143,7 +156,7 @@ class Device(Handle):
         `BadProtoVerError`, and `PortBusyError` if none matches and another process holds a box's port."""
         out = ctypes.c_void_p()
         check(_native.lib.medius_device_find_mouse_box(ctypes.byref(out)))
-        return cls(out.value)
+        return cls._adopt(out.value)
 
     @classmethod
     def find_keyboard_box(cls) -> "Device":
@@ -153,7 +166,7 @@ class Device(Handle):
         `BadProtoVerError`, and `PortBusyError` if none matches and another process holds a box's port."""
         out = ctypes.c_void_p()
         check(_native.lib.medius_device_find_keyboard_box(ctypes.byref(out)))
-        return cls(out.value)
+        return cls._adopt(out.value)
 
     @classmethod
     def open_mock(cls, mock) -> "Device":
@@ -161,7 +174,7 @@ class Device(Handle):
         _require_mock()
         out = ctypes.c_void_p()
         check(_native.lib.medius_device_open_mock(mock._handle, ctypes.byref(out)))
-        return cls(out.value)
+        return cls._adopt(out.value)
 
     @classmethod
     def open_mock_for_update(cls, mock) -> "Device":
@@ -169,7 +182,7 @@ class Device(Handle):
         _require_mock()
         out = ctypes.c_void_p()
         check(_native.lib.medius_device_open_mock_for_update(mock._handle, ctypes.byref(out)))
-        return cls(out.value)
+        return cls._adopt(out.value)
 
     @classmethod
     def with_mock(cls, mock) -> "Device":
@@ -177,14 +190,14 @@ class Device(Handle):
         _require_mock()
         out = ctypes.c_void_p()
         check(_native.lib.medius_device_with_mock(mock._handle, ctypes.byref(out)))
-        return cls(out.value)
+        return cls._adopt(out.value)
 
     def clone(self) -> "Device":
         """Another handle to the same connection; the link is shared."""
         handle = self._call(_native.lib.medius_device_clone)
         if not handle:
             raise MediusError(Status.ERR_UNKNOWN, "device clone failed")
-        return Device(handle)
+        return Device._adopt(handle)
 
     def move_rel(self, dx, dy):
         check(self._call(_native.lib.medius_device_move_rel, _i16(dx, "dx"), _i16(dy, "dy")))
