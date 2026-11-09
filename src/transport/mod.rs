@@ -5,6 +5,11 @@ pub(crate) mod mock;
 pub(crate) mod scan;
 pub(crate) mod serial;
 
+// Opens the box's port at a control rate; a device opened to update keeps one to follow the box
+// across a rate change.
+pub(crate) type Opener =
+    std::sync::Arc<dyn Fn(u32) -> io::Result<std::sync::Arc<dyn Transport>> + Send + Sync>;
+
 pub(crate) trait Transport: Send + Sync + std::fmt::Debug {
     fn write_all(&self, buf: &[u8]) -> io::Result<()>;
 

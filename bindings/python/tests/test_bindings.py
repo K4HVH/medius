@@ -1,9 +1,11 @@
 """Mock-backed tests for the Python bindings."""
 
 import gc
+import os
 import pathlib
 import subprocess
 import tempfile
+import sys
 import time
 
 import pytest
@@ -44,7 +46,6 @@ from medius import (
     ClipSettings,
     ClipState,
     ClipStatus,
-    ClipTransferDataError,
     ClipTrigger,
     ClockDomain,
     ClockEstimate,
@@ -62,6 +63,7 @@ from medius import (
     Usage,
     Device,
     EmitPace,
+    FrameTooLongError,
     FrameType,
     Health,
     ImperfectStatus,
@@ -103,8 +105,11 @@ from medius import (
     RewriteAction,
     RewriteMatchTooLongError,
     Setup,
+    TransferDataError,
     TransferOutcome,
+    TransferStage,
     TransferStatus,
+    TransferTimeoutRangeError,
     Transform,
     Transforms,
     TransformOp,
@@ -125,8 +130,8 @@ def test_mock_feature_present():
 
 def test_meta_functions():
     # The ctypes structs hand-mirror the C header, so a bumped ABI leaves them stale: pin it.
-    assert medius.abi_version() == 10
-    assert medius._native.ABI_VERSION == 10
+    assert medius.abi_version() == 11
+    assert medius._native.ABI_VERSION == 11
     assert medius.version_string()
     assert medius.default_query_timeout_ms() > 0
     assert medius.default_keepalive_cadence_ms() > 0
@@ -176,6 +181,19 @@ def test_import_takes_a_library_of_the_same_abi(monkeypatch):
     assert module.lib.medius_version_string().decode() == medius.version_string()
 
 
+@pytest.mark.parametrize("arg", ["'/dev/ttyACM0'", "12345"])
+def test_a_device_is_not_built_from_a_path_or_a_number(arg):
+    # Device(path) once kept the path as the native handle, and freeing it at interpreter exit
+    # crashed the process.
+    env = dict(os.environ, PYTHONPATH=str(pathlib.Path(medius.__file__).resolve().parents[1]))
+    run = subprocess.run(
+        [sys.executable, "-c", f"import medius\nd = medius.Device({arg})\n"],
+        env=env, capture_output=True, text=True, timeout=60,
+    )
+    assert run.returncode == 1, (run.returncode, run.stderr)
+    assert "TypeError" in run.stderr and "Device.open(path)" in run.stderr, run.stderr
+
+
 def test_configure_version_then_open_mock_matches():
     mock = MockBox()
     # The handshake checks proto_ver, so reuse the default proto and only change
@@ -218,6 +236,58 @@ def test_bad_proto_version_reports_status_and_proto_ver():
     assert ei.value.status == Status.ERR_BAD_PROTO_VER
     assert ei.value.proto_ver == 99
     mock.close()
+
+
+def test_open_for_update_old_box():
+    mock = MockBox()
+    mock.set_version(Version(9, 3, 4, 6))
+    d = Device.open_mock_for_update(mock)
+    assert d.is_update_only
+    assert d.firmware_info() is not None
+    with pytest.raises(BadProtoVerError) as ei:
+        d.move_rel(1, 0)
+    assert ei.value.proto_ver == 9
+    d.close()
+    mock.close()
+
+
+def test_open_for_update_refuses_proto_4():
+    mock = MockBox()
+    mock.set_version(Version(4, 3, 0, 0))
+    with pytest.raises(BadProtoVerError):
+        Device.open_mock_for_update(mock)
+    mock.close()
+
+
+def test_open_for_update_current_box_is_full():
+    mock = MockBox()
+    with Device.open_mock_for_update(mock) as d:
+        assert not d.is_update_only
+        d.move_rel(1, 0)
+    mock.close()
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="the holder scan reads /proc")
+def test_port_busy_error_maps():
+    import os
+    import pty
+    import subprocess
+
+    from medius import PortBusyError
+
+    master, slave = pty.openpty()
+    path = os.ttyname(slave)
+    child = subprocess.Popen(["sleep", "30"], stdin=slave)
+    os.close(slave)
+    try:
+        with pytest.raises(PortBusyError) as ei:
+            Device.open(path)
+        assert ei.value.status == Status.ERR_PORT_BUSY
+        assert f"sleep (pid {child.pid})" in str(ei.value)
+    finally:
+        child.kill()
+        child.wait()
+        os.close(master)
 
 
 def test_a_listed_box_on_another_protocol_has_no_device():
@@ -636,6 +706,7 @@ def test_stats_roundtrip():
         host_rx_drops=0,
         relay_drops=0x0A0B0C0D,
         session=0xBEEF,
+        host_restarts=0x1234,
     )
     with MockBox() as mock:
         mock.set_stats(stats)
@@ -1007,7 +1078,7 @@ def test_clip_transfer_event_accessors():
     assert stalled.rule_acted() is False
     assert stalled.data() == b""
     unanswered = TrafficEvent(CatchClass.CLIP_TRANSFER, 0, Direction.IN, 0xFE, 8, setup)
-    assert unanswered.transfer_status() == TransferStatus.NAK
+    assert unanswered.transfer_status() == TransferStatus.NO_ANSWER
     # A status no member names is kept as its byte.
     unknown = TrafficEvent(CatchClass.CLIP_TRANSFER, 0, Direction.IN, 0x42, 8, setup)
     assert unknown.transfer_status() == 0x42
@@ -1321,7 +1392,9 @@ def test_a_byte_argument_that_is_not_bytes_is_refused(bad):
                 lambda: mock.set_clip_settings(ClipSettings(packet_triggers=[ClipPacketTrigger(*_HELD[:4], match_bytes=bad)])),
                 lambda: mock.clip_packet(TrafficClass.HID_IN, 2, Direction.IN, bad),
                 lambda: d.set_patch(Patch(PatchSection.DEVICE, 0, 0, 0, bad)),
-                lambda: mock.set_transfer_reply(TransferStatus.OK, bad),
+                lambda: mock.set_transfer_reply(
+                    TransferOutcome(TransferStatus.OK, TransferStage.STATUS, bad)
+                ),
                 lambda: mock.push_traffic(0, 0, ClockDomain.DEVICE_CHIP, TrafficEvent(CatchClass.HID_IN, 1, Direction.IN, 0, 3, bad)),
             ]
             for i, call in enumerate(calls):
@@ -1358,8 +1431,8 @@ def test_a_refused_clip_frame_raises_its_own_exception_and_sends_nothing():
         (ClipFrameCountError, dict(edges=[(left, Action.PRESS)] * (CLIP_EDGES_MAX + 1))),
         (ClipFrameCountError, dict(raw=[(1, Direction.OUT, b"\x00")] * (CLIP_RAW_MAX + 1))),
         (ClipFrameTooLongError, dict(raw=[(1, Direction.OUT, bytes(CLIP_ENTRY_MAX))])),
-        (ClipTransferDataError, dict(transfers=[(0, set_report, b"\x04")])),
-        (ClipTransferDataError, dict(transfers=[(0, Setup(0xA1, 0x01, 0x0300, 0, 8), b"\x04")])),
+        (TransferDataError, dict(transfers=[(0, set_report, b"\x04")])),
+        (TransferDataError, dict(transfers=[(0, Setup(0xA1, 0x01, 0x0300, 0, 8), b"\x04")])),
         (RawDirectionError, dict(raw=[(1, Direction.BOTH, b"\x00")])),
         (RelativeDirectionError, dict(raw=[(1, Direction.WITH, b"\x00")])),
     ]
@@ -2350,45 +2423,68 @@ def test_transfer_roundtrips_the_answer():
     reply = bytes([0x12, 0x01, 0x10, 0x02])
     with MockBox() as mock:
         mock.set_imperfect_status(_allowed())
-        mock.set_transfer_reply(TransferStatus.OK, reply)
+        mock.set_transfer_reply(TransferOutcome(TransferStatus.OK, TransferStage.STATUS, reply))
         with Device.with_mock(mock) as d:
             out = d.transfer(0, Setup(0x80, 0x06, 0x0100, 0, 18))
     assert isinstance(out, TransferOutcome)
     assert out.status == TransferStatus.OK
+    assert out.stage == TransferStage.STATUS
     assert out.is_ok
     assert out.data == reply
 
 
-def test_transfer_takes_its_own_reply_wait():
-    reply = bytes([0x12, 0x01])
+def test_a_long_reply_and_the_data_before_a_stall_reach_python():
+    reply = bytes((i * 7) & 0xFF for i in range(1000))
     with MockBox() as mock:
         mock.set_imperfect_status(_allowed())
-        mock.set_transfer_reply(TransferStatus.OK, reply)
+        mock.set_transfer_reply(TransferOutcome(TransferStatus.STALL, TransferStage.DATA, reply))
         with Device.with_mock(mock) as d:
-            out = d.transfer(
-                0, Setup(0x80, 0x06, 0x0100, 0, 2), timeout_ms=medius.default_transfer_timeout_ms()
-            )
-    assert out.status == TransferStatus.OK
+            out = d.transfer(0, Setup(0x80, 0x06, 0x0200, 0, 0xFFFF))
+    assert out.status == TransferStatus.STALL
+    assert out.stage == TransferStage.DATA
     assert out.data == reply
-    assert medius.default_transfer_timeout_ms() >= 800
+
+
+def test_an_unnamed_status_and_stage_arrive_as_bytes():
+    with MockBox() as mock:
+        mock.set_imperfect_status(_allowed())
+        mock.set_transfer_reply(TransferOutcome(0x42, 7, b""))
+        with Device.with_mock(mock) as d:
+            out = d.transfer(0, Setup(0x80, 0x06, 0x0100, 0, 18))
+    assert (out.status, out.stage) == (0x42, 7)
+    assert not isinstance(out.status, TransferStatus)
+
+
+def test_transfer_sends_its_timeout_and_refuses_what_the_box_would():
+    assert medius.default_transfer_timeout_ms() == 1000
+    get = Setup(0x80, 0x06, 0x0100, 0, 18)
+    with MockBox() as mock:
+        mock.set_imperfect_status(_allowed())
+        with Device.with_mock(mock) as d:
+            d.transfer(0, get)
+            d.transfer(0, get, timeout_ms=40_000)
+            with pytest.raises(TransferTimeoutRangeError):
+                d.transfer(0, get, timeout_ms=0)
+            with pytest.raises(TransferTimeoutRangeError):
+                d.transfer(0, get, timeout_ms=65_536)
+            with pytest.raises(TransferDataError):
+                d.transfer(0, Setup(0x21, 0x09, 0x0200, 0, 2), b"\x01")
+            with pytest.raises(FrameTooLongError):
+                d.transfer(0, Setup(0x21, 0x09, 0x0200, 0, 502), bytes(502))
+        timeouts = [
+            int.from_bytes(bytes(f.payload[1:3]), "little")
+            for f in (mock.recorded_frame(i) for i in range(mock.recorded()))
+            if f.type == FrameType.TRANSFER
+        ]
+    assert timeouts == [1000, 40_000]
 
 
 def test_transfer_is_refused_without_the_opt_in():
     with MockBox() as mock, Device.with_mock(mock) as d:
         out = d.transfer(0, Setup(0x80, 0x06, 0x0100, 0, 18))
     assert out.status == TransferStatus.REFUSED
+    assert out.stage == TransferStage.SETUP
     assert not out.is_ok
-    assert out.data == b""
-
-
-def test_a_non_ok_transfer_carries_no_data():
-    # The box zeroes the IN length unless the status is OK, so a stall scripted with bytes drops them.
-    with MockBox() as mock:
-        mock.set_imperfect_status(_allowed())
-        mock.set_transfer_reply(TransferStatus.STALL, b"\x12\x01\x00\x02")
-        with Device.with_mock(mock) as d:
-            out = d.transfer(0, Setup(0x80, 0x06, 0x0100, 0, 18))
-    assert out.status == TransferStatus.STALL
     assert out.data == b""
 
 
@@ -2782,7 +2878,7 @@ def test_a_release_the_box_counts_is_recovered():
             while d.query_locks().scale_of(x, Direction.POSITIVE) != 40:
                 assert time.monotonic() < deadline, "the scale never went back"
                 time.sleep(0.01)
-            mock.detach(back_within_grace=False)
+            mock.detach()
             mock.attach()
             deadline = time.monotonic() + 3
             while d.query_locks().scale_of(x, Direction.POSITIVE) != 40:

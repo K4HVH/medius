@@ -52,6 +52,7 @@ include = [
     "MediusRenderMode",
     "MediusRewriteAction",
     "MediusRewriteClass",
+    "MediusTransferStage",
     "MediusTransferStatus",
     "MediusTransformOp",
 ]

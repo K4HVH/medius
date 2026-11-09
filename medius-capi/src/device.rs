@@ -70,6 +70,7 @@ fn query<T, M: From<T>>(
 }
 
 /// Open the box at serial `path` (NUL-terminated UTF-8), handshake, and write the owned handle to `*out`.
+/// On Linux, `MEDIUS_STATUS_ERR_PORT_BUSY` if another process holds the port.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_device_open(
     path: *const c_char,
@@ -93,7 +94,49 @@ pub unsafe extern "C" fn medius_device_open(
     })
 }
 
+/// Open the box at serial `path` to update it, on any control protocol from 5 on, and write the
+/// handle to `*out`. On this build's protocol the handle is a full one, as from `medius_device_open`.
+/// On another, it is update-only (`medius_device_is_update_only`): the version and firmware queries
+/// and `medius_device_stage_firmware`, `_activate_firmware`, `_abort_update`, `_update_firmware` and
+/// `_wait_firmware_confirmed` work, and every other call returns `MEDIUS_STATUS_ERR_BAD_PROTO_VER`.
+/// A box on a protocol older than 5 gives `MEDIUS_STATUS_ERR_BAD_PROTO_VER`.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn medius_device_open_for_update(
+    path: *const c_char,
+    out: *mut *mut MediusDevice,
+) -> MediusStatus {
+    guard_status(|| {
+        if path.is_null() || out.is_null() {
+            return fail(MediusStatus::ErrInvalidArg, "null pointer");
+        }
+        let Ok(s) = (unsafe { CStr::from_ptr(path) }).to_str() else {
+            return fail(MediusStatus::ErrInvalidArg, "path is not valid UTF-8");
+        };
+        match Device::open_for_update(s) {
+            Ok(dev) => {
+                unsafe { *out = MediusDevice::boxed(dev) };
+                clear_error();
+                MediusStatus::Ok
+            }
+            Err(e) => record(&e),
+        }
+    })
+}
+
+/// Whether this handle reaches only the update path: its box speaks an older control protocol than
+/// this library. See `medius_device_open_for_update`. False for a null handle.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn medius_device_is_update_only(dev: *const MediusDevice) -> bool {
+    guard(false, || {
+        if dev.is_null() {
+            return false;
+        }
+        unsafe { &(*dev).inner }.is_update_only()
+    })
+}
+
 /// Discover the first medius box by USB id, open it, handshake, and write the handle to `*out`.
+/// On Linux, `MEDIUS_STATUS_ERR_PORT_BUSY` if another process holds that box's port.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_device_find(out: *mut *mut MediusDevice) -> MediusStatus {
     guard_status(|| {
@@ -159,7 +202,7 @@ pub unsafe extern "C" fn medius_find_ports(
     })
 }
 
-/// Enumerate every connected box into `out` (up to `cap`), reading each in turn; writes the total to `*out_total` and returns the number written. A box on another control protocol is listed with `has_device` 0.
+/// Enumerate every connected box into `out` (up to `cap`), reading each in turn; writes the total to `*out_total` and returns the number written. A box on another control protocol is listed with `has_device` 0. On Linux, a box whose port another process holds is left out. A box on firmware before v3.4.0 runs at 4 Mbaud and isn't listed; open it by its port with `medius_device_open_for_update`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_list(
     out: *mut MediusBoxInfo,
@@ -188,7 +231,8 @@ pub unsafe extern "C" fn medius_list(
 
 /// Open the box whose identity matches `id` (device-chip MAC hex or CH343 serial), handshake, and
 /// write the handle to `*out`. `MEDIUS_STATUS_ERR_BAD_PROTO_VER` if that box speaks another
-/// control protocol.
+/// control protocol, `MEDIUS_STATUS_ERR_PORT_BUSY` if no box matches and another process holds a
+/// box's port.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_device_open_by_id(
     id: *const c_char,
@@ -212,7 +256,7 @@ pub unsafe extern "C" fn medius_device_open_by_id(
     })
 }
 
-/// Open the first box whose clone is a mouse, handshake, and write the handle to `*out`. With no such box, a box on another control protocol (which reports no clone) gives `MEDIUS_STATUS_ERR_BAD_PROTO_VER`.
+/// Open the first box whose clone is a mouse, handshake, and write the handle to `*out`. With no such box, a box on another control protocol (which reports no clone) gives `MEDIUS_STATUS_ERR_BAD_PROTO_VER`, and `MEDIUS_STATUS_ERR_PORT_BUSY` if none matches and another process holds a box's port.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_device_find_mouse_box(out: *mut *mut MediusDevice) -> MediusStatus {
     guard_status(|| {
@@ -230,7 +274,7 @@ pub unsafe extern "C" fn medius_device_find_mouse_box(out: *mut *mut MediusDevic
     })
 }
 
-/// Open the first box whose clone is a keyboard, handshake, and write the handle to `*out`. With no such box, a box on another control protocol (which reports no clone) gives `MEDIUS_STATUS_ERR_BAD_PROTO_VER`.
+/// Open the first box whose clone is a keyboard, handshake, and write the handle to `*out`. With no such box, a box on another control protocol (which reports no clone) gives `MEDIUS_STATUS_ERR_BAD_PROTO_VER`, and `MEDIUS_STATUS_ERR_PORT_BUSY` if none matches and another process holds a box's port.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_device_find_keyboard_box(
     out: *mut *mut MediusDevice,
@@ -620,46 +664,48 @@ pub unsafe extern "C" fn medius_device_raw(
     })
 }
 
-/// `TRANSFER` (§3.14): run one control transfer against the real device, writing the reply to
-/// `*out`. `ep` is 0 for EP0 or a control endpoint the real device declares; `out_data[0..out_len]`
-/// is the OUT data stage (empty for IN). A non-OK `out->status` is a protocol outcome, not a
-/// failure. The box replies `REFUSED` while the opt-in is off, and `NAK` while the game PC has the
-/// clone suspended (the real device is suspended too). `MEDIUS_STATUS_OK` means only that the box
-/// replied.
+/// `TRANSFER` (§3.14): run one control transfer against the real device. `ep` is 0 for EP0 or a
+/// control endpoint the real device declares. `out_data[0..out_len]` is the OUT data stage:
+/// `setup.length` bytes for OUT, none for IN, at most `MEDIUS_MAX_TRANSFER_OUT`. The reply's first
+/// `reply_cap` bytes go to `reply` (`MEDIUS_MAX_TRANSFER_REPLY` holds any), and `*out` takes the
+/// status, the stage it ended in and the reply's length. The box waits
+/// `medius_default_transfer_timeout_ms()` on the real device. A non-OK `out->status` is a protocol
+/// outcome: `MEDIUS_STATUS_OK` means only that the box replied. With the opt-in off the box replies
+/// `REFUSED`.
 #[unsafe(no_mangle)]
+#[allow(clippy::too_many_arguments)]
 pub unsafe extern "C" fn medius_device_transfer(
     dev: *mut MediusDevice,
     ep: u8,
     setup: MediusSetup,
     out_data: *const u8,
     out_len: usize,
+    reply: *mut u8,
+    reply_cap: usize,
     out: *mut MediusTransferOutcome,
 ) -> MediusStatus {
-    guard_status(|| {
-        if dev.is_null() || out.is_null() {
-            return fail(MediusStatus::ErrInvalidArg, "null pointer");
-        }
-        let Some(data) = (unsafe { opt_slice(out_data, out_len) }) else {
-            return fail(
-                MediusStatus::ErrInvalidArg,
-                "null out_data with out_len > 0",
-            );
-        };
-        match unsafe { &(*dev).inner }.transfer(ep, setup_from_c(setup), data) {
-            Ok(outcome) => {
-                unsafe { *out = outcome.into() };
-                clear_error();
-                MediusStatus::Ok
-            }
-            Err(e) => record(&e),
-        }
+    guard_status(|| unsafe {
+        transfer_into(
+            dev,
+            ep,
+            setup,
+            out_data,
+            out_len,
+            medius::DEFAULT_TRANSFER_TIMEOUT,
+            reply,
+            reply_cap,
+            out,
+        )
     })
 }
 
-/// [`medius_device_transfer`] with a reply timeout in milliseconds. The box gives up on a control
-/// transfer after ~800 ms. A shorter `timeout_ms` can abandon the wait before a slow device
-/// replies, so keep it >= `medius_default_transfer_timeout_ms()`.
+/// [`medius_device_transfer`] with the box's wait on the real device set to `timeout_ms`, 1 to
+/// 65535, else `MEDIUS_STATUS_ERR_TRANSFER_TIMEOUT_RANGE`. The call waits up to `timeout_ms` plus
+/// 2 s for the reply, then gives `MEDIUS_STATUS_ERR_QUERY_TIMEOUT`; a reply that lost a chunk
+/// between the box's chips (STATS `relay_drops` counts it) or on the control link gives
+/// `MEDIUS_STATUS_ERR_TRANSFER_REPLY_INCOMPLETE`.
 #[unsafe(no_mangle)]
+#[allow(clippy::too_many_arguments)]
 pub unsafe extern "C" fn medius_device_transfer_timeout(
     dev: *mut MediusDevice,
     ep: u8,
@@ -667,32 +713,61 @@ pub unsafe extern "C" fn medius_device_transfer_timeout(
     out_data: *const u8,
     out_len: usize,
     timeout_ms: u32,
+    reply: *mut u8,
+    reply_cap: usize,
     out: *mut MediusTransferOutcome,
 ) -> MediusStatus {
-    guard_status(|| {
-        if dev.is_null() || out.is_null() {
-            return fail(MediusStatus::ErrInvalidArg, "null pointer");
-        }
-        let Some(data) = (unsafe { opt_slice(out_data, out_len) }) else {
-            return fail(
-                MediusStatus::ErrInvalidArg,
-                "null out_data with out_len > 0",
-            );
-        };
-        match unsafe { &(*dev).inner }.transfer_timeout(
+    guard_status(|| unsafe {
+        transfer_into(
+            dev,
             ep,
-            setup_from_c(setup),
-            data,
-            Duration::from_millis(timeout_ms as u64),
-        ) {
-            Ok(outcome) => {
-                unsafe { *out = outcome.into() };
-                clear_error();
-                MediusStatus::Ok
-            }
-            Err(e) => record(&e),
-        }
+            setup,
+            out_data,
+            out_len,
+            Duration::from_millis(timeout_ms.into()),
+            reply,
+            reply_cap,
+            out,
+        )
     })
+}
+
+#[allow(clippy::too_many_arguments)]
+unsafe fn transfer_into(
+    dev: *mut MediusDevice,
+    ep: u8,
+    setup: MediusSetup,
+    out_data: *const u8,
+    out_len: usize,
+    timeout: Duration,
+    reply: *mut u8,
+    reply_cap: usize,
+    out: *mut MediusTransferOutcome,
+) -> MediusStatus {
+    if dev.is_null() || out.is_null() {
+        return fail(MediusStatus::ErrInvalidArg, "null pointer");
+    }
+    if reply.is_null() && reply_cap > 0 {
+        return fail(MediusStatus::ErrInvalidArg, "null reply with reply_cap > 0");
+    }
+    let Some(data) = (unsafe { opt_slice(out_data, out_len) }) else {
+        return fail(
+            MediusStatus::ErrInvalidArg,
+            "null out_data with out_len > 0",
+        );
+    };
+    match unsafe { &(*dev).inner }.transfer_timeout(ep, setup_from_c(setup), data, timeout) {
+        Ok(outcome) => {
+            let n = outcome.data.len().min(reply_cap);
+            if n > 0 {
+                unsafe { std::ptr::copy_nonoverlapping(outcome.data.as_ptr(), reply, n) };
+            }
+            unsafe { *out = (&outcome).into() };
+            clear_error();
+            MediusStatus::Ok
+        }
+        Err(e) => record(&e),
+    }
 }
 
 fn with_rewrite_rule(
@@ -1159,8 +1234,12 @@ pub unsafe extern "C" fn medius_device_update_firmware(
 }
 
 /// Block until neither chip is on probation and write both chips' firmware state to `*out`. Keeps
-/// asking while the box reboots after an activate. After 55 s, returns `ErrUpdate` if a chip is
-/// still on probation, or `ErrQueryTimeout` if the box hasn't replied.
+/// asking while the box reboots after an activate. Right after an activate a chip can still answer
+/// from the image it is replacing, so a reply counts only once the box shows the reboot (its ready
+/// hello, or a query left unanswered), or after 5 s. A handle from `medius_device_open_for_update`
+/// follows the box to the other control rate when it reboots into firmware on it. After 55 s,
+/// returns `ErrUpdate` if a chip is still on probation, or `ErrQueryTimeout` if the box hasn't
+/// replied.
 ///
 /// # Safety
 /// `dev` must be a live device handle and `out` writable.
@@ -1325,7 +1404,7 @@ pub extern "C" fn medius_default_query_timeout_ms() -> u32 {
     dur_ms(medius::DEFAULT_QUERY_TIMEOUT)
 }
 
-/// Default reply wait for `medius_device_transfer`, in milliseconds.
+/// How long the box waits on the real device for `medius_device_transfer`, in milliseconds.
 #[unsafe(no_mangle)]
 pub extern "C" fn medius_default_transfer_timeout_ms() -> u32 {
     dur_ms(medius::DEFAULT_TRANSFER_TIMEOUT)
@@ -1339,7 +1418,7 @@ pub extern "C" fn medius_default_keepalive_cadence_ms() -> u32 {
 
 /// The C ABI version this header declares, bumped on any breaking change. Compare with
 /// `medius_abi_version()` once at start-up.
-pub const MEDIUS_ABI_VERSION: u32 = 10;
+pub const MEDIUS_ABI_VERSION: u32 = 11;
 
 /// The loaded library's C ABI version, bumped on any breaking header change. Compare with
 /// `MEDIUS_ABI_VERSION` once at start-up. On a mismatch call nothing else: the header's struct

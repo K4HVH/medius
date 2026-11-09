@@ -623,8 +623,9 @@ impl ClipFrame {
     }
 
     /// Control transfer to the real device, as [`Device::transfer`](crate::Device::transfer) runs
-    /// one. `out` is exactly `setup.length` bytes for an OUT request, empty for an IN one. The reply
-    /// arrives as a [`TrafficClass::ClipTransfer`](crate::TrafficClass::ClipTransfer) event.
+    /// one, with 4 s for the real device to answer. `out` is exactly `setup.length` bytes for an
+    /// OUT request, empty for an IN one. The reply arrives as a
+    /// [`TrafficClass::ClipTransfer`](crate::TrafficClass::ClipTransfer) event.
     pub fn transfer(mut self, ep: u8, setup: Setup, out: impl Into<Vec<u8>>) -> ClipFrame {
         self.transfers.push(TransferItem {
             ep,

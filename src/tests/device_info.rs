@@ -146,11 +146,11 @@ fn rate_unlearned_period_is_none() {
 #[test]
 fn decode_stats_exact_bytes_with_saturation() {
     // The firmware packer test's vector. 0xDEADBEEF proves the three drop counters are full width;
-    // the last two bytes are the session counter.
+    // the session counter follows them, then the host chip's restarts, saturated.
     let p = [
         5u8, 0x04, 0x03, 0x02, 0x01, 0xFF, 0xFF, 0x0A, 0x00, 0xFF, 0x02, 0xFF, 0xFF, 0x07, 0x00,
         0x09, 0x00, 0xEF, 0xBE, 0xAD, 0xDE, 0x04, 0x03, 0x02, 0x01, 0x0D, 0x0C, 0x0B, 0x0A, 0xEF,
-        0xBE,
+        0xBE, 0xFF, 0xFF,
     ];
     let Some(Resp::Stats(s)) = parse_resp(&p) else {
         panic!("expected Stats");
@@ -167,6 +167,7 @@ fn decode_stats_exact_bytes_with_saturation() {
     assert_eq!(s.host_rx_drops, 0x0102_0304);
     assert_eq!(s.relay_drops, 0x0A0B_0C0D);
     assert_eq!(s.session, 0xBEEF);
+    assert_eq!(s.host_restarts, 0xFFFF);
 }
 
 #[test]
@@ -183,8 +184,9 @@ fn truncated_payloads_decode_to_none() {
     assert!(parse_resp(&[2, 0, 0]).is_none()); // DEVICE_INFO needs 11
     assert!(parse_resp(&[3, 5]).is_none()); // CAPS needs 4
     assert!(parse_resp(&[4, 0xE8, 0x03]).is_none()); // RATE needs 6
-    assert!(parse_resp(&[5, 0, 0, 0]).is_none()); // STATS needs 31
+    assert!(parse_resp(&[5, 0, 0, 0]).is_none()); // STATS needs 33
     assert!(parse_resp(&[5u8; 17]).is_none()); // the v8 STATS reply is short now
     assert!(parse_resp(&[5u8; 25]).is_none()); // and so is one that stops before relay_drops
     assert!(parse_resp(&[5u8; 29]).is_none()); // and one that stops before session
+    assert!(parse_resp(&[5u8; 31]).is_none()); // and the 31-byte reply, before host_restarts
 }

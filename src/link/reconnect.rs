@@ -181,6 +181,14 @@ fn adopt_first(
         {
             continue;
         }
+        // A link opened to update reaches a box on an older protocol, with nothing held to replay.
+        if let Some(v) = version.as_ref()
+            && ctx.restart.reaches_update_only(v.proto_ver)
+        {
+            ctx.transport.swap(port);
+            ctx.counters.inc_reconnects();
+            return Ok(());
+        }
         // A box reflashed while held comes back on its new protocol; this build would misread its
         // replies, starting with the clip probe.
         if let Some(got) = version

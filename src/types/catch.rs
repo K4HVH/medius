@@ -38,7 +38,9 @@ pub enum CatchClass {
     /// control link by itself, and the first dropped when the link cannot keep up.
     VendorBulk = CATCH_CLS_VEND_BULK,
     /// Control transaction the game PC received, on any control endpoint; `id` is the endpoint
-    /// number (0 = EP0). On EP0 only class and vendor requests raise one.
+    /// number (0 = EP0). On EP0 every class and vendor request raises one, those the box answers from
+    /// its cache or a rule ends included, as does each standard request relayed to the real device;
+    /// the standard requests the clone serves itself raise none.
     Control = CATCH_CLS_CONTROL,
     /// Bytes the clone emitted; `id` is the endpoint number, `direction`
     /// [`IN`](Direction::IN).
@@ -127,7 +129,9 @@ pub enum TrafficClass {
     /// [`IN`](Direction::IN) or [`OUT`](Direction::OUT).
     VendorBulk = CATCH_CLS_VEND_BULK,
     /// Control transaction the game PC received, on any control endpoint; `id` is the endpoint
-    /// number (0 = EP0). On EP0 only class and vendor requests raise one.
+    /// number (0 = EP0). On EP0 every class and vendor request raises one, those the box answers from
+    /// its cache or a rule ends included, as does each standard request relayed to the real device;
+    /// the standard requests the clone serves itself raise none.
     Control = CATCH_CLS_CONTROL,
     /// Bytes the clone emitted; `id` is the endpoint number, `direction`
     /// [`IN`](Direction::IN).
