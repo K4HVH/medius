@@ -29,11 +29,11 @@ pub struct Health {
     pub catch_on: bool,
     /// A keyboard is attached on the host chip, cloned and injectable.
     pub kbd_attached: bool,
-    /// The rewrite-rule table (§3.14) is non-empty (v3.4.0).
+    /// The rewrite-rule table (§3.14) is non-empty.
     pub rewrite_on: bool,
-    /// The clone serves a patched descriptor set (§3.14) (v3.4.0).
+    /// The clone serves a patched descriptor set (§3.14).
     pub patch_on: bool,
-    /// A field transform is active (v3.4.0).
+    /// A field transform is active.
     pub transform_on: bool,
 }
 

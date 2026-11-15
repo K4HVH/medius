@@ -2684,7 +2684,7 @@ void medius_event_stream_free(struct MediusEventStream *stream);
 // threads may be receiving on it.
 void medius_event_stream_close(struct MediusEventStream *stream);
 
-// Block until the next event, writing it to `*out`; `ErrDisconnected` on close.
+// Block until the next event, writing it to `*out`; `MEDIUS_STATUS_ERR_DISCONNECTED` on close.
 MediusStatus medius_event_stream_recv(struct MediusEventStream *stream,
                                       struct MediusCatchEvent *out);
 
@@ -2726,7 +2726,7 @@ void medius_input_stream_free(struct MediusInputStream *stream);
 // receiving on it.
 void medius_input_stream_close(struct MediusInputStream *stream);
 
-// Block until the next input event, writing it to `*out`; `ErrDisconnected` on close.
+// Block until the next input event, writing it to `*out`; `MEDIUS_STATUS_ERR_DISCONNECTED` on close.
 //
 // # Safety
 // `stream` and `out` must be non-null and valid.
@@ -2844,7 +2844,7 @@ void medius_log_stream_free(struct MediusLogStream *stream);
 // be receiving on it.
 void medius_log_stream_close(struct MediusLogStream *stream);
 
-// Block until the next LOG line, writing it to `*out`. Returns `ErrDisconnected` on close.
+// Block until the next LOG line, writing it to `*out`; `MEDIUS_STATUS_ERR_DISCONNECTED` on close.
 MediusStatus medius_log_stream_recv(struct MediusLogStream *stream, struct MediusLogLine *out);
 
 // The next buffered LOG line, written to `*out`; returns false if none is queued (never blocks).

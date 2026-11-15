@@ -9,7 +9,7 @@ pub struct KbdCaps {
     pub nkro: bool,
     /// A Consumer (media-key) collection is present; media injection and catch work.
     pub has_consumer: bool,
-    /// A System-control collection is present (passthrough-only; not injectable).
+    /// A System-control collection is present (relayed only; not injectable).
     pub has_system: bool,
     /// The keyboard report sits behind a HID report ID.
     pub has_report_id: bool,
