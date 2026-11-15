@@ -17,9 +17,10 @@ use std::time::Duration;
 
 use parking_lot::Mutex;
 
-use crate::error::Result;
+use crate::error::{Error, Result};
 use crate::protocol::{FrameType, encode};
-use crate::transport::Transport;
+use crate::transport::serial::{CTRL_BAUD, LEGACY_CTRL_BAUD};
+use crate::transport::{Opener, Transport};
 use crate::types::{CountersSnapshot, LogLine};
 
 use catch::CatchReg;
@@ -38,6 +39,9 @@ const HELD_UPDATES_MAX: usize = 64;
 
 /// Default keepalive cadence for re-sending a held override.
 pub const DEFAULT_KEEPALIVE_CADENCE: Duration = Duration::from_millis(500);
+
+// Outlasts a parked read (the serial I/O timeout), so the reader has dropped a port being released.
+const PORT_RELEASE_WAIT: Duration = Duration::from_millis(200);
 
 pub(crate) struct LinkInner {
     transport: Arc<TransportSlot>,
@@ -63,6 +67,8 @@ pub(crate) struct LinkInner {
     // different box that happens to be present.
     identity: Arc<Mutex<Option<BoxIdentity>>>,
     restart: Arc<RestartWatch>,
+    rates: Mutex<Option<(Opener, u32)>>,
+    activated: Mutex<Option<(u64, std::time::Instant)>>,
     query_timeout: Duration,
     reader: Option<JoinHandle<()>>,
     keepalive: Option<JoinHandle<()>>,
@@ -188,6 +194,8 @@ impl Link {
                 reconnect_lock,
                 identity,
                 restart,
+                rates: Mutex::new(None),
+                activated: Mutex::new(None),
                 query_timeout,
                 reader: Some(reader),
                 keepalive: Some(keepalive),
@@ -200,6 +208,11 @@ impl Link {
     }
 
     pub(crate) fn send_with_seq(&self, seq: u8, ty: FrameType, payload: &[u8]) -> Result<()> {
+        if let Some(got) = self.update_only()
+            && !is_update_path(ty, payload)
+        {
+            return Err(Error::BadProtoVer { got });
+        }
         write_frame(
             &self.inner.transport,
             &self.inner.write_lock,
@@ -213,6 +226,67 @@ impl Link {
     pub(crate) fn send(&self, ty: FrameType, payload: &[u8]) -> Result<()> {
         let seq = self.next_seq();
         self.send_with_seq(seq, ty, payload)
+    }
+
+    pub(crate) fn update_only(&self) -> Option<u8> {
+        self.inner.restart.update_only()
+    }
+
+    pub(crate) fn swap_transport(&self, transport: Arc<dyn Transport>) {
+        self.inner.transport.swap(transport);
+    }
+
+    pub(crate) fn release_transport(&self) {
+        self.inner
+            .transport
+            .swap(Arc::new(crate::transport::Disconnected));
+        std::thread::sleep(PORT_RELEASE_WAIT);
+    }
+
+    pub(crate) fn note_activated(&self) {
+        *self.inner.activated.lock() =
+            Some((self.inner.restart.boots(), std::time::Instant::now()));
+    }
+
+    pub(crate) fn take_activated(&self) -> Option<(u64, std::time::Instant)> {
+        self.inner.activated.lock().take()
+    }
+
+    pub(crate) fn boots(&self) -> u64 {
+        self.inner.restart.boots()
+    }
+
+    pub(crate) fn set_rates(&self, opener: Opener, baud: u32) {
+        *self.inner.rates.lock() = Some((opener, baud));
+    }
+
+    pub(crate) fn switch_rate(&self) -> bool {
+        let mut rates = self.inner.rates.lock();
+        let Some((opener, baud)) = rates.as_mut() else {
+            return false;
+        };
+        let next = if *baud == CTRL_BAUD {
+            LEGACY_CTRL_BAUD
+        } else {
+            CTRL_BAUD
+        };
+        self.release_transport();
+        match opener(next) {
+            Ok(transport) => {
+                *baud = next;
+                self.inner.transport.swap(transport);
+                true
+            }
+            Err(_) => false,
+        }
+    }
+
+    pub(crate) fn open_for_update(&self) {
+        self.inner.restart.open_for_update();
+    }
+
+    pub(crate) fn reaches_update_only(&self, proto: u8) -> bool {
+        self.inner.restart.reaches_update_only(proto)
     }
 
     pub(crate) fn counters(&self) -> CountersSnapshot {
@@ -302,4 +376,10 @@ fn write_frame(
         len = payload.len(),
     );
     Ok(())
+}
+
+fn is_update_path(ty: FrameType, payload: &[u8]) -> bool {
+    use crate::protocol::opcode::{Q_FIRMWARE, Q_VERSION};
+    ty == FrameType::Update
+        || ty == FrameType::Query && matches!(payload.first(), Some(&Q_VERSION) | Some(&Q_FIRMWARE))
 }

@@ -54,6 +54,8 @@ from ._enums import (
     Status,
     InputKind,
     TrafficClass,
+    TRANSFER_OUT_MAX,
+    TransferStage,
     TransferStatus,
     TransformOp,
 )
@@ -64,7 +66,6 @@ from ._errors import (
     ClipFrameCountError,
     ClipFrameTooLongError,
     ClipPacketTriggerError,
-    ClipTransferDataError,
     DisconnectedError,
     EmptySubscriptionError,
     UpdateError,
@@ -91,6 +92,10 @@ from ._errors import (
     RewritePoolFullError,
     TransformOpFieldsError,
     RewriteTableFullError,
+    TransferDataError,
+    TransferReplyIncompleteError,
+    PortBusyError,
+    TransferTimeoutRangeError,
     TransformTableFullError,
     WildcardNotInputError,
 )
@@ -170,8 +175,7 @@ def find_ports(cap: int = 16) -> List[PortInfo]:
 
 
 def list_boxes(cap: int = 16) -> List[BoxInfo]:
-    """Enumerate every connected box, reading its version and device info. A box on another control
-    protocol is listed with `device` None."""
+    """Enumerate every connected box no other process holds, reading its version and device info."""
     import ctypes
 
     arr = (_native.MediusBoxInfo * cap)()
@@ -241,6 +245,8 @@ __all__ = [
     "RebootTarget",
     "RewriteAction",
     "RewriteClass",
+    "TRANSFER_OUT_MAX",
+    "TransferStage",
     "TransferStatus",
     "TransformOp",
     "Status",
@@ -286,7 +292,10 @@ __all__ = [
     "ClipFrameCountError",
     "ClipFrameTooLongError",
     "ClipPacketTriggerError",
-    "ClipTransferDataError",
+    "TransferDataError",
+    "TransferReplyIncompleteError",
+    "PortBusyError",
+    "TransferTimeoutRangeError",
     "RewriteMatchTooLongError",
     "ImperfectRequiredError",
     "LockScaleRangeError",

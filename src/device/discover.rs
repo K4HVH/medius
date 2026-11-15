@@ -41,9 +41,37 @@ impl BoxInfo {
     }
 }
 
-fn probe(port: &PortInfo) -> Option<BoxInfo> {
+fn probe_unheld(port: &PortInfo) -> Option<BoxInfo> {
     let serial = crate::transport::serial::SerialTransport::open(Path::new(&port.path)).ok()?;
     probe_transport(port, Arc::new(serial))
+}
+
+fn list_and_held() -> (Vec<BoxInfo>, Vec<String>) {
+    list_and_held_from(&crate::transport::scan::find_medius())
+}
+
+pub(crate) fn list_and_held_from(ports: &[PortInfo]) -> (Vec<BoxInfo>, Vec<String>) {
+    let mut held = Vec::new();
+    let boxes = ports
+        .iter()
+        .filter_map(|port| {
+            let holders = crate::transport::serial::holders(Path::new(&port.path));
+            if holders.is_empty() {
+                probe_unheld(port)
+            } else {
+                held.extend(holders);
+                None
+            }
+        })
+        .collect();
+    (boxes, held)
+}
+
+pub(crate) fn unmatched(err: Error, held: Vec<String>) -> Error {
+    match err {
+        Error::NotFound if !held.is_empty() => Error::PortBusy { holders: held },
+        e => e,
+    }
 }
 
 // A box on another protocol is listed by its version alone, so a box needing an update still shows.
@@ -105,37 +133,40 @@ pub(crate) fn may_clone(kind: DeviceKind) -> impl Fn(&BoxInfo) -> bool {
 }
 
 impl Device {
-    /// Every connected box, with its version and cloned-device info. A box on another control
-    /// protocol is listed with [`device`](BoxInfo::device) `None`.
+    /// Every connected box no other process holds, with its version and cloned-device info.
     pub fn list() -> Vec<BoxInfo> {
-        crate::transport::scan::find_medius()
-            .iter()
-            .filter_map(probe)
-            .collect()
+        list_and_held().0
     }
 
-    /// Open the box whose device-chip MAC or CH343 serial matches `id`. [`Error::BadProtoVer`] if
-    /// that box speaks another control protocol, [`Error::NotFound`] if no box matches.
+    /// Open the box whose device-chip MAC or CH343 serial matches `id`.
     pub fn open_by_id(id: &str) -> Result<Device> {
-        Device::open(&pick_by_id(&Device::list(), id)?.port.path)
+        let (boxes, held) = list_and_held();
+        let path = pick_by_id(&boxes, id)
+            .map_err(|e| unmatched(e, held))?
+            .port
+            .path
+            .clone();
+        Device::open(&path)
     }
 
-    /// Open the first box cloning a mouse ([`DeviceKind::Mouse`]). With no such box, a box on
-    /// another control protocol (which reports no clone) gives [`Error::BadProtoVer`].
+    /// Open the first box cloning a mouse ([`DeviceKind::Mouse`]).
     pub fn find_mouse_box() -> Result<Device> {
         Device::find_where(may_clone(DeviceKind::Mouse))
     }
 
-    /// Open the first box cloning a keyboard ([`DeviceKind::Keyboard`]). With no such box, a box on
-    /// another control protocol (which reports no clone) gives [`Error::BadProtoVer`].
+    /// Open the first box cloning a keyboard ([`DeviceKind::Keyboard`]).
     pub fn find_keyboard_box() -> Result<Device> {
         Device::find_where(may_clone(DeviceKind::Keyboard))
     }
 
-    /// Open the first box satisfying `pred`, preferring one this build speaks to. A box on another
-    /// control protocol ([`device`](BoxInfo::device) `None`) is chosen only if no other box
-    /// satisfies `pred`, and gives [`Error::BadProtoVer`]. [`Error::NotFound`] if no box matches.
+    /// Open the first box satisfying `pred`, preferring one this build speaks to.
     pub fn find_where(pred: impl Fn(&BoxInfo) -> bool) -> Result<Device> {
-        Device::open(&pick_where(&Device::list(), pred)?.port.path)
+        let (boxes, held) = list_and_held();
+        let path = pick_where(&boxes, pred)
+            .map_err(|e| unmatched(e, held))?
+            .port
+            .path
+            .clone();
+        Device::open(&path)
     }
 }

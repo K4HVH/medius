@@ -1,4 +1,4 @@
-//! Typed response/event decoders (box → PC).
+//! Typed response/event decoders (box to PC).
 
 use std::time::Duration;
 

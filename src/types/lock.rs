@@ -115,7 +115,7 @@ pub enum LockScope {
 /// Decoded `RESP(LOCKS)` entry (§4.8): what is weighed, in which direction, by how much.
 ///
 /// Mirrors the `LOCK` frame field for field, so it replays as sent. Only directions not at
-/// [`LOCK_SCALE_PASS`] are reported; a target absent from the reply passes untouched.
+/// [`LOCK_SCALE_PASS`] are reported; a target absent from the reply is relayed unchanged.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct LockEntry {
     /// What this entry weighs.

@@ -1,11 +1,11 @@
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use parking_lot::Mutex;
 
 use crate::protocol::command::query_payload;
 use crate::protocol::opcode::{Q_CAPS, Q_CLIP, Q_DEVICE_INFO, Q_STATS};
-use crate::protocol::{FrameType, PROTO_VER, Resp, parse_resp};
+use crate::protocol::{FrameType, MIN_PROTO_VER, PROTO_VER, Resp, parse_resp};
 use crate::types::{ClipStatus, Stats};
 
 use super::correlation;
@@ -76,6 +76,9 @@ impl Pending {
 #[derive(Debug, Default)]
 pub(crate) struct RestartWatch {
     state: Mutex<Watch>,
+    for_update: AtomicBool,
+    update_only: AtomicU8,
+    boots: AtomicU64,
 }
 
 #[derive(Debug, Default)]
@@ -94,6 +97,29 @@ struct Watch {
 }
 
 impl RestartWatch {
+    pub(crate) fn open_for_update(&self) {
+        self.for_update.store(true, Ordering::SeqCst);
+    }
+
+    pub(crate) fn boots(&self) -> u64 {
+        self.boots.load(Ordering::SeqCst)
+    }
+
+    pub(crate) fn update_only(&self) -> Option<u8> {
+        match self.update_only.load(Ordering::SeqCst) {
+            0 => None,
+            p => Some(p),
+        }
+    }
+
+    pub(crate) fn reaches_update_only(&self, proto: u8) -> bool {
+        if !self.for_update.load(Ordering::SeqCst) || proto == PROTO_VER || proto < MIN_PROTO_VER {
+            return false;
+        }
+        self.update_only.store(proto, Ordering::SeqCst);
+        true
+    }
+
     pub(crate) fn note_reply(&self) {
         self.state.lock().armed = true;
     }
@@ -105,6 +131,10 @@ impl RestartWatch {
             Some(Resp::Version(v)) => v.proto_ver,
             _ => return,
         };
+        self.boots.fetch_add(1, Ordering::SeqCst);
+        if self.reaches_update_only(proto) {
+            return;
+        }
         if proto != PROTO_VER {
             trace_event!(
                 target: "medius::device",
@@ -320,13 +350,7 @@ fn query(ctx: &KeepaliveCtx, what: u8) -> Option<Vec<u8>> {
 
 // The outer `None` means the frame wasn't sent. The wait ends early if the device is dropped.
 fn query_sent(ctx: &KeepaliveCtx, what: u8) -> Option<Option<Vec<u8>>> {
-    let (seq, gen_id, rx) = correlation::register(
-        &ctx.pending,
-        &ctx.query_gen,
-        &ctx.seq,
-        FrameType::Resp,
-        what,
-    );
+    let (seq, gen_id, rx) = correlation::register(&ctx.pending, &ctx.query_gen, &ctx.seq, what);
     let sent = write_frame(
         &ctx.transport,
         &ctx.write_lock,

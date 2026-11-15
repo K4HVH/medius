@@ -14,8 +14,7 @@ use crate::types::{
     Direction, Edge, EmitPace, EmitPaceStatus, FirmwareInfo, Health, ImperfectStatus, LedMode,
     LedTarget, LockTarget, Locks, Motion, MoveTiming, Patch, PatchSet, PendingMotion, Rate,
     RebootTarget, RenderMode, RenderStatus, RewriteRule, RewriteTable, Setup, SpreadStatus, Stats,
-    TransferOutcome, TransferStatus, Transform, Transforms, UpdateProgress, UpdateTarget, Usage,
-    Version,
+    TransferOutcome, Transform, Transforms, UpdateProgress, UpdateTarget, Usage, Version,
 };
 
 use super::Device;
@@ -24,7 +23,7 @@ use super::clip::ClipHandle;
 use super::discover::BoxInfo;
 use super::input::InputStream;
 use super::logs::LogStream;
-use super::raw::DEFAULT_TRANSFER_TIMEOUT;
+use super::raw::{DEFAULT_TRANSFER_TIMEOUT, transfer_timeout_ms, validate_transfer_data};
 
 /// Async view over a [`Device`]: the same `Link` core. Queries are `async` and await the correlated
 /// `RESP` with the default timeout; commands send at once.
@@ -343,9 +342,6 @@ impl AsyncDevice {
         self.offload(|d| d.wait_firmware_confirmed()).await
     }
 
-    // Not cancellable: dropping the future stops the wait, not the thread, and `update_firmware`
-    // still reboots the box. The crate has no runtime or timer to bound async waits with, so it
-    // drives the sync path and keeps one implementation of the wire.
     async fn offload<T, F>(&self, f: F) -> Result<T>
     where
         T: Send + 'static,
@@ -548,7 +544,7 @@ impl AsyncDevice {
             .await
     }
 
-    /// [`transfer`](Self::transfer) with an explicit reply timeout; see [`Device::transfer_timeout`].
+    /// [`transfer`](Self::transfer) with the box's wait on the real device set to `timeout`.
     pub async fn transfer_timeout(
         &self,
         ep: u8,
@@ -556,11 +552,9 @@ impl AsyncDevice {
         out: &[u8],
         timeout: Duration,
     ) -> Result<TransferOutcome> {
-        let (status, data) = self.link.transfer_async(ep, setup, out, timeout).await?;
-        Ok(TransferOutcome {
-            status: TransferStatus::from_u8(status),
-            data,
-        })
+        let timeout_ms = transfer_timeout_ms(timeout)?;
+        validate_transfer_data(setup, out)?;
+        self.link.transfer_async(ep, timeout_ms, setup, out).await
     }
 
     /// `REWRITE`: add one rewrite rule; see [`Device::set_rewrite`].
@@ -689,6 +683,16 @@ impl AsyncDevice {
     /// Open the box at `path` as an [`AsyncDevice`].
     pub fn open(path: impl AsRef<std::path::Path>) -> Result<AsyncDevice> {
         Ok(Device::open(path)?.into_async())
+    }
+
+    /// Open the box at `path` to update it, as an [`AsyncDevice`]; see [`Device::open_for_update`].
+    pub fn open_for_update(path: impl AsRef<std::path::Path>) -> Result<AsyncDevice> {
+        Ok(Device::open_for_update(path)?.into_async())
+    }
+
+    /// Whether this device reaches only the update path; see [`Device::is_update_only`].
+    pub fn is_update_only(&self) -> bool {
+        self.dev().is_update_only()
     }
 
     /// Open the first box found as an [`AsyncDevice`]; blocks. See [`Device::find`].

@@ -34,6 +34,7 @@ from ._enums import (
     RewriteAction,
     RewriteClass,
     TrafficClass,
+    TransferStage,
     TransferStatus,
     TransformOp,
     Button,
@@ -200,11 +201,11 @@ class Health:
     lock_on: bool
     catch_on: bool
     kbd_attached: bool
-    #: The rewrite-rule table (§3.14) is non-empty (v3.4.0).
+    #: The rewrite-rule table is non-empty.
     rewrite_on: bool = False
-    #: The clone serves a patched descriptor set (§3.14) (v3.4.0).
+    #: The clone serves a patched descriptor set.
     patch_on: bool = False
-    #: A field transform is active (v3.4.0).
+    #: A field transform is active.
     transform_on: bool = False
 
 
@@ -278,29 +279,7 @@ class Rate:
 
 @dataclass
 class Stats:
-    """Box-side delivery and telemetry counters.
-
-    Narrowed fields saturate rather than wrap. The three drop counters are full width and do not
-    saturate, so a count keeps rising while loss continues.
-
-    `tx_drops` (a report the clone's queue could not hold) and `link_rx_drops`/`host_rx_drops` (an
-    input-carrying frame one chip could not take off the inter-chip link) count lost input and
-    should read 0.
-
-    `relay_drops` counts relayed traffic and commands that went no further, never native input:
-
-    - a vendor IN packet behind a queue full of RAW packets
-    - a zero-length packet answering a poll a suspended PC did not make
-    - an OUT or RAW OUT packet the box could not queue or deliver
-    - a relayed request or flagged MOVE the box could not queue
-    - a non-input frame either chip's link ring dropped
-    - a frame from the control PC the receive ring had no room for
-    - a control-port UART overrun
-
-    A rise across a burst of commands can mean some never reached the box. A lost release can leave
-    a key held. `reapply()` re-sends only what is held, so send the releases again or call
-    `reset()`.
-    """
+    """Box-side delivery and telemetry counters."""
 
     inject_emits: int
     tx_drops: int
@@ -315,6 +294,8 @@ class Stats:
     relay_drops: int
     #: Times the box released host-set session state; wraps, so compare for inequality.
     session: int = 0
+    #: Restarts of the host chip since the device chip booted.
+    host_restarts: int = 0
 
 
 @dataclass
@@ -358,13 +339,7 @@ class Locks:
         )
 
     def scale_of(self, target: "LockTarget", direction) -> int:
-        """The scale on that target and direction, or 100 when nothing covers it. Where several
-        entries cover it, the one that keeps least applies, ranked by magnitude (the negative one
-        wins a tie). So a block outranks a reversal of any size, and a pass outranks a reversal
-        below -100. `Direction.BOTH` reports the scale that keeps least across every direction. A
-        delta is scaled by the product of its fixed and relative scales, which this does not
-        compute.
-        """
+        """The scale on that target and direction, or 100 when nothing covers it."""
         c = locks_to_c(self)
         return int(
             _native.lib.medius_locks_scale_of(
@@ -423,11 +398,7 @@ class ImperfectStatus:
 
 @dataclass
 class Setup:
-    """A USB setup packet (§9.3): the eight ``<BBHHH>`` little-endian bytes.
-
-    ``length`` is the data-stage length. IN: the bytes to read back. OUT: the length of the data
-    passed to `Device.transfer`.
-    """
+    """A USB setup packet: the eight ``<BBHHH>`` little-endian bytes."""
 
     request_type: int
     request: int
@@ -438,15 +409,10 @@ class Setup:
 
 @dataclass
 class TransferOutcome:
-    """The real device's reply to `Device.transfer`: status and its reply.
-
-    ``status`` is a `TransferStatus`, or the raw wire byte for an unnamed value. A non-OK status is
-    a protocol outcome, not a link error, and carries no data. ``data`` is an IN transfer's data
-    stage, whole even past wLength; for an OUT transfer or one with wLength 0, what the real device
-    sent where the status stage was due (at most 64 bytes, usually none).
-    """
+    """Outcome of `Device.transfer`: how and where it ended, and the native reply."""
 
     status: "TransferStatus | int"
+    stage: "TransferStage | int"
     data: bytes = b""
 
     @property
@@ -750,8 +716,7 @@ class TrafficEvent:
     bytes: bytes = b""
 
     def truncated(self) -> bool:
-        """Whether the capture cut this packet short; `bytes` alone cannot tell that from a short
-        packet."""
+        """Whether the capture cut this packet short."""
         c = traffic_event_to_c(self)
         return bool(_native.lib.medius_traffic_event_truncated(ctypes.byref(c)))
 
@@ -762,7 +727,7 @@ class TrafficEvent:
         return bytes(p[:8]) if p else None
 
     def data(self) -> bytes:
-        """The data stage of a CONTROL or CLIP_TRANSFER event, the whole packet for any other class."""
+        """The data stage of a CONTROL or CLIP_TRANSFER event; the whole packet for any other class."""
         c = traffic_event_to_c(self)
         n = _native.usize()
         p = _native.lib.medius_traffic_event_data(ctypes.byref(c), ctypes.byref(n))
@@ -777,8 +742,7 @@ class TrafficEvent:
         return None
 
     def transfer_status(self) -> "Optional[TransferStatus | int]":
-        """How the transfer ended; `None` for any class but CLIP_TRANSFER. `NAK` when no reply came;
-        the raw byte for an unnamed status."""
+        """How the transfer ended; `None` for any class but CLIP_TRANSFER."""
         c = traffic_event_to_c(self)
         out = _native.u8()
         if not _native.lib.medius_traffic_event_transfer_status(ctypes.byref(c), ctypes.byref(out)):
@@ -808,10 +772,7 @@ class TrafficEvent:
         return bool(_native.lib.medius_traffic_event_bulk_end_of_transfer(ctypes.byref(c)))
 
     def zlp(self) -> bool:
-        """Whether this event is a zero-length packet.
-
-        A HID_IN or EMIT event on a HID endpoint carries a whole report of <=64 bytes; if it has
-        bytes, a zero-length packet ended the report after them."""
+        """Whether this event is, or ends with, a zero-length packet."""
         c = traffic_event_to_c(self)
         return bool(_native.lib.medius_traffic_event_zlp(ctypes.byref(c)))
 
@@ -976,13 +937,7 @@ class LockTarget:
 
 
 class Capture:
-    """How much of each packet to keep. Traffic classes only: an input class carries no packet, so
-    a capture on one is refused.
-
-    The control link runs at 6 Mbaud, and a vendor bulk pipe at whole packets saturates it by
-    itself. A capture is a ceiling request: the box holds one entry per address and cuts once.
-    Another subscriber asking for more of the same address raises yours too.
-    """
+    """How much of each packet to keep."""
 
     #: Keep the whole packet.
     WHOLE = 0
@@ -1388,6 +1343,7 @@ def stats_from_c(c) -> Stats:
         c.host_rx_drops,
         c.relay_drops,
         c.session,
+        c.host_restarts,
     )
 
 
@@ -1405,6 +1361,7 @@ def stats_to_c(s) -> "_native.MediusStats":
         s.host_rx_drops,
         s.relay_drops,
         s.session,
+        s.host_restarts,
     )
 
 
@@ -1483,13 +1440,16 @@ def setup_to_c(s) -> "_native.MediusSetup":
     )
 
 
-def transfer_outcome_from_c(c) -> TransferOutcome:
-    n = min(int(c.len), _native.MEDIUS_MAX_DEV_PAYLOAD)
+def transfer_outcome_from_c(c, reply) -> TransferOutcome:
     try:
         status = TransferStatus(c.status)
     except ValueError:
         status = int(c.status)
-    return TransferOutcome(status, bytes(c.data[:n]))
+    try:
+        stage = TransferStage(c.stage)
+    except ValueError:
+        stage = int(c.stage)
+    return TransferOutcome(status, stage, bytes(reply[: min(int(c.len), len(reply))]))
 
 
 def rewrite_rule_to_c(r) -> "_native.MediusRewriteRule":
@@ -1699,8 +1659,7 @@ def clip_status_to_c(s) -> "_native.MediusClipStatus":
 
 @dataclass
 class ClipTrigger:
-    """One clip input trigger: `on`'s `edge` drives `action`; `consume` suppresses the input from the
-    game. The other trigger kind is `ClipPacketTrigger`."""
+    """One clip input trigger: `on`'s `edge` drives `action`."""
 
     on: "Usage"
     edge: Edge

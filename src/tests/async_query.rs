@@ -290,3 +290,42 @@ fn async_spread_round_trips_through_the_mock() {
         }
     );
 }
+
+#[test]
+fn async_transfer_matches_the_sync_one() {
+    use std::time::Duration;
+
+    use crate::protocol::FrameType;
+    use crate::types::{Setup, TransferOutcome, TransferStage, TransferStatus};
+
+    let reply = TransferOutcome {
+        status: TransferStatus::Ok,
+        stage: TransferStage::Status,
+        data: vec![0x5A; 600],
+    };
+    let get = Setup::new(0x80, 0x06, 0x0200, 0, 0xFFFF);
+    let mock = MockBox::new()
+        .with_imperfect(true)
+        .with_transfer_reply(reply.clone());
+    let sync = Device::with_mock(mock.clone());
+    let device = sync.clone().into_async();
+    assert_eq!(block_on(device.transfer(0, get, &[])).unwrap(), reply);
+    assert_eq!(sync.transfer(0, get, &[]).unwrap(), reply);
+    let wire: Vec<Vec<u8>> = mock
+        .recorded_frames()
+        .into_iter()
+        .filter(|f| f.ty == FrameType::Transfer)
+        .map(|f| f.payload)
+        .collect();
+    assert_eq!(wire.len(), 2);
+    assert_eq!(wire[0], wire[1]);
+    let set = Setup::new(0x21, 0x09, 0x0200, 0, 2);
+    assert!(matches!(
+        block_on(device.transfer(0, set, &[1])),
+        Err(Error::TransferData { want: 2, got: 1 })
+    ));
+    assert!(matches!(
+        block_on(device.transfer_timeout(0, get, &[], Duration::from_millis(65_536))),
+        Err(Error::TransferTimeoutRange { .. })
+    ));
+}

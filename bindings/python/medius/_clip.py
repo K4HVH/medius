@@ -97,8 +97,7 @@ class ClipBuilder(Handle):
         return self
 
     def transfer(self, ep: int, setup: Setup, out: bytes = b"") -> "ClipBuilder":
-        """A frame carrying one control transfer, as `Device.transfer` runs one; the reply arrives
-        as a `TrafficClass.CLIP_TRANSFER` event."""
+        """A frame carrying one control transfer, as `Device.transfer` runs one, with a 4 s timeout."""
         buf, n = _bytes_buf(out, "out")
         check(
             self._call(_native.lib.medius_clip_builder_transfer, _u8(ep, "ep"), setup_to_c(setup), buf, n)
@@ -165,16 +164,7 @@ class ClipHandle(Handle):
         self._device = device  # keep the device alive while the handle is open
 
     def append(self, builder: ClipBuilder):
-        """Append the builder's entries to the ring as whole-entry frames, each stamped with the
-        next append-sequence number.
-
-        Every entry is checked before the first frame is sent, so a refusal sends nothing. Refused:
-        a frame with more than `CLIP_EDGES_MAX` edges or `CLIP_RAW_MAX` raw reports
-        (`ClipFrameCountError`); a frame encoding to more than `CLIP_ENTRY_MAX` bytes
-        (`ClipFrameTooLongError`); a raw report neither `Direction.IN` nor `Direction.OUT`
-        (`RawDirectionError`, or `RelativeDirectionError` for the bearing-relative pair); a transfer
-        whose data doesn't match its setup packet (`ClipTransferDataError`).
-        """
+        """Append the builder's entries to the ring as whole-entry frames; a refusal sends nothing."""
         check(self._call(lambda c: builder._call(lambda b: _native.lib.medius_clip_append(c, b))))
 
     def set_autolock(self, scope: Optional[Sequence[Blanket]] = None):

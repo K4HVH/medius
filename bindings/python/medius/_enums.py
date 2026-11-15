@@ -56,10 +56,13 @@ class Status(IntEnum):
     ERR_RAW_DIRECTION = 29
     ERR_CLIP_FRAME_COUNT = 30
     ERR_CLIP_FRAME_TOO_LONG = 31
-    ERR_CLIP_TRANSFER_DATA = 32
+    ERR_TRANSFER_DATA = 32
     ERR_CLIP_PACKET_TRIGGER = 33
     ERR_REWRITE_MATCH_TOO_LONG = 34
     ERR_REWRITE_POOL_FULL = 35
+    ERR_TRANSFER_TIMEOUT_RANGE = 36
+    ERR_TRANSFER_REPLY_INCOMPLETE = 37
+    ERR_PORT_BUSY = 38
 
 
 class DeviceKind(IntEnum):
@@ -121,6 +124,8 @@ CLIP_PKT_TRIG_MAX = 8
 CLIP_PKT_MATCH_POOL = 112
 #: Most match bytes one packet trigger compares.
 PKT_MATCH_MAX = 16
+#: Most OUT data one `Device.transfer` carries: one frame less its header.
+TRANSFER_OUT_MAX = 501
 
 
 class Edge(IntEnum):
@@ -331,12 +336,12 @@ class ClockDomain(IntEnum):
 
 
 class ControlStatus(IntEnum):
-    """The handshake the game PC received for a control transaction. `STALLED` covers a STALL from
-    the real device, a request a rule refused, and above endpoint 0 a request that failed; `NAKED`
-    is endpoint 0 only."""
+    """The handshake the game PC received for a control transaction."""
 
     OK = 0
+    #: The real device STALLed, or a `RewriteAction.STALL` rule refused the request.
     STALLED = 1
+    #: NAKed until the PC gave up.
     NAKED = 2
     #: A handshake value this build does not know; `TrafficEvent.flags` bits 0-1 hold it.
     OTHER = 3
@@ -389,16 +394,23 @@ class PatchSection(IntEnum):
 
 
 class TransferStatus(IntEnum):
-    """How a control transfer ended (§3.14).
+    """How a control transfer ended; an unnamed wire byte is kept as its integer value."""
 
-    A non-`OK` status is a protocol outcome, not a link error. An unnamed wire byte is a status this
-    build does not know, kept as its integer value without raising.
-    """
-
+    #: Completed.
     OK = 0x00
+    #: The game PC held the pipe until the timeout, or took it from the transfer in `stage`.
+    BUSY = 0xF9
+    #: The game PC has suspended the clone, and with it the real device: nothing was sent.
+    SUSPENDED = 0xFA
+    #: Native packets were corrupt or overran the buffer, or the host chip had no free channel.
+    ERROR = 0xFB
+    #: Never sent: the opt-in is off, `ep` is undeclared, or the box had no room for it.
     REFUSED = 0xFC
+    #: The real device STALLed, in `stage`.
     STALL = 0xFD
-    NAK = 0xFE
+    #: No answer: the real device NAKed until the timeout, or the host chip's reply was lost.
+    NO_ANSWER = 0xFE
+    #: No device attached.
     NO_DEVICE = 0xFF
 
     @property
@@ -406,13 +418,17 @@ class TransferStatus(IntEnum):
         return self == TransferStatus.OK
 
 
-class TransformOp(IntEnum):
-    """What a `Transform` does to its fields (§3.15).
+class TransferStage(IntEnum):
+    """Where a control transfer ended; an unnamed wire byte is kept as its integer value."""
 
-    `SWAP` exchanges two axes; `REMAP` moves a source field into a destination (axis→axis or
-    button→button in one report, or button→key / button→media across classes). To weigh or reverse a
-    field, use `Device.scale`.
-    """
+    SETUP = 0
+    DATA = 1
+    #: The status stage, where a completed transfer ends.
+    STATUS = 2
+
+
+class TransformOp(IntEnum):
+    """What a `Transform` does to its fields."""
 
     REMAP = 0
     SWAP = 1

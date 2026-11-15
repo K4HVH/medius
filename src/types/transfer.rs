@@ -1,15 +1,9 @@
-//! `TRANSFER` (§3.14) vocabulary: the setup packet a host sends, and the native reply.
-//!
-//! [`Device::transfer`](crate::Device::transfer) runs one control transfer against the real device,
-//! through the host chip, and returns the native reply. Its request and reply cross the inter-chip
-//! link separately from the game PC's EP0 proxy. One at a time: wait for the reply before the next.
+use crate::protocol::opcode::{
+    XFER_BUSY, XFER_ERROR, XFER_NO_ANSWER, XFER_NO_DEVICE, XFER_OK, XFER_REFUSED, XFER_STAGE_DATA,
+    XFER_STAGE_SETUP, XFER_STAGE_STATUS, XFER_STALL, XFER_SUSPENDED,
+};
 
-/// USB control-transfer setup packet: `bmRequestType`, `bRequest`, `wValue`, `wIndex`, `wLength`
-/// (USB spec §9.3), eight bytes little-endian on the wire.
-///
-/// `length` is the data-stage length. IN: the bytes to read back (the real device may return fewer).
-/// OUT: the length of the data passed to [`transfer`](crate::Device::transfer), which the box
-/// carries after the setup packet.
+/// USB control-transfer setup packet, eight bytes little-endian on the wire.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct Setup {
     /// `bmRequestType`: direction (b7), type and recipient.
@@ -20,7 +14,7 @@ pub struct Setup {
     pub value: u16,
     /// `wIndex`: request-specific (often an interface or endpoint).
     pub index: u16,
-    /// `wLength`: data-stage length (see the type docs).
+    /// `wLength`: data-stage length.
     pub length: u16,
 }
 
@@ -59,23 +53,26 @@ impl Setup {
     }
 }
 
-/// How a [`transfer`](crate::Device::transfer) ended: `TRANSFER_RESP`'s `status` byte (§3.14).
+/// How a [`transfer`](crate::Device::transfer) ended: `TRANSFER_RESP`'s `status` byte.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TransferStatus {
-    /// Completed; any data is in [`TransferOutcome::data`].
+    /// Completed.
     Ok,
-    /// The real device STALLed the request.
-    Stall,
-    /// No reply: the real device NAKed past the timeout or failed on the bus, `ep` names a control
-    /// endpoint the real device does not declare, or the host chip did not reply in time. Also
-    /// returned while the game PC has the clone suspended (the real device is suspended with it).
-    Nak,
-    /// No device attached on the host chip.
-    NoDevice,
-    /// Refused by the box before reaching the real device: the opt-in is off, the request is
-    /// malformed or its data stage too large or short, or the host chip's control queue is full.
+    /// The game PC held the pipe until the timeout, or took it from the transfer in `stage`.
+    Busy,
+    /// The game PC has suspended the clone, and with it the real device: nothing was sent.
+    Suspended,
+    /// Native packets were corrupt or overran the buffer, or the host chip had no free channel.
+    Error,
+    /// Never sent: the opt-in is off, `ep` is undeclared, or the box had no room for it.
     Refused,
-    /// Status byte this crate does not name, kept so a newer box's value is not lost.
+    /// The real device STALLed, in `stage`.
+    Stall,
+    /// No answer: the real device NAKed until the timeout, or the host chip's reply was lost.
+    NoAnswer,
+    /// No device attached.
+    NoDevice,
+    /// Status byte this crate does not name.
     Other(u8),
 }
 
@@ -83,11 +80,14 @@ impl TransferStatus {
     /// Decodes a wire `status` byte.
     pub fn from_u8(v: u8) -> TransferStatus {
         match v {
-            0x00 => TransferStatus::Ok,
-            0xFD => TransferStatus::Stall,
-            0xFE => TransferStatus::Nak,
-            0xFF => TransferStatus::NoDevice,
-            0xFC => TransferStatus::Refused,
+            XFER_OK => TransferStatus::Ok,
+            XFER_BUSY => TransferStatus::Busy,
+            XFER_SUSPENDED => TransferStatus::Suspended,
+            XFER_ERROR => TransferStatus::Error,
+            XFER_REFUSED => TransferStatus::Refused,
+            XFER_STALL => TransferStatus::Stall,
+            XFER_NO_ANSWER => TransferStatus::NoAnswer,
+            XFER_NO_DEVICE => TransferStatus::NoDevice,
             other => TransferStatus::Other(other),
         }
     }
@@ -95,11 +95,14 @@ impl TransferStatus {
     /// Wire `status` byte.
     pub fn as_u8(self) -> u8 {
         match self {
-            TransferStatus::Ok => 0x00,
-            TransferStatus::Stall => 0xFD,
-            TransferStatus::Nak => 0xFE,
-            TransferStatus::NoDevice => 0xFF,
-            TransferStatus::Refused => 0xFC,
+            TransferStatus::Ok => XFER_OK,
+            TransferStatus::Busy => XFER_BUSY,
+            TransferStatus::Suspended => XFER_SUSPENDED,
+            TransferStatus::Error => XFER_ERROR,
+            TransferStatus::Refused => XFER_REFUSED,
+            TransferStatus::Stall => XFER_STALL,
+            TransferStatus::NoAnswer => XFER_NO_ANSWER,
+            TransferStatus::NoDevice => XFER_NO_DEVICE,
             TransferStatus::Other(v) => v,
         }
     }
@@ -110,19 +113,49 @@ impl TransferStatus {
     }
 }
 
-/// Native reply to a [`transfer`](crate::Device::transfer): status and the real device's reply.
-///
-/// A [`TransferStatus`] other than [`Ok`](TransferStatus::Ok) is a protocol outcome, not a link
-/// error: it is returned, not raised. Read it with [`is_ok`](Self::is_ok) and [`data`](Self::data).
-/// The surrounding [`Result`](crate::Result)'s `Ok(_)` means the box replied.
+/// Where a [`transfer`](crate::Device::transfer) ended: `TRANSFER_RESP`'s `stage` byte.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum TransferStage {
+    /// The setup stage.
+    Setup,
+    /// The data stage.
+    Data,
+    /// The status stage, where a completed transfer ends.
+    Status,
+    /// Stage byte this crate does not name.
+    Other(u8),
+}
+
+impl TransferStage {
+    /// Decodes a wire `stage` byte.
+    pub fn from_u8(v: u8) -> TransferStage {
+        match v {
+            XFER_STAGE_SETUP => TransferStage::Setup,
+            XFER_STAGE_DATA => TransferStage::Data,
+            XFER_STAGE_STATUS => TransferStage::Status,
+            other => TransferStage::Other(other),
+        }
+    }
+
+    /// Wire `stage` byte.
+    pub fn as_u8(self) -> u8 {
+        match self {
+            TransferStage::Setup => XFER_STAGE_SETUP,
+            TransferStage::Data => XFER_STAGE_DATA,
+            TransferStage::Status => XFER_STAGE_STATUS,
+            TransferStage::Other(v) => v,
+        }
+    }
+}
+
+/// Outcome of a [`transfer`](crate::Device::transfer): how and where it ended, and the native reply.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TransferOutcome {
     /// How the transfer ended.
     pub status: TransferStatus,
-    /// An IN transfer's data stage, whole even where the real device sent more than wLength asked for. For an OUT
-    /// transfer or one with wLength 0, what it sent where the status stage was due (at most 64 bytes, usually none).
-    /// Empty for any status but [`Ok`](TransferStatus::Ok). A PC sees a reply past wLength, and data in a status
-    /// stage, as the transfer failing.
+    /// Where the transfer ended.
+    pub stage: TransferStage,
+    /// The native reply as the box received it, partial data before a STALL included.
     pub data: Vec<u8>,
 }
 

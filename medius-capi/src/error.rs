@@ -26,7 +26,7 @@ pub enum MediusStatus {
     ErrUnknown = 11,
     /// The subscription needs more entries than the box's table holds.
     ErrCatchTableFull = 12,
-    /// A catch subscription with no filters, which would never yield an event.
+    /// A catch subscription with no filters.
     ErrEmptySubscription = 13,
     /// A non-zero `capture` on an input class, which carries no packet.
     ErrCaptureNotApplicable = 14,
@@ -36,7 +36,7 @@ pub enum MediusStatus {
     ErrWildcardNotInput = 16,
     /// An input filter narrowed to one edge, which cannot be decoded into press and release.
     ErrHalfEdgeInputFilter = 17,
-    /// An exact id equal to the blanket sentinel, which would address the whole class.
+    /// An exact id equal to the blanket sentinel, which addresses the whole class.
     ErrReservedId = 18,
     /// `MEDIUS_DIRECTION_WITH` / `_AGAINST` on a target with no bearing.
     ErrRelativeDirection = 19,
@@ -64,9 +64,8 @@ pub enum MediusStatus {
     ErrClipFrameCount = 30,
     /// A clip frame that encodes to more than `MEDIUS_CLIP_ENTRY_MAX` bytes.
     ErrClipFrameTooLong = 31,
-    /// A clip transfer whose data disagrees with its setup packet: `length` bytes for OUT, none for
-    /// IN.
-    ErrClipTransferData = 32,
+    /// A control transfer, or a clip's, whose data disagrees with its setup packet.
+    ErrTransferData = 32,
     /// A clip packet trigger the box would refuse; `medius_last_error_message` says why.
     ErrClipPacketTrigger = 33,
     /// A rewrite rule with more than `MEDIUS_MAX_REWRITE_MATCH` match bytes.
@@ -74,6 +73,12 @@ pub enum MediusStatus {
     /// A rewrite payload larger than what the other held rules leave of
     /// `MEDIUS_REWRITE_PAYLOAD_POOL`.
     ErrRewritePoolFull = 35,
+    /// A transfer timeout outside 1 to 65535 ms.
+    ErrTransferTimeoutRange = 36,
+    /// A transfer reply that lost a chunk between the box's chips or on the control link.
+    ErrTransferReplyIncomplete = 37,
+    /// The control port is open in another process (Linux); `medius_last_error_message` names each holder.
+    ErrPortBusy = 38,
 }
 
 #[derive(Default)]
@@ -110,6 +115,7 @@ fn status_for(err: &Error) -> MediusStatus {
         Error::Io(_) => MediusStatus::ErrIo,
         Error::NotFound => MediusStatus::ErrNotFound,
         Error::NoReply => MediusStatus::ErrNoReply,
+        Error::PortBusy { .. } => MediusStatus::ErrPortBusy,
         Error::BadProtoVer { .. } => MediusStatus::ErrBadProtoVer,
         Error::QueryTimeout => MediusStatus::ErrQueryTimeout,
         Error::Disconnected => MediusStatus::ErrDisconnected,
@@ -125,7 +131,9 @@ fn status_for(err: &Error) -> MediusStatus {
         Error::RawDirection { .. } => MediusStatus::ErrRawDirection,
         Error::ClipFrameCount { .. } => MediusStatus::ErrClipFrameCount,
         Error::ClipFrameTooLong { .. } => MediusStatus::ErrClipFrameTooLong,
-        Error::ClipTransferData { .. } => MediusStatus::ErrClipTransferData,
+        Error::TransferData { .. } => MediusStatus::ErrTransferData,
+        Error::TransferTimeoutRange { .. } => MediusStatus::ErrTransferTimeoutRange,
+        Error::TransferReplyIncomplete { .. } => MediusStatus::ErrTransferReplyIncomplete,
         Error::ClipPacketTrigger { .. } => MediusStatus::ErrClipPacketTrigger,
         Error::ImperfectRequired => MediusStatus::ErrImperfectRequired,
         Error::RewriteMaskLength { .. } => MediusStatus::ErrRewriteMaskLength,
@@ -209,7 +217,7 @@ pub unsafe extern "C" fn medius_last_error_message(buf: *mut c_char, cap: usize)
     })
 }
 
-/// The last error's `BadProtoVer` version byte, or 0 if it carried none.
+/// The last error's protocol version byte if it was `MEDIUS_STATUS_ERR_BAD_PROTO_VER`, else 0.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_last_error_proto_ver() -> u8 {
     guard(0, || LAST_ERROR.with(|e| e.borrow().proto_ver))

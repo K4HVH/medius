@@ -453,6 +453,7 @@ impl From<Stats> for MediusStats {
             host_rx_drops: s.host_rx_drops,
             relay_drops: s.relay_drops,
             session: s.session,
+            host_restarts: s.host_restarts,
         }
     }
 }
@@ -622,15 +623,12 @@ pub(crate) fn setup_from_c(c: MediusSetup) -> Setup {
     }
 }
 
-impl From<TransferOutcome> for MediusTransferOutcome {
-    fn from(o: TransferOutcome) -> Self {
-        let mut data = [0u8; MEDIUS_MAX_DEV_PAYLOAD];
-        let n = o.data.len().min(MEDIUS_MAX_DEV_PAYLOAD);
-        data[..n].copy_from_slice(&o.data[..n]);
+impl From<&TransferOutcome> for MediusTransferOutcome {
+    fn from(o: &TransferOutcome) -> Self {
         MediusTransferOutcome {
             status: o.status.as_u8(),
-            len: n as u16,
-            data,
+            stage: o.stage.as_u8(),
+            len: o.data.len(),
         }
     }
 }
@@ -1296,6 +1294,7 @@ impl From<MediusStats> for Stats {
             host_rx_drops: s.host_rx_drops,
             relay_drops: s.relay_drops,
             session: s.session,
+            host_restarts: s.host_restarts,
         }
     }
 }

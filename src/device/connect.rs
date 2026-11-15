@@ -6,7 +6,8 @@ use crate::error::{Error, Result};
 use crate::link::reconnect::BoxIdentity;
 use crate::protocol::opcode::{Q_CAPS, Q_STATS, Q_VERSION};
 use crate::protocol::{PROTO_VER, Resp, parse_resp};
-use crate::transport::Transport;
+use crate::transport::serial::{CTRL_BAUD, LEGACY_CTRL_BAUD};
+use crate::transport::{Opener, Transport};
 use crate::types::Version;
 
 use super::Device;
@@ -15,16 +16,55 @@ const HANDSHAKE_ATTEMPTS: usize = 5;
 
 const HANDSHAKE_ATTEMPT_TIMEOUT: Duration = Duration::from_millis(250);
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Accept {
+    Current,
+    Update,
+}
+
 impl Device {
     /// Open the box at serial `path` and run the version handshake.
     pub fn open(path: impl AsRef<Path>) -> Result<Device> {
-        let path = path.as_ref();
-        let serial = crate::transport::serial::SerialTransport::open(path)?;
-        let device = Device::from_transport(Arc::new(serial));
-        let version = device.handshake()?;
+        Device::open_accepting(path.as_ref(), Accept::Current)
+    }
+
+    /// Open the box at serial `path` to update it, on any control protocol from `MIN_PROTO_VER` on.
+    pub fn open_for_update(path: impl AsRef<Path>) -> Result<Device> {
+        Device::open_accepting(path.as_ref(), Accept::Update)
+    }
+
+    /// Whether this device reaches only the update path.
+    pub fn is_update_only(&self) -> bool {
+        self.link.update_only().is_some()
+    }
+
+    fn open_accepting(path: &Path, accept: Accept) -> Result<Device> {
+        let holders = crate::transport::serial::holders(path);
+        if !holders.is_empty() {
+            return Err(Error::PortBusy { holders });
+        }
+        let (device, version) = match accept {
+            Accept::Current => {
+                let serial = crate::transport::serial::SerialTransport::open(path)?;
+                let device = Device::from_transport(Arc::new(serial));
+                let version = device.handshake(accept)?;
+                (device, version)
+            }
+            Accept::Update => {
+                let owned = path.to_path_buf();
+                Device::open_with_opener_for_update_version(Arc::new(move |baud| {
+                    let serial = crate::transport::serial::SerialTransport::open_at(&owned, baud)?;
+                    Ok(Arc::new(serial) as Arc<dyn Transport>)
+                }))?
+            }
+        };
+        let real = std::fs::canonicalize(path).ok();
         let port_serial = crate::transport::scan::find_medius()
             .into_iter()
-            .find(|p| Path::new(&p.path) == path)
+            .find(|p| {
+                Path::new(&p.path) == path
+                    || real.is_some() && std::fs::canonicalize(&p.path).ok() == real
+            })
             .and_then(|p| p.serial);
         device.link.set_identity(BoxIdentity {
             serial: port_serial,
@@ -33,18 +73,68 @@ impl Device {
         Ok(device)
     }
 
+    #[cfg(all(test, feature = "mock"))]
+    pub(crate) fn open_with_opener_for_update(opener: Opener) -> Result<Device> {
+        Ok(Device::open_with_opener_for_update_version(opener)?.0)
+    }
+
+    fn open_with_opener_for_update_version(opener: Opener) -> Result<(Device, Version)> {
+        let mut device: Option<Device> = None;
+        for baud in [CTRL_BAUD, LEGACY_CTRL_BAUD] {
+            if let Some(d) = &device {
+                d.link.release_transport();
+            }
+            let transport = opener(baud)?;
+            let dev = match &device {
+                Some(d) => {
+                    d.link.swap_transport(transport);
+                    d.clone()
+                }
+                None => device.insert(Device::from_transport(transport)).clone(),
+            };
+            match dev.handshake(Accept::Update) {
+                Ok(version) => {
+                    dev.link.set_rates(opener, baud);
+                    return Ok((dev, version));
+                }
+                Err(Error::NoReply) => continue,
+                Err(e) => return Err(e),
+            }
+        }
+        Err(Error::NoReply)
+    }
+
     #[cfg_attr(not(feature = "mock"), allow(dead_code))]
     pub(crate) fn open_transport(transport: Arc<dyn Transport>) -> Result<Device> {
         let device = Device::from_transport(transport);
-        device.handshake()?;
+        device.handshake(Accept::Current)?;
         Ok(device)
     }
 
-    fn handshake(&self) -> Result<Version> {
+    #[cfg_attr(not(feature = "mock"), allow(dead_code))]
+    pub(crate) fn open_transport_for_update(transport: Arc<dyn Transport>) -> Result<Device> {
+        let device = Device::from_transport(transport);
+        device.handshake(Accept::Update)?;
+        Ok(device)
+    }
+
+    fn handshake(&self, accept: Accept) -> Result<Version> {
         let _span =
             trace_span!(target: "medius::device", tracing::Level::INFO, "connect").entered();
 
+        if accept == Accept::Update {
+            self.link.open_for_update();
+        }
         let version = self.read_version()?;
+        if self.link.reaches_update_only(version.proto_ver) {
+            trace_event!(
+                target: "medius::device",
+                tracing::Level::INFO,
+                proto_ver = version.proto_ver,
+                "connected, update only",
+            );
+            return Ok(version);
+        }
         if version.proto_ver != PROTO_VER {
             trace_event!(
                 target: "medius::device",

@@ -48,6 +48,11 @@ fn keepalive_loop(ctx: KeepaliveCtx) {
         if ctx.stop.load(Ordering::SeqCst) {
             return;
         }
+        if ctx.restart.update_only().is_some() {
+            ctx.restart.take_owed();
+            std::thread::sleep(KEEPALIVE_STOP_POLL);
+            continue;
+        }
         let now = Instant::now();
         if ctx.restart.take_owed() {
             pending = Some(Pending::new(Cause::Restart, now));

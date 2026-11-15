@@ -23,6 +23,8 @@ const HELD_POLL: Duration = Duration::from_millis(50);
 // Outlasts the host chip's 40 s probation, the longer of the two.
 pub(crate) const CONFIRM_TIMEOUT: Duration = Duration::from_secs(55);
 
+const REBOOT_WAIT: Duration = Duration::from_secs(5);
+
 // Chunking and credit accounting for one staged image, transport-free, so the sync and async
 // transfers share one copy of the wire logic.
 pub(crate) struct ChunkPlan<'a> {
@@ -120,20 +122,28 @@ impl Device {
         }
     }
 
-    /// Block until neither chip is on probation (a chip that hasn't confirmed its booted image
-    /// refuses another update). The device chip confirms after 10 s of running; the host chip
-    /// confirms only on a completed clock exchange over the inter-chip link. Keeps asking while the
-    /// box reboots after an activate. After 55 s, returns [`Error::Update`] (`ON_PROBATION`) if a
-    /// chip is still on probation, or [`Error::QueryTimeout`] if the box hasn't replied.
+    /// Block until neither chip is on probation (a chip on probation refuses an update).
     pub fn wait_firmware_confirmed(&self) -> Result<FirmwareInfo> {
         let deadline = Instant::now() + CONFIRM_TIMEOUT;
+        let activated = self.link.take_activated();
+        let mut rebooted = activated.is_none();
         loop {
-            // Called right after an activate, while the box reboots into the image it will confirm.
             let info = match self.firmware_info() {
+                Ok(i) if !rebooted => {
+                    let (boots, at) = activated.expect("set while not rebooted");
+                    rebooted = self.link.boots() > boots || at.elapsed() >= REBOOT_WAIT;
+                    if !rebooted {
+                        std::thread::sleep(Duration::from_millis(200));
+                        continue;
+                    }
+                    i
+                }
                 Ok(i) => i,
                 // Only a timeout: the CH343 stays enumerated while the chip behind it reboots, so a
                 // reboot reads as an unanswered query.
                 Err(Error::QueryTimeout) if Instant::now() < deadline => {
+                    rebooted = true;
+                    self.link.switch_rate();
                     std::thread::sleep(Duration::from_millis(500));
                     continue;
                 }
@@ -229,6 +239,7 @@ impl Device {
                 arg,
             });
         }
+        self.link.note_activated();
         Ok(())
     }
 

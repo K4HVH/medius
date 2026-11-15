@@ -45,7 +45,7 @@ impl Device {
     /// control-PC silence.
     ///
     /// `scale` is the percent of the native value kept on that direction: [`LOCK_SCALE_BLOCK`]
-    /// blocks, [`LOCK_SCALE_PASS`] passes untouched, and values above that amplify, up to
+    /// blocks, [`LOCK_SCALE_PASS`] relays it unchanged, and values above that amplify, up to
     /// [`LOCK_SCALE_MAX`](crate::LOCK_SCALE_MAX) = 2.55x. [`lock`](Self::lock) is `scale`
     /// at [`LOCK_SCALE_BLOCK`], and [`unlock`](Self::unlock) is `scale` at [`LOCK_SCALE_PASS`].
     ///

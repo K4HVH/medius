@@ -104,7 +104,7 @@ pub unsafe extern "C" fn medius_event_stream_close(stream: *mut MediusEventStrea
     });
 }
 
-/// Block until the next event, writing it to `*out`; `ErrDisconnected` on close.
+/// Block until the next event, writing it to `*out`; `MEDIUS_STATUS_ERR_DISCONNECTED` on close.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_event_stream_recv(
     stream: *mut MediusEventStream,
@@ -303,7 +303,7 @@ pub unsafe extern "C" fn medius_input_stream_close(stream: *mut MediusInputStrea
     });
 }
 
-/// Block until the next input event, writing it to `*out`; `ErrDisconnected` on close.
+/// Block until the next input event, writing it to `*out`; `MEDIUS_STATUS_ERR_DISCONNECTED` on close.
 ///
 /// # Safety
 /// `stream` and `out` must be non-null and valid.
@@ -627,7 +627,7 @@ pub unsafe extern "C" fn medius_log_stream_close(stream: *mut MediusLogStream) {
     });
 }
 
-/// Block until the next LOG line, writing it to `*out`. Returns `ErrDisconnected` on close.
+/// Block until the next LOG line, writing it to `*out`; `MEDIUS_STATUS_ERR_DISCONNECTED` on close.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_log_stream_recv(
     stream: *mut MediusLogStream,

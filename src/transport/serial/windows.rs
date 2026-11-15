@@ -43,6 +43,10 @@ pub(crate) struct SerialTransport {
 
 impl SerialTransport {
     pub(crate) fn open(path: &Path) -> io::Result<Self> {
+        Self::open_at(path, CTRL_BAUD)
+    }
+
+    pub(crate) fn open_at(path: &Path, baud: u32) -> io::Result<Self> {
         // serial2 prepends the win32 device namespace itself, so it takes the bare `COM7`.
         let path = path.to_string_lossy();
         let name = path
@@ -51,7 +55,7 @@ impl SerialTransport {
             .unwrap_or(&path);
         let port = SerialPort::open(name, |mut settings: Settings| {
             settings.set_raw();
-            settings.set_baud_rate(CTRL_BAUD)?;
+            settings.set_baud_rate(baud)?;
             settings.as_raw_dbc_mut()._bitfield &= !DCB_ABORT_ON_ERROR;
             Ok(settings)
         })?;
