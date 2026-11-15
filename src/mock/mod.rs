@@ -512,7 +512,7 @@ fn slot_mask(dir: u8) -> u8 {
 impl LockTable {
     fn set_mouse(&mut self, target: usize, dir: u8, scale: i16) {
         let slots = slot_mask(dir);
-        for i in 0..4 {
+        for (i, slot) in self.mouse[target].iter_mut().enumerate() {
             if slots & (1 << i) == 0 {
                 continue;
             }
@@ -535,7 +535,7 @@ impl LockTable {
                     v = LOCK_SCALE_PASS;
                 }
             }
-            self.mouse[target][i] = v;
+            *slot = v;
         }
     }
 
