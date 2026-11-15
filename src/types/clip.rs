@@ -20,9 +20,9 @@ use crate::types::{Action, Blanket, CatchClass, Class, Direction, Setup, Traffic
 pub enum Edge {
     /// Either edge.
     Both = LOCK_DIR_BOTH,
-    /// Press edge (0 → 1).
+    /// Press edge (0 -> 1).
     Press = LOCK_DIR_POS,
-    /// Release edge (1 → 0).
+    /// Release edge (1 -> 0).
     Release = LOCK_DIR_NEG,
 }
 
@@ -96,7 +96,7 @@ pub struct ClipTrigger {
     pub edge: Edge,
     /// Engine action the trigger drives.
     pub action: ClipAction,
-    /// Suppress the trigger input from the game while held.
+    /// Suppress the trigger input from the game PC while held.
     pub consume: bool,
 }
 
@@ -111,7 +111,7 @@ impl ClipTrigger {
         }
     }
 
-    /// Suppress the trigger input from the game while it is held.
+    /// Suppress the trigger input from the game PC while it is held.
     pub fn consume(mut self) -> ClipTrigger {
         self.consume = true;
         self
@@ -622,10 +622,7 @@ impl ClipFrame {
         self
     }
 
-    /// Control transfer to the real device, as [`Device::transfer`](crate::Device::transfer) runs
-    /// one, with 4 s for the real device to answer. `out` is exactly `setup.length` bytes for an
-    /// OUT request, empty for an IN one. The reply arrives as a
-    /// [`TrafficClass::ClipTransfer`](crate::TrafficClass::ClipTransfer) event.
+    /// Control transfer to the real device, as `Device::transfer` runs one, with a 4 s timeout.
     pub fn transfer(mut self, ep: u8, setup: Setup, out: impl Into<Vec<u8>>) -> ClipFrame {
         self.transfers.push(TransferItem {
             ep,

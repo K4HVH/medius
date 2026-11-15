@@ -4516,7 +4516,6 @@ const GET_CONFIG: MediusSetup = MediusSetup {
     length: 0xFFFF,
 };
 
-// A device over a mock whose TRANSFER brings back `data` with `status` and `stage`, the opt-in on.
 fn transfer_mock(status: u8, stage: u8, data: &[u8]) -> (*mut MediusMockBox, *mut MediusDevice) {
     let mock = medius_mock_new();
     unsafe {
@@ -4623,7 +4622,6 @@ fn transfer_writes_the_reply_to_the_buffer_and_its_length_to_the_outcome() {
     assert_eq!(out.status, want.status.as_u8());
     assert_eq!(out.stage, want.stage.as_u8());
     assert_eq!(&reply[..out.len], want.data());
-    // A buffer too small takes the reply's head, and the outcome still names the whole length.
     let mut head = [0u8; 100];
     let mut cut: MediusTransferOutcome = unsafe { std::mem::zeroed() };
     assert_eq!(
@@ -4710,7 +4708,6 @@ fn a_transfer_the_box_would_refuse_is_refused_at_the_boundary() {
 
 #[test]
 fn a_refused_transfer_carries_no_data() {
-    // With the opt-in off the box replies REFUSED in the setup stage, with no data.
     let mock = medius_mock_new();
     let mut dev: *mut MediusDevice = ptr::null_mut();
     assert_eq!(
@@ -5113,9 +5110,6 @@ fn raw_rejects_a_non_flow_direction_with_its_own_status() {
         MediusStatus::Ok
     );
     let bytes = [0u8, 1];
-    // Both names two flows, and the bearing-relative pair names none here. Each gets its own
-    // status, checked ahead of the opt-in; an unknown direction byte is refused as an invalid
-    // argument.
     assert_eq!(
         unsafe {
             medius_device_raw(
@@ -5355,7 +5349,6 @@ fn mouse_caps_pan_crosses_the_boundary() {
     );
     assert_eq!(out.mouse.pan, 1);
     assert_eq!(out.mouse.has_wheel, 1);
-    // A clone that declares pan holds a pan-axis transform, so pan is first-class end to end.
     assert_eq!(
         unsafe {
             medius_device_transform_remap(

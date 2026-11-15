@@ -76,7 +76,7 @@ class CatchTableFullError(MediusError):
 
 
 class EmptySubscriptionError(MediusError):
-    """A catch subscription with no filters, which would never yield an event."""
+    """A catch subscription with no filters."""
 
 
 class CaptureNotApplicableError(MediusError):
@@ -96,7 +96,7 @@ class HalfEdgeInputFilterError(MediusError):
 
 
 class ReservedIdError(MediusError):
-    """An exact id equal to the blanket sentinel, which would address the whole class."""
+    """An exact id equal to the blanket sentinel, which addresses the whole class."""
 
 
 class RelativeDirectionError(MediusError):
@@ -157,8 +157,7 @@ class ClipFrameTooLongError(MediusError):
 
 
 class TransferDataError(MediusError):
-    """A control transfer, or a clip's, whose data disagrees with its setup packet: `length` bytes
-    for OUT, none for IN."""
+    """A control transfer, or a clip's, whose data disagrees with its setup packet."""
 
 
 class TransferTimeoutRangeError(MediusError):
@@ -166,8 +165,7 @@ class TransferTimeoutRangeError(MediusError):
 
 
 class PortBusyError(MediusError):
-    """The control port is open in another process (Linux). The port takes one reader; the
-    message names each holder as `"<name> (pid N)"`."""
+    """The control port is open in another process (Linux); the message names each holder."""
 
 
 class TransferReplyIncompleteError(MediusError):

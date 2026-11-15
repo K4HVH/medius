@@ -333,10 +333,7 @@ impl ClipHandle {
         self.set(CLIP_SET_RETAIN, on as u8)
     }
 
-    /// Clip motion rides native reports under
-    /// [`set_movement_riding`](crate::Device::set_movement_riding); with `false` (the default) it
-    /// is emitted at once. While rendering is on with a profile armed, this applies to wheel and
-    /// pan only. Changeable mid-playback. Fire-and-forget.
+    /// Make clip motion ride native reports; with `false` (the default) it is emitted at once.
     pub fn set_ride(&self, on: bool) -> Result<()> {
         self.set(CLIP_SET_RIDE, on as u8)
     }

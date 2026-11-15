@@ -44,12 +44,11 @@ const _: () = {
     assert!(MEDIUS_MAX_DEV_PAYLOAD == medius::MAX_PAYLOAD);
     assert!(MEDIUS_MAX_TRANSFER_OUT == medius::TRANSFER_OUT_MAX);
 };
-/// Largest byte payload one control-link frame carries (`MAX_PAYLOAD`): the bound on a
-/// `medius_device_raw` write, a rewrite payload and a descriptor patch.
+/// Largest byte payload one control-link frame carries (`MAX_PAYLOAD`).
 pub const MEDIUS_MAX_DEV_PAYLOAD: usize = 512;
 /// Most OUT data one `medius_device_transfer` carries: one frame less its header.
 pub const MEDIUS_MAX_TRANSFER_OUT: usize = 501;
-/// Longest reply a control transfer brings back: wLength 65535 rounded up to whole 64-byte packets.
+/// Longest control-transfer reply: wLength 65535 rounded up to whole 64-byte packets.
 pub const MEDIUS_MAX_TRANSFER_REPLY: usize = 65536;
 
 /// CATCH classes (`MediusCatchFilter::class`). 0-3 are the `LOCK` and `INJECT` classes; 4-11 are
@@ -66,10 +65,7 @@ pub const MEDIUS_CATCH_CLASS_HID_OUT: u8 = 5;
 pub const MEDIUS_CATCH_CLASS_VENDOR_INTERRUPT: u8 = 6;
 /// Vendor-interface bulk traffic, keyed by endpoint number and direction.
 pub const MEDIUS_CATCH_CLASS_VENDOR_BULK: u8 = 7;
-/// A control transaction the game PC received, keyed by endpoint number (0 = EP0). On EP0 every
-/// class and vendor request raises one, those the box answers from its cache or a rule ends
-/// included, as does each standard request relayed to the real device; the standard requests the
-/// clone serves itself raise none.
+/// A control transaction the game PC received, keyed by endpoint number (0 = EP0).
 pub const MEDIUS_CATCH_CLASS_CONTROL: u8 = 8;
 /// Bytes the clone emitted, keyed by endpoint number, direction IN.
 pub const MEDIUS_CATCH_CLASS_EMIT: u8 = 9;
@@ -134,8 +130,7 @@ pub enum MediusEmitMode {
     Fixed = 2,
 }
 
-/// Motion render texture: `Off` is the paced fill; the others render the learned native report
-/// texture and differ only in the path smoother.
+/// Motion render texture: the paced fill (`MEDIUS_RENDER_MODE_OFF`) or the learned native texture.
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MediusRenderMode {
@@ -168,8 +163,7 @@ pub enum MediusLedMode {
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MediusDirection {
-    /// Both edges, signs or flows. A `LOCK` scale on `Both` goes to the two fixed signs, and the
-    /// relative pair gets a full pass.
+    /// Both edges, signs or flows.
     Both = 0,
     Positive = 1,
     Negative = 2,
@@ -391,8 +385,7 @@ pub enum MediusClipAction {
     Toggle = 5,
 }
 
-/// One clip input trigger: `on`'s `edge` drives `action`; `consume` suppresses the input from the
-/// game. The other trigger kind is `MediusClipPacketTrigger`.
+/// One clip input trigger: `on`'s `edge` drives `action`.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MediusClipTrigger {
@@ -416,8 +409,7 @@ pub struct MediusMotion {
     pub pan: i16,
 }
 
-/// A lock target: an axis (`kind` is `X`/`Y`/`Wheel`/`Pan`) or a momentary usage (`kind` is `Usage`,
-/// read `usage`).
+/// A lock target: an axis, or a momentary usage (`kind` is `MEDIUS_LOCK_TARGET_KIND_USAGE`).
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MediusLockTarget {
@@ -463,9 +455,7 @@ pub struct MediusChipFirmware {
     pub state: u8,
 }
 
-/// The detail of an `ErrUpdate`: the update op the box refused and its status. If
-/// `medius_device_wait_firmware_confirmed` runs out of time, it gives op 0 and `0x1B` (on
-/// probation): the refusal the next update would meet.
+/// The detail of a `MEDIUS_STATUS_ERR_UPDATE`: the update op the box refused and its status.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MediusUpdateError {
@@ -503,11 +493,11 @@ pub struct MediusHealth {
     pub lock_on: u8,
     pub catch_on: u8,
     pub kbd_attached: u8,
-    /// The rewrite-rule table (§3.14) is non-empty (v3.4.0).
+    /// The rewrite-rule table is non-empty.
     pub rewrite_on: u8,
-    /// The clone serves a patched descriptor set (§3.14) (v3.4.0).
+    /// The clone serves a patched descriptor set.
     pub patch_on: u8,
-    /// A field transform is active (v3.4.0).
+    /// A field transform is active.
     pub transform_on: u8,
 }
 
@@ -572,22 +562,11 @@ pub struct MediusRate {
 }
 
 /// Box-side delivery and telemetry counters.
-///
-/// Narrowed fields saturate rather than wrap. The three drop counters are full width and do not
-/// saturate, so a count keeps rising while loss continues.
-///
-/// `tx_drops`, `link_rx_drops` and `host_rx_drops` count lost input and should read 0.
-/// `relay_drops` counts relayed traffic and commands that went no further, never native input. A
-/// rise across a burst of commands can mean some never reached the box. A lost release can leave a
-/// key held. `medius_device_reapply` re-sends only what is held, so send the releases again or call
-/// `medius_device_reset`.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MediusStats {
     pub inject_emits: u32,
-    /// Input reports never emitted to the game PC: one the clone's TX queue could not hold, one the
-    /// host chip's forwarder or link could not take, or one a stop of its stream (a setting switch, a
-    /// halt, a suspend) cut short. Should stay 0.
+    /// Input reports never emitted to the game PC; should stay 0.
     pub tx_drops: u16,
     pub tx_merges: u16,
     pub tx_maxdepth: u8,
@@ -600,28 +579,11 @@ pub struct MediusStats {
     pub link_rx_drops: u32,
     /// The same count for the host chip, relayed over the link.
     pub host_rx_drops: u32,
-    /// Relayed traffic and commands that went no further. Counted apart from `tx_drops` because no
-    /// native input goes missing with it. Each of these counts:
-    ///
-    /// - a vendor IN packet the host chip's link would not carry, or that found its endpoint's queue
-    ///   full of the control PC's RAW packets
-    /// - a native zero-length packet answering a poll the PC did not make (the one poll the box
-    ///   runs ahead of a suspended PC)
-    /// - an OUT packet the box could not queue, that failed 3 times on the real device's bus, or
-    ///   that a bus reset or SET_INTERFACE overtook
-    /// - a RAW OUT packet with no room to wait
-    /// - a relayed request, or a packet or step of one, the box could not queue (the request then
-    ///   ends, NAKed until the game PC gives up)
-    /// - a flagged MOVE the box could not queue
-    /// - any frame other than native input that either chip's link receive ring dropped
-    /// - a frame from the control PC the box's receive ring had no room for (1 per frame)
-    /// - an overrun of the control port's UART (1 per overrun, however many frames it cost)
+    /// Relayed traffic and commands that went no further, never native input.
     pub relay_drops: u32,
     /// Times the box released host-set session state. 0 at boot; wraps, so compare for inequality.
     pub session: u16,
-    /// Restarts of the host chip since the device chip booted. A host-chip restart is too short to
-    /// drop the inter-chip link, so nothing else counts it. Should stay 0 outside a
-    /// `medius_device_update_firmware` or a `medius_device_reboot`.
+    /// Restarts of the host chip since the device chip booted.
     pub host_restarts: u16,
 }
 
@@ -653,14 +615,7 @@ pub struct MediusLocks {
     pub entries: [MediusLockEntry; MEDIUS_MAX_LOCKS],
 }
 
-/// One CATCH subscription entry: what to observe, which direction, and how much of each packet to
-/// keep. Build with a `medius_catch_filter_*` helper.
-///
-/// Each event resolves to its most specific matching entry, which supplies `capture`: an exact
-/// `(class, id)` outranks a class blanket, which outranks the everything filter, and a named
-/// direction outranks `Both`. The wildcards are sentinels: `class = MEDIUS_CATCH_CLASS_ANY` matches
-/// every class and `id = MEDIUS_CATCH_ID_ANY` every id within one. The wildcard class with a real
-/// id addresses nothing and is refused.
+/// One CATCH subscription entry; build with a `medius_catch_filter_*` helper.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MediusCatchFilter {
@@ -668,10 +623,7 @@ pub struct MediusCatchFilter {
     pub class: MediusCatchClass,
     /// The class-specific id, or `MEDIUS_CATCH_ID_ANY`.
     pub id: u16,
-    /// A `MEDIUS_DIRECTION_*` value: press/release edge on momentary classes, delta sign on axes,
-    /// IN (`Positive`) / OUT (`Negative`) on traffic classes. An unnamed byte is refused at
-    /// subscribe time. A byte, not `MediusDirection`, so the boundary can validate it; C++ (`enum :
-    /// uint8_t`) needs a cast to assign it to one.
+    /// A `MEDIUS_DIRECTION_*` value: press/release edge, delta sign, or IN/OUT on traffic classes.
     pub direction: u8,
     /// Bytes kept per event; 0 keeps the whole packet. Traffic classes only: an input class carries
     /// no packet, so a non-zero capture on one is refused at subscribe time.
@@ -731,9 +683,7 @@ pub struct MediusImperfectStatus {
 // Advanced control layer (§3.14): raw injection, control transfers, rewrite rules, descriptor
 // patches. Gated on `medius_device_allow_imperfect_clones`.
 
-/// A traffic class a rewrite rule addresses (§3.14): the write-direction `CATCH` classes the box
-/// rewrites, as the `class` byte of a `MediusRewriteRule`/`MediusRewriteEntry`. `Any` is the wire
-/// wildcard `0xFF`: `Pass`/`Patch`/`Replace` only, applied at every surface a packet crosses.
+/// A traffic class a rewrite rule addresses, as the `class` byte of a `MediusRewriteRule`.
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MediusRewriteClass {
@@ -746,9 +696,7 @@ pub enum MediusRewriteClass {
     Any = 0xFF,
 }
 
-/// What the top-ranked matching rewrite rule does to the packet (§3.14), as the `action` byte.
-/// `Drop` is report surfaces only; `Answer`/`Stall`/`Nak` and the two reply rewrites are
-/// control-only, matching the box's check.
+/// What the top-ranked matching rewrite rule does to the packet, as the `action` byte.
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MediusRewriteAction {
@@ -782,32 +730,23 @@ pub enum MediusPatchSection {
 pub enum MediusTransferStatus {
     /// Completed.
     Ok = 0x00,
-    /// The game PC's transfer held the pipe until the timeout and nothing was sent (stage
-    /// `SETUP`); or the game PC's next request on that endpoint, or a bus event it caused, took the
-    /// pipe in the stage named.
+    /// The game PC held the pipe until the timeout, or took it from the transfer in `stage`.
     Busy = 0xF9,
     /// The game PC has suspended the clone, and with it the real device: nothing was sent.
     Suspended = 0xFA,
-    /// The real device's packets were corrupt past three tries, or ran past the buffer the host
-    /// asked for; or the host chip had no channel free to send it on.
+    /// Native packets were corrupt or overran the buffer, or the host chip had no free channel.
     Error = 0xFB,
-    /// Never sent: the opt-in is off, `ep` is a control endpoint the real device does not declare,
-    /// another transfer is outstanding, or the box had no room for it then: the link between its chips
-    /// was full, or an earlier transfer still held its place (its reply for up to 1 s after it ended,
-    /// or, where the box ended that reply at a 1 s chunk wait, until the real device finishes it).
+    /// Never sent: the opt-in is off, `ep` is undeclared, or the box had no room for it.
     Refused = 0xFC,
-    /// The real device STALLed, in the stage named.
+    /// The real device STALLed, in `stage`.
     Stall = 0xFD,
-    /// The real device NAKed until the timeout, in the stage named; or the host chip's reply was
-    /// lost on the inter-chip link; or the reply's next chunk waited 1 s to be passed on to the
-    /// control port, in the data stage.
+    /// No answer in time: the real device NAKed until the timeout, or the reply was lost.
     NoAnswer = 0xFE,
     /// No device attached.
     NoDevice = 0xFF,
 }
 
-/// Where a control transfer ended (§3.14): the `stage` byte of a `MediusTransferOutcome`. An
-/// unnamed byte is a stage this build does not know, carried through verbatim.
+/// Where a control transfer ended: the `stage` byte of a `MediusTransferOutcome`.
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MediusTransferStage {
@@ -830,12 +769,7 @@ pub struct MediusSetup {
     pub length: u16,
 }
 
-/// How `medius_device_transfer` ended. The reply goes to the caller's buffer: the IN data stage as
-/// the box received it, partial data before a STALL included, and past wLength where the real
-/// device sent more than was asked for in the packets a host asks for; for an OUT transfer or one
-/// with wLength 0, what the real device sent where the status stage was due (at most one packet,
-/// usually none). It is meaningful on any status. A non-OK `status` is a protocol outcome, not a
-/// link error.
+/// How `medius_device_transfer` ended; the native reply goes to the caller's buffer.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MediusTransferOutcome {
@@ -849,13 +783,7 @@ pub struct MediusTransferOutcome {
     pub len: usize,
 }
 
-/// A rewrite rule (§3.14), keyed by `(class, id, direction, match, mask)`.
-///
-/// `match_bytes[0..match_len]` and `mask[0..mask_len]` are one length; the box compares the packet
-/// head byte for byte under `mask`. An empty match takes every packet on the address.
-/// `payload[0..payload_len]` is the payload for actions that carry one; `offset` is where a
-/// `Patch`/`ReplyPatch` writes.
-/// `medius_device_query_rewrite_entry` reads back this shape, so a read rule replays as a set.
+/// A rewrite rule, keyed by `(class, id, direction, match, mask)`.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct MediusRewriteRule {
@@ -870,7 +798,7 @@ pub struct MediusRewriteRule {
     /// One of `MEDIUS_REWRITE_ACTION_*`. A byte, not `MediusRewriteAction`, so the boundary can
     /// validate it; C++ needs a cast to assign it to one.
     pub action: u8,
-    /// Where a `Patch`/`ReplyPatch` writes; other actions ignore it.
+    /// Where a `MEDIUS_REWRITE_ACTION_PATCH`/`_REPLY_PATCH` writes; other actions ignore it.
     pub offset: u16,
     /// Valid bytes in `match_bytes` (must equal `mask_len`).
     pub match_len: u16,
@@ -923,22 +851,16 @@ pub struct MediusRewriteTable {
     pub entries: [MediusRewriteEntry; MEDIUS_MAX_REWRITE_ENTRIES],
 }
 
-/// A descriptor patch (§3.14), keyed by `(section, cfg, index, offset)`.
-///
-/// `bytes[0..len]` overwrites the descriptor from `offset`; `len` 0 removes the patch at that key.
-/// Setting an existing key overwrites it and moves it to the end of the set; setting the bytes it
-/// already holds changes nothing. Every section but `String` keeps the descriptor's byte count.
-/// `medius_device_query_patch_entry` reads back this shape, so a read patch replays as a set.
+/// A descriptor patch, keyed by `(section, cfg, index, offset)`.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct MediusPatch {
     /// One of `MEDIUS_PATCH_SECTION_*`. A byte, not `MediusPatchSection`, so the boundary can
     /// validate it; C++ (`enum : uint8_t`) needs a cast to assign it to one.
     pub section: u8,
-    /// Configuration index for `Config`/`Report`: 0 is the first configuration, not
-    /// `bConfigurationValue`.
+    /// Configuration index for `MEDIUS_PATCH_SECTION_CONFIG`/`_REPORT`, not `bConfigurationValue`.
     pub cfg: u8,
-    /// Interface or string index, for `Report`/`String`.
+    /// Interface or string index, for `MEDIUS_PATCH_SECTION_REPORT`/`_STRING`.
     pub index: u8,
     /// Byte offset in the descriptor where the overwrite starts.
     pub offset: u16,
@@ -1008,13 +930,7 @@ const _: () = {
     assert!(MediusTransformOp::Swap as u8 == medius::TransformOp::Swap.as_u8());
 };
 
-/// One field transform (§3.15): an `op`, the `source` field it reads and the `dest` field it
-/// writes.
-///
-/// `source` and `dest` are `MediusLockTarget`s (an axis `kind`, or `Usage` with `usage` read):
-/// transforms address the lock-target field space. To weigh or reverse a field, use
-/// `medius_device_scale`, whose percent is signed. `medius_device_query_transforms` reads back this
-/// shape, so a read entry replays as a set.
+/// One field transform: an `op`, the `source` field it reads and the `dest` field it writes.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MediusTransform {
@@ -1286,9 +1202,7 @@ pub struct MediusUsageEvent {
     /// The snapshot's class, a `MEDIUS_CLASS_*` value; set even when `n == 0` (the snapshot for the
     /// release of the last held usage).
     pub class: u8,
-    /// A `MEDIUS_DIRECTION_*` value: the edge that produced this snapshot. The subscribed set grew
-    /// (`Positive`) or shrank (`Negative`). A byte, not `MediusDirection`, so the
-    /// boundary can validate it; C++ (`enum : uint8_t`) needs a cast to assign it to one.
+    /// A `MEDIUS_DIRECTION_*` value: the edge that produced this snapshot.
     pub direction: u8,
     pub n: u16,
     pub usages: [MediusUsage; MEDIUS_MAX_USAGES],
@@ -1304,9 +1218,7 @@ pub struct MediusTrafficEvent {
     pub class: MediusCatchClass,
     /// Endpoint address, interface number, or endpoint number, per the class.
     pub id: u16,
-    /// A `MEDIUS_DIRECTION_*` value: `Positive` is IN (device to PC), `Negative` is OUT. A byte,
-    /// not `MediusDirection`, so the boundary can validate it; C++ (`enum : uint8_t`) needs a cast
-    /// to assign it to one.
+    /// A `MEDIUS_DIRECTION_*` value: `MEDIUS_DIRECTION_POSITIVE` is IN, `_NEGATIVE` is OUT.
     pub direction: u8,
     /// Class-specific; read it with `medius_traffic_event_control_status`, `..._rule_acted`,
     /// `..._bus_event`, `..._transfer_status`, `..._zlp` or `..._bulk_end_of_transfer`.
@@ -1324,14 +1236,9 @@ pub struct MediusTrafficEvent {
 pub enum MediusControlStatus {
     /// The transaction completed.
     Ok = 0,
-    /// The real device STALLed, or a `Stall` rule refused the request.
+    /// The real device STALLed, or a `MEDIUS_REWRITE_ACTION_STALL` rule refused the request.
     Stalled = 1,
-    /// NAKed until the PC gave up: the real device left the request unanswered or it failed on the
-    /// real device's bus, a `Nak` rule matched it, the PC gave up before the real device finished,
-    /// a SET_INTERFACE on its interface, a configuration change or a suspend ended it, or the box
-    /// had no room to pass a step of it on. For a request the PC gave up on, the event comes when
-    /// the PC's next SETUP on that endpoint replaces it, or 250-300 ms after the PC stopped polling
-    /// it, whichever is first.
+    /// NAKed until the PC gave up.
     Naked = 2,
     /// A handshake value this build does not know; `MediusTrafficEvent::flags` bits 0-1 hold it.
     Other = 3,
@@ -1412,17 +1319,17 @@ pub struct MediusInputEvent {
     pub kind: MediusInputKind,
     /// The report's arrival stamp, in the `clock` chip's microseconds.
     pub ts_us: u32,
-    /// Which chip's clock stamped it; always `HostChip` for native input.
+    /// Which chip's clock stamped it; always `MEDIUS_CLOCK_DOMAIN_HOST_CHIP` for native input.
     pub clock: MediusClockDomain,
-    /// The usage this is an edge on; unset for `Motion`.
+    /// The usage this is an edge on; unset for `MEDIUS_INPUT_KIND_MOTION`.
     pub usage: MediusUsage,
-    /// Relative X this report (right positive); 0 unless `kind` is `Motion`.
+    /// Relative X this report (right positive); 0 unless `kind` is `MEDIUS_INPUT_KIND_MOTION`.
     pub dx: i16,
-    /// Relative Y this report (down positive); 0 unless `kind` is `Motion`.
+    /// Relative Y this report (down positive); 0 unless `kind` is `MEDIUS_INPUT_KIND_MOTION`.
     pub dy: i16,
-    /// Wheel delta this report (up positive); 0 unless `kind` is `Motion`.
+    /// Wheel delta this report (up positive); 0 unless `kind` is `MEDIUS_INPUT_KIND_MOTION`.
     pub dz: i16,
-    /// AC Pan (horizontal-scroll) delta this report (right positive); 0 unless `kind` is `Motion`.
+    /// AC Pan delta this report (right positive); 0 unless `kind` is `MEDIUS_INPUT_KIND_MOTION`.
     pub pan: i16,
 }
 

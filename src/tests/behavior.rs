@@ -81,7 +81,6 @@ fn handshake_rejects_wrong_proto_ver() {
 
 #[test]
 fn handshake_refuses_a_v3_4_0_box() {
-    // v3.4.0 firmware reports protocol 7; this build speaks 10.
     let mock = MockBox::new().with_version(Version {
         proto_ver: 7,
         fw_major: 3,

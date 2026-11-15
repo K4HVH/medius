@@ -100,13 +100,7 @@ fn lock_entry_covers(e: &MediusLockEntry, target: MediusLockTarget) -> bool {
     }
 }
 
-/// The scale on `target`/`dir`, or `MEDIUS_LOCK_SCALE_PASS` when nothing covers it. Where several
-/// entries cover it, the one that keeps least applies, ranked by magnitude (the negative one wins a
-/// tie). So a block outranks a reversal of any size, and a pass outranks a reversal below -100.
-/// `Both` reports the scale that keeps least across every direction. A delta is scaled by the
-/// product of its fixed and relative scales, which this does not compute. Mirrors
-/// `medius::Locks::scale_of`. `dir` takes a `MEDIUS_DIRECTION_*` constant; any other value reads as
-/// `MEDIUS_LOCK_SCALE_PASS`.
+/// The scale on `target`/`dir`, or `MEDIUS_LOCK_SCALE_PASS` when nothing covers it.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_locks_scale_of(
     locks: *const MediusLocks,
@@ -134,11 +128,7 @@ pub unsafe extern "C" fn medius_locks_scale_of(
     })
 }
 
-/// Whether `target`/`dir` is blocked outright in `locks`; a direction weighed between block and
-/// pass is not locked. `Both` asks about the two fixed signs only; ask about a relative direction
-/// by name. Mirrors
-/// `medius::Locks::is_locked`. `dir` takes a `MEDIUS_DIRECTION_*` constant; any other value reads
-/// as unlocked.
+/// Whether `target`/`dir` is blocked outright in `locks`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_locks_is_locked(
     locks: *const MediusLocks,
@@ -391,8 +381,7 @@ fn is_control_shaped(e: &MediusTrafficEvent) -> bool {
     )
 }
 
-/// Whether the capture cut this packet short; `len` alone cannot tell it from a short packet.
-/// Mirrors `medius::TrafficEvent::truncated`.
+/// Whether the capture cut this packet short. Mirrors `medius::TrafficEvent::truncated`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_traffic_event_truncated(event: *const MediusTrafficEvent) -> bool {
     guard(false, || {
@@ -422,9 +411,7 @@ pub unsafe extern "C" fn medius_traffic_event_setup(event: *const MediusTrafficE
     })
 }
 
-/// The data stage of a CONTROL event, the reply of a CLIP_TRANSFER one (empty on an OUT request
-/// with a data stage), the whole packet for any other class; its length goes to `*out_len`. Points
-/// into `event`. Mirrors `medius::TrafficEvent::data`.
+/// The event's data stage, clip-transfer reply or whole packet; points into `event`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_traffic_event_data(
     event: *const MediusTrafficEvent,
@@ -479,10 +466,7 @@ pub unsafe extern "C" fn medius_traffic_event_control_status(
     })
 }
 
-/// How the transfer ended, written to `*out` as a `MEDIUS_TRANSFER_STATUS_*` value; false for any
-/// class but CLIP_TRANSFER. `MEDIUS_TRANSFER_STATUS_NO_ANSWER` when no answer came in 4 s; an
-/// unnamed byte is carried through. A null `out` is skipped and the return value still holds.
-/// Mirrors `medius::TrafficEvent::transfer_status`.
+/// How a CLIP_TRANSFER event's transfer ended, written to `*out`; false for any other class.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_traffic_event_transfer_status(
     event: *const MediusTrafficEvent,
@@ -585,8 +569,7 @@ pub unsafe extern "C" fn medius_traffic_event_rule_acted(event: *const MediusTra
     })
 }
 
-/// Whether this VEND_BULK event carries end-of-transfer. Mirrors
-/// `medius::TrafficEvent::bulk_end_of_transfer`.
+/// Whether this VENDOR_BULK event carries end-of-transfer.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_traffic_event_bulk_end_of_transfer(
     event: *const MediusTrafficEvent,
@@ -600,9 +583,7 @@ pub unsafe extern "C" fn medius_traffic_event_bulk_end_of_transfer(
     })
 }
 
-/// Whether this event is a zero-length packet. A HID_IN or EMIT event on a HID endpoint carries a
-/// whole report of <=64 bytes; if it has bytes, a zero-length packet ended the report after them.
-/// Mirrors `medius::TrafficEvent::zlp`.
+/// Whether this event is, or ends with, a zero-length packet. Mirrors `medius::TrafficEvent::zlp`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_traffic_event_zlp(event: *const MediusTrafficEvent) -> bool {
     guard(false, || {

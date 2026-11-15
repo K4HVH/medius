@@ -34,10 +34,7 @@ pub enum RewriteClass {
     /// Bulk traffic on a vendor interface; `id` is the endpoint number, `direction`
     /// [`IN`](crate::Direction::IN) or [`OUT`](crate::Direction::OUT).
     VendorBulk = CATCH_CLS_VEND_BULK,
-    /// Proxied control transfer; `id` is the endpoint number (0 = EP0). On EP0, class and vendor
-    /// requests reach a rule, as do the standard requests the clone relays to the real device; the
-    /// clone serves the rest itself (change descriptors with `PATCH`). Above EP0 every request
-    /// does.
+    /// Control transfer; `id` is the endpoint number (0 = EP0).
     Control = CATCH_CLS_CONTROL,
     /// Emitted bytes, after the renderer; `id` is the endpoint number, `direction`
     /// [`IN`](crate::Direction::IN). Matches injected and rendered frames as well as relayed ones.
@@ -202,7 +199,7 @@ pub struct RewriteRule {
 }
 
 impl Default for RewriteClass {
-    /// [`Emit`](RewriteClass::Emit): emitted bytes, the most common target.
+    /// [`Emit`](RewriteClass::Emit): emitted bytes.
     fn default() -> Self {
         RewriteClass::Emit
     }
@@ -315,8 +312,6 @@ pub struct RewriteTable {
 }
 
 impl RewriteTable {
-    /// `[what][flags u8][gen u8][n u8]` then `n` ×
-    /// `[cls u8][id u16][dir u8][action u8][mlen u8][off u16][plen u16][hits u16]`.
     pub(crate) fn from_payload(p: &[u8]) -> Option<RewriteTable> {
         if p.len() < 4 {
             return None;

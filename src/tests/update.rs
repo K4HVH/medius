@@ -537,8 +537,6 @@ mod refused_and_rebooting {
         assert_eq!(aborts(&mock), vec![UpdateTarget::Device.as_u8()]);
     }
 
-    // Right after an activate the chip may still answer from the image being replaced; a reply then
-    // says nothing about the new one. The wait must not end before the box shows it rebooted.
     #[test]
     fn wait_firmware_confirmed_waits_for_the_reboot() {
         let mock = crate::MockBox::new();
@@ -724,7 +722,6 @@ mod update_only {
     }
 }
 
-// A box before v3.4.0 runs its control link at 4 Mbaud; one updated past it comes back at 6 Mbaud.
 #[cfg(feature = "mock")]
 mod update_rates {
     use std::sync::Arc;
@@ -765,8 +762,6 @@ mod update_rates {
         assert_eq!(dev.query_version().expect("version").proto_ver, 6);
     }
 
-    // A serial port opens once at a time: the link must let go of the port at one rate before it is
-    // opened at the other.
     #[test]
     fn the_port_is_released_before_it_opens_at_the_other_rate() {
         let old = on_proto(6);
@@ -782,15 +777,14 @@ mod update_rates {
             Ok(o.transport())
         }))
         .expect("reached at 4 Mbaud");
-        // `f` itself, captured by the opener, is the one count above `unheld`.
         assert_eq!(*held_at_reopen.lock(), Some(unheld + 1));
     }
 
     #[test]
     fn wait_confirmed_follows_the_box_to_the_new_rate() {
         let old = on_proto(6);
-        old.reboot_after_activate(u32::MAX, 0); // gone from 4 Mbaud once it activates
-        let new = crate::MockBox::new(); // the updated box, confirmed, at 6 Mbaud
+        old.reboot_after_activate(u32::MAX, 0);
+        let new = crate::MockBox::new();
         let silent = crate::MockBox::new().silent();
         let activated = Arc::new(AtomicBool::new(false));
         let flag = Arc::clone(&activated);

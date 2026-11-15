@@ -183,8 +183,6 @@ def test_import_takes_a_library_of_the_same_abi(monkeypatch):
 
 @pytest.mark.parametrize("arg", ["'/dev/ttyACM0'", "12345"])
 def test_a_device_is_not_built_from_a_path_or_a_number(arg):
-    # Device(path) once kept the path as the native handle, and freeing it at interpreter exit
-    # crashed the process.
     env = dict(os.environ, PYTHONPATH=str(pathlib.Path(medius.__file__).resolve().parents[1]))
     run = subprocess.run(
         [sys.executable, "-c", f"import medius\nd = medius.Device({arg})\n"],

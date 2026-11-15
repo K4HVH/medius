@@ -181,7 +181,6 @@ fn adopt_first(
         {
             continue;
         }
-        // A link opened to update reaches a box on an older protocol, with nothing held to replay.
         if let Some(v) = version.as_ref()
             && ctx.restart.reaches_update_only(v.proto_ver)
         {

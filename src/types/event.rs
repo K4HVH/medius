@@ -72,8 +72,7 @@ pub struct UsageSnapshot {
     pub ts_us: u32,
     /// Always [`ClockDomain::HostChip`].
     pub clock: ClockDomain,
-    /// Snapshot class. In the frame because the empty snapshot (release of the last held usage) has
-    /// no usages to read it from.
+    /// Snapshot class.
     pub class: Class,
     /// Edge that produced this snapshot: the subscribed set grew ([`Direction::PRESS`]) or shrank
     /// ([`Direction::RELEASE`]).
@@ -83,8 +82,6 @@ pub struct UsageSnapshot {
 }
 
 impl UsageSnapshot {
-    // Decode a `USAGE_EVENT` payload (§4.10): `[ts u32][clk u8][cls u8][dir u8][n u8]` then
-    // `n × [class][id u16]`.
     pub(crate) fn from_payload(p: &[u8]) -> Option<UsageSnapshot> {
         if p.len() < EVENT_HDR + 2 {
             return None;
@@ -138,15 +135,9 @@ pub enum ControlStatus {
     Ok,
     /// STALL to the PC: the real device STALLed, or a `Stall` rule refused the request.
     Stalled,
-    /// NAKed until the PC gave up: the real device left the request unanswered or it failed on the
-    /// real device's bus, a `Nak` rule matched it, the PC gave up before the real device finished,
-    /// a SET_INTERFACE on its interface, a configuration change or a suspend ended it, or the box
-    /// had no room to pass a step of it on. For a request the PC gave up on, the event comes when
-    /// the PC's next SETUP on that endpoint replaces it, or 250-300 ms after the PC stopped polling
-    /// it, whichever is first.
+    /// NAKed until the PC gave up.
     Naked,
-    /// Handshake value unknown to this build, kept distinct so a newer firmware's value does not
-    /// read as a device fault.
+    /// Handshake value unknown to this build.
     Other(u8),
 }
 
@@ -191,8 +182,7 @@ impl TrafficEvent {
         })
     }
 
-    /// Whether the capture cut this packet short; the bytes alone cannot tell that from a short
-    /// packet.
+    /// Whether the capture cut this packet short.
     pub fn truncated(&self) -> bool {
         (self.bytes.len() as u16) < self.true_len
     }
@@ -211,11 +201,7 @@ impl TrafficEvent {
         }
     }
 
-    /// Data stage of a [`CatchClass::Control`] event, the reply of a [`CatchClass::ClipTransfer`]
-    /// one (empty on an OUT request with a data stage); the whole packet for any other class.
-    ///
-    /// Empty when the capture cut the setup packet itself short: the surviving bytes are the
-    /// request, and returning them would label a GET_DESCRIPTOR request as the descriptor.
+    /// Data stage of a control event or reply of a clip transfer; the whole packet otherwise.
     pub fn data(&self) -> &[u8] {
         if !self.is_control_shaped() {
             return &self.bytes;
@@ -256,9 +242,7 @@ impl TrafficEvent {
         ruled && self.flags & CATCH_F_RULE != 0
     }
 
-    /// How a [`CatchClass::ClipTransfer`] event's transfer ended: the status
-    /// [`transfer`](crate::Device::transfer) returns, or [`NoAnswer`](TransferStatus::NoAnswer) if
-    /// no answer came in 4 s.
+    /// How a [`CatchClass::ClipTransfer`] event's transfer ended.
     pub fn transfer_status(&self) -> Option<TransferStatus> {
         (self.class == CatchClass::ClipTransfer).then(|| TransferStatus::from_u8(self.flags))
     }
@@ -293,14 +277,7 @@ impl TrafficEvent {
         self.class == CatchClass::VendorBulk && self.flags & 0x01 != 0
     }
 
-    /// Whether the event is a zero-length packet.
-    ///
-    /// An event is one packet, except a [`CatchClass::HidIn`] or [`CatchClass::Emit`] event on a HID
-    /// endpoint: that carries a whole report of <=64 bytes, however many packets it took. If such an
-    /// event has bytes, a zero-length packet ended the report after them. An event with no bytes is
-    /// the zero-length packet alone: on a HID endpoint, the native reply to a poll with nothing to
-    /// report; on a bulk endpoint, the end of a transfer whose length is an exact multiple of the
-    /// packet size.
+    /// Whether the event is, or ends with, a zero-length packet.
     pub fn zlp(&self) -> bool {
         let packets = matches!(
             self.class,

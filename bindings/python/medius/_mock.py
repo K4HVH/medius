@@ -120,9 +120,7 @@ class MockBox:
         _native.lib.medius_mock_set_imperfect_status(self._handle, imperfect_to_c(status))
 
     def set_transfer_reply(self, reply: TransferOutcome):
-        """Set what a TRANSFER brings back, sent in chunks as the box sends them. The mock refuses a
-        TRANSFER as the box does: with the opt-in off, a zero timeout, or OUT data shorter than
-        wLength."""
+        """Set the TRANSFER outcome, sent in chunks as the box sends them."""
         raw = _as_bytes(reply.data, "data")
         buf = (_native.u8 * len(raw)).from_buffer_copy(raw)
         _native.lib.medius_mock_set_transfer_reply(
@@ -228,8 +226,7 @@ class MockBox:
         _native.lib.medius_mock_link_lost(self._handle)
 
     def detach(self):
-        """Simulate the real device detaching: the mock releases host-set session state (counted once
-        in `Stats.session`) and takes the clone down until `attach`."""
+        """Simulate the real device detaching: session state is released and the clone goes down."""
         _native.lib.medius_mock_detach(self._handle)
 
     def attach(self):

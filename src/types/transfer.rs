@@ -1,15 +1,9 @@
-//! `TRANSFER` (§3.14) vocabulary: the setup packet a host sends, and what came back.
-
 use crate::protocol::opcode::{
     XFER_BUSY, XFER_ERROR, XFER_NO_ANSWER, XFER_NO_DEVICE, XFER_OK, XFER_REFUSED, XFER_STAGE_DATA,
     XFER_STAGE_SETUP, XFER_STAGE_STATUS, XFER_STALL, XFER_SUSPENDED,
 };
 
-/// USB control-transfer setup packet: `bmRequestType`, `bRequest`, `wValue`, `wIndex`, `wLength`
-/// (USB spec §9.3), eight bytes little-endian on the wire.
-///
-/// `length` is the data-stage length. IN: the bytes to read back. OUT: the length of the data
-/// passed to [`transfer`](crate::Device::transfer), which the box carries after the setup packet.
+/// USB control-transfer setup packet, eight bytes little-endian on the wire.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct Setup {
     /// `bmRequestType`: direction (b7), type and recipient.
@@ -20,7 +14,7 @@ pub struct Setup {
     pub value: u16,
     /// `wIndex`: request-specific (often an interface or endpoint).
     pub index: u16,
-    /// `wLength`: data-stage length (see the type docs).
+    /// `wLength`: data-stage length.
     pub length: u16,
 }
 
@@ -64,29 +58,21 @@ impl Setup {
 pub enum TransferStatus {
     /// Completed.
     Ok,
-    /// The game PC's transfer held the pipe until the timeout and nothing was sent
-    /// ([`TransferStage::Setup`]); or the game PC's next request on that endpoint, or a bus event
-    /// it caused, took the pipe in the stage named.
+    /// The game PC held the pipe until the timeout, or took it from the transfer in `stage`.
     Busy,
     /// The game PC has suspended the clone, and with it the real device: nothing was sent.
     Suspended,
-    /// The real device's packets were corrupt past three tries, or ran past the buffer the host
-    /// asked for; or the host chip had no channel free to send it on.
+    /// Native packets were corrupt or overran the buffer, or the host chip had no free channel.
     Error,
-    /// Never sent: the opt-in is off, `ep` is a control endpoint the real device does not declare,
-    /// another transfer is outstanding, or the box had no room for it then: the link between its chips
-    /// was full, or an earlier transfer still held its place (its reply for up to 1 s after it ended,
-    /// or, where the box ended that reply at a 1 s chunk wait, until the real device finishes it).
+    /// Never sent: the opt-in is off, `ep` is undeclared, or the box had no room for it.
     Refused,
-    /// The real device STALLed, in the stage named.
+    /// The real device STALLed, in `stage`.
     Stall,
-    /// The real device NAKed until the timeout, in the stage named; or the host chip's reply was
-    /// lost on the inter-chip link; or the reply's next chunk waited 1 s to be passed on to the
-    /// control port, in the data stage.
+    /// No answer in time: the real device NAKed until the timeout, or the reply was lost.
     NoAnswer,
     /// No device attached.
     NoDevice,
-    /// Status byte this crate does not name, kept so a newer box's value is not lost.
+    /// Status byte this crate does not name.
     Other(u8),
 }
 
@@ -127,7 +113,7 @@ impl TransferStatus {
     }
 }
 
-/// Where a [`transfer`](crate::Device::transfer) ended: `TRANSFER_RESP`'s `stage` byte (§3.14).
+/// Where a [`transfer`](crate::Device::transfer) ended: `TRANSFER_RESP`'s `stage` byte.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TransferStage {
     /// The setup packet.
@@ -136,7 +122,7 @@ pub enum TransferStage {
     Data,
     /// The status stage, where a completed transfer ends.
     Status,
-    /// Stage byte this crate does not name, kept so a newer box's value is not lost.
+    /// Stage byte this crate does not name.
     Other(u8),
 }
 
@@ -162,23 +148,14 @@ impl TransferStage {
     }
 }
 
-/// What a [`transfer`](crate::Device::transfer) brought back: how it ended, where, and the real
-/// device's reply.
-///
-/// A [`TransferStatus`] other than [`Ok`](TransferStatus::Ok) is a protocol outcome, not a link
-/// error: it is returned, not raised. The surrounding [`Result`](crate::Result)'s `Ok(_)` means the
-/// box replied.
+/// Outcome of a [`transfer`](crate::Device::transfer): how and where it ended, and the reply.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TransferOutcome {
     /// How the transfer ended.
     pub status: TransferStatus,
     /// Where it ended.
     pub stage: TransferStage,
-    /// The IN data stage as the box received it, partial data before a STALL included, and past
-    /// wLength where the real device sent more than was asked for in the packets a host asks for.
-    /// On an OUT transfer, or one with wLength 0, what the real device sent where the status stage
-    /// was due (at most one packet, usually none). Meaningful on any status. A PC sees data past
-    /// wLength, and data in a status stage, as the transfer failing.
+    /// The native reply as the box received it; meaningful on any status.
     pub data: Vec<u8>,
 }
 

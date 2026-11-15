@@ -94,7 +94,6 @@ struct State {
     // (keyed rows in installation order, a full flag).
     transforms: Vec<MockTransform>,
     transform_full: bool,
-    // The reply to a TRANSFER the box does not refuse.
     transfer_reply: TransferOutcome,
     recorded: Vec<DecodedFrame>,
     respond: bool,
@@ -468,7 +467,7 @@ const CATCH_MAXN: usize = 32; // CTRL_CATCH_MAXN
 const USAGE_EVENT_MAX: usize = 40; // CTRL_USAGE_EVENT_MAX
 const CLIP_HELD_MAX: usize = USAGE_EVENT_MAX; // CTRL_CLIP_HELD_MAX, defined as CTRL_USAGE_EVENT_MAX
 const TRAFFIC_DATA_MAX: usize = 180; // CTRL_TRAFFIC_DATA_MAX
-const XFER_CHUNK: usize = 448; // XFR_CHUNK
+const XFER_CHUNK: usize = 448;
 const PATCH_POOL: usize = 1024; // PATCH_POOL, the bytes every stored patch shares
 // How long a booted device chip takes to clone the attached device again.
 const BOOT_CLONE_DELAY: std::time::Duration = std::time::Duration::from_millis(100);
@@ -940,7 +939,6 @@ impl State {
         }
     }
 
-    // The clone's teardown: counted only when a command came since the last count.
     fn tear_down(&mut self) {
         self.count_release();
         self.release_session();
@@ -978,7 +976,6 @@ impl State {
     // APPLY, CLEAR and an opt-in toggle re-present the clone when what it serves changes. That is a
     // re-clone: the session goes and the game PC enumerates the clone again.
     fn present_patches(&mut self) {
-        // With no device attached there is nothing to present: the next attach serves the stored set.
         if !self.clone_up {
             return;
         }
@@ -1040,7 +1037,6 @@ impl State {
         }
     }
 
-    // A chunk a frame (§3.14); only the last carries the status and stage.
     fn transfer_resp(&self, seq: u8, p: &[u8]) -> Vec<u8> {
         if p.len() < XFER_REQ_HDR {
             return Vec::new();
@@ -1644,8 +1640,6 @@ fn transform_pair_ok(op: u8, sc: u8, si: u16, dc: u8, di: u16) -> bool {
     }
 }
 
-// RESP(TRANSFORMS): [16][flags][n] then n × [op][sclass][sid u16][dclass][did u16]. No state
-// byte per entry: a readback row is always live, and rebuilds with state 1.
 fn transforms_resp_payload(st: &State) -> Vec<u8> {
     let mut p = vec![
         Q_TRANSFORMS,
@@ -1662,7 +1656,6 @@ fn transforms_resp_payload(st: &State) -> Vec<u8> {
     p
 }
 
-// RESP(REWRITE): [12][flags][gen][n] then n × [cls][id u16][dir][action][mlen][off u16][plen u16][hits u16].
 fn rewrite_resp_payload(st: &State) -> Vec<u8> {
     let mut p = vec![
         Q_REWRITE,
@@ -1701,7 +1694,6 @@ fn rewrite_entry_resp_payload(st: &State, index: u8) -> Vec<u8> {
     p
 }
 
-// RESP(PATCHES): [14][flags][n] then n × [section][cfg][index][offset u16][len u16].
 fn patches_resp_payload(st: &State) -> Vec<u8> {
     // applied = the clone serves a non-empty patched set; pending = the stored set is not that set.
     let mut flags = 0u8;
@@ -1993,8 +1985,6 @@ impl MockBox {
                 {
                     st.restart()
                 }
-                // The host chip is back within the link's timeout: nothing is released, and the
-                // device chip counts the restart.
                 FrameType::RebootDl if payload.first() == Some(&RebootTarget::HostRun.as_u8()) => {
                     st.stats.host_restarts = st.stats.host_restarts.saturating_add(1)
                 }
@@ -2309,17 +2299,14 @@ impl MockBox {
         self
     }
 
-    /// What a `TRANSFER` brings back (builder style), a chunk a frame as the box sends it. The mock
-    /// refuses a `TRANSFER` as the box does: with the opt-in off, a zero timeout, or OUT data
-    /// shorter than `wLength`.
+    /// Outcome the mock returns to a `TRANSFER` (builder style).
     #[must_use]
     pub fn with_transfer_reply(self, reply: TransferOutcome) -> Self {
         self.state.lock().transfer_reply = reply;
         self
     }
 
-    /// Set what a `TRANSFER` brings back after construction; see
-    /// [`with_transfer_reply`](Self::with_transfer_reply).
+    /// Set the `TRANSFER` outcome after construction.
     pub fn set_transfer_reply(&self, reply: TransferOutcome) {
         self.state.lock().transfer_reply = reply;
     }
@@ -2473,12 +2460,7 @@ impl MockBox {
         (verb.and_then(ClipAction::from_u8), consumed)
     }
 
-    /// Simulate a device-chip restart: session state goes (locks, rules, transforms, the clip),
-    /// stored state stays, the box says hello now and on the next frame, and the clone is back 100 ms
-    /// later. `RESET` with its store flag, and
-    /// [`RebootTarget::DeviceRun`](crate::RebootTarget::DeviceRun), also restart the device chip.
-    /// [`RebootTarget::HostRun`](crate::RebootTarget::HostRun) restarts the host chip alone: it
-    /// counts one in [`Stats::host_restarts`](crate::Stats::host_restarts) and releases nothing.
+    /// Simulate a device-chip restart: session state goes, stored state stays.
     pub fn restart(&self) {
         let hello = {
             let mut st = self.state.lock();
@@ -2499,9 +2481,7 @@ impl MockBox {
         st.release_session();
     }
 
-    /// Simulate the real device detaching: the box releases host-set session state (counted once
-    /// in [`Stats::session`](crate::Stats::session)) and takes the clone down until
-    /// [`attach`](Self::attach).
+    /// Simulate the real device detaching: session state is released and the clone goes down.
     pub fn detach(&self) {
         let mut st = self.state.lock();
         st.advance(std::time::Instant::now());
@@ -2532,9 +2512,6 @@ impl MockBox {
         self.state.lock().link_lost_before_clip_query = true;
     }
 
-    // A release counted now, and the clone's teardown just before the next command with nothing marked
-    // between, as an opt-in toggle's re-present lands on the box's next loop tick: the window a re-send
-    // can fall into.
     #[cfg(test)]
     pub(crate) fn torn_down_before_next_command(&self) {
         let mut st = self.state.lock();
@@ -2692,8 +2669,7 @@ impl crate::Device {
         crate::Device::open_transport(mock.transport())
     }
 
-    /// [`Device`](crate::Device) over a [`MockBox`], with the handshake
-    /// [`open_for_update`](crate::Device::open_for_update) runs.
+    /// [`Device`](crate::Device) over a [`MockBox`], with the handshake `open_for_update` runs.
     pub fn open_mock_for_update(mock: MockBox) -> crate::Result<crate::Device> {
         crate::Device::open_transport_for_update(mock.transport())
     }

@@ -29,7 +29,7 @@ pub extern "C" fn medius_mock_new() -> *mut MediusMockBox {
     })
 }
 
-/// Clone a mock handle sharing the same recorded state (like `MockBox::clone`).
+/// Clone a mock handle sharing the same recorded state.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_mock_clone(mock: *const MediusMockBox) -> *mut MediusMockBox {
     guard(std::ptr::null_mut(), || {
@@ -166,10 +166,7 @@ pub unsafe extern "C" fn medius_mock_set_imperfect_status(
     });
 }
 
-/// Set what a `TRANSFER` brings back: a `MEDIUS_TRANSFER_STATUS_*` status, a
-/// `MEDIUS_TRANSFER_STAGE_*` stage and the reply `data[0..len]`, sent in chunks as the box sends
-/// them. The mock refuses a `TRANSFER` as the box does: with the opt-in off, a zero timeout, or OUT
-/// data shorter than `wLength`.
+/// Set the `TRANSFER` outcome: a status, a stage and the reply `data[0..len]`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_mock_set_transfer_reply(
     mock: *mut MediusMockBox,
@@ -224,9 +221,7 @@ pub unsafe extern "C" fn medius_mock_set_bearing(
     });
 }
 
-/// Set the pacing mode and forced poll rate of the mock's OPTION(EMIT) reply; `hz` matters only for
-/// `Fixed`, `force_hz` 0 means unforced. `mode` takes a `MEDIUS_EMIT_MODE_*` constant; any other
-/// value leaves the pacing mode alone.
+/// Set the pacing mode and forced poll rate of the mock's OPTION(EMIT) reply.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_mock_set_emit_pace(
     mock: *mut MediusMockBox,
@@ -277,8 +272,7 @@ pub unsafe extern "C" fn medius_mock_set_advertised_hz(mock: *mut MediusMockBox,
     });
 }
 
-/// Set the mock's [`ClipStatus`](medius::ClipStatus) reply to `medius_clip_query_status`.
-/// `value.state` takes a `MEDIUS_CLIP_STATE_*` constant; any other value is ignored.
+/// Set the mock's `MediusClipStatus` reply to `medius_clip_query_status`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_mock_set_clip_status(
     mock: *mut MediusMockBox,
@@ -291,15 +285,7 @@ pub unsafe extern "C" fn medius_mock_set_clip_status(
     });
 }
 
-/// Set the mock's [`ClipSettings`](medius::ClipSettings) reply to `medius_clip_query_config`.
-/// `value.packet_triggers[0..packet_n]` are bound in order, as `medius_clip_bind_packet` binds
-/// them, under the opt-in in force at scripting time. The mock keeps the ones the box would take,
-/// each with its scripted `hits`, and drops the rest as the box would: a direction the class never
-/// carries, a match bit outside the mask, a run with no condition, `consume` on `CONTROL` or with
-/// the opt-in off, and entries beyond the match pool. A trigger with an unnamed byte is skipped.
-/// Script the opt-in with `medius_mock_set_imperfect_status` before a consuming trigger.
-/// `medius_clip_bind_packet` adds to the kept set, and `medius_mock_clip_packet` runs packets
-/// through it.
+/// Set the mock's `MediusClipSettings` reply to `medius_clip_query_config`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_mock_set_clip_settings(
     mock: *mut MediusMockBox,
@@ -376,8 +362,7 @@ pub unsafe extern "C" fn medius_mock_link_lost(mock: *mut MediusMockBox) {
     with_mock(mock, |m| m.link_lost());
 }
 
-/// Simulate the real device detaching: the mock releases host-set session state (counted once) and
-/// takes the clone down until `medius_mock_attach`.
+/// Simulate the real device detaching: session state is released and the clone goes down.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_mock_detach(mock: *mut MediusMockBox) {
     with_mock(mock, |m| m.detach());
@@ -451,7 +436,7 @@ pub unsafe extern "C" fn medius_mock_push_log(
     });
 }
 
-/// Push a MOTION_EVENT as if the box sent it (surfaces as a `Motion` catch event).
+/// Push a MOTION_EVENT as if the box sent it (a `MEDIUS_CATCH_EVENT_KIND_MOTION` event).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_mock_push_motion(
     mock: *mut MediusMockBox,
@@ -464,7 +449,7 @@ pub unsafe extern "C" fn medius_mock_push_motion(
     });
 }
 
-/// Push a USAGE_EVENT as if the box sent it (surfaces as a `Usages` catch event).
+/// Push a USAGE_EVENT as if the box sent it (a `MEDIUS_CATCH_EVENT_KIND_USAGES` event).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_mock_push_usages(
     mock: *mut MediusMockBox,
@@ -488,8 +473,7 @@ pub unsafe extern "C" fn medius_mock_push_usages(
     });
 }
 
-/// Push a TRAFFIC_EVENT as if the box sent it (surfaces as a `Traffic` catch event).
-/// `true_len` above `len` makes a snaplen-truncated capture.
+/// Push a TRAFFIC_EVENT as if the box sent it (a `MEDIUS_CATCH_EVENT_KIND_TRAFFIC` event).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_mock_push_traffic(
     mock: *mut MediusMockBox,
@@ -592,7 +576,7 @@ pub unsafe extern "C" fn medius_mock_recorded_frame(
     })
 }
 
-/// Build a `Device` over the mock without a handshake (clones the mock's shared state).
+/// Build a `MediusDevice` over the mock without a handshake (clones the mock's shared state).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_device_with_mock(
     mock: *const MediusMockBox,
@@ -609,7 +593,7 @@ pub unsafe extern "C" fn medius_device_with_mock(
     })
 }
 
-/// Build a `Device` over the mock and run the version handshake (can fail if the mock is silent).
+/// Build a `MediusDevice` over the mock and run the version handshake.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_device_open_mock(
     mock: *const MediusMockBox,
@@ -631,7 +615,7 @@ pub unsafe extern "C" fn medius_device_open_mock(
     })
 }
 
-/// Build a `Device` over the mock and run the handshake `medius_device_open_for_update` runs.
+/// Build a `MediusDevice` over the mock and run the handshake `medius_device_open_for_update` runs.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_device_open_mock_for_update(
     mock: *const MediusMockBox,

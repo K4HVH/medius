@@ -86,8 +86,7 @@ def _require_mock():
 
 
 class Device(Handle):
-    """An open connection to one medius box. Open one with `open`, `find`, `open_by_id` or another
-    `open_*` / `find_*` method; `Device(...)` itself raises `TypeError`."""
+    """An open connection to one medius box."""
 
     _free = "medius_device_free"
 
@@ -105,65 +104,47 @@ class Device(Handle):
 
     @classmethod
     def open(cls, path) -> "Device":
-        """Open the box at serial `path` and run the version handshake. On Linux, raises
-        `PortBusyError` if another process holds the port."""
+        """Open the box at serial `path` and run the version handshake."""
         out = ctypes.c_void_p()
         check(_native.lib.medius_device_open(path.encode("utf-8"), ctypes.byref(out)))
         return cls._adopt(out.value)
 
     @classmethod
     def find(cls) -> "Device":
-        """Open the first box found by USB id, or raise `NotFoundError`. On Linux, raises
-        `PortBusyError` if another process holds that box's port."""
+        """Open the first box found by USB id, or raise `NotFoundError`."""
         out = ctypes.c_void_p()
         check(_native.lib.medius_device_find(ctypes.byref(out)))
         return cls._adopt(out.value)
 
     @classmethod
     def open_by_id(cls, box_id: str) -> "Device":
-        """Open the box whose identity matches `box_id` (device-chip MAC hex or CH343 serial).
-
-        Raises `BadProtoVerError` if that box speaks another control protocol, `PortBusyError` if no
-        box matches and another process holds a box's port."""
+        """Open the box whose identity matches `box_id` (device-chip MAC hex or CH343 serial)."""
         out = ctypes.c_void_p()
         check(_native.lib.medius_device_open_by_id(box_id.encode("utf-8"), ctypes.byref(out)))
         return cls._adopt(out.value)
 
     @classmethod
     def open_for_update(cls, path) -> "Device":
-        """Open the box at `path` to update it, on any control protocol from 5 on.
-
-        On this build's protocol the device is a full one, as from `open`. On another it is
-        update-only (`is_update_only`): `query_version`, `firmware_info`, `stage_firmware`,
-        `activate_firmware`, `abort_update`, `update_firmware` and `wait_firmware_confirmed` work,
-        and every other call raises `BadProtoVerError`. Open the box again once it is updated.
-        Raises `BadProtoVerError` for a box older than protocol 5."""
+        """Open the box at `path` to update it, on any control protocol from 5 on."""
         out = ctypes.c_void_p()
         check(_native.lib.medius_device_open_for_update(path.encode("utf-8"), ctypes.byref(out)))
         return cls._adopt(out.value)
 
     @property
     def is_update_only(self) -> bool:
-        """Whether this device reaches only the update path: its box speaks an older control
-        protocol than this package. See `open_for_update`."""
+        """Whether this device reaches only the update path."""
         return bool(self._call(_native.lib.medius_device_is_update_only))
 
     @classmethod
     def find_mouse_box(cls) -> "Device":
-        """Open the first box whose clone is a mouse.
-
-        With no such box, a box on another control protocol (which reports no clone) raises
-        `BadProtoVerError`, and `PortBusyError` if none matches and another process holds a box's port."""
+        """Open the first box whose clone is a mouse."""
         out = ctypes.c_void_p()
         check(_native.lib.medius_device_find_mouse_box(ctypes.byref(out)))
         return cls._adopt(out.value)
 
     @classmethod
     def find_keyboard_box(cls) -> "Device":
-        """Open the first box whose clone is a keyboard.
-
-        With no such box, a box on another control protocol (which reports no clone) raises
-        `BadProtoVerError`, and `PortBusyError` if none matches and another process holds a box's port."""
+        """Open the first box whose clone is a keyboard."""
         out = ctypes.c_void_p()
         check(_native.lib.medius_device_find_keyboard_box(ctypes.byref(out)))
         return cls._adopt(out.value)
@@ -383,15 +364,7 @@ class Device(Handle):
         check(self._call(_native.lib.medius_device_clear_name))
 
     def set_bearing(self, window_ms: Optional[int], mode: BearingMode):
-        """Set what `Direction.WITH` and `Direction.AGAINST` are measured against.
-
-        `window_ms` is how long the last injected delta's direction stays the bearing; `None` turns
-        it off, leaving the relative directions inert whatever their scale. It saturates at 65535 ms,
-        as the Rust API does.
-
-        Both fields share one frame and persist together, so `mode` is required: a default would
-        revert a `VECTOR` box on any window change.
-        """
+        """Set what `Direction.WITH` and `Direction.AGAINST` are measured against."""
         mode = _enum(mode, BearingMode, "mode")
         check(
             self._call(
@@ -400,17 +373,7 @@ class Device(Handle):
         )
 
     def set_render(self, mode: RenderMode, full: bool):
-        """Set the render texture, and whether the model renders native motion instead of relaying
-        it.
-
-        Both share one command and persist, so `full` is required: omitting it would rewrite a
-        setting the caller did not name. Rendering adds latency; `full` adds it to native motion
-        too. `full` is off by default. Nothing renders until the box has learned the real device's
-        profile (`RenderStatus.ready`).
-
-        Motion asking for exact timing skips the model: `move_rel_now`, `flush_motion` and
-        `discard_motion` take the paced path. With `full` on, the rendered stream ignores
-        `set_movement_riding`."""
+        """Set the render texture, and whether native motion is rendered instead of relayed."""
         mode = _enum(mode, RenderMode, "mode")
         check(self._call(_native.lib.medius_device_set_render, int(mode), bool(full)))
 
@@ -434,15 +397,7 @@ class Device(Handle):
         return firmware_info_from_c(out)
 
     def wait_firmware_confirmed(self) -> FirmwareInfo:
-        """Block until neither chip is on probation (a chip on probation refuses an update).
-
-        Keeps asking while the box reboots after an activate. Right after an activate a chip can still
-        answer from the image it is replacing, so a reply counts only once the box shows the reboot
-        (its ready hello, or a query left unanswered), or after 5 s. A device from `open_for_update`
-        follows the box to the other control rate when it reboots into firmware on it. After 55 s,
-        raises `UpdateError` if a chip is still on probation, or `QueryTimeoutError` if the box
-        hasn't replied.
-        """
+        """Block until neither chip is on probation (a chip on probation refuses an update)."""
         out = _native.MediusFirmwareInfo()
         check(self._call(_native.lib.medius_device_wait_firmware_confirmed, ctypes.byref(out)))
         return firmware_info_from_c(out)
@@ -587,20 +542,7 @@ class Device(Handle):
     def transfer(
         self, ep: int, setup: Setup, out: bytes = b"", timeout_ms: Optional[int] = None
     ) -> TransferOutcome:
-        """`TRANSFER` (§3.14): run one control transfer against the real device and return what came
-        back.
-
-        `ep` is 0 for EP0, or a control endpoint the real device declares. `out` is the OUT data
-        stage: `setup.length` bytes for an OUT request, none for an IN one (`TransferDataError`),
-        at most `TRANSFER_OUT_MAX` (`FrameTooLongError`). A non-OK `TransferOutcome.status` is a
-        protocol outcome: it is returned, not raised. With the opt-in off the box replies
-        `REFUSED`. `timeout_ms` (1-65535, else `TransferTimeoutRangeError`; a negative value or one
-        past 32 bits raises `ValueError`) is how long the box waits on the real device, the time the
-        game PC holds the pipe included; the default is `default_transfer_timeout_ms()`. The call
-        waits up to `timeout_ms` plus 2 s for the reply (`QueryTimeoutError` past that), and a reply
-        that lost a chunk between the box's chips or on the control link raises
-        `TransferReplyIncompleteError`.
-        """
+        """`TRANSFER`: run one control transfer against the real device."""
         buf, n = _bytes_buf(out, "out")
         reply = (_native.u8 * _native.MEDIUS_MAX_TRANSFER_REPLY)()
         outcome = _native.MediusTransferOutcome()

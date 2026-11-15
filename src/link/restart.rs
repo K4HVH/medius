@@ -76,11 +76,8 @@ impl Pending {
 #[derive(Debug, Default)]
 pub(crate) struct RestartWatch {
     state: Mutex<Watch>,
-    // Opened to update: a box on any protocol from MIN_PROTO_VER on is reached, never refused.
     for_update: AtomicBool,
-    // The box's protocol while it is below this build's (0 otherwise): only the update path is sent.
     update_only: AtomicU8,
-    // Every hello the box sent, on any protocol: a count that moves when a chip boots.
     boots: AtomicU64,
 }
 
@@ -115,8 +112,6 @@ impl RestartWatch {
         }
     }
 
-    // Whether a box on `proto` is reached on the update path only: opened to update, and on an
-    // older or newer protocol from MIN_PROTO_VER on. The link stays update-only from then on.
     pub(crate) fn reaches_update_only(&self, proto: u8) -> bool {
         if !self.for_update.load(Ordering::SeqCst) || proto == PROTO_VER || proto < MIN_PROTO_VER {
             return false;

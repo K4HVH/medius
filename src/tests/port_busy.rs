@@ -1,13 +1,8 @@
-//! A control port another process holds is refused at open, naming the holder: two readers split
-//! the box's frames between them.
-
 use std::fs::File;
 use std::io::{BufRead, BufReader, Write};
 use std::process::{Child, Command, Stdio};
 use std::time::Duration;
 
-// A pty whose master another process keeps open (the crate forbids unsafe code, so no openpty
-// here). Its slave is left unheld; the caller decides who holds it.
 fn pty() -> (Owner, String) {
     let mut owner = Command::new("python3")
         .args([
@@ -37,7 +32,6 @@ struct Owner {
 }
 
 impl Owner {
-    // The bytes written to the slave so far, read off the master.
     fn bytes_received(&mut self) -> usize {
         writeln!(self.child.stdin.as_mut().expect("stdin")).expect("ask");
         let mut line = String::new();

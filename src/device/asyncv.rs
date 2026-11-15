@@ -342,9 +342,6 @@ impl AsyncDevice {
         self.offload(|d| d.wait_firmware_confirmed()).await
     }
 
-    // Not cancellable: dropping the future stops the wait, not the thread, and `update_firmware`
-    // still reboots the box. The crate has no runtime or timer to bound async waits with, so it
-    // drives the sync path and keeps one implementation of the wire.
     async fn offload<T, F>(&self, f: F) -> Result<T>
     where
         T: Send + 'static,
@@ -542,15 +539,12 @@ impl AsyncDevice {
     }
 
     /// `TRANSFER`: one control transfer against the real device; see [`Device::transfer`].
-    /// Dropping the future stops the wait, not the transfer, and the box refuses another until it
-    /// ends.
     pub async fn transfer(&self, ep: u8, setup: Setup, out: &[u8]) -> Result<TransferOutcome> {
         self.transfer_timeout(ep, setup, out, DEFAULT_TRANSFER_TIMEOUT)
             .await
     }
 
-    /// [`transfer`](Self::transfer) with the box's wait on the real device set to `timeout`; see
-    /// [`Device::transfer_timeout`].
+    /// [`transfer`](Self::transfer) with the box's wait on the real device set to `timeout`.
     pub async fn transfer_timeout(
         &self,
         ep: u8,

@@ -8,24 +8,10 @@ pub const SOF: u8 = 0xA5;
 /// Maximum payload length (§2); a larger `LEN` is rejected as bogus.
 pub const MAX_PAYLOAD: usize = 512;
 
-/// Control-protocol version in `RESP(VERSION)` (§4.1). The handshake refuses a box reporting any
-/// other version with [`Error::BadProtoVer`](crate::Error::BadProtoVer); update that box from
-/// <https://medius.k4tech.net/dashboard>.
-///
-/// 10 (v3.5.0): `TRANSFER` carries how long the box waits on the real device; `TRANSFER_RESP` comes
-/// in chunks, names the stage the transfer ended in and adds `BUSY`, `SUSPENDED` and `ERROR`; a
-/// `CONTROL` event's NAK covers every control endpoint; `RESP(STATS)` grows from 31 to 33 bytes (the
-/// host chip's restarts the device chip saw). 9 (v3.4.2): `RESP(STATS)` grows from 17 to
-/// 31 bytes (a dropped-frame counter per inter-chip link direction, one for relay back-pressure,
-/// and the session counter); a `CONTROL` event's handshake moves to flags bits 0-1, beside the rule
-/// bit (b7). 8 (v3.4.1): reshaped `RESP(CLIP)` and `CLIP_TRIGGER`; an interrupt OUT packet on a
-/// vendor interface matches as `VendorInterrupt` (7 matched it as `HidOut`). 7 (v3.4.0): the
-/// advanced control layer (`RAW`/`TRANSFER`/`REWRITE`/`PATCH`) and `u16` `HEALTH` flags.
+/// Control-protocol version this build speaks, reported in `RESP(VERSION)`.
 pub const PROTO_VER: u8 = 10;
 
-/// Oldest control protocol whose update path this build speaks: from 5 on, `QUERY(VERSION)`,
-/// `QUERY(FIRMWARE)` and `UPDATE` are unchanged, so [`Device::open_for_update`](crate::Device::open_for_update)
-/// can bring a box on any protocol from here to [`PROTO_VER`] up to date.
+/// Oldest control protocol whose update path this build speaks.
 pub const MIN_PROTO_VER: u8 = 5;
 
 /// `INJECT` class byte: the momentary-usage field kind.
@@ -60,8 +46,6 @@ pub const Q_LOCKS: u8 = 6;
 /// Catch table, drop counts and inter-chip clock (§4.9, v1.6.0).
 pub const Q_CATCH: u8 = 7;
 // selector 8 retired (was Q_KBD_CAPS; keyboard caps folded into the unified Q_CAPS = 3).
-/// Persistent box options, read by id: `QUERY [Q_OPTIONS][id]` → `RESP [Q_OPTIONS][id][value..]`
-/// (§4.14).
 pub const Q_OPTIONS: u8 = 9;
 
 /// `OPTION` id: imperfect-clone opt-in. Set value `[allow u8]`; readback adds `over_capacity`/`clone_imperfect`.
@@ -89,15 +73,11 @@ pub const BEARING_PER_AXIS: u8 = 0;
 /// it is unscaled.
 pub const BEARING_VECTOR: u8 = 1;
 
-/// Buffered-clip status selector: `QUERY [Q_CLIP]` → `RESP(CLIP)` (§4.15).
 pub const Q_CLIP: u8 = 10;
-/// Both chips' firmware versions and slot state: `QUERY [Q_FIRMWARE]` → `RESP(FIRMWARE)` (§4.16).
 pub const Q_FIRMWARE: u8 = 11;
-/// Rewrite-rule table summary: `QUERY [Q_REWRITE]` → `RESP(REWRITE)` (flags + gen + list) (§3.14, §4.17).
 pub const Q_REWRITE: u8 = 12;
 /// One rewrite rule in full, in `REWRITE`'s shape: `QUERY [Q_REWRITE_ENTRY][index]` (§4.17).
 pub const Q_REWRITE_ENTRY: u8 = 13;
-/// Descriptor-patch set summary: `QUERY [Q_PATCHES]` → `RESP(PATCHES)` (flags + list) (§3.14, §4.17).
 pub const Q_PATCHES: u8 = 14;
 /// One descriptor patch in full, in `PATCH`'s shape: `QUERY [Q_PATCH_ENTRY][index]` (§4.17).
 pub const Q_PATCH_ENTRY: u8 = 15;
@@ -206,11 +186,8 @@ pub const H_CATCH_ON: u8 = 0x40;
 pub const H_KBD_ATT: u8 = 0x80;
 
 // `HEALTH` is a `u16` LE from `CTRL_PROTO_VER 7` (§4.2); these three are in the high byte.
-/// The rewrite-rule table (§3.14) is non-empty (v3.4.0).
 pub const H_REWRITE_ON: u16 = 0x0100;
-/// The clone serves a patched descriptor set (§3.14) (v3.4.0).
 pub const H_PATCH_ON: u16 = 0x0200;
-/// A field transform is active (v3.4.0).
 pub const H_TRANSFORM_ON: u16 = 0x0400;
 
 /// `CATCH` class: a mouse button (§3.9). Classes 0..3 are `LOCK`'s classes unchanged.
@@ -229,7 +206,6 @@ pub const CATCH_CLS_HID_OUT: u8 = 5;
 pub const CATCH_CLS_VEND_INTR: u8 = 6;
 /// `CATCH` class: vendor-interface bulk traffic, keyed by endpoint number and direction (§3.9).
 pub const CATCH_CLS_VEND_BULK: u8 = 7;
-/// `CATCH` class: a proxied control transaction, keyed by endpoint number (§3.9).
 pub const CATCH_CLS_CONTROL: u8 = 8;
 /// `CATCH` class: the bytes the clone emitted, keyed by endpoint number, direction IN (§3.9).
 pub const CATCH_CLS_EMIT: u8 = 9;
@@ -250,7 +226,6 @@ pub const CATCH_MAX_ENTRIES: usize = 32;
 pub const CATCH_CTRL_OK: u8 = 0x00;
 /// The PC got a STALL.
 pub const CATCH_CTRL_STALL: u8 = 0x01;
-/// NAKed until the PC gave up.
 pub const CATCH_CTRL_NAK: u8 = 0x02;
 /// The bits of a `CATCH_CLS_CONTROL` event's flags that carry the handshake.
 pub const CATCH_CTRL_MASK: u8 = 0x03;
@@ -265,7 +240,6 @@ pub const CATCH_F_ZLP: u8 = 0x02;
 /// `RESP(CATCH).clk_rate_ppb` sentinel: no fitted drift rate. A fitted 0 means matched crystals.
 pub const CLK_RATE_NONE: i32 = i32::MIN;
 
-// `TRANSFER_RESP` `status` (§3.14), also a `CLIP_XFER` event's flags byte.
 pub const XFER_OK: u8 = 0x00;
 pub const XFER_BUSY: u8 = 0xF9;
 pub const XFER_SUSPENDED: u8 = 0xFA;
@@ -274,15 +248,11 @@ pub const XFER_REFUSED: u8 = 0xFC;
 pub const XFER_STALL: u8 = 0xFD;
 pub const XFER_NO_ANSWER: u8 = 0xFE;
 pub const XFER_NO_DEVICE: u8 = 0xFF;
-// `TRANSFER_RESP` `stage`: where the transfer ended.
 pub const XFER_STAGE_SETUP: u8 = 0;
 pub const XFER_STAGE_DATA: u8 = 1;
 pub const XFER_STAGE_STATUS: u8 = 2;
-/// `TRANSFER_RESP` flags bit 0: the reply's last chunk, whose `status` and `stage` are the outcome.
 pub const XFER_LAST: u8 = 0x01;
-/// `TRANSFER` bytes ahead of the OUT data: `[ep][timeout_ms u16][setup 8]`.
 pub const XFER_REQ_HDR: usize = 11;
-/// `TRANSFER_RESP` bytes ahead of a chunk's data: `[ep][status][stage][flags][offset u16]`.
 pub const XFER_RESP_HDR: usize = 6;
 /// Most OUT data one `TRANSFER` carries: one frame less its header.
 pub const TRANSFER_OUT_MAX: usize = MAX_PAYLOAD - XFER_REQ_HDR;
@@ -303,7 +273,6 @@ pub const RW_REPLACE: u8 = 3;
 pub const RW_ANSWER: u8 = 4;
 /// Control: protocol STALL.
 pub const RW_STALL: u8 = 5;
-/// Control: NAK until the PC gives up.
 pub const RW_NAK: u8 = 6;
 /// Control IN: overwrite the native reply at `off`.
 pub const RW_REPLY_PATCH: u8 = 7;
@@ -344,15 +313,12 @@ pub const REWRITE_MATCH_MAX: usize = PKT_MATCH_MAX;
 
 // `TRANSFORM` op byte (§3.15, `CTRL_XF_*`): a field operation on the semantic path.
 // `sclass`/`dclass` reuse the input classes ([`CATCH_CLS_AXIS`]/`_BTN`/`_KEY`/`_MEDIA`).
-/// Move a source field into a destination (axis→axis or button→button in one report, or button→key /
-/// button→media across classes).
 pub const TF_REMAP: u8 = 0;
 /// Exchange two axes (read both, write both).
 pub const TF_SWAP: u8 = 1;
 /// Ops the box admits (`CTRL_XF_OP_COUNT`): a byte at or above it is refused.
 pub const TF_OP_COUNT: u8 = 2;
 
-/// Field-transform table summary: `QUERY [Q_TRANSFORMS]` → `RESP(TRANSFORMS)` (flags + list) (§3.15).
 pub const Q_TRANSFORMS: u8 = 16;
 /// Entries the box's transform table holds (`CTRL_TRANSFORM_MAXN`); past it an entry is refused,
 /// flagged in `RESP(TRANSFORMS).table_full`.
@@ -380,8 +346,7 @@ pub const LOCK_DIR_POS: u8 = 1;
 pub const LOCK_DIR_NEG: u8 = 2;
 pub const LOCK_DIR_WITH: u8 = 3;
 pub const LOCK_DIR_AGAINST: u8 = 4;
-/// `LOCK` scale (§3.8), an `i16` on the wire: percent of the native value kept. 0 blocks, 100
-/// passes untouched, >100 amplifies, up to 255 (2.55x).
+/// `LOCK` scale: percent of the native value kept; 0 blocks, 100 passes, up to 255 (2.55x).
 pub const LOCK_SCALE_BLOCK: i16 = 0;
 pub const LOCK_SCALE_PASS: i16 = 100;
 pub const LOCK_SCALE_MAX: i16 = 255;
@@ -395,7 +360,6 @@ pub const LOCK_SCALE_MIN: i16 = -LOCK_SCALE_MAX;
 pub const KBC_NKRO: u8 = 0x01;
 /// `CAPS` kbd_flags: a Consumer (media-key) collection is present and injectable/catchable.
 pub const KBC_CONSUMER: u8 = 0x02;
-/// `CAPS` kbd_flags: a System-control collection is present (passthrough-only, not injectable).
 pub const KBC_SYSTEM: u8 = 0x04;
 /// `CAPS` kbd_flags: the keyboard report sits behind a HID report ID.
 pub const KBC_REPORT_ID: u8 = 0x08;
@@ -437,62 +401,57 @@ pub const LOG_VERBOSE: u8 = 4;
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum FrameType {
-    /// `MOVE`: relative-axis motion, motion-tagged (cursor dx/dy, wheel dz or pan dpan) (PC→box).
+    /// `MOVE`: relative-axis motion, motion-tagged (cursor dx/dy, wheel dz or pan dpan) (PC->box).
     Move = 0x01,
-    /// `INJECT`: set a momentary-usage override (button/key/media), class-tagged (PC→box).
+    /// `INJECT`: set a momentary-usage override (button/key/media), class-tagged (PC->box).
     Inject = 0x03,
-    /// `RESET`: clear all injection (PC→box).
+    /// `RESET`: clear all injection (PC->box).
     Reset = 0x04,
-    /// `QUERY`: request a state snapshot, elicits `RESP` (PC→box).
+    /// `QUERY`: request a state snapshot, elicits `RESP` (PC->box).
     Query = 0x05,
-    /// `RESP`: reply to a `QUERY`, `SEQ` echoes the request (box→PC).
+    /// `RESP`: reply to a `QUERY`, `SEQ` echoes the request (box->PC).
     Resp = 0x06,
-    /// `REBOOT_DL`: reboot a chip to ROM download or to run (PC→box).
+    /// `REBOOT_DL`: reboot a chip to ROM download or to run (PC->box).
     RebootDl = 0x07,
-    /// `LOG`: unsolicited device diagnostics (box→PC).
+    /// `LOG`: unsolicited device diagnostics (box->PC).
     Log = 0x08,
-    /// `LED`: status LED override (PC→box).
+    /// `LED`: status LED override (PC->box).
     Led = 0x09,
-    /// `LOCK`: lock/unlock an axis or button edge (PC→box).
+    /// `LOCK`: lock/unlock an axis or button edge (PC->box).
     Lock = 0x0A,
-    /// `CATCH`: subscribe to the native input event stream (PC→box).
+    /// `CATCH`: add or remove one catch subscription entry (PC->box).
     Catch = 0x0B,
-    /// `MOTION_EVENT`: one unsolicited relative-axis catch event (dx/dy/dz/dpan); `SEQ` rolling (box→PC).
+    /// `MOTION_EVENT`: one unsolicited relative-axis catch event; `SEQ` rolling (box->PC).
     MotionEvent = 0x0C,
-    /// `USAGE_EVENT`: one unsolicited held-usage snapshot (class-tagged button/key/media); box→PC.
+    /// `USAGE_EVENT`: one unsolicited held-usage snapshot (class-tagged button/key/media); box->PC.
     UsageEvent = 0x0F,
-    /// `TRAFFIC_EVENT`: one unsolicited byte-oriented catch event (HID / vendor / control / emit /
-    /// bus); box→PC.
+    /// `TRAFFIC_EVENT`: one unsolicited byte-oriented catch event (box->PC).
     TrafficEvent = 0x16,
-    /// `OPTION`: set a persistent box option by id (PC→box).
+    /// `OPTION`: set a persistent box option by id (PC->box).
     Option = 0x11,
-    /// `CLIP_APPEND`: append buffered-clip entries to the box's ring; `SEQ` = append seq (PC→box).
+    /// `CLIP_APPEND`: append buffered-clip entries to the box's ring; `SEQ` = append seq (PC->box).
     ClipAppend = 0x12,
-    /// `CLIP_CTRL`: a clip engine verb (start/stop/pause/resume/restart/toggle/clear/finalize) (PC→box).
+    /// `CLIP_CTRL`: a clip engine verb (PC->box).
     ClipCtrl = 0x13,
-    /// `CLIP_SET`: a clip scalar setting `[id][value]` (autolock/loop/retain/ride) (PC→box).
+    /// `CLIP_SET`: a clip scalar setting `[id][value]` (autolock/loop/retain/ride) (PC->box).
     ClipSet = 0x14,
-    /// `CLIP_TRIGGER`: add/remove a clip trigger (PC→box). An input binding is
-    /// `[class][id u16][edge][action][flags]`; a packet trigger names a traffic class and carries
-    /// `[slen][mlen][match][mask]` after those six bytes.
+    /// `CLIP_TRIGGER`: add/remove a clip trigger (PC->box).
     ClipTrigger = 0x15,
-    /// `UPDATE`: stage and activate firmware on either chip (PC→box) (§3.13).
+    /// `UPDATE`: stage and activate firmware on either chip (PC->box).
     Update = 0x17,
-    /// `UPDATE_RESP`: reply to one `UPDATE` op (box→PC) (§4.16).
+    /// `UPDATE_RESP`: reply to one `UPDATE` op (box->PC).
     UpdateResp = 0x18,
-    /// `RAW`: put raw bytes on a cloned endpoint, fire-and-forget (PC→box, §3.14, `OPTION(IMPERFECT)`).
+    /// `RAW`: put raw bytes on a cloned endpoint, fire-and-forget (PC->box).
     Raw = 0x19,
-    /// `TRANSFER`: one control transfer against the real device, replied to by `TransferResp`
-    /// (PC→box, §3.14).
+    /// `TRANSFER`: one control transfer against the real device (PC->box).
     Transfer = 0x1A,
-    /// `TRANSFER_RESP`: one chunk of the reply to a `TRANSFER`; `SEQ` echoes the request (box→PC,
-    /// §3.14).
+    /// `TRANSFER_RESP`: one chunk of the reply to a `TRANSFER`; `SEQ` echoes the request (box->PC).
     TransferResp = 0x1B,
-    /// `REWRITE`: add/overwrite/remove one on-box rewrite rule, fire-and-forget (PC→box, §3.14).
+    /// `REWRITE`: add/overwrite/remove one on-box rewrite rule, fire-and-forget (PC->box).
     Rewrite = 0x1C,
-    /// `PATCH`: store/apply/clear a descriptor patch, fire-and-forget (PC→box, §3.14).
+    /// `PATCH`: store/apply/clear a descriptor patch, fire-and-forget (PC->box).
     Patch = 0x1D,
-    /// `TRANSFORM`: add/overwrite/remove one field transform, fire-and-forget (PC→box, §3.15).
+    /// `TRANSFORM`: add/overwrite/remove one field transform, fire-and-forget (PC->box).
     Transform = 0x1E,
 }
 

@@ -134,9 +134,6 @@ pub fn name_payload(name: &str) -> Vec<u8> {
     v
 }
 
-/// `RAW` (§3.14): `[ep_num u8][dir u8][bytes…]`; put `bytes` verbatim on cloned endpoint `ep` in
-/// `direction` (IN toward the game PC, OUT to the real device). `ep` is masked to its low nibble,
-/// the bare endpoint number the box reassembles into an address.
 pub fn raw_payload(ep: u8, direction: Direction, bytes: &[u8]) -> Vec<u8> {
     let mut v = Vec::with_capacity(2 + bytes.len());
     v.push(ep & 0x0f);
@@ -145,8 +142,6 @@ pub fn raw_payload(ep: u8, direction: Direction, bytes: &[u8]) -> Vec<u8> {
     v
 }
 
-/// `TRANSFER` (§3.14): `[ep u8][timeout_ms u16 LE][setup 8][OUT data…]`; one control transfer
-/// against the real device, which the box waits `timeout_ms` on.
 pub fn transfer_payload(ep: u8, timeout_ms: u16, setup: Setup, out: &[u8]) -> Vec<u8> {
     let mut v = Vec::with_capacity(XFER_REQ_HDR + out.len());
     v.push(ep);
@@ -185,8 +180,6 @@ pub fn rewrite_payload(
     v
 }
 
-/// `PATCH` (§3.14): `[section u8][cfg u8][index u8][offset u16 LE][bytes…]`; a zero-length `bytes`
-/// removes the patch at that key.
 pub fn patch_payload(section: u8, cfg: u8, index: u8, offset: u16, bytes: &[u8]) -> Vec<u8> {
     let mut v = Vec::with_capacity(5 + bytes.len());
     v.push(section);

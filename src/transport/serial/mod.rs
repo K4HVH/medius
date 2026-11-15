@@ -4,7 +4,6 @@ use std::time::Duration;
 
 pub(crate) const CTRL_BAUD: u32 = 6_000_000;
 
-// Firmware before v3.4.0 (control protocols 5 and 6) runs the link at 4 Mbaud.
 pub(crate) const LEGACY_CTRL_BAUD: u32 = 4_000_000;
 
 // Bounds a parked read so the reader thread stays responsive to stop and reconnect.
@@ -20,8 +19,6 @@ mod portable;
 #[cfg(not(windows))]
 pub(crate) use portable::SerialTransport;
 
-/// The other processes with the port at `path` open, as `"<name> (pid N)"`; empty where the OS can't
-/// say. Each descriptor's link is read, never followed: a stat of one on a hung mount would hang.
 #[cfg(target_os = "linux")]
 pub(crate) fn holders(path: &std::path::Path) -> Vec<String> {
     let Ok(want) = std::fs::canonicalize(path) else {
@@ -46,6 +43,7 @@ pub(crate) fn holders(path: &std::path::Path) -> Vec<String> {
         let Ok(fds) = std::fs::read_dir(entry.path().join("fd")) else {
             continue;
         };
+        // Read each descriptor's link, never follow it: a stat on a hung mount would hang.
         let holds = fds
             .flatten()
             .any(|fd| std::fs::read_link(fd.path()).is_ok_and(|t| t == want));

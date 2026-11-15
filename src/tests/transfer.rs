@@ -1,6 +1,3 @@
-//! `RAW` and `TRANSFER` (§3.14): payload bytes, the setup packet, the status and stage bytes, the
-//! checks made before the wire, and a reply assembled from its chunks.
-
 use std::time::Duration;
 
 use crate::device::raw::{transfer_timeout_ms, validate_transfer_data};
@@ -36,15 +33,12 @@ fn setup_bytes_are_little_endian() {
 #[test]
 fn transfer_payload_bytes() {
     let s = Setup::new(0x80, 0x06, 0x0100, 0x0000, 18);
-    // [ep 0][timeout 1000 LE][setup 8][no OUT data].
     assert_eq!(
         transfer_payload(0, 1000, s, &[]),
         vec![
             0x00, 0xE8, 0x03, 0x80, 0x06, 0x00, 0x01, 0x00, 0x00, 0x12, 0x00
         ]
     );
-    // An OUT transfer carries its data after the setup packet; the timeout's bytes differ, so a
-    // swapped pair shows.
     let out = Setup::new(0x00, 0x09, 0x0200, 0x0000, 2);
     assert_eq!(
         transfer_payload(3, 0x1234, out, &[0xAA, 0xBB]),
@@ -89,7 +83,6 @@ fn the_timeout_is_whole_milliseconds_the_box_takes() {
     assert_eq!(ms(Duration::from_millis(1)), Some(1));
     assert_eq!(ms(Duration::from_micros(1_999)), Some(1));
     assert_eq!(ms(Duration::from_millis(65_535)), Some(65_535));
-    // The box refuses 0, and the field is 16 bits: neither end is clamped into range.
     for d in [
         Duration::ZERO,
         Duration::from_micros(999),
@@ -124,7 +117,6 @@ fn out_data_is_wlength_bytes_for_out_and_none_for_in() {
     ));
 }
 
-// Replies scripted a chunk at a time, as the box sends them or as a lossy link delivers them.
 mod chunks {
     use std::sync::Arc;
     use std::time::Duration;
@@ -176,7 +168,6 @@ mod chunks {
         let a: Vec<u8> = (0..448).map(|i| i as u8).collect();
         let b: Vec<u8> = (0..100).map(|i| !(i as u8)).collect();
         let (a2, b2) = (a.clone(), b.clone());
-        // As the host chip sends them: chunks before the last say OK in the data stage.
         let dev = device(move |seq, ep| {
             let mut out = chunk(seq, ep, 0x00, 1, 0, 0, &a2);
             out.extend(chunk(seq, ep, 0x00, 1, 0, 448, &b2));
@@ -202,8 +193,6 @@ mod chunks {
         ));
     }
 
-    // The 65536 bytes a device sends for wLength 0xFFFF in 64-byte packets, in 448-byte chunks, then the empty
-    // chunk ending the reply at 65536, which the u16 offset carries as 0.
     fn full_reply(seq: u8, ep: u8, lose_last_data: bool) -> Vec<u8> {
         let mut out = Vec::new();
         for off in (0..65536usize).step_by(448) {
@@ -249,8 +238,6 @@ mod chunks {
     #[test]
     fn frames_that_are_not_this_transfers_chunks_are_skipped() {
         let dev = device(|seq, ep| {
-            // A chunk too short for its header, one echoing another endpoint and a query reply on
-            // the same SEQ all leave the reply as the real chunks build it.
             let mut out = encode(FrameType::TransferResp, seq, &[ep, 0, 0, XFER_LAST]).unwrap();
             out.extend(chunk(seq, ep ^ 1, 0xFF, 0, XFER_LAST, 0, &[0x99]));
             out.extend(encode(FrameType::Resp, seq, &[ep, 0x00, 0x02, XFER_LAST, 0, 0]).unwrap());
@@ -401,7 +388,6 @@ mod mock_roundtrip {
 
     #[test]
     fn transfer_refused_when_opt_in_off() {
-        // No pre-check: the box itself replies REFUSED, which is more faithful than a local error.
         let device = Device::with_mock(MockBox::new());
         let reply = device.transfer(0, GET_DEVICE, &[]).unwrap();
         assert_eq!(reply.status, TransferStatus::Refused);
@@ -423,7 +409,6 @@ mod mock_roundtrip {
             Err(Error::TransferTimeoutRange { .. })
         ));
         assert!(!mock.saw(FrameType::Transfer));
-        // A data stage one frame cannot carry is refused at the frame, and its SEQ is freed.
         let big = Setup::new(0x21, 0x09, 0x0200, 0, 502);
         assert!(matches!(
             device.transfer(0, big, &[0; 502]),

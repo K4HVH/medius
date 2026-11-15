@@ -26,7 +26,7 @@ pub enum MediusStatus {
     ErrUnknown = 11,
     /// The subscription needs more entries than the box's table holds.
     ErrCatchTableFull = 12,
-    /// A catch subscription with no filters, which would never yield an event.
+    /// A catch subscription with no filters.
     ErrEmptySubscription = 13,
     /// A non-zero `capture` on an input class, which carries no packet.
     ErrCaptureNotApplicable = 14,
@@ -36,7 +36,7 @@ pub enum MediusStatus {
     ErrWildcardNotInput = 16,
     /// An input filter narrowed to one edge, which cannot be decoded into press and release.
     ErrHalfEdgeInputFilter = 17,
-    /// An exact id equal to the blanket sentinel, which would address the whole class.
+    /// An exact id equal to the blanket sentinel, which addresses the whole class.
     ErrReservedId = 18,
     /// `MEDIUS_DIRECTION_WITH` / `_AGAINST` on a target with no bearing.
     ErrRelativeDirection = 19,
@@ -64,8 +64,7 @@ pub enum MediusStatus {
     ErrClipFrameCount = 30,
     /// A clip frame that encodes to more than `MEDIUS_CLIP_ENTRY_MAX` bytes.
     ErrClipFrameTooLong = 31,
-    /// A control transfer, or a clip's, whose data disagrees with its setup packet: `length` bytes
-    /// for OUT, none for IN.
+    /// A control transfer, or a clip's, whose data disagrees with its setup packet.
     ErrTransferData = 32,
     /// A clip packet trigger the box would refuse; `medius_last_error_message` says why.
     ErrClipPacketTrigger = 33,
@@ -79,7 +78,6 @@ pub enum MediusStatus {
     /// A transfer reply that lost a chunk between the box's chips or on the control link.
     ErrTransferReplyIncomplete = 37,
     /// The control port is open in another process (Linux): the port takes one reader.
-    /// `medius_last_error_message` names each holder as `"<name> (pid N)"`.
     ErrPortBusy = 38,
 }
 
@@ -219,7 +217,7 @@ pub unsafe extern "C" fn medius_last_error_message(buf: *mut c_char, cap: usize)
     })
 }
 
-/// The last error's `BadProtoVer` version byte, or 0 if it carried none.
+/// The last error's protocol version byte if it was `MEDIUS_STATUS_ERR_BAD_PROTO_VER`, else 0.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_last_error_proto_ver() -> u8 {
     guard(0, || LAST_ERROR.with(|e| e.borrow().proto_ver))

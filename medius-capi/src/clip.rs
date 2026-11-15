@@ -106,7 +106,6 @@ pub unsafe extern "C" fn medius_clip_frame_pan(f: *mut MediusClipFrame, dpan: i1
     with_frame(f, |cf| cf.pan(dpan))
 }
 
-/// Add an edge driving `usage` with `action`; `ErrInvalidArg` on a null frame or invalid usage.
 fn frame_edge(f: *mut MediusClipFrame, usage: MediusUsage, action: medius::Action) -> MediusStatus {
     let Some(u) = input_to_medius(usage) else {
         return fail(MediusStatus::ErrInvalidArg, "invalid clip usage");
@@ -179,11 +178,7 @@ pub unsafe extern "C" fn medius_clip_frame_raw(
     with_frame(f, |cf| cf.raw(ep_num, dir, slice))
 }
 
-/// Add a control transfer against the real device, as `medius_device_transfer` runs one, with 4 s
-/// for the real device to answer. `out_data[0..out_len]` is the OUT data stage: `setup.length`
-/// bytes for OUT, none for IN, checked by `medius_clip_append`. The reply arrives as a
-/// `MEDIUS_CATCH_CLASS_CLIP_TRANSFER` event. The box runs it only with the imperfect-clone opt-in
-/// on.
+/// Add a control transfer against the real device to the frame, with a 4 s timeout.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_clip_frame_transfer(
     f: *mut MediusClipFrame,
@@ -294,7 +289,6 @@ pub unsafe extern "C" fn medius_clip_builder_pan(
     })
 }
 
-/// Append a one-edge frame driving `usage` with `action`; `ErrInvalidArg` on a null builder or invalid usage.
 fn builder_edge(
     b: *mut MediusClipBuilder,
     usage: MediusUsage,
@@ -438,13 +432,7 @@ pub unsafe extern "C" fn medius_clip_free(clip: *mut MediusClip) {
     });
 }
 
-/// Append the builder's entries to the ring as whole-entry frames, each stamped with the next
-/// append-sequence number. Every entry is checked before the first frame is sent, so a refusal
-/// sends nothing. Refused: a frame with more than `MEDIUS_CLIP_EDGES_MAX` edges or
-/// `MEDIUS_CLIP_RAW_MAX` raw reports (`MEDIUS_STATUS_ERR_CLIP_FRAME_COUNT`); a frame encoding to
-/// more than `MEDIUS_CLIP_ENTRY_MAX` bytes (`..._CLIP_FRAME_TOO_LONG`); a raw report neither IN nor
-/// OUT (`..._RAW_DIRECTION`, or `..._RELATIVE_DIRECTION` for the bearing-relative pair); a transfer
-/// whose data doesn't match its setup packet (`..._TRANSFER_DATA`).
+/// Append the builder's entries to the ring as whole-entry frames; a refusal sends nothing.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_clip_append(
     clip: *mut MediusClip,
@@ -680,7 +668,7 @@ pub unsafe extern "C" fn medius_clip_lost(clip: *const MediusClip) -> bool {
     })
 }
 
-/// Query the ring depth, progress, and playback counters; recover a `Faulted` state with `medius_clip_clear`.
+/// Query the ring depth, progress, and playback counters.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_clip_query_status(
     clip: *mut MediusClip,

@@ -37,10 +37,7 @@ pub enum CatchClass {
     /// [`IN`](Direction::IN) or [`OUT`](Direction::OUT). The only class that can saturate the
     /// control link by itself, and the first dropped when the link cannot keep up.
     VendorBulk = CATCH_CLS_VEND_BULK,
-    /// Control transaction the game PC received, on any control endpoint; `id` is the endpoint
-    /// number (0 = EP0). On EP0 every class and vendor request raises one, those the box answers from
-    /// its cache or a rule ends included, as does each standard request relayed to the real device;
-    /// the standard requests the clone serves itself raise none.
+    /// Control transaction the game PC received; `id` is the endpoint number (0 = EP0).
     Control = CATCH_CLS_CONTROL,
     /// Bytes the clone emitted; `id` is the endpoint number, `direction`
     /// [`IN`](Direction::IN).
@@ -128,10 +125,7 @@ pub enum TrafficClass {
     /// Bulk traffic on a vendor interface; `id` is the endpoint number, `direction`
     /// [`IN`](Direction::IN) or [`OUT`](Direction::OUT).
     VendorBulk = CATCH_CLS_VEND_BULK,
-    /// Control transaction the game PC received, on any control endpoint; `id` is the endpoint
-    /// number (0 = EP0). On EP0 every class and vendor request raises one, those the box answers from
-    /// its cache or a rule ends included, as does each standard request relayed to the real device;
-    /// the standard requests the clone serves itself raise none.
+    /// Control transaction the game PC received; `id` is the endpoint number (0 = EP0).
     Control = CATCH_CLS_CONTROL,
     /// Bytes the clone emitted; `id` is the endpoint number, `direction`
     /// [`IN`](Direction::IN).
@@ -206,12 +200,6 @@ impl From<Class> for CatchClass {
 }
 
 /// How much of each packet to keep.
-///
-/// Traffic classes only: an input class carries no packet, so a capture on one is refused. The
-/// control link runs at 6 Mbaud, and a vendor bulk pipe at whole packets saturates it by itself.
-///
-/// A ceiling request: the box holds one entry per address and cuts once. Another subscriber asking
-/// for more of the same address raises yours too.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Default)]
 pub enum Capture {
     /// Keep the whole packet.

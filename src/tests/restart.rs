@@ -591,8 +591,6 @@ fn scale_x(device: &Device) -> i16 {
         .scale_of(Axis::X, Direction::Positive)
 }
 
-// An inter-chip link drop releases the session with no re-clone or hello. The box counts it, and
-// since the clone is up the crate re-sends at once.
 #[test]
 fn a_release_that_leaves_the_clone_up_is_recovered() {
     let mock = MockBox::new();
@@ -609,8 +607,6 @@ fn a_release_that_leaves_the_clone_up_is_recovered() {
     assert_eq!(device.counters().restarts, 0);
 }
 
-// A detach takes the clone down, and nothing can land until another device is cloned: the recovery
-// waits, however long, then re-sends.
 #[test]
 fn a_detach_waits_for_the_next_clone() {
     let mock = MockBox::new();
@@ -660,7 +656,6 @@ fn the_mock_counts_a_release_only_after_a_command() {
     mock.detach();
     mock.attach();
     assert_eq!(session(), 1, "one command, one release counted");
-    // A detach counts once, its teardown included, and a fresh clone releases nothing.
     device.scale(Axis::X, Direction::Both, 40).unwrap();
     mock.detach();
     assert_eq!(session(), 2);
@@ -683,7 +678,6 @@ fn the_mock_counts_a_release_only_after_a_command() {
     assert_eq!(session(), 0, "and a commanded reboot boots clean");
 }
 
-// A host-chip reboot is counted, releases nothing, and a device-chip boot starts the count again.
 #[test]
 fn the_mock_counts_a_host_chip_restart() {
     let mock = MockBox::new();
@@ -873,8 +867,6 @@ fn dropping_the_device_does_not_wait_out_a_recovery() {
     );
 }
 
-// An APPLY with no device attached presents nothing, and the next device attached is cloned with the
-// stored set.
 #[test]
 fn the_mock_presents_a_patch_set_on_the_next_attach() {
     use crate::{Patch, PatchSection};

@@ -17,7 +17,6 @@ pub(crate) struct PendingEntry {
     waiter: Waiter,
 }
 
-// The first byte must match too: a stale reply on a reused `SEQ` is never taken as the awaited one.
 enum Waiter {
     Resp {
         what: u8,
@@ -46,8 +45,7 @@ impl TransferReply {
             return false;
         };
         let mut off = u16::from_le_bytes([lo, hi]) as usize;
-        // A reply runs to 65536 bytes, one past what the offset holds, so the empty chunk ending a reply of
-        // that length reads 0. In order, an empty chunk at 0 after data is that end.
+        // The empty chunk that ends a 65536-byte reply has offset 0: the u16 wraps.
         if off == 0 && data.is_empty() && !self.data.is_empty() {
             off = 1 << 16;
         }
@@ -226,7 +224,6 @@ impl Link {
         self.recv_query(seq, gen_id, &rx, what, timeout)
     }
 
-    /// One `TRANSFER` the box waits `timeout_ms` on, awaiting the last chunk of its reply.
     pub(crate) fn transfer(
         &self,
         ep: u8,
@@ -377,8 +374,6 @@ impl Link {
         std::thread::Builder::new()
             .name("medius-query-timeout".into())
             .spawn(move || {
-                // Past the timeout, or with the future dropped unanswered, the entry has no waiter left.
-                // A reply that came first has already freed it, and the generation guards a newer one.
                 let _ = cancel_rx.recv_timeout(timeout);
                 if let Some(inner) = weak.upgrade() {
                     inner.cancel_query(seq, gen_id);

@@ -48,7 +48,6 @@ fn keepalive_loop(ctx: KeepaliveCtx) {
         if ctx.stop.load(Ordering::SeqCst) {
             return;
         }
-        // A box below this build's protocol gets no held state and no recovery: only the update path.
         if ctx.restart.update_only().is_some() {
             ctx.restart.take_owed();
             std::thread::sleep(KEEPALIVE_STOP_POLL);

@@ -18,40 +18,22 @@ const HANDSHAKE_ATTEMPT_TIMEOUT: Duration = Duration::from_millis(250);
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Accept {
-    // This build's protocol only.
     Current,
-    // Any protocol from MIN_PROTO_VER on; below PROTO_VER, the update path only.
     Update,
 }
 
 impl Device {
-    /// Open the box at serial `path` and run the version handshake. On Linux, a port another
-    /// process holds open is refused with [`Error::PortBusy`].
+    /// Open the box at serial `path` and run the version handshake.
     pub fn open(path: impl AsRef<Path>) -> Result<Device> {
         Device::open_accepting(path.as_ref(), Accept::Current)
     }
 
-    /// Open the box at serial `path` to update it, on any control protocol from
-    /// [`MIN_PROTO_VER`](crate::MIN_PROTO_VER) on.
-    ///
-    /// Tries this build's 6 Mbaud control rate, then the 4 Mbaud firmware before v3.4.0 runs, and
-    /// [`wait_firmware_confirmed`](Self::wait_firmware_confirmed) follows the box to the other rate
-    /// when it reboots into firmware on it.
-    ///
-    /// A box on this build's [`PROTO_VER`](crate::PROTO_VER) opens as [`open`](Self::open) would. On
-    /// any other, the device is [update-only](Self::is_update_only): it answers
-    /// [`query_version`](Self::query_version), [`firmware_info`](Self::firmware_info),
-    /// [`stage_firmware`](Self::stage_firmware), [`activate_firmware`](Self::activate_firmware),
-    /// [`abort_update`](Self::abort_update), [`update_firmware`](Self::update_firmware) and
-    /// [`wait_firmware_confirmed`](Self::wait_firmware_confirmed), and every other call returns
-    /// [`Error::BadProtoVer`]. It holds no state and sends nothing on its own. Once updated, open the
-    /// box again to use it.
+    /// Open the box at serial `path` to update it, on any control protocol from `MIN_PROTO_VER` on.
     pub fn open_for_update(path: impl AsRef<Path>) -> Result<Device> {
         Device::open_accepting(path.as_ref(), Accept::Update)
     }
 
-    /// Whether this device reaches only the update path: the box speaks an older control protocol
-    /// than this build. See [`open_for_update`](Self::open_for_update).
+    /// Whether this device reaches only the update path.
     pub fn is_update_only(&self) -> bool {
         self.link.update_only().is_some()
     }
@@ -76,8 +58,6 @@ impl Device {
                 }))?
             }
         };
-        // The scan lists the port by its device name; `path` may be a link to it (/dev/serial/by-id). Without its
-        // serial, a reconnect has to probe every box and sim on the PC, which takes seconds.
         let real = std::fs::canonicalize(path).ok();
         let port_serial = crate::transport::scan::find_medius()
             .into_iter()
@@ -93,8 +73,6 @@ impl Device {
         Ok(device)
     }
 
-    // Opens to update at this build's control rate, then at the rate firmware before v3.4.0 runs, as the
-    // dashboard does; only silence moves on to the next rate.
     #[cfg(all(test, feature = "mock"))]
     pub(crate) fn open_with_opener_for_update(opener: Opener) -> Result<Device> {
         Ok(Device::open_with_opener_for_update_version(opener)?.0)
@@ -224,8 +202,7 @@ impl Device {
         Err(Error::NoReply)
     }
 
-    /// Open the first box found by VID/PID, with the handshake. On Linux, [`Error::PortBusy`] if
-    /// another process holds that box's port.
+    /// Open the first box found by VID/PID, with the handshake.
     pub fn find() -> Result<Device> {
         let port = crate::transport::scan::find_medius()
             .into_iter()

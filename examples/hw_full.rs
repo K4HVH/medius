@@ -257,8 +257,6 @@ mod linux {
             .collect();
         std::thread::sleep(Duration::from_millis(300));
 
-        // OPEN FOR UPDATE: a box on this build's protocol opens as a full device. Closed before the
-        // main device opens: the port takes one reader.
         let update_path = args
             .get(2)
             .cloned()
@@ -269,7 +267,6 @@ mod linux {
             .and_then(Device::open_for_update)
             .and_then(|d| Ok((d.is_update_only(), d.firmware_info()?)));
 
-        // PORT BUSY: with another process holding the port, the open is refused and names it.
         let port_busy = update_path.as_deref().map(|p| {
             let holder = std::fs::File::open(p).and_then(|f| {
                 std::process::Command::new("sleep")
@@ -1077,8 +1074,6 @@ mod linux {
         }
 
         {
-            // LOCK (keyboard/blanket): a key lock and the all-keys blanket set HEALTH lock_on and
-            // RESET clears them; verifying the block needs native keyboard input (run `medius.py`).
             let dev = device.as_ref().unwrap();
             let has_kbd = dev.query_health().map(|h| h.kbd_attached).unwrap_or(false);
             if has_kbd {
@@ -1184,12 +1179,6 @@ mod linux {
         }
 
         {
-            // HID_IN is host-stamped (the real device produced it) and EMIT device-stamped (the clone
-            // did). A wrong domain gives plausible wrong deltas, not an error, so it is asserted.
-            //
-            // EMIT is driven by injecting: a change-driven mouse NAKs at rest (the Mamba Elite
-            // sends nothing untouched), so waiting alone sees neither class. HID_IN needs the real
-            // device to report, and says so when it did not.
             let dev = device.as_ref().unwrap();
             let mut hid_in = 0usize;
             let mut emit = 0usize;
@@ -1990,9 +1979,6 @@ mod linux {
         }
 
         {
-            // A held Y scale survives the host chip's reboot: the chip returns within the link
-            // watch's timeout, so nothing is released. A slower reboot is a counted release, and
-            // the scale is re-sent. The device chip counts the restart once.
             let dev = device.as_ref().unwrap();
             let _ = dev.scale(Axis::Y, Direction::Both, 40);
             let before = dev.query_stats().ok();
@@ -2058,10 +2044,6 @@ mod linux {
             let refused = dev.transfer(0, get_device, &[]);
             let opt = dev.allow_imperfect_clones(true);
 
-            // TRANSFER: the 18-byte device descriptor; the whole configuration descriptor, asked
-            // with wLength 0xFFFF, in as many chunks as it takes; and the device descriptor again
-            // under a 10 s box-side wait. With the opt-in off the box refuses before the real
-            // device.
             let shape = |r: &medius::Result<medius::TransferOutcome>| {
                 r.as_ref()
                     .map(|o| (o.status, o.stage, o.data().len()))
