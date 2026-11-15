@@ -178,7 +178,7 @@ pub unsafe extern "C" fn medius_clip_frame_raw(
     with_frame(f, |cf| cf.raw(ep_num, dir, slice))
 }
 
-/// Add a control transfer against the real device to the frame, with a 4 s timeout.
+/// Add a control transfer as `medius_device_transfer` runs one, with a 4 s timeout.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_clip_frame_transfer(
     f: *mut MediusClipFrame,

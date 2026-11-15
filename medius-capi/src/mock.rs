@@ -166,7 +166,7 @@ pub unsafe extern "C" fn medius_mock_set_imperfect_status(
     });
 }
 
-/// Set the `TRANSFER` outcome: a status, a stage and the reply `data[0..len]`.
+/// Set the mock's `TRANSFER` reply: a status, a stage and `data[0..len]`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_mock_set_transfer_reply(
     mock: *mut MediusMockBox,
@@ -221,7 +221,7 @@ pub unsafe extern "C" fn medius_mock_set_bearing(
     });
 }
 
-/// Set the pacing mode and forced poll rate of the mock's OPTION(EMIT) reply.
+/// Set the mock's OPTION(EMIT) reply: pacing and forced poll rate.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_mock_set_emit_pace(
     mock: *mut MediusMockBox,

@@ -120,7 +120,7 @@ class MockBox:
         _native.lib.medius_mock_set_imperfect_status(self._handle, imperfect_to_c(status))
 
     def set_transfer_reply(self, reply: TransferOutcome):
-        """Set the TRANSFER outcome, sent in chunks as the box sends them."""
+        """Set the mock's `Device.transfer` reply."""
         raw = _as_bytes(reply.data, "data")
         buf = (_native.u8 * len(raw)).from_buffer_copy(raw)
         _native.lib.medius_mock_set_transfer_reply(

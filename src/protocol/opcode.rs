@@ -5,7 +5,7 @@ use core::fmt;
 /// Start-of-frame byte; the receiver resyncs by scanning for it (§2).
 pub const SOF: u8 = 0xA5;
 
-/// Maximum payload length (§2); a larger `LEN` is rejected as bogus.
+/// Largest byte payload one control-link frame carries.
 pub const MAX_PAYLOAD: usize = 512;
 
 /// Control-protocol version this build speaks, reported in `RESP(VERSION)`.
@@ -346,7 +346,7 @@ pub const LOCK_DIR_POS: u8 = 1;
 pub const LOCK_DIR_NEG: u8 = 2;
 pub const LOCK_DIR_WITH: u8 = 3;
 pub const LOCK_DIR_AGAINST: u8 = 4;
-/// `LOCK` scale: percent of the native value kept; 0 blocks, 100 passes, up to 255 (2.55x).
+/// `LOCK` scale: percent of the native value kept; 0 blocks, 100 passes, >100 amplifies up to 2.55x.
 pub const LOCK_SCALE_BLOCK: i16 = 0;
 pub const LOCK_SCALE_PASS: i16 = 100;
 pub const LOCK_SCALE_MAX: i16 = 255;
@@ -423,7 +423,7 @@ pub enum FrameType {
     Catch = 0x0B,
     /// `MOTION_EVENT`: one unsolicited relative-axis catch event; `SEQ` rolling (box->PC).
     MotionEvent = 0x0C,
-    /// `USAGE_EVENT`: one unsolicited held-usage snapshot (class-tagged button/key/media); box->PC.
+    /// `USAGE_EVENT`: one unsolicited held-usage snapshot (button/key/media), class-tagged (box->PC).
     UsageEvent = 0x0F,
     /// `TRAFFIC_EVENT`: one unsolicited byte-oriented catch event (box->PC).
     TrafficEvent = 0x16,

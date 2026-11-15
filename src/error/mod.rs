@@ -16,7 +16,7 @@ pub enum Error {
     #[error("no reply to version query during handshake")]
     NoReply,
 
-    /// The control port is open in another process, named in `holders` as `"<name> (pid N)"`.
+    /// The control port is open in another process (Linux), named in `holders` as `"<name> (pid N)"`.
     #[error("the control port is open in {}: close it first", holders.join(", "))]
     PortBusy { holders: Vec<String> },
 

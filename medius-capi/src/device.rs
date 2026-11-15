@@ -194,7 +194,7 @@ pub unsafe extern "C" fn medius_find_ports(
     })
 }
 
-/// Enumerate every connected box into `out` (up to `cap`); returns the number written.
+/// Enumerate every connected box no other process holds into `out`; writes the total to `*out_total` and returns the number written.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_list(
     out: *mut MediusBoxInfo,
@@ -627,7 +627,7 @@ pub unsafe extern "C" fn medius_device_raw(
     })
 }
 
-/// Run one control transfer against the real device; `MEDIUS_STATUS_OK` means the box replied.
+/// `TRANSFER`: run one control transfer against the real device; `MEDIUS_STATUS_OK` means the box replied.
 #[unsafe(no_mangle)]
 #[allow(clippy::too_many_arguments)]
 pub unsafe extern "C" fn medius_device_transfer(
@@ -797,7 +797,7 @@ pub unsafe extern "C" fn medius_device_query_rewrite(
     query(dev, out, |d| d.query_rewrite())
 }
 
-/// `QUERY(REWRITE_ENTRY, index)` into `*out`: one rule in full, which replays as a set.
+/// `QUERY(REWRITE_ENTRY, index)` into `*out`: one rule in full, as `medius_device_set_rewrite` takes it.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_device_query_rewrite_entry(
     dev: *mut MediusDevice,
@@ -865,7 +865,7 @@ pub unsafe extern "C" fn medius_device_query_patches(
     query(dev, out, |d| d.query_patches())
 }
 
-/// `QUERY(PATCH_ENTRY, index)` into `*out`: one patch in full, which replays as a set.
+/// `QUERY(PATCH_ENTRY, index)` into `*out`: one patch in full, as `medius_device_set_patch` takes it.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_device_query_patch_entry(
     dev: *mut MediusDevice,
@@ -982,7 +982,7 @@ pub unsafe extern "C" fn medius_device_set_movement_riding(
     with_device(dev, |d| d.set_movement_riding(window))
 }
 
-/// Set injected-motion pacing and the clone's poll rate.
+/// Set injected-motion pacing and the forced poll rate.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_device_set_emit_pace(
     dev: *mut MediusDevice,

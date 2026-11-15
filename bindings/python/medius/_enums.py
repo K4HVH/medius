@@ -339,7 +339,7 @@ class ControlStatus(IntEnum):
     """The handshake the game PC received for a control transaction."""
 
     OK = 0
-    #: The real device STALLed, or a `STALL` rule refused the request.
+    #: The real device STALLed, or a `RewriteAction.STALL` rule refused the request.
     STALLED = 1
     #: NAKed until the PC gave up.
     NAKED = 2
@@ -408,7 +408,7 @@ class TransferStatus(IntEnum):
     REFUSED = 0xFC
     #: The real device STALLed, in `stage`.
     STALL = 0xFD
-    #: No answer in time: the real device NAKed until the timeout, or the reply was lost.
+    #: No answer: the real device NAKed until the timeout, or the host chip's reply was lost.
     NO_ANSWER = 0xFE
     #: No device attached.
     NO_DEVICE = 0xFF
@@ -423,7 +423,7 @@ class TransferStage(IntEnum):
 
     SETUP = 0
     DATA = 1
-    #: Where a completed transfer ends.
+    #: The status stage, where a completed transfer ends.
     STATUS = 2
 
 

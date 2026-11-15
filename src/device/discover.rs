@@ -133,7 +133,7 @@ pub(crate) fn may_clone(kind: DeviceKind) -> impl Fn(&BoxInfo) -> bool {
 }
 
 impl Device {
-    /// Every connected box, with its version and cloned-device info.
+    /// Every connected box no other process holds, with its version and cloned-device info.
     pub fn list() -> Vec<BoxInfo> {
         list_and_held().0
     }

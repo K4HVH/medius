@@ -53,7 +53,7 @@ impl Setup {
     }
 }
 
-/// How a [`transfer`](crate::Device::transfer) ended: `TRANSFER_RESP`'s `status` byte (§3.14).
+/// How a [`transfer`](crate::Device::transfer) ended: `TRANSFER_RESP`'s `status` byte.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TransferStatus {
     /// Completed.
@@ -68,7 +68,7 @@ pub enum TransferStatus {
     Refused,
     /// The real device STALLed, in `stage`.
     Stall,
-    /// No answer in time: the real device NAKed until the timeout, or the reply was lost.
+    /// No answer: the real device NAKed until the timeout, or the host chip's reply was lost.
     NoAnswer,
     /// No device attached.
     NoDevice,
@@ -116,7 +116,7 @@ impl TransferStatus {
 /// Where a [`transfer`](crate::Device::transfer) ended: `TRANSFER_RESP`'s `stage` byte.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TransferStage {
-    /// The setup packet.
+    /// The setup stage.
     Setup,
     /// The data stage.
     Data,
@@ -148,14 +148,14 @@ impl TransferStage {
     }
 }
 
-/// Outcome of a [`transfer`](crate::Device::transfer): how and where it ended, and the reply.
+/// Outcome of a [`transfer`](crate::Device::transfer): how and where it ended, and the native reply.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TransferOutcome {
     /// How the transfer ended.
     pub status: TransferStatus,
-    /// Where it ended.
+    /// Where the transfer ended.
     pub stage: TransferStage,
-    /// The native reply as the box received it; meaningful on any status.
+    /// The native reply as the box received it, partial data before a STALL included.
     pub data: Vec<u8>,
 }
 

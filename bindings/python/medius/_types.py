@@ -727,7 +727,7 @@ class TrafficEvent:
         return bytes(p[:8]) if p else None
 
     def data(self) -> bytes:
-        """The event's data stage, clip-transfer reply or whole packet."""
+        """The data stage of a CONTROL or CLIP_TRANSFER event; the whole packet for any other class."""
         c = traffic_event_to_c(self)
         n = _native.usize()
         p = _native.lib.medius_traffic_event_data(ctypes.byref(c), ctypes.byref(n))

@@ -77,7 +77,7 @@ pub enum MediusStatus {
     ErrTransferTimeoutRange = 36,
     /// A transfer reply that lost a chunk between the box's chips or on the control link.
     ErrTransferReplyIncomplete = 37,
-    /// The control port is open in another process (Linux): the port takes one reader.
+    /// The control port is open in another process (Linux); `medius_last_error_message` names each holder.
     ErrPortBusy = 38,
 }
 

@@ -411,7 +411,7 @@ pub unsafe extern "C" fn medius_traffic_event_setup(event: *const MediusTrafficE
     })
 }
 
-/// The event's data stage, clip-transfer reply or whole packet; points into `event`.
+/// The data stage of a CONTROL or CLIP_TRANSFER event, else the whole packet; points into `event`, length in `*out_len`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn medius_traffic_event_data(
     event: *const MediusTrafficEvent,

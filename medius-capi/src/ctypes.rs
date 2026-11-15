@@ -723,8 +723,7 @@ pub enum MediusPatchSection {
     Bos = 4,
 }
 
-/// How a control transfer ended (§3.14): the `status` byte of a `MediusTransferOutcome`. An unnamed
-/// byte is a status this build does not know, carried through verbatim.
+/// How a control transfer ended: the `status` byte of a `MediusTransferOutcome`.
 #[repr(u8)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MediusTransferStatus {
@@ -740,7 +739,7 @@ pub enum MediusTransferStatus {
     Refused = 0xFC,
     /// The real device STALLed, in `stage`.
     Stall = 0xFD,
-    /// No answer in time: the real device NAKed until the timeout, or the reply was lost.
+    /// No answer: the real device NAKed until the timeout, or the host chip's reply was lost.
     NoAnswer = 0xFE,
     /// No device attached.
     NoDevice = 0xFF,
@@ -752,7 +751,7 @@ pub enum MediusTransferStatus {
 pub enum MediusTransferStage {
     Setup = 0,
     Data = 1,
-    /// Where a completed transfer ends.
+    /// The status stage, where a completed transfer ends.
     Status = 2,
 }
 
@@ -769,17 +768,15 @@ pub struct MediusSetup {
     pub length: u16,
 }
 
-/// How `medius_device_transfer` ended; the native reply goes to the caller's buffer.
+/// Outcome of `medius_device_transfer`: how and where it ended, and the native reply's length.
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MediusTransferOutcome {
-    /// One of `MEDIUS_TRANSFER_STATUS_*`, or an unknown status carried through. A byte, not
-    /// `MediusTransferStatus`, so it can carry unnamed values; C++ (`enum : uint8_t`) needs a cast
-    /// to compare it to one.
+    /// How the transfer ended: a `MEDIUS_TRANSFER_STATUS_*` value, or a byte no constant names.
     pub status: u8,
-    /// One of `MEDIUS_TRANSFER_STAGE_*`, or an unknown stage carried through, as `status` is.
+    /// Where the transfer ended: a `MEDIUS_TRANSFER_STAGE_*` value, or a byte no constant names.
     pub stage: u8,
-    /// The reply's length. Bytes past the buffer's capacity were not written.
+    /// The native reply's length; bytes past `reply_cap` were not written to `reply`.
     pub len: usize,
 }
 
@@ -816,13 +813,13 @@ pub struct MediusRewriteRule {
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MediusRewriteEntry {
-    /// One of `MEDIUS_REWRITE_CLASS_*`. A byte, not `MediusRewriteClass`; C++ needs a cast.
+    /// One of `MEDIUS_REWRITE_CLASS_*`. A byte, not `MediusRewriteClass`; C++ needs a cast to assign it to one.
     pub class: u8,
     /// Address within the class.
     pub id: u16,
-    /// A `MEDIUS_DIRECTION_*` value. A byte, not `MediusDirection`; C++ needs a cast.
+    /// A `MEDIUS_DIRECTION_*` value. A byte, not `MediusDirection`; C++ needs a cast to assign it to one.
     pub direction: u8,
-    /// One of `MEDIUS_REWRITE_ACTION_*`. A byte, not `MediusRewriteAction`; C++ needs a cast.
+    /// One of `MEDIUS_REWRITE_ACTION_*`. A byte, not `MediusRewriteAction`; C++ needs a cast to assign it to one.
     pub action: u8,
     /// `match`/`mask` bytes the rule compares.
     pub match_len: u8,
@@ -874,7 +871,7 @@ pub struct MediusPatch {
 #[repr(C)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MediusPatchEntry {
-    /// One of `MEDIUS_PATCH_SECTION_*`. A byte, not `MediusPatchSection`; C++ needs a cast.
+    /// One of `MEDIUS_PATCH_SECTION_*`. A byte, not `MediusPatchSection`; C++ needs a cast to assign it to one.
     pub section: u8,
     /// Configuration index.
     pub cfg: u8,

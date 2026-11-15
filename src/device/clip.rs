@@ -333,7 +333,7 @@ impl ClipHandle {
         self.set(CLIP_SET_RETAIN, on as u8)
     }
 
-    /// Make clip motion ride native reports; with `false` (the default) it is emitted at once.
+    /// Make clip motion ride native reports (`false` = emitted at once, the default). Fire-and-forget.
     pub fn set_ride(&self, on: bool) -> Result<()> {
         self.set(CLIP_SET_RIDE, on as u8)
     }

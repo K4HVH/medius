@@ -1,6 +1,6 @@
 //! Decoded `RESP(STATS)`: delivery and telemetry counters (§4.6).
 
-/// Firmware delivery and telemetry counters.
+/// Box-side delivery and telemetry counters.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Stats {
     /// Pure-injection reports emitted (the no-halving / 1 kHz path).

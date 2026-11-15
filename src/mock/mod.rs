@@ -2299,14 +2299,14 @@ impl MockBox {
         self
     }
 
-    /// Outcome the mock returns to a `TRANSFER` (builder style).
+    /// Set the [`TransferOutcome`] reply to `TRANSFER` (builder style).
     #[must_use]
     pub fn with_transfer_reply(self, reply: TransferOutcome) -> Self {
         self.state.lock().transfer_reply = reply;
         self
     }
 
-    /// Set the `TRANSFER` outcome after construction.
+    /// Update the configured [`TransferOutcome`] reply to `TRANSFER` in place.
     pub fn set_transfer_reply(&self, reply: TransferOutcome) {
         self.state.lock().transfer_reply = reply;
     }
@@ -2460,7 +2460,7 @@ impl MockBox {
         (verb.and_then(ClipAction::from_u8), consumed)
     }
 
-    /// Simulate a device-chip restart: session state goes, stored state stays.
+    /// Simulate a device-chip restart: the mock drops its session state and keeps its stored state.
     pub fn restart(&self) {
         let hello = {
             let mut st = self.state.lock();

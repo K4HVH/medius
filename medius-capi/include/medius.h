@@ -226,7 +226,7 @@ enum MediusStatus
     MEDIUS_STATUS_ERR_TRANSFER_TIMEOUT_RANGE = 36,
     // A transfer reply that lost a chunk between the box's chips or on the control link.
     MEDIUS_STATUS_ERR_TRANSFER_REPLY_INCOMPLETE = 37,
-    // The control port is open in another process (Linux): the port takes one reader.
+    // The control port is open in another process (Linux); `medius_last_error_message` names each holder.
     MEDIUS_STATUS_ERR_PORT_BUSY = 38,
 };
 #ifndef __cplusplus
@@ -889,7 +889,7 @@ enum MediusTransferStage
  {
     MEDIUS_TRANSFER_STAGE_SETUP = 0,
     MEDIUS_TRANSFER_STAGE_DATA = 1,
-    // Where a completed transfer ends.
+    // The status stage, where a completed transfer ends.
     MEDIUS_TRANSFER_STAGE_STATUS = 2,
 };
 #ifndef __cplusplus
@@ -900,8 +900,7 @@ typedef uint8_t MediusTransferStage;
 #endif // __STDC_VERSION__ >= 202311L
 #endif // __cplusplus
 
-// How a control transfer ended (§3.14): the `status` byte of a `MediusTransferOutcome`. An unnamed
-// byte is a status this build does not know, carried through verbatim.
+// How a control transfer ended: the `status` byte of a `MediusTransferOutcome`.
 enum MediusTransferStatus
 #if defined(__cplusplus) || __STDC_VERSION__ >= 202311L
   : uint8_t
@@ -919,7 +918,7 @@ enum MediusTransferStatus
     MEDIUS_TRANSFER_STATUS_REFUSED = 252,
     // The real device STALLed, in `stage`.
     MEDIUS_TRANSFER_STATUS_STALL = 253,
-    // No answer in time: the real device NAKed until the timeout, or the reply was lost.
+    // No answer: the real device NAKed until the timeout, or the host chip's reply was lost.
     MEDIUS_TRANSFER_STATUS_NO_ANSWER = 254,
     // No device attached.
     MEDIUS_TRANSFER_STATUS_NO_DEVICE = 255,
@@ -1179,15 +1178,13 @@ typedef struct MediusLockTarget {
     struct MediusUsage usage;
 } MediusLockTarget;
 
-// How `medius_device_transfer` ended; the native reply goes to the caller's buffer.
+// Outcome of `medius_device_transfer`: how and where it ended, and the native reply's length.
 typedef struct MediusTransferOutcome {
-    // One of `MEDIUS_TRANSFER_STATUS_*`, or an unknown status carried through. A byte, not
-    // `MediusTransferStatus`, so it can carry unnamed values; C++ (`enum : uint8_t`) needs a cast
-    // to compare it to one.
+    // How the transfer ended: a `MEDIUS_TRANSFER_STATUS_*` value, or a byte no constant names.
     uint8_t status;
-    // One of `MEDIUS_TRANSFER_STAGE_*`, or an unknown stage carried through, as `status` is.
+    // Where the transfer ended: a `MEDIUS_TRANSFER_STAGE_*` value, or a byte no constant names.
     uint8_t stage;
-    // The reply's length. Bytes past the buffer's capacity were not written.
+    // The native reply's length; bytes past `reply_cap` were not written to `reply`.
     uintptr_t len;
 } MediusTransferOutcome;
 
@@ -1220,13 +1217,13 @@ typedef struct MediusRewriteRule {
 // One decoded `RESP(REWRITE)` row (§4.17): a rule's address, action and live counters, without its
 // match/mask/payload bytes (read those with `medius_device_query_rewrite_entry`).
 typedef struct MediusRewriteEntry {
-    // One of `MEDIUS_REWRITE_CLASS_*`. A byte, not `MediusRewriteClass`; C++ needs a cast.
+    // One of `MEDIUS_REWRITE_CLASS_*`. A byte, not `MediusRewriteClass`; C++ needs a cast to assign it to one.
     uint8_t class_;
     // Address within the class.
     uint16_t id;
-    // A `MEDIUS_DIRECTION_*` value. A byte, not `MediusDirection`; C++ needs a cast.
+    // A `MEDIUS_DIRECTION_*` value. A byte, not `MediusDirection`; C++ needs a cast to assign it to one.
     uint8_t direction;
-    // One of `MEDIUS_REWRITE_ACTION_*`. A byte, not `MediusRewriteAction`; C++ needs a cast.
+    // One of `MEDIUS_REWRITE_ACTION_*`. A byte, not `MediusRewriteAction`; C++ needs a cast to assign it to one.
     uint8_t action;
     // `match`/`mask` bytes the rule compares.
     uint8_t match_len;
@@ -1272,7 +1269,7 @@ typedef struct MediusPatch {
 // One decoded `RESP(PATCHES)` row (§4.17): a stored patch's key and length, without its bytes
 // (read those with `medius_device_query_patch_entry`).
 typedef struct MediusPatchEntry {
-    // One of `MEDIUS_PATCH_SECTION_*`. A byte, not `MediusPatchSection`; C++ needs a cast.
+    // One of `MEDIUS_PATCH_SECTION_*`. A byte, not `MediusPatchSection`; C++ needs a cast to assign it to one.
     uint8_t section;
     // Configuration index.
     uint8_t cfg;
@@ -1898,7 +1895,7 @@ MediusStatus medius_clip_frame_raw(struct MediusClipFrame *f,
                                    const uint8_t *bytes,
                                    uintptr_t len);
 
-// Add a control transfer against the real device to the frame, with a 4 s timeout.
+// Add a control transfer as `medius_device_transfer` runs one, with a 4 s timeout.
 MediusStatus medius_clip_frame_transfer(struct MediusClipFrame *f,
                                         uint8_t ep,
                                         struct MediusSetup setup,
@@ -2104,8 +2101,10 @@ uintptr_t medius_find_ports(struct MediusPortInfo *out,
                             uintptr_t cap,
                             uintptr_t *out_total);
 
-// Enumerate every connected box into `out` (up to `cap`); returns the number written.
-uintptr_t medius_list(struct MediusBoxInfo *out, uintptr_t cap, uintptr_t *out_total);
+// Enumerate every connected box no other process holds into `out`; writes the total to `*out_total` and returns the number written.
+uintptr_t medius_list(struct MediusBoxInfo *out,
+                      uintptr_t cap,
+                      uintptr_t *out_total);
 
 // Open the box whose identity matches `id` (device-chip MAC hex or CH343 serial).
 MediusStatus medius_device_open_by_id(const char *id, struct MediusDevice **out);
@@ -2240,7 +2239,7 @@ MediusStatus medius_device_raw(struct MediusDevice *dev,
                                const uint8_t *bytes,
                                uintptr_t len);
 
-// Run one control transfer against the real device; `MEDIUS_STATUS_OK` means the box replied.
+// `TRANSFER`: run one control transfer against the real device; `MEDIUS_STATUS_OK` means the box replied.
 MediusStatus medius_device_transfer(struct MediusDevice *dev,
                                     uint8_t ep,
                                     struct MediusSetup setup,
@@ -2289,7 +2288,7 @@ MediusStatus medius_device_clear_rewrite(struct MediusDevice *dev);
 // `QUERY(REWRITE)` into `*out`: the table summary, a row per rule without its bytes.
 MediusStatus medius_device_query_rewrite(struct MediusDevice *dev, struct MediusRewriteTable *out);
 
-// `QUERY(REWRITE_ENTRY, index)` into `*out`: one rule in full, which replays as a set.
+// `QUERY(REWRITE_ENTRY, index)` into `*out`: one rule in full, as `medius_device_set_rewrite` takes it.
 MediusStatus medius_device_query_rewrite_entry(struct MediusDevice *dev,
                                                uint8_t index,
                                                struct MediusRewriteRule *out);
@@ -2318,7 +2317,7 @@ MediusStatus medius_device_clear_patch(struct MediusDevice *dev);
 // `QUERY(PATCHES)` into `*out`: the stored patch set and its apply state, a row per patch.
 MediusStatus medius_device_query_patches(struct MediusDevice *dev, struct MediusPatchSet *out);
 
-// `QUERY(PATCH_ENTRY, index)` into `*out`: one patch in full, which replays as a set.
+// `QUERY(PATCH_ENTRY, index)` into `*out`: one patch in full, as `medius_device_set_patch` takes it.
 MediusStatus medius_device_query_patch_entry(struct MediusDevice *dev,
                                              uint8_t index,
                                              struct MediusPatch *out);
@@ -2361,7 +2360,7 @@ MediusStatus medius_device_set_movement_riding(struct MediusDevice *dev,
                                                bool enabled,
                                                uint32_t window_ms);
 
-// Set injected-motion pacing and the clone's poll rate.
+// Set injected-motion pacing and the forced poll rate.
 MediusStatus medius_device_set_emit_pace(struct MediusDevice *dev,
                                          uint8_t mode,
                                          uint16_t hz,
@@ -2619,7 +2618,7 @@ bool medius_traffic_event_truncated(const struct MediusTrafficEvent *event);
 // `medius::TrafficEvent::setup`.
 const uint8_t *medius_traffic_event_setup(const struct MediusTrafficEvent *event);
 
-// The event's data stage, clip-transfer reply or whole packet; points into `event`.
+// The data stage of a CONTROL or CLIP_TRANSFER event, else the whole packet; points into `event`, length in `*out_len`.
 const uint8_t *medius_traffic_event_data(const struct MediusTrafficEvent *event,
                                          uintptr_t *out_len);
 
@@ -2936,7 +2935,7 @@ void medius_mock_set_imperfect_status(struct MediusMockBox *mock,
 #endif
 
 #if defined(MEDIUS_FEATURE_MOCK)
-// Set the `TRANSFER` outcome: a status, a stage and the reply `data[0..len]`.
+// Set the mock's `TRANSFER` reply: a status, a stage and `data[0..len]`.
 void medius_mock_set_transfer_reply(struct MediusMockBox *mock,
                                     uint8_t status,
                                     uint8_t stage,
@@ -2956,7 +2955,7 @@ void medius_mock_set_bearing(struct MediusMockBox *mock, uint16_t window_ms, uin
 #endif
 
 #if defined(MEDIUS_FEATURE_MOCK)
-// Set the pacing mode and forced poll rate of the mock's OPTION(EMIT) reply.
+// Set the mock's OPTION(EMIT) reply: pacing and forced poll rate.
 void medius_mock_set_emit_pace(struct MediusMockBox *mock,
                                uint8_t mode,
                                uint16_t hz,

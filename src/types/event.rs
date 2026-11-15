@@ -133,7 +133,7 @@ pub enum BusEvent {
 pub enum ControlStatus {
     /// Transaction completed.
     Ok,
-    /// STALL to the PC: the real device STALLed, or a `Stall` rule refused the request.
+    /// The real device STALLed, or a [`Stall`](crate::RewriteAction::Stall) rule refused the request.
     Stalled,
     /// NAKed until the PC gave up.
     Naked,

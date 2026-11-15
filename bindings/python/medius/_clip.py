@@ -97,7 +97,7 @@ class ClipBuilder(Handle):
         return self
 
     def transfer(self, ep: int, setup: Setup, out: bytes = b"") -> "ClipBuilder":
-        """A frame carrying one control transfer, with a 4 s timeout."""
+        """A frame carrying one control transfer, as `Device.transfer` runs one, with a 4 s timeout."""
         buf, n = _bytes_buf(out, "out")
         check(
             self._call(_native.lib.medius_clip_builder_transfer, _u8(ep, "ep"), setup_to_c(setup), buf, n)

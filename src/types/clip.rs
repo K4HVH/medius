@@ -622,7 +622,7 @@ impl ClipFrame {
         self
     }
 
-    /// Control transfer to the real device, as `Device::transfer` runs one, with a 4 s timeout.
+    /// Control transfer, as [`Device::transfer`](crate::Device::transfer) runs one, with a 4 s timeout.
     pub fn transfer(mut self, ep: u8, setup: Setup, out: impl Into<Vec<u8>>) -> ClipFrame {
         self.transfers.push(TransferItem {
             ep,

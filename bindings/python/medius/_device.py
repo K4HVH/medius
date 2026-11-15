@@ -111,7 +111,7 @@ class Device(Handle):
 
     @classmethod
     def find(cls) -> "Device":
-        """Open the first box found by USB id, or raise `NotFoundError`."""
+        """Open the first box found by USB id and run the version handshake."""
         out = ctypes.c_void_p()
         check(_native.lib.medius_device_find(ctypes.byref(out)))
         return cls._adopt(out.value)
@@ -125,7 +125,7 @@ class Device(Handle):
 
     @classmethod
     def open_for_update(cls, path) -> "Device":
-        """Open the box at `path` to update it, on any control protocol from 5 on."""
+        """Open the box at serial `path` to update it, on any control protocol from 5 on."""
         out = ctypes.c_void_p()
         check(_native.lib.medius_device_open_for_update(path.encode("utf-8"), ctypes.byref(out)))
         return cls._adopt(out.value)
